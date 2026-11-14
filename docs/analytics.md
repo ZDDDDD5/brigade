@@ -15,12 +15,13 @@ Three rules hold everywhere:
 
 ## Settings
 
-| Variable                         | Where                                        | What                                                                                                        |
-| -------------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `POSTHOG_KEY`                    | `brigade-api` secret (`wrangler secret put`) | The project's API key (`phc_…`). Without it the API sends nothing.                                          |
-| `POSTHOG_HOST`                   | `brigade-api`, optional                      | Ingestion address. Default `https://eu.i.posthog.com`.                                                      |
-| `POSTHOG_INTERNAL_EMAIL_DOMAINS` | `brigade-api` secret, optional               | Domains, comma-separated, whose people are Brigade's own: their events carry `internal: true`.              |
-| `NEXT_PUBLIC_POSTHOG_KEY`        | `brigade-web` build variable (Workers Build) | The same key, inlined into the website at build time. Without it the site loads nothing. Never in the demo. |
+| Variable                         | Where                                        | What                                                                                                                                                                                               |
+| -------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTHOG_KEY`                    | `brigade-api` secret (`wrangler secret put`) | The project's API key (`phc_…`). Without it the API sends nothing.                                                                                                                                 |
+| `POSTHOG_HOST`                   | `brigade-api`, optional                      | Ingestion address. Default `https://eu.i.posthog.com`.                                                                                                                                             |
+| `POSTHOG_INTERNAL_EMAIL_DOMAINS` | `brigade-api` secret, optional               | Domains, comma-separated, whose people are Brigade's own: their events carry `internal: true`.                                                                                                     |
+| `NEXT_PUBLIC_POSTHOG_KEY`        | `brigade-web` build variable (Workers Build) | The same key, inlined into the website at build time. Without it the site loads nothing. Never in the demo.                                                                                        |
+| `NEXT_PUBLIC_GOOGLE_TAG_ID`      | `brigade-web` build variable (Workers Build) | **Temporary trial, to be removed.** Google's tag (`GTM-…` or `G-…`) on the site's public pages. Unlike PostHog it sets cookies, and no banner asks first. Empty: nothing loads. Never in the demo. |
 
 Locally, in tests, previews and self-hosted Brigades none is set, so nothing is sent. PostHog's
 project must have cookieless mode turned on in its settings, or it drops the website's events.
