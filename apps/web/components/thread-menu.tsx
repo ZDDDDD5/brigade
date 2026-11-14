@@ -32,6 +32,7 @@ import { Hint } from '@/components/ui/tooltip'
 import { renamedHere } from '@/components/streamed-title'
 import { useThreadPanel } from '@/components/thread-panel'
 import { api, type Thread, type ThreadSummary } from '@/lib/api'
+import { setPinned, useShownPins } from '@/lib/optimistic-pins'
 
 type Action = 'preview' | 'pin' | 'later' | 'rename' | 'done' | 'archive' | 'delete'
 
@@ -61,7 +62,8 @@ export function useThreadMenu({
   admin: boolean
   /** Rename picked: where the title is edited is the caller's. */
   onRename: () => void
-  onChanged: () => void
+  /** Something changed: ask for the lists again. Pin waits for it before it stops showing ahead. */
+  onChanged: () => unknown
   onDeleted: (id: string) => void
 }) {
   const title = thread.title || 'New thread'
@@ -74,7 +76,9 @@ export function useThreadMenu({
   // archives it, its starter deletes it, and admins do all of them.
   const mayChange = starter || !!thread.othersMayPrompt || admin
   const mayDelete = starter || admin
-  const pinned = !!thread.pinnedAt
+  // Pin shows at once (lib/optimistic-pins.ts): as clicked, while its request goes.
+  const shownPin = useShownPins().get(thread.id)
+  const pinned = shownPin ? !!shownPin.pinnedAt : !!thread.pinnedAt
   const archived = !!thread.archivedAt
   const later = !!thread.laterAt
   const done = !!thread.doneAt
@@ -85,10 +89,16 @@ export function useThreadMenu({
     if (action === 'rename') return onRename()
     if (action === 'delete' && !confirm(await deleteQuestion(thread.id, title))) return
     const path = `/threads/${thread.id}`
+    if (action === 'pin')
+      return setPinned(
+        thread.id,
+        !pinned,
+        (pin) => api(`${path}/pin`, { method: pin ? 'POST' : 'DELETE' }),
+        onChanged,
+      ).catch((e) => alert(e instanceof Error ? e.message : String(e)))
     setBusy(true)
     try {
-      if (action === 'pin') await api(`${path}/pin`, { method: pinned ? 'DELETE' : 'POST' })
-      else if (action === 'later') await api(`${path}/later`, { method: later ? 'DELETE' : 'POST' })
+      if (action === 'later') await api(`${path}/later`, { method: later ? 'DELETE' : 'POST' })
       else if (action === 'done') await api(`${path}/done`, { method: done ? 'DELETE' : 'POST' })
       else if (action === 'archive')
         await api(`${path}/archive`, { method: archived ? 'DELETE' : 'POST' })
@@ -197,7 +207,7 @@ export function ThreadMenu({ thread, onChanged }: { thread: Thread; onChanged: (
   const router = useRouter()
   function changed() {
     onChanged()
-    void reloadThreads()
+    return reloadThreads()
   }
   const menu = useThreadMenu({
     thread,
