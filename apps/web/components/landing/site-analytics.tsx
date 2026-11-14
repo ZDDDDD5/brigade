@@ -11,6 +11,32 @@ import { visitSource } from '@/lib/signup-source'
 // autocapture. Nothing loads without NEXT_PUBLIC_POSTHOG_KEY, nor in the demo's build.
 const KEY = DEMO ? undefined : process.env.NEXT_PUBLIC_POSTHOG_KEY
 const HOST = 'https://eu.i.posthog.com'
+// A trial of Google's tag beside PostHog, to be removed: a Tag Manager container (GTM-…) or a
+// Google Analytics stream (G-…). Public pages only, nothing without it, never in the demo.
+const GOOGLE_TAG = DEMO ? undefined : process.env.NEXT_PUBLIC_GOOGLE_TAG_ID
+
+/** Google's tag, added once per page load, as Google's own snippet does. */
+function loadGoogleTag(id: string) {
+  if (!/^(GTM|G)-[A-Z0-9]+$/.test(id) || document.getElementById('google-tag')) return
+  const w = window as unknown as { dataLayer: unknown[] }
+  w.dataLayer = w.dataLayer || []
+  const script = document.createElement('script')
+  script.id = 'google-tag'
+  script.async = true
+  if (id.startsWith('GTM-')) {
+    w.dataLayer.push({ 'gtm.start': Date.now(), event: 'gtm.js' })
+    script.src = `https://www.googletagmanager.com/gtm.js?id=${id}`
+  } else {
+    // gtag() must push its `arguments` object, not an array.
+    const gtag = function (..._args: unknown[]) {
+      w.dataLayer.push(arguments)
+    }
+    gtag('js', new Date())
+    gtag('config', id)
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${id}`
+  }
+  document.head.appendChild(script)
+}
 
 type Capture = (event: string, properties: Record<string, string>) => void
 
@@ -87,6 +113,7 @@ function load(key: string) {
 export function SiteAnalytics() {
   const pathname = usePathname()
   useEffect(() => {
+    if (GOOGLE_TAG && isPublicPage(pathname)) loadGoogleTag(GOOGLE_TAG)
     if (KEY && isPublicPage(pathname))
       // posthog-js fills in the address itself, masked (mask_personal_data_properties): click
       // ids such as gclid never leave the browser.

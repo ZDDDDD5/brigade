@@ -46,7 +46,7 @@ const MINTLIFY = 'https://brigade.mintlify.site'
 
 /**
  * The dashboard's Content-Security-Policy. Scripts and styles only from here, inline (Next's
- * own inline scripts), Cloudflare Turnstile and PostHog; the three CDNs are for teammates'
+ * own inline scripts), Cloudflare Turnstile, PostHog and Google's tag (a trial on the site); the three CDNs are for teammates'
  * widgets, whose srcdoc frames inherit this policy (components/widget-frame.tsx). What a page
  * shows of members' content stays open: images and fonts in mail and messages, previews in
  * frames (brigade.surf, a provider's address, or <thread>.localhost on a member's Mac), uploads
@@ -54,7 +54,7 @@ const MINTLIFY = 'https://brigade.mintlify.site'
  */
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://eu-assets.i.posthog.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com",
+  "script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://eu-assets.i.posthog.com https://www.googletagmanager.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com https://unpkg.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' data: https:",
   "img-src 'self' data: blob: https:",
@@ -80,6 +80,8 @@ const nextConfig = async (phase: string): Promise<NextConfig> => ({
     NEXT_PUBLIC_DEMO: DEMO ? '1' : '',
     // The site's analytics (components/landing/site-analytics.tsx): never in the demo's build.
     NEXT_PUBLIC_POSTHOG_KEY: DEMO ? '' : (process.env.NEXT_PUBLIC_POSTHOG_KEY ?? ''),
+    // A trial of Google's tag on the site's public pages (same component), to be removed.
+    NEXT_PUBLIC_GOOGLE_TAG_ID: DEMO ? '' : (process.env.NEXT_PUBLIC_GOOGLE_TAG_ID ?? ''),
     BRIGADE_LANDING_PROOF: DEMO ? '' : await landingProof(phase),
   },
   // A sample workspace is not something to find in a search engine.
