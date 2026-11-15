@@ -30,6 +30,32 @@ if (info?.window === 'main')
     focused = value === true
   })
 
+// ⌘F (Ctrl+F on Windows and Linux) finds in the page, with the app's find bar (find.ts), unless
+// the page used the key itself (a code editor's own search). ⌘G and ⇧⌘G (F3) for the next and
+// previous match. Esc closes the bar from the page too, unless the page used it (a dialog).
+let findOpen = false
+if (info?.window === 'main') {
+  ipcRenderer.on('brigade:find-open', (_event, open: unknown) => {
+    findOpen = open === true
+  })
+  window.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented) return
+    if (event.key === 'Escape' && findOpen && !event.isComposing) {
+      findOpen = false
+      return ipcRenderer.send('brigade:find', 'close')
+    }
+    if (event.altKey) return
+    const mod = info.platform === 'darwin' ? event.metaKey : event.ctrlKey
+    const key = event.key.toLowerCase()
+    let what: 'open' | 'next' | 'previous'
+    if (mod && key === 'f' && !event.shiftKey) what = 'open'
+    else if ((mod && key === 'g') || event.key === 'F3') what = event.shiftKey ? 'previous' : 'next'
+    else return
+    event.preventDefault()
+    ipcRenderer.send('brigade:find', what)
+  })
+}
+
 if (info)
   contextBridge.exposeInMainWorld('brigadeDesktop', {
     info,
