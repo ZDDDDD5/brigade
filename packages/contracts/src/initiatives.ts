@@ -298,12 +298,11 @@ export type MissionRow = {
   number: MissionNumber | null
   next: MissionAgendaItem | null
   needs: MissionNeed[]
-  /** Its latest output, or else its latest routine run's report. */
-  last:
-    | { kind: 'output'; output: MissionOutput }
-    | { kind: 'run'; threadId: string; at: string; summary: string | null }
-    | null
+  /** Its latest output: what went out, never a routine's own report. */
+  last: { kind: 'output'; output: MissionOutput } | null
   outputs: MissionOutput[]
+  /** What went out in the last 7 days, by kind. */
+  week: { outputs: number; byKind: Partial<Record<OutputKind, number>> }
   archivedAt: string | null
 }
 

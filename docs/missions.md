@@ -106,10 +106,14 @@ Brigade's own and the page draws them instead ("Measured by Brigade").
 
 `/app/missions`, in the sidebar for people with the feature:
 
-- **Missions** (`GET /api/missions`): one row per mission, with its owner and objective, its number
-  and its trend over 30 days, what needs the member (drafts to approve, with Approve and Decline, and
-  the Board's Needs you cards of its threads and routines), its next agenda item and what went out
-  last (its latest output, else its latest routine report).
+- **Missions** (`GET /api/missions`): one status line per mission. A dot says where it stands
+  (something waits on the member, something went out this week, or nothing moved), a phrase says it
+  ("Approve “Roles post”", "3 replies out this week", "Nothing went out this week"), with its next
+  planned action, and its number on the right (else what went out this week). Clicked, it opens its
+  detail: objective, drafts to approve with Approve and Decline and the Board's Needs you cards of its
+  threads and routines, its next planned action, what went out, the number's trend, its threads and
+  how many routines run. Routines' runs are never its next step nor what went out: they always come,
+  and their reports are notes between teammates.
 - **This week** (`GET /api/missions/week?from=`): the agenda across missions from the start of the
   member's day, for 7 days: its routines' runs, its threads' wake-ups (the teammate's own), its
   planned actions and the deadlines of drafts to approve.

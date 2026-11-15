@@ -33,8 +33,7 @@ import {
 import { HTTPException } from 'hono/http-exception'
 import { audit } from './audit.js'
 import { board } from './board.js'
-import { reportOf } from './children.js'
-import { Prisma, prisma, scoped, type Scope, type ScopedDb } from './db.js'
+import { prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { featuresOfMember } from './features.js'
 import { hubs, scheduleUpdated, threadUpdated } from './hub.js'
 import type { WorkspaceScope } from './scope.js'
@@ -1148,22 +1147,18 @@ export async function listMissions(
     db,
     outputs.map((o) => o.teammateId),
   )
-  const routineIds = missions.flatMap((m) => m.routines.map((r) => r.id))
-  const runs = routineIds.length
-    ? await db.session.findMany({
-        where: { scheduleId: { in: routineIds }, NOT: { report: { equals: Prisma.DbNull } } },
-        orderBy: { updatedAt: 'desc' },
-        take: 100,
-        select: { id: true, scheduleId: true, updatedAt: true, report: true },
-      })
-    : []
+  const weekAgo = now.getTime() - 7 * DAY
   return missions.map((m) => {
-    const mine = outputs.filter((o) => o.initiativeId === m.id).slice(0, OUTPUTS_SHOWN)
-    const routineSet = new Set(m.routines.map((r) => r.id))
-    const lastRun = runs.find(
-      (r) =>
-        r.scheduleId && routineSet.has(r.scheduleId) && reportOf(r.report)?.status !== 'nothing',
-    )
+    const all = outputs.filter((o) => o.initiativeId === m.id)
+    const mine = all.slice(0, OUTPUTS_SHOWN)
+    const byKind: Partial<Record<OutputKind, number>> = {}
+    let week = 0
+    for (const o of all)
+      if (o.at.getTime() >= weekAgo) {
+        const kind = OutputKind.catch('other').parse(o.kind)
+        byKind[kind] = (byKind[kind] ?? 0) + 1
+        week++
+      }
     const shown = mine.map((o) => outputView(o, names))
     return {
       id: m.id,
@@ -1185,26 +1180,19 @@ export async function listMissions(
         pausedAt: iso(r.pausedAt),
       })),
       number: numbers.get(m.id) ?? null,
-      // What comes next: not an action that will not go (declined, expired) or already went.
+      // What comes next: its next planned action, not one that will not go (declined, expired) or
+      // already went, nor a routine's run, which always comes and says nothing.
       next:
         agenda.find(
           (i) =>
             i.missionId === m.id &&
-            i.kind !== 'approval' &&
-            (!i.status || i.status === 'planned' || i.status === 'awaiting_approval'),
+            i.kind === 'action' &&
+            (i.status === 'planned' || i.status === 'awaiting_approval'),
         ) ?? null,
       needs: needs.get(m.id) ?? [],
-      last: shown[0]
-        ? { kind: 'output' as const, output: shown[0] }
-        : lastRun
-          ? {
-              kind: 'run' as const,
-              threadId: lastRun.id,
-              at: lastRun.updatedAt.toISOString(),
-              summary: reportOf(lastRun.report)?.summary ?? null,
-            }
-          : null,
+      last: shown[0] ? { kind: 'output' as const, output: shown[0] } : null,
       outputs: shown,
+      week: { outputs: week, byKind },
       archivedAt: iso(m.archivedAt),
     }
   })
