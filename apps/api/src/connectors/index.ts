@@ -201,7 +201,7 @@ export const appCatalog: Record<
     category: 'Marketing',
     personal: true,
   },
-  // Behind the google_ads feature until Brigade's developer token has Basic access and the
+  // Behind the google_ads feature until Brigade's Google Cloud project has Basic access and the
   // adwords scope is verified.
   google_ads: {
     name: 'Google Ads',

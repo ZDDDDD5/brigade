@@ -1,10 +1,10 @@
-// Google Ads connector (Google Ads API, REST), on the account's OAuth credential in the vault and
-// Brigade's developer token. One Brigade account is one Google sign-in; its owner then picks the
+// Google Ads connector (Google Ads API, REST), on the account's OAuth credential in the vault. No
+// developer token: since 2026 Google ties API access to the Cloud project of the OAuth client
+// (Brigade's Google client), and ignores the developer-token header. One Brigade account is one Google sign-in; its owner then picks the
 // Google Ads customer accounts teammates reach (Connection.settings), each with the manager
 // account it is reached through (login-customer-id). Reports are GAQL queries; writes are
 // mutates, each one atomic.
 import { z } from 'zod'
-import { env } from '../config.js'
 import {
   ConnectorError,
   op,
@@ -145,14 +145,6 @@ export async function adsJson<T>(response: Response): Promise<T> {
   return (body ? JSON.parse(body) : {}) as T
 }
 
-const developerToken = () => {
-  if (!env.GOOGLE_ADS_DEVELOPER_TOKEN)
-    throw new ConnectorError(
-      'Google Ads is not configured on this Brigade server (no developer token)',
-    )
-  return env.GOOGLE_ADS_DEVELOPER_TOKEN
-}
-
 /** The picked customers of an account, from its settings. */
 export const pickedCustomers = (settings: unknown): AdsCustomer[] => {
   const parsed = AdsSettings.safeParse(settings)
@@ -178,7 +170,6 @@ const check = async (ctx: ConnectorContext, i: { customerId: string }) => {
 
 const headers = (loginCustomerId?: string) => ({
   'content-type': 'application/json',
-  'developer-token': developerToken(),
   ...(loginCustomerId ? { 'login-customer-id': loginCustomerId } : {}),
 })
 

@@ -22,9 +22,11 @@ Code: `apps/api/src/connectors/google-ads.ts` (operations), `google-oauth.ts` (s
    in `Connection.settings` (`{ customers: [{ id, loginCustomerId, name, currency, timeZone }] }`).
    Manager accounts hold no campaigns and are not picked. Until one is picked, every tool refuses.
 
-Each call sends Brigade's developer token (`developer-token`, from `GOOGLE_ADS_DEVELOPER_TOKEN`)
-and the picked account's `login-customer-id`. The token is Brigade's, one server secret; it is
-never a customer's.
+Each call sends the picked account's `login-customer-id`. There is no developer token: since
+2026 Google ties Google Ads API access to the Cloud project that owns the OAuth client
+(`GOOGLE_CLIENT_ID`; Brigade's is `brigade-511113`) and ignores the `developer-token` header, which
+a future API version will reject. The access level (Test, Explorer, Basic, Standard) shows on the
+project's Google Ads API overview in Cloud Console.
 
 ## Tools
 
@@ -51,13 +53,20 @@ to the latest before then, and check the release notes for changed fields.
 
 ## Before opening it to everyone
 
-1. **Manager account and developer token.** Create a Google Ads manager account for Brigade, and in
-   it Admin › API Center: accept the terms and get the developer token. Set it as the
-   `GOOGLE_ADS_DEVELOPER_TOKEN` Worker secret of `brigade-api` (a secret, not a variable).
-2. **Basic access.** A new token has Explorer (or Test) access: few operations a day on production
-   accounts (or test accounts only). Apply for Basic access in API Center, with the design
-   documentation Google asks for (what Brigade does with the API, the tools above).
-3. **OAuth scope.** Add `https://www.googleapis.com/auth/adwords` to the Google client's consent
+1. **Enable the API** on the OAuth client's Cloud project (`gcloud services enable
+googleads.googleapis.com`). That gives Test access: test accounts only. Done for
+   `brigade-511113` on 15 Nov 2026.
+2. **Explorer access** (production accounts, 2,880 operations a day): apply on the project's
+   [Google Ads API overview](https://console.cloud.google.com/google/ads-apis/overview); the review
+   is automated. Applied for `brigade-511113` on 15 Nov 2026. A Test-access project gets
+   `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION` on production accounts.
+3. **Basic access** (15,000 operations a day): needs the project's brand verification, then the
+   same page. Projects on a free trial or with billing off may be refused.
+4. **OAuth scope.** Add `https://www.googleapis.com/auth/adwords` to the Google client's consent
    screen and submit it for verification. It is a sensitive scope (not restricted): no CASA audit,
-   but a demo video and justification. Until then, open the feature only to test users.
-4. **Open the feature** to everyone, then remove the flag from the code in a later change.
+   but a demo video and justification. Until then Google shows its unverified-app warning at
+   sign-in: open the feature only to the team.
+5. **Open the feature** to everyone, then remove the flag from the code in a later change.
+
+A Google Ads manager account is not needed for the API; Brigade has one (Brigade, 865-207-5274)
+for its own ad accounts.

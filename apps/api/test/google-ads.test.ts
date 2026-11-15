@@ -4,12 +4,11 @@ import { APP_FEATURES, FEATURES } from '@brigade/contracts'
 import type { ConnectorContext } from '../src/connectors/types.js'
 
 // The Google Ads App (src/connectors/google-ads.ts): reports are GAQL queries on a customer its
-// owner picked, sent with Brigade's developer token and the manager it is reached through; writes
+// owner picked, sent through the manager it is reached through, with no developer token; writes
 // are mutates; a customer not picked is refused before anything is sent.
 process.env.DATABASE_URL ??= 'postgresql://localhost:1/none'
 process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
 process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
-process.env.GOOGLE_ADS_DEVELOPER_TOKEN = 'dev-token'
 
 const { googleAds, listAdsCustomers, metricsOf, dateClause, GOOGLE_ADS_VERSION } =
   await import('../src/connectors/google-ads.js')
@@ -86,7 +85,7 @@ test('reads and writes are declared as such', () => {
   ])
 })
 
-test('the campaign report queries the picked customer through its manager, with the developer token', async () => {
+test('the campaign report queries the picked customer through its manager, with no developer token', async () => {
   const { ctx, calls } = fake([
     [
       `${API}/customers/1234567890/googleAds:search`,
@@ -142,7 +141,7 @@ test('the campaign report queries the picked customer through its manager, with 
   })
   assert.equal(calls.length, 1)
   assert.equal(calls[0]!.method, 'POST')
-  assert.equal(calls[0]!.headers['developer-token'], 'dev-token')
+  assert.equal(calls[0]!.headers['developer-token'], undefined)
   assert.equal(calls[0]!.headers['login-customer-id'], '9998887776')
   const { query } = calls[0]!.body as { query: string }
   assert.match(
@@ -393,8 +392,11 @@ test("Google Ads' readable errors come out of its details, not its generic messa
                   '@type': 'type.googleapis.com/google.ads.googleads.v26.errors.GoogleAdsFailure',
                   errors: [
                     {
-                      errorCode: { authorizationError: 'DEVELOPER_TOKEN_NOT_APPROVED' },
-                      message: 'The developer token is only approved for use with test accounts.',
+                      errorCode: {
+                        authorizationError: 'CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION',
+                      },
+                      message:
+                        'The Google Cloud project is only approved for use with test accounts.',
                     },
                   ],
                 },
@@ -407,7 +409,7 @@ test("Google Ads' readable errors come out of its details, not its generic messa
   ])
   await assert.rejects(
     () => run('google_ads_campaigns', ctx, { customerId: '1234567890' }),
-    /403: The developer token is only approved for use with test accounts\. \(DEVELOPER_TOKEN_NOT_APPROVED\)/,
+    /403: The Google Cloud project is only approved for use with test accounts\. \(CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION\)/,
   )
 })
 
@@ -469,7 +471,7 @@ test('listing customers walks each manager, lists direct accounts once, and pref
   )
   // listAccessibleCustomers takes no login-customer-id; each walk logs in as its own root.
   assert.equal(calls[0]!.headers['login-customer-id'], undefined)
-  assert.equal(calls[0]!.headers['developer-token'], 'dev-token')
+  assert.equal(calls[0]!.headers['developer-token'], undefined)
   // The manager's tree only below itself; never customer_client on the advertiser.
   const clientQueries = calls.filter((c) =>
     /FROM customer_client/.test((c.body as { query?: string } | undefined)?.query ?? ''),

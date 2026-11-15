@@ -1556,7 +1556,7 @@ enum ConnectorKind {
   /// Search Console and Analytics (GA4), on Brigade's Google client like Gmail.
   google_search_console
   google_analytics
-  /// Google Ads, on Brigade's Google client and its developer token, behind the google_ads feature.
+  /// Google Ads, on Brigade's Google client (no developer token), behind the google_ads feature.
   google_ads
   /// Brigade's own addresses on its mail domain (mails.brigade.lol), received and sent through
   /// Resend with Brigade's key: an agent's address, or a project's inbox. No credential.
