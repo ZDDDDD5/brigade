@@ -27,6 +27,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDashboard } from '@/components/dashboard'
 import { useDocumentDiscussion } from '@/components/document-discussion'
 import { libraryDocument, useOptionalDocumentPanel } from '@/components/document-panel'
+import { ProviderTile, providerKind } from '@/components/provider-logo'
 import { SidePanel } from '@/components/side-panel'
 import { Button } from '@/components/ui/button'
 import {
@@ -445,10 +446,7 @@ function ToolAccounts({
         <DialogHeader>
           <DialogTitle>Accounts</DialogTitle>
           <DialogDescription>
-            The tool calls these Apps for whoever opens it and may use the account: a personal
-            account works for its owner only. Its code reads what an account returns and could send
-            it on, so attach accounts only to tools you trust. Each change to the tool waits for
-            someone to allow it again.
+            Attach accounts only to tools you trust: the tool’s code sees what they return.
           </DialogDescription>
         </DialogHeader>
         {changed && (
@@ -475,14 +473,17 @@ function ToolAccounts({
             const name = attached[0]?.app ?? offered[0]?.app ?? need.kind
             return (
               <section key={need.kind} className="flex flex-col gap-2">
-                <div className="flex flex-col gap-0.5">
-                  <h3 className="text-sm font-medium">
-                    {name}
-                    <span className="font-normal text-muted-foreground">
-                      {need.access === 'read_write' ? ' · reads and changes' : ' · reads'}
-                    </span>
-                  </h3>
-                  {need.why && <p className="text-xs text-muted-foreground">{need.why}</p>}
+                <div className="flex items-center gap-3">
+                  <ProviderTile kind={providerKind(need.kind)} small />
+                  <div className="flex min-w-0 flex-col gap-0.5">
+                    <h3 className="text-sm font-medium">
+                      {name}
+                      <span className="font-normal text-muted-foreground">
+                        {need.access === 'read_write' ? ' · reads and changes' : ' · reads'}
+                      </span>
+                    </h3>
+                    {need.why && <p className="text-xs text-muted-foreground">{need.why}</p>}
+                  </div>
                 </div>
                 {attached.map((a) => (
                   <div
