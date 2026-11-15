@@ -531,20 +531,29 @@ function ModeOption({
 export function ThreadItemsCard({ threadId, className }: { threadId: string; className?: string }) {
   const items = useApi<ThreadListItems>(`/lists/threads/${threadId}`, QUIET_LIVE)
   const [open, setOpen] = useState(true)
-  const [busy, setBusy] = useState<string>()
-  const list = items.data ?? []
+  // Ticked or unticked here: shown at once, until the list is reloaded; one at a time per item.
+  const [ticking, setTicking] = useState<ReadonlyMap<string, boolean>>(new Map())
+  const list = (items.data ?? []).map((i) =>
+    ticking.has(i.id) ? { ...i, done: ticking.get(i.id)! } : i,
+  )
   if (!list.length) return null
   const lists = [...new Map(list.map((i) => [i.documentId, i])).values()]
   const done = list.filter((i) => i.done).length
+  const settle = (id: string) =>
+    setTicking((t) => {
+      const next = new Map(t)
+      next.delete(id)
+      return next
+    })
   const toggle = async (id: string, value: boolean) => {
-    setBusy(id)
+    setTicking((t) => new Map(t).set(id, value))
     try {
       await api(`/lists/items/${id}/done`, { method: 'PUT', body: { done: value } })
       await items.reload()
     } catch (e) {
       window.alert((e as Error).message)
     } finally {
-      setBusy(undefined)
+      settle(id)
     }
   }
   return (
@@ -595,7 +604,7 @@ export function ThreadItemsCard({ threadId, className }: { threadId: string; cla
                 role="checkbox"
                 aria-checked={item.done}
                 aria-label={item.done ? 'Untick' : 'Tick'}
-                disabled={busy === item.id || item.missing}
+                disabled={ticking.has(item.id) || item.missing}
                 onClick={() => void toggle(item.id, !item.done)}
                 className={cn(
                   'mt-0.5 grid size-4 shrink-0 place-items-center rounded-[5px] border-[1.5px] border-foreground/45 bg-card',

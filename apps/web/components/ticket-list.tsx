@@ -48,7 +48,10 @@ export function TicketList({ projectId }: { projectId?: string }) {
         body: { approved, ...(always ? { always } : {}), ...(edited ? { edited } : {}) },
       })
     } catch (e) {
+      // Its row gives the buttons back.
       setError((e as Error).message)
+      await tickets.reload()
+      throw e
     }
     await tickets.reload()
   }

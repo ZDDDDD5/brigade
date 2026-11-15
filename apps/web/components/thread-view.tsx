@@ -157,7 +157,6 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Hint } from '@/components/ui/tooltip'
-import { ActivityIndicator } from '@/components/ui/activity-indicator'
 import { WidgetFrame } from '@/components/widget-frame'
 import {
   ChildrenWorking,
@@ -2654,7 +2653,7 @@ export function ThreadItems({
     approved: boolean,
     always?: boolean,
     edited?: EditedEmail,
-  ) => void
+  ) => Promise<void>
   onAnswer: (questionId: string, answer: QuestionAnswer) => Promise<void>
   onTicket: (requestId: string, answer: TicketAnswer) => Promise<void>
   /** Sends a choice someone clicked as their message, with the option's design it picks. Unset when they cannot send one now. */
@@ -3151,71 +3150,19 @@ export function ThreadItems({
           )
         return <ToolStep key={item.key} threadId={threadId} item={item} />
       }
-      case 'approval': {
-        // A trigger lets outside events start work: only an owner or admin allows one.
-        const adminsOnly = bareToolName(item.toolName) === 'create_trigger'
+      case 'approval':
         return (
-          <Card key={item.key} className="min-w-0 gap-3 border-warning/50 px-5 py-4 wrap-anywhere">
-            <div className="flex items-start gap-2">
-              <ShieldAlert aria-hidden className="mt-0.5 size-4 flex-none text-warning" />
-              <div className="min-w-0 flex-1 font-semibold">
-                {approvalAsk(item.toolName) ?? (
-                  <>
-                    Allow <code className="font-mono text-sm">{item.toolName}</code>{' '}
-                    {toolSummary(item.toolName, item.input)}?
-                  </>
-                )}
-              </div>
-              {item.resolved && (
-                <StatusBadge
-                  status={item.resolved.approved ? 'approved' : 'denied'}
-                  label={item.resolved.approved ? 'Allowed' : 'Denied'}
-                />
-              )}
-            </div>
-            {item.reason && <p className="text-sm text-muted-foreground">{item.reason}</p>}
-            {/* An email may be changed before it is allowed. */}
-            {!item.resolved && canApprove && isEmailSend(item.toolName) ? (
-              <EditableEmailPreview
-                input={item.input}
-                onAllow={(edited) => onApproval(item.approvalId, true, false, edited)}
-              />
-            ) : (
-              <ToolInputPreview input={item.input} />
-            )}
-            {item.resolved ? null : (adminsOnly ? admin : canApprove) ? (
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => onApproval(item.approvalId, true)}>
-                  {item.always ? 'Allow in this thread' : 'Allow'}
-                </Button>
-                {item.always && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    tooltip="Let this teammate use it from now on, in any thread, without asking"
-                    onClick={() => onApproval(item.approvalId, true, true)}
-                  >
-                    Always allow
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => onApproval(item.approvalId, false)}
-                >
-                  Deny
-                </Button>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                {adminsOnly
-                  ? 'Waiting for an owner or admin.'
-                  : 'Only the member who started this thread can answer.'}
-              </p>
-            )}
-          </Card>
+          <ApprovalCard
+            key={item.key}
+            item={item}
+            // A trigger lets outside events start work: only an owner or admin allows one.
+            mayAnswer={bareToolName(item.toolName) === 'create_trigger' ? admin : canApprove}
+            canApprove={canApprove}
+            onApproval={(approved, always, edited) =>
+              onApproval(item.approvalId, approved, always, edited)
+            }
+          />
         )
-      }
       case 'question':
         return (
           <QuestionCard
@@ -3890,6 +3837,100 @@ const answerBadge = (answer: QuestionAnswer | TicketAnswer) =>
       : { tone: 'warning' as const, label: 'Declined' }
     : { tone: 'success' as const, label: 'Answered' }
 
+/**
+ * A tool the teammate asks to use: Allow (in this thread, or always) or Deny. The answer shows
+ * at once, as the thread will have it; one that did not go gives the buttons back, with why.
+ */
+function ApprovalCard({
+  item,
+  mayAnswer,
+  canApprove,
+  onApproval,
+}: {
+  item: Extract<Item, { kind: 'approval' }>
+  /** This person may answer this one (a trigger: an owner or admin). */
+  mayAnswer: boolean
+  /** This person answers the thread's approvals: an email may be changed before it goes. */
+  canApprove: boolean
+  onApproval: (approved: boolean, always?: boolean, edited?: EditedEmail) => Promise<void>
+}) {
+  const [sending, setSending] = useState<{ approved: boolean }>()
+  const [error, setError] = useState<string>()
+  const resolved = item.resolved ?? sending
+  const adminsOnly = bareToolName(item.toolName) === 'create_trigger'
+
+  async function answer(approved: boolean, always?: boolean, edited?: EditedEmail) {
+    if (resolved) return
+    setSending({ approved })
+    setError(undefined)
+    try {
+      await onApproval(approved, always, edited)
+    } catch (e) {
+      setError((e as Error).message)
+      setSending(undefined)
+    }
+  }
+
+  return (
+    <Card className="min-w-0 gap-3 border-warning/50 px-5 py-4 wrap-anywhere">
+      <div className="flex items-start gap-2">
+        <ShieldAlert aria-hidden className="mt-0.5 size-4 flex-none text-warning" />
+        <div className="min-w-0 flex-1 font-semibold">
+          {approvalAsk(item.toolName) ?? (
+            <>
+              Allow <code className="font-mono text-sm">{item.toolName}</code>{' '}
+              {toolSummary(item.toolName, item.input)}?
+            </>
+          )}
+        </div>
+        {resolved && (
+          <StatusBadge
+            status={resolved.approved ? 'approved' : 'denied'}
+            label={resolved.approved ? 'Allowed' : 'Denied'}
+          />
+        )}
+      </div>
+      {item.reason && <p className="text-sm text-muted-foreground">{item.reason}</p>}
+      {/* An email may be changed before it is allowed. */}
+      {!resolved && canApprove && isEmailSend(item.toolName) ? (
+        <EditableEmailPreview
+          input={item.input}
+          onAllow={(edited) => void answer(true, false, edited)}
+        />
+      ) : (
+        <ToolInputPreview input={item.input} />
+      )}
+      {resolved ? null : mayAnswer ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => void answer(true)}>
+            {item.always ? 'Allow in this thread' : 'Allow'}
+          </Button>
+          {item.always && (
+            <Button
+              size="sm"
+              variant="outline"
+              tooltip="Let this teammate use it from now on, in any thread, without asking"
+              onClick={() => void answer(true, true)}
+            >
+              Always allow
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => void answer(false)}>
+            Deny
+          </Button>
+          {error && <span className="text-sm text-destructive-text">{error}</span>}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {adminsOnly
+            ? 'Waiting for an owner or admin.'
+            : 'Only the member who started this thread can answer.'}
+        </p>
+      )}
+    </Card>
+  )
+}
+
 /** The harness asks a person something: options, a free answer, or a decline. */
 export function QuestionCard({
   item,
@@ -3902,17 +3943,20 @@ export function QuestionCard({
 }) {
   const [picked, setPicked] = useState<Record<string, string[]>>({})
   const [text, setText] = useState<Record<string, string>>({})
-  const [busy, setBusy] = useState(false)
+  // The answer sent from here shows at once, as the thread will have it; one that did not go
+  // gives the card back, as it was filled in, with why.
+  const [sending, setSending] = useState<QuestionAnswer>()
   const [error, setError] = useState<string>()
+  const answer = item.answer ?? sending
 
-  async function send(answer: QuestionAnswer) {
-    setBusy(true)
+  async function send(next: QuestionAnswer) {
+    setSending(next)
     setError(undefined)
     try {
-      await onAnswer(answer)
+      await onAnswer(next)
     } catch (e) {
       setError((e as Error).message)
-      setBusy(false)
+      setSending(undefined)
     }
   }
 
@@ -3928,7 +3972,7 @@ export function QuestionCard({
   const complete = item.questions.every(
     (q) => (picked[q.id]?.length ?? 0) > 0 || Boolean(text[q.id]?.trim()),
   )
-  const disabled = !canAnswer || busy
+  const disabled = !canAnswer || !!answer
 
   return (
     <Card className="gap-4 border-primary/40 px-5 py-4">
@@ -3948,13 +3992,13 @@ export function QuestionCard({
               <div className="flex items-start gap-2">
                 <CircleHelp aria-hidden className="mt-0.5 size-4 flex-none text-primary" />
                 {question}
-                {item.answer ? (
-                  <StatusBadge status={item.answer.action} {...answerBadge(item.answer)} />
+                {answer ? (
+                  <StatusBadge status={answer.action} {...answerBadge(answer)} />
                 ) : (
                   canAnswer && (
                     <DeclineMenu
                       label="Question options"
-                      disabled={busy}
+                      disabled={disabled}
                       onDecline={() => void send({ action: 'declined' })}
                     />
                   )
@@ -3963,7 +4007,7 @@ export function QuestionCard({
             ) : (
               question
             )}
-            {item.answer ? null : (
+            {answer ? null : (
               <>
                 {q.options?.length ? (
                   q.allowMultiple ? (
@@ -4029,15 +4073,14 @@ export function QuestionCard({
           </div>
         )
       })}
-      {item.answer ? (
-        item.answer.action === 'declined' &&
-        item.answer.note && <SentInstead note={item.answer.note} />
-      ) : canAnswer ? (
-        <div className="flex flex-col gap-2">
+      {answer?.action === 'declined' && answer.note && <SentInstead note={answer.note} />}
+      {item.answer ? null : canAnswer ? (
+        // Hidden, not gone, while the answer goes: a note written in it comes back if it fails.
+        <div hidden={!!sending} className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
-              disabled={busy || !complete}
+              disabled={!complete}
               onClick={() => void send({ action: 'answered', answers })}
             >
               Answer
@@ -4045,7 +4088,7 @@ export function QuestionCard({
             {error && <span className="text-sm text-destructive-text">{error}</span>}
           </div>
           <SomethingElse
-            disabled={busy}
+            disabled={disabled}
             onSend={(note) => void send({ action: 'declined', note })}
           />
         </div>
@@ -4179,20 +4222,27 @@ export function TicketCard({
   askerName: string
   onAnswer: (answer: TicketAnswer) => Promise<void>
 }) {
-  const done = Boolean(item.answer)
-  const [replies, setReplies, forget] = useTicketReplies(item.requestId, item.asks, done)
-  const [busy, setBusy] = useState(false)
+  const [replies, setReplies, forget] = useTicketReplies(
+    item.requestId,
+    item.asks,
+    Boolean(item.answer),
+  )
+  // The answer sent from here shows at once, as the thread will have it; one that did not go
+  // gives the card back, with its replies and why.
+  const [sending, setSending] = useState<TicketAnswer>()
   const [error, setError] = useState<string>()
+  const answer = item.answer ?? sending
+  const done = Boolean(answer)
 
-  async function send(answer: TicketAnswer) {
-    setBusy(true)
+  async function send(next: TicketAnswer) {
+    setSending(next)
     setError(undefined)
     try {
-      await onAnswer(answer)
+      await onAnswer(next)
       forget()
     } catch (e) {
       setError((e as Error).message)
-      setBusy(false)
+      setSending(undefined)
     }
   }
 
@@ -4207,8 +4257,8 @@ export function TicketCard({
     setReplies(rest)
   }
 
-  const answered = item.answer?.action === 'answered' ? item.answer.replies : undefined
-  const disabled = !canAnswer || busy || done
+  const answered = answer?.action === 'answered' ? answer.replies : undefined
+  const disabled = !canAnswer || done
   const soleAccess = item.asks.length === 1 && item.asks[0]!.type === 'access'
   // A lone credential ask has Something else among its own buttons.
   const sole = item.asks.length === 1 ? item.asks[0]! : undefined
@@ -4226,8 +4276,8 @@ export function TicketCard({
       <div className="flex items-start gap-2">
         <ClipboardList aria-hidden className="mt-0.5 size-4 flex-none text-primary" />
         <div className="min-w-0 flex-1 font-semibold">{item.title}</div>
-        {item.answer ? (
-          <StatusBadge status={item.answer.action} {...answerBadge(item.answer)} />
+        {answer ? (
+          <StatusBadge status={answer.action} {...answerBadge(answer)} />
         ) : (
           <>
             {several && (
@@ -4239,7 +4289,7 @@ export function TicketCard({
             {canAnswer && !soleAccess && (
               <DeclineMenu
                 label="Ticket options"
-                disabled={busy}
+                disabled={done}
                 onDecline={() => void send({ action: 'declined' })}
               >
                 Decline ticket
@@ -4262,7 +4312,7 @@ export function TicketCard({
             askerId={askerId}
             askerName={askerName}
             onReply={(value) => reply(ask.id, value)}
-            onUndo={done || busy ? undefined : () => undo(ask.id)}
+            onUndo={done ? undefined : () => undo(ask.id)}
             onSomethingElse={elseInline && canAnswer ? somethingElse : undefined}
           />
         </div>
@@ -4274,12 +4324,11 @@ export function TicketCard({
             : `Your answers go to ${askerName} when every ask is answered.`}
         </p>
       )}
-      {item.answer?.action === 'declined' && item.answer.note && (
-        <SentInstead note={item.answer.note} />
-      )}
-      {!done && canAnswer && !elseInline && (
-        <div className="mt-3 flex flex-col">
-          <SomethingElse disabled={busy} onSend={somethingElse} />
+      {answer?.action === 'declined' && answer.note && <SentInstead note={answer.note} />}
+      {!item.answer && canAnswer && !elseInline && (
+        // Hidden, not gone, while the answer goes: a note written in it comes back if it fails.
+        <div hidden={!!sending} className="mt-3 flex flex-col">
+          <SomethingElse disabled={done} onSend={somethingElse} />
         </div>
       )}
       {error && <p className="mt-3 text-sm text-destructive-text">{error}</p>}
@@ -4435,49 +4484,173 @@ function AskView({
         </CopyableCode>
       ) : null}
 
-      {disabled ? null : ask.type === 'approval' ? (
-        open ? (
+      {/* Hidden, not gone, while an answer goes: what was written in it comes back if it fails. */}
+      <div hidden={disabled} className="contents">
+        {ask.type === 'approval' ? (
+          open ? (
+            <div className="flex flex-col gap-2">
+              <Textarea
+                rows={3}
+                autoFocus
+                placeholder="What should change?"
+                aria-label="What should change"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">Send back to</span>
+                <Select value={sendTo || askerId || ''} onValueChange={setSendTo}>
+                  <SelectTrigger size="sm" aria-label="Send back to">
+                    <SelectValue placeholder={askerName} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(teammates.length
+                      ? teammates
+                      : askerId
+                        ? [{ id: askerId, name: askerName }]
+                        : []
+                    ).map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  disabled={!text.trim()}
+                  onClick={() =>
+                    onReply({
+                      type: 'approval',
+                      approved: false,
+                      changes: text.trim(),
+                      ...(sendTo && sendTo !== askerId ? { sendTo } : {}),
+                    })
+                  }
+                >
+                  Send
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => onReply({ type: 'approval', approved: true })}>
+                Approve
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+                Request changes
+              </Button>
+            </div>
+          )
+        ) : ask.type === 'decision' ? (
+          <div className="flex flex-wrap gap-2">
+            {ask.options?.length ? (
+              ask.options.map((o) => (
+                <Button
+                  key={o.id}
+                  size="sm"
+                  variant="outline"
+                  tooltip={o.description}
+                  onClick={() => onReply({ type: 'decision', optionId: o.id })}
+                >
+                  {o.label}
+                </Button>
+              ))
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => onReply({ type: 'decision', optionId: 'approve' })}
+                >
+                  Approve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onReply({ type: 'decision', optionId: 'decline' })}
+                >
+                  Decline
+                </Button>
+              </>
+            )}
+          </div>
+        ) : ask.type === 'variables' ? (
+          <VariablesAsk ask={ask} askerName={askerName} onReply={onReply} />
+        ) : ask.type === 'access' && ask.app ? (
+          <AppAccessAsk ask={{ ...ask, app: ask.app }} askerName={askerName} onReply={onReply} />
+        ) : ask.type === 'access' && ask.kind === 'credential' ? (
+          <CredentialAccess
+            ask={ask}
+            askerName={askerName}
+            onReply={onReply}
+            onSomethingElse={onSomethingElse}
+          />
+        ) : ask.type === 'access' ? (
+          // A connection asked for in words: given by hand on the Apps page.
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => onReply({ type: 'access', granted: true })}>
+              I&apos;ve given access
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <a href="/app/connections" target="_blank" rel="noreferrer">
+                Open Apps →
+              </a>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onReply({ type: 'access', granted: false })}
+            >
+              Decline
+            </Button>
+          </div>
+        ) : ask.type === 'action' && ask.browser && takeover ? (
+          <BrowserAction askerName={askerName} takeover={takeover} onReply={onReply} />
+        ) : ask.type === 'action' ? (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => onReply({ type: 'action', done: true })}>
+              Done
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onReply({ type: 'action', done: false })}
+            >
+              Can&apos;t do it
+            </Button>
+          </div>
+        ) : ask.secret ? (
+          <div className="flex flex-col gap-2">
+            <CredentialPicker value={text} onChange={setText} disabled={false} />
+            <Button
+              size="sm"
+              className="self-start"
+              disabled={!text}
+              onClick={() => onReply({ type: 'input', text })}
+            >
+              Submit
+            </Button>
+          </div>
+        ) : open ? (
           <div className="flex flex-col gap-2">
             <Textarea
               rows={3}
               autoFocus
-              placeholder="What should change?"
-              aria-label="What should change"
+              placeholder="Your answer"
+              aria-label="Your answer"
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-muted-foreground">Send back to</span>
-              <Select value={sendTo || askerId || ''} onValueChange={setSendTo}>
-                <SelectTrigger size="sm" aria-label="Send back to">
-                  <SelectValue placeholder={askerName} />
-                </SelectTrigger>
-                <SelectContent>
-                  {(teammates.length
-                    ? teammates
-                    : askerId
-                      ? [{ id: askerId, name: askerName }]
-                      : []
-                  ).map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex gap-2">
               <Button
                 size="sm"
                 disabled={!text.trim()}
-                onClick={() =>
-                  onReply({
-                    type: 'approval',
-                    approved: false,
-                    changes: text.trim(),
-                    ...(sendTo && sendTo !== askerId ? { sendTo } : {}),
-                  })
-                }
+                onClick={() => onReply({ type: 'input', text: text.trim() })}
               >
-                Send
+                Submit
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
                 Cancel
@@ -4485,134 +4658,16 @@ function AskView({
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => onReply({ type: 'approval', approved: true })}>
-              Approve
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-              Request changes
-            </Button>
-          </div>
-        )
-      ) : ask.type === 'decision' ? (
-        <div className="flex flex-wrap gap-2">
-          {ask.options?.length ? (
-            ask.options.map((o) => (
-              <Button
-                key={o.id}
-                size="sm"
-                variant="outline"
-                tooltip={o.description}
-                onClick={() => onReply({ type: 'decision', optionId: o.id })}
-              >
-                {o.label}
-              </Button>
-            ))
-          ) : (
-            <>
-              <Button size="sm" onClick={() => onReply({ type: 'decision', optionId: 'approve' })}>
-                Approve
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onReply({ type: 'decision', optionId: 'decline' })}
-              >
-                Decline
-              </Button>
-            </>
-          )}
-        </div>
-      ) : ask.type === 'variables' ? (
-        <VariablesAsk ask={ask} askerName={askerName} onReply={onReply} />
-      ) : ask.type === 'access' && ask.app ? (
-        <AppAccessAsk ask={{ ...ask, app: ask.app }} askerName={askerName} onReply={onReply} />
-      ) : ask.type === 'access' && ask.kind === 'credential' ? (
-        <CredentialAccess
-          ask={ask}
-          askerName={askerName}
-          onReply={onReply}
-          onSomethingElse={onSomethingElse}
-        />
-      ) : ask.type === 'access' ? (
-        // A connection asked for in words: given by hand on the Apps page.
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => onReply({ type: 'access', granted: true })}>
-            I&apos;ve given access
+          <Button size="sm" className="self-start" onClick={() => setOpen(true)}>
+            Provide details
           </Button>
-          <Button asChild size="sm" variant="outline">
-            <a href="/app/connections" target="_blank" rel="noreferrer">
-              Open Apps →
-            </a>
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onReply({ type: 'access', granted: false })}
-          >
-            Decline
-          </Button>
-        </div>
-      ) : ask.type === 'action' && ask.browser && takeover ? (
-        <BrowserAction askerName={askerName} takeover={takeover} onReply={onReply} />
-      ) : ask.type === 'action' ? (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => onReply({ type: 'action', done: true })}>
-            Done
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onReply({ type: 'action', done: false })}
-          >
-            Can&apos;t do it
-          </Button>
-        </div>
-      ) : ask.secret ? (
-        <div className="flex flex-col gap-2">
-          <CredentialPicker value={text} onChange={setText} disabled={false} />
-          <Button
-            size="sm"
-            className="self-start"
-            disabled={!text}
-            onClick={() => onReply({ type: 'input', text })}
-          >
-            Submit
-          </Button>
-        </div>
-      ) : open ? (
-        <div className="flex flex-col gap-2">
-          <Textarea
-            rows={3}
-            autoFocus
-            placeholder="Your answer"
-            aria-label="Your answer"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              disabled={!text.trim()}
-              onClick={() => onReply({ type: 'input', text: text.trim() })}
-            >
-              Submit
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <Button size="sm" className="self-start" onClick={() => setOpen(true)}>
-          Provide details
-        </Button>
-      )}
+        )}
+      </div>
     </>
   )
 }
 
-/** What `sending` / `sent` hold while a person's own words go from the choices card. */
+/** What `sent` holds once a person's own words went from the choices card. */
 const OWN_WORDS = '\u0000own'
 
 /**
@@ -4647,47 +4702,43 @@ export function ChoicesCard({
     links ? links.open({ path }) : router.push(`/app/library?design=${encodeURIComponent(path)}`)
   const designs = choices.options.some((o) => o.design)
   const library = useApi<LibraryFile[]>(designs ? '/library' : null)
-  // What is on its way (an option's id, or OWN_WORDS), then what went: the spinner lasts as
-  // long as the request, and the card shows what was sent until the thread has the message.
-  const [sending, setSending] = useState<string>()
+  // What was picked here (an option's id, or OWN_WORDS): shown at once, as the message goes and
+  // until the thread has it; a message that did not go gives the card back, with why.
   const [sent, setSent] = useState<string>()
   const [words, setWords] = useState('')
   const [error, setError] = useState<string>()
-  // Dismissed here, until the thread says so too.
-  const [dismissing, setDismissing] = useState<'sending' | 'done'>()
-  const closed = dismissed || dismissing === 'done'
+  // Dismissed here, at once, until the thread says so too.
+  const [dismissing, setDismissing] = useState(false)
+  const closed = dismissed || dismissing
   const picked =
     reply !== undefined
       ? pickedChoice(choices.options, reply)
       : choices.options.find((o) => o.id === sent)
   // Answered with other words (theirs, sent from here or the composer), or closed.
   const replied = reply !== undefined ? !picked : sent === OWN_WORDS
-  const open = reply === undefined && !closed && !!onChoose && !sending && !sent && !dismissing
+  const open = reply === undefined && !closed && !!onChoose && !sent
   const passed = replied || closed
 
   async function dismiss() {
     if (!onDismiss) return
-    setDismissing('sending')
+    setDismissing(true)
     setError(undefined)
     try {
       await onDismiss()
-      setDismissing('done')
     } catch (e) {
       setError((e as Error).message)
-      setDismissing(undefined)
+      setDismissing(false)
     }
   }
 
   async function send(id: string, message: () => Promise<void>) {
-    setSending(id)
+    setSent(id)
     setError(undefined)
     try {
       await message()
-      setSent(id)
     } catch (e) {
       setError((e as Error).message)
-    } finally {
-      setSending(undefined)
+      setSent(undefined)
     }
   }
 
@@ -4717,12 +4768,6 @@ export function ChoicesCard({
       {text}
     </span>
   )
-  const spinner = (
-    <span className="flex size-5 flex-none items-center justify-center text-foreground">
-      <ActivityIndicator label="Sending" />
-    </span>
-  )
-
   return (
     <Card className="gap-3 border-primary/40 px-3 py-3.5">
       <div className="flex items-start gap-2 px-2">
@@ -4739,17 +4784,16 @@ export function ChoicesCard({
         ) : closed ? (
           <StatusBadge status="dismissed" tone="neutral" label="Dismissed" />
         ) : (
-          (open || dismissing === 'sending') &&
+          open &&
           onDismiss && (
             <Hint label="Close it without picking: the thread stops, and the teammate is told">
               <Button
                 size="sm"
                 variant="ghost"
                 className="-my-0.5 h-7 flex-none px-2 text-xs text-muted-foreground"
-                disabled={!!dismissing}
                 onClick={() => void dismiss()}
               >
-                {dismissing === 'sending' ? 'Dismissing…' : 'Dismiss'}
+                Dismiss
               </Button>
             </Hint>
           )
@@ -4759,7 +4803,7 @@ export function ChoicesCard({
         {choices.options.map((o, i) => {
           const { mark: number, name } = choiceLabel(o.label, i)
           const offered = o.design?.replace(/\/+$/, '')
-          const chosen = picked?.id === o.id || sending === o.id
+          const chosen = picked?.id === o.id
           // Once picked, an option from an options folder is copied to the design, which it opens;
           // every option keeps its picture. Picks from before moved the option there and trashed the rest.
           const options = offered && designOptionsOf(offered)
@@ -4803,7 +4847,7 @@ export function ChoicesCard({
           )
           const body = (
             <>
-              {sending === o.id ? spinner : mark(number)}
+              {mark(number)}
               {picture}
               {text}
             </>
@@ -4839,7 +4883,7 @@ export function ChoicesCard({
                 'flex items-center rounded-[10px] bg-muted/55 transition-[background-color,opacity]',
                 (opens || picks) && 'hover:bg-muted',
                 chosen && 'bg-primary/15 hover:bg-primary/15',
-                ((picked && !chosen) || (sending && !chosen) || passed) && 'opacity-50',
+                ((picked && !chosen) || passed) && 'opacity-50',
               )}
             >
               {content}
@@ -4859,15 +4903,12 @@ export function ChoicesCard({
             </li>
           )
         })}
-        {(open || sending === OWN_WORDS) && onChoose && (
+        {open && (
           <li className="flex items-start gap-2.5 rounded-[10px] border border-dashed px-2.5 py-1.5 focus-within:border-solid focus-within:border-primary/40">
-            <span className="mt-0.5">
-              {sending === OWN_WORDS ? spinner : mark(<Pencil aria-hidden className="size-3" />)}
-            </span>
+            <span className="mt-0.5">{mark(<Pencil aria-hidden className="size-3" />)}</span>
             <textarea
               rows={1}
               value={words}
-              disabled={!!sending}
               placeholder="Something else…"
               aria-label="Something else: your own words, sent as a message"
               className="min-h-6 min-w-0 flex-1 resize-none bg-transparent leading-6 outline-none placeholder:text-muted-foreground disabled:opacity-60"
@@ -4883,7 +4924,7 @@ export function ChoicesCard({
                 writeOwn()
               }}
             />
-            {words.trim() && !sending && (
+            {words.trim() && (
               <Button
                 size="icon"
                 className="-my-0.5 size-7 flex-none rounded-full"
@@ -4925,6 +4966,8 @@ function SuggestedReplyButtons({
   preview?: ReplyPreview
   onSend: (text: string) => Promise<void>
 }) {
+  // A click answers at once: the buttons go as the message shows in the thread, and come back,
+  // with why, if it did not go.
   const [sending, setSending] = useState<string>()
   const [error, setError] = useState<string>()
 
@@ -4939,6 +4982,7 @@ function SuggestedReplyButtons({
     }
   }
 
+  if (sending !== undefined) return null
   return (
     <div className="flex flex-col -mt-2 gap-1.5">
       <div className="flex flex-wrap gap-2">
@@ -4959,7 +5003,7 @@ function SuggestedReplyButtons({
                   type="button"
                   size="sm"
                   className="rounded-full"
-                  disabled={preview.busy || sending !== undefined}
+                  disabled={preview.busy}
                   onClick={() => preview.start(a.label)}
                 >
                   {preview.busy ? (
@@ -4978,7 +5022,6 @@ function SuggestedReplyButtons({
             size="sm"
             variant="outline"
             className="rounded-full"
-            disabled={sending !== undefined}
             onClick={() => void send(reply)}
           >
             {reply}
