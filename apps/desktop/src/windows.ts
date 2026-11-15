@@ -225,7 +225,7 @@ function markBand(window: BrowserWindow) {
       const page = hostPage
       if (host.isDestroyed() || !page) return
       if (bandStyle?.page === page && bandStyle.top === top) return
-      const key = await host.insertCSS(`#band{height:${top}px}`)
+      const key = await host.insertCSS(`#band{height:${top}px !important}`)
       // Reloaded meanwhile: the style went with the old page, the new one marks its own.
       if (page !== hostPage) return
       const previous = bandStyle?.page === page ? bandStyle.key : undefined

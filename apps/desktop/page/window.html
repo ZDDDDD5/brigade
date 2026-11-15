@@ -23,7 +23,8 @@
         top: 0;
         left: 0;
         right: 0;
-        height: 0;
+        /* No height of its own: the app sets it (an inserted style, which this page's own would
+           otherwise outrank). Empty, it is 0 until then. */
         -webkit-app-region: drag;
         app-region: drag;
       }
