@@ -73,6 +73,27 @@ try {
   const expected = process.platform === 'win32' ? 'unsupported' : 'notConnected'
   check('runner status', () => assert.equal(status, expected))
 
+  // macOS: the app menu holds what the menu-bar menu does, as on a Mac (menu.ts).
+  if (process.platform === 'darwin') {
+    const menus = await app.evaluate(({ Menu }) =>
+      Object.fromEntries(
+        Menu.getApplicationMenu().items.map((m) => [
+          m.label,
+          m.submenu?.items.filter((i) => i.type !== 'separator').map((i) => i.label) ?? [],
+        ]),
+      ),
+    )
+    check('app menu', () => {
+      assert.deepEqual(Object.keys(menus), ['Brigade', 'File', 'Edit', 'View', 'Window'])
+      for (const item of ['Check for Updates…', 'Open at Login', 'Keep Screen Awake', 'Shortcuts'])
+        assert.ok(menus.Brigade.includes(item), `Brigade › ${item}`)
+      for (const item of ['Restart Runner', 'Show Logs', 'Close Window', 'Quit Brigade'])
+        assert.ok(menus.Brigade.includes(item), `Brigade › ${item}`)
+      for (const item of ['New Thread', 'Open Dashboard', 'Open in Browser'])
+        assert.ok(menus.File.includes(item), `File › ${item}`)
+    })
+  }
+
   // The new thread window: the dashboard's /app/capture, with the bridge and the draft.
   await app.evaluate(() => globalThis.brigadeTest.capture.show())
   const capture = await windowAt('/app/capture')
