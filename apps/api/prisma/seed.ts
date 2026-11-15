@@ -24,6 +24,7 @@ await prisma.featureFlag.createMany({
     { key: 'gmail', everyone: true, note: 'Local development' },
     { key: 'google_drive', everyone: true, note: 'Local development' },
     { key: 'tools', everyone: true, note: 'Local development' },
+    { key: 'missions', everyone: true, note: 'Local development' },
   ],
   skipDuplicates: true,
 })
@@ -53,6 +54,8 @@ if (accounts === emails.length && organized) {
     }))
   )
     await (await import('./seed-inbox.js')).seedInbox()
+  // So came its missions (docs/missions.md): added once to a sample without them.
+  await (await import('./seed-missions.js')).seedMissions()
   await prisma.$disconnect()
   process.exit(0)
 }
@@ -84,6 +87,7 @@ if (sample) console.log('exists: sample organization Acme')
 else if (onboarded) console.log('skipped: sample organization (Ada, Bob or Carol already has one)')
 else await seedWorkspace(users)
 await (await import('./seed-inbox.js')).seedInbox()
+await (await import('./seed-missions.js')).seedMissions()
 
 await prisma.$disconnect()
 // Library saves leave timers for runners; none listen here.
