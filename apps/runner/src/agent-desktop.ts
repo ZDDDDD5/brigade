@@ -335,6 +335,8 @@ const TEXT_MAX = 160
 export const TREE_MAX = 15_000
 /** The children of one element shown before the rest is summed up in a line (a long list). */
 export const CHILDREN_MAX = 25
+/** Plain siblings of one role in a row (no ref, name or value), from which they are one line. */
+const SAME_RUN = 4
 /** Siblings scrolled out of view in a row, from which they are summed up in a line. */
 const OUT_OF_VIEW_RUN = 3
 
@@ -414,6 +416,33 @@ export function renderTree(
           `${indent}… ${rest} more here${node.ref_id ? `: snapshot with root ${node.ref_id} to list them` : ''}`,
         )
         break
+      }
+      // Siblings of one role with nothing to tell them apart (a ruler's 15 markers): one line.
+      const plain = (node: DesktopNode) =>
+        // Nothing a line would show but its role: a description, a state or a frame tells it apart.
+        !node.ref_id &&
+        !node.name &&
+        (node.value === undefined || node.value === null || node.value === '') &&
+        !node.description &&
+        !node.placeholder &&
+        !node.states?.some((state) => state !== 'hidden') &&
+        !node.bounds &&
+        !node.children_count &&
+        !node.children?.length
+      if (plain(children[i]!)) {
+        let end = i
+        while (
+          end < children.length &&
+          plain(children[end]!) &&
+          children[end]!.role === children[i]!.role
+        )
+          end++
+        if (end - i >= SAME_RUN) {
+          push(`${indent}… ${end - i} × ${children[i]!.role ?? 'element'}`)
+          shown++
+          i = end - 1
+          continue
+        }
       }
       // Siblings scrolled out of view, in a row: one line, the way to them, not each of them.
       if (!options.hidden && offscreen(children[i]!)) {

@@ -53,7 +53,7 @@ import {
   type ScheduleOperation,
   GoalContractInput,
 } from '@brigade/contracts'
-import { ComputerUseError, type RequestOptions } from '../computer-use.js'
+import { ComputerUseError, Line, type RequestOptions } from '../computer-use.js'
 import type { AppInput } from './desktop-tools.js'
 import type { LibraryOperation, StagedFile } from '../uploads.js'
 import type { Arrivals, Cut } from './arrivals.js'
@@ -3888,6 +3888,18 @@ export function computerUseTools(
     }
     return apps?.find((running) => running.active)
   }
+  /** Whether Brigade Computer Use checks a named app is in front as it sends a key (version 3). */
+  let checking: Promise<boolean> | undefined
+  const checksFront = (signal?: AbortSignal) =>
+    (checking ??= computer
+      .request('status', {}, signal)
+      .then((status) => Number((status as { version?: unknown }).version) >= 3)
+      .catch(() => {
+        checking = undefined
+        return false
+      }))
+  /** Keys for a named app, one after the other (computer_key). */
+  const namedKeys = new Line()
   const inFront = async (signal?: AbortSignal) => (await frontApp(signal))?.name ?? 'unknown'
   /** Whether an app as computer_apps lists it is the one named (its name, bundle id or .app). */
   const isApp = (app: { name?: string; bundleId?: string } | undefined, named: string) => {
@@ -4033,9 +4045,10 @@ export function computerUseTools(
     computer_key: tool({
       description:
         'Press a key or a shortcut: "return", "escape", "tab", "cmd+n", "cmd+shift+t", "down". Name the ' +
-        'app it is for: it goes to that app, even when another comes to the front meanwhile. An app behind ' +
-        'others takes no key, so it is refused there unless front: true brings the app forward first ' +
-        "(taking the person's focus). Without app, it goes to the app in front, which the answer names (front). " +
+        'app it is for: it is sent only if that app is in front as it goes, to what has its focus (its ' +
+        'dialogs and sheets too); nothing is sent otherwise. An app behind others takes no key, ' +
+        "so it is refused there unless front: true brings the app forward first (taking the person's focus). " +
+        'Without app, it goes to the app in front, which the answer names (front). ' +
         ABOUT_COMPUTER,
       inputSchema: jsonSchema<{ key: string; app?: string; front?: boolean }>({
         type: 'object',
@@ -4052,40 +4065,58 @@ export function computerUseTools(
         required: ['key'],
       }),
       execute: async (input, { abortSignal }) => {
-        const target = named(input.app)
-        if (target && input.app) {
-          // An app behind others takes no key: it has no window with the keyboard, and its menus,
-          // which shortcuts go through, are off (Cmd+S to TextEdit behind Chrome did nothing).
-          const front = await frontApp(abortSignal)
-          let brought = false
-          if (!isApp(front, input.app)) {
-            if (!input.front)
-              throw new Error(
-                `${input.app} is behind ${front?.name ?? 'another app'}, and an app behind others takes no key ` +
-                  '(its menus, which shortcuts go through, are off there), so nothing was sent. If the person ' +
-                  `is not using the Mac, call again with front: true: it brings ${input.app} to the front first, ` +
-                  'taking their focus. Text for one of its fields goes in from behind: computer_act on its ref, ' +
-                  'or computer_type with app.',
-              )
-            const opened = (await computer.request(
-              'open_app',
-              { app: input.app },
-              abortSignal,
-            )) as {
-              name?: string
-              active?: boolean
+        if (input.app) {
+          const app = input.app
+          // One named key at a time: the app checked (or brought) in front, the key sent, and the
+          // front checked again, with no other named key in between.
+          return namedKeys.run(async () => {
+            // An app behind others takes no key: it has no window with the keyboard, and its menus,
+            // which shortcuts go through, are off (Cmd+S to TextEdit behind Chrome did nothing).
+            const front = await frontApp(abortSignal)
+            let brought = false
+            if (!isApp(front, app)) {
+              if (!input.front)
+                throw new Error(
+                  `${app} is behind ${front?.name ?? 'another app'}, and an app behind others takes no key ` +
+                    '(its menus, which shortcuts go through, are off there), so nothing was sent. If the person ' +
+                    `is not using the Mac, call again with front: true: it brings ${app} to the front first, ` +
+                    'taking their focus. Text for one of its fields goes in from behind: computer_act on its ref, ' +
+                    'or computer_type with app.',
+                )
+              const opened = (await computer.request('open_app', { app }, abortSignal)) as {
+                name?: string
+                active?: boolean
+              }
+              if (opened.active === false)
+                throw new Error(
+                  `${opened.name ?? app} did not come to the front, so nothing was sent.`,
+                )
+              brought = true
             }
-            if (opened.active === false)
-              throw new Error(
-                `${opened.name ?? input.app} did not come to the front, so nothing was sent.`,
-              )
-            brought = true
-          }
-          return {
-            to: input.app,
-            ...(brought ? { broughtToFront: true } : {}),
-            ...(await target.press(input.app, input.key, abortSignal)),
-          }
+            // The helper checks the app is in front and sends the key in one go, to what has the
+            // keyboard: the app's Open and Save panels too, which run in a process of their own and
+            // which a key for the app's process never reached (Cmd+Shift+G in TextEdit's save sheet).
+            if (await checksFront(abortSignal)) {
+              try {
+                await computer.request('key', { key: input.key, app }, abortSignal)
+              } catch (error) {
+                if (error instanceof ComputerUseError && error.code === 'not_front')
+                  throw new Error(
+                    `${error.message}: another app came to the front meanwhile. Look at the screen before trying again.`,
+                  )
+                throw error
+              }
+              return { to: app, ...(brought ? { broughtToFront: true } : {}) }
+            }
+            // An older helper: to the app's process, which its Open and Save panels don't get.
+            const target = named(app)!
+            return {
+              to: app,
+              ...(brought ? { broughtToFront: true } : {}),
+              ...(await target.press(app, input.key, abortSignal)),
+              note: "Sent to the app's process: its Open and Save panels don't get keys this way until Brigade.app is updated (Check for Updates…).",
+            }
+          }, abortSignal)
         }
         const front = await inFront(abortSignal)
         await computer.request('key', { key: input.key }, abortSignal)

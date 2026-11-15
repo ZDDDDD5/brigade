@@ -60,11 +60,13 @@ Inside it, **Brigade Computer Use.app** (`apps/computer-use-macos`) gives teamma
 so macOS gives Screen Recording and Accessibility to it, not to Brigade.app or a terminal, and talks to it over a
 token-checked socket in `~/.brigade/computer-use`. While a teammate acts, a pill shows its name with a Stop button
 (no Esc shortcut); Stop ends computer use for that turn. `computer_key` and `computer_type` take the app they are
-for, and then go to that app's own process through agent-desktop (`macAppInput`): a key with `press --app`, which
-doesn't bring the app forward, text with `type` into its one focused field that takes text (`find --state focused`;
-AppKit marks a list's cells focused too), and nothing when there is none or several. Bringing the app forward and
-then sending let another app (the person, Brigade.app, a parallel call) come to the front in between and get them.
-Without an app they go to the app in front, as before, and the answer names it (`front`). An app behind others
+for. Text goes into the app's one focused field that takes text, from behind, through agent-desktop (`macAppInput`:
+`type` into it, found with `find --state focused`; AppKit marks a list's cells focused too), and nothing when there is
+none or several. A key for a named app is checked and sent by Brigade Computer Use in one go (`key` with `app`,
+helper version 3, on its main actor): only if that app is in front at that moment, as the keyboard's key, so it reaches
+the app's Open and Save panels too, which run in a process of their own; nothing is sent otherwise (`not_front`). A key
+to the app's own process (`press --app`) never reached those panels (Cmd+Shift+G and Return in TextEdit's save sheet
+did nothing); it is still how a key goes with an older helper, and the answer says what it misses. Without an app they go to the app in front, as before, and the answer names it (`front`). An app behind others
 takes no key (its menus, which shortcuts go through, are off: Cmd+S to TextEdit behind Chrome did nothing), so a key
 for one is refused, unless `front: true` brings it forward first (taking the person's focus). `computer_open_app`
 answers once a window of the app is there (agent-desktop's `list-windows`, up to 5 seconds, then 300 ms for it to
@@ -109,7 +111,11 @@ without another call. A small window's (a tree under 6,000 characters) is read a
 a result often shows as text alone (Calculator's). A ref from a snapshot the tool didn't take in this turn gets no
 `after`, and the answer says to take one. A menu bar (`surface: menubar`) is read as its menus and items, without the
 Apple menu (the system's Restart, Shut Down and Log Out, and the person's recent items) and with each submenu folded
-with its count (an app's Open Recent lists file names): rooted on an item, all of it.
+with its count (an app's Open Recent lists file names): rooted on an item, all of it. A
+rooted read (`root`) drops `surface`, which agent-desktop refuses beside it, and says its refs are new: a drill
+renumbers its region's refs in the same snapshot. Plain siblings of one role in a row (nothing shown but their role: a ruler's markers)
+are one line. An action that closed the window it read answers `closed` rather than a snapshot to
+take.
 
 - **On a Mac**, beside the tools above, agent-desktop runs through Brigade Computer Use's `run`, so it gets the
   helper's Accessibility; its answer, and any text to type, go through files, never on its command line. `headed:
