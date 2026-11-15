@@ -5,7 +5,9 @@
 // session; a write to an App and a message to the thread wait for the person
 // to confirm them in a dialog of the dashboard's own, which the page cannot
 // draw or click. Accounts the tool asks for are attached from its Accounts
-// button, by the people allowed to.
+// button, by the people allowed to. Ask talks about it with a teammate, as for any
+// library file (components/document-discussion.tsx): in the thread that saved it, else
+// in a new one, its mention in the reply box.
 import { toolName, type ToolView } from '@brigade/contracts'
 import {
   ChevronDown,
@@ -13,6 +15,7 @@ import {
   KeyRound,
   Library,
   Maximize2,
+  MessageSquare,
   Minimize2,
   RotateCw,
   TriangleAlert,
@@ -20,8 +23,9 @@ import {
   X,
 } from 'lucide-react'
 import Link from 'next/link'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDashboard } from '@/components/dashboard'
+import { useDocumentDiscussion } from '@/components/document-discussion'
 import { SidePanel } from '@/components/side-panel'
 import { Button } from '@/components/ui/button'
 import {
@@ -187,6 +191,13 @@ export function ToolPanel({
   const missing = needs.filter((n) => !view?.accounts.some((a) => a.kind === n.kind)).length
   const changed = view?.accounts.some((a) => a.changed) ?? false
   const first = asking[0]
+  // Its `index.html`, which its mention names. Not beside a thread: that one is already open.
+  const toolId = view?.toolId
+  const file = useMemo(
+    () => (toolId && !threadId ? { id: toolId, path: folder } : null),
+    [toolId, threadId, folder],
+  )
+  const discussion = useDocumentDiscussion(file)
 
   function settle(yes: boolean) {
     if (!first) return
@@ -263,6 +274,19 @@ export function ToolPanel({
             </DropdownMenuContent>
           </DropdownMenu>
           <span className="flex-1" />
+          {discussion?.teammate && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              tooltip={`Talk about this tool with ${discussion.teammate.name}`}
+              aria-label={`Ask ${discussion.teammate.name}`}
+              onClick={() => void discussion.ask()}
+            >
+              <MessageSquare aria-hidden />
+              <span className="max-sm:hidden">Ask {discussion.teammate.name}</span>
+            </Button>
+          )}
           {needs.length > 0 && (
             <Button
               type="button"
