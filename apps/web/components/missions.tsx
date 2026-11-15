@@ -17,7 +17,6 @@ import {
   CalendarClock,
   ChevronRight,
   ExternalLink,
-  MoreHorizontal,
   Pencil,
   Plus,
   Send,
@@ -36,12 +35,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -271,7 +264,53 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
   )
 }
 
-function MissionCard({
+const PLURAL: Record<MissionOutput['kind'], [string, string]> = {
+  post: ['post', 'posts'],
+  comment: ['comment', 'comments'],
+  reply: ['reply', 'replies'],
+  article: ['article', 'articles'],
+  email: ['email', 'emails'],
+  other: ['output', 'outputs'],
+}
+
+/** "3 replies, 1 post": what went out, by kind. */
+function outputsText(byKind: MissionRow['week']['byKind']) {
+  return (Object.entries(byKind) as [MissionOutput['kind'], number][])
+    .sort((a, b) => b[1] - a[1])
+    .map(([kind, n]) => `${n} ${PLURAL[kind][n === 1 ? 0 : 1]}`)
+    .join(', ')
+}
+
+type State = 'needs' | 'moving' | 'quiet'
+
+/** Where a mission stands, in a line: what waits on the member, else what went out this week. */
+function stateOf(m: MissionRow): { state: State; text: string } {
+  const approvals = m.needs.filter((n) => n.reason === 'approval')
+  if (m.needs.length) {
+    const text =
+      m.needs.length > 1
+        ? `${m.needs.length} things wait on you`
+        : approvals.length
+          ? `Approve “${approvals[0]!.title}”`
+          : m.needs[0]!.title
+    return { state: 'needs', text }
+  }
+  if (m.week.outputs)
+    return { state: 'moving', text: `${outputsText(m.week.byKind)} out this week` }
+  return { state: 'quiet', text: 'Nothing went out this week' }
+}
+
+const DOT: Record<State, string> = {
+  needs: 'bg-warning',
+  moving: 'bg-success',
+  quiet: 'bg-muted-foreground/40',
+}
+
+/**
+ * One mission as a status line: a dot (waits on you, moving, quiet), where it stands in a phrase,
+ * its number. Its detail opens below it: drafts to approve, what is planned, what went out.
+ */
+function MissionLine({
   mission,
   onChanged,
   onEdit,
@@ -281,7 +320,7 @@ function MissionCard({
   onEdit: () => void
 }) {
   const { me } = useDashboard()
-  const [outputs, setOutputs] = useState(false)
+  const [open, setOpen] = useState(false)
   const [error, setError] = useState<string>()
   // A mission is its member's: they change it, an admin may archive it.
   const mine = mission.memberId === me.memberId
@@ -295,145 +334,139 @@ function MissionCard({
       setError((e as Error).message)
     }
   }
+  const { state, text } = stateOf(mission)
   const approvals = mission.needs.filter((n) => n.reason === 'approval' && n.ticketId)
   const needs = mission.needs.filter((n) => !(n.reason === 'approval' && n.ticketId))
   const next = mission.next
-  const NextIcon = next ? KIND_ICON[next.kind] : null
+  const latest = mission.number?.series.at(-1)
+  const running = mission.routines.filter((r) => !r.pausedAt).length
   return (
-    <li className="flex flex-col gap-3 border-t px-4 py-4 first:border-t-0">
-      <div className="flex items-start gap-3">
-        <TeammateAvatar teammate={mission.teammate} className="mt-0.5 size-7" />
-        <div className="flex min-w-0 flex-1 flex-col">
+    <li className="border-t first:border-t-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted/40"
+      >
+        <span className={cn('size-2 shrink-0 rounded-full', DOT[state])} aria-hidden />
+        <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate font-semibold">{mission.title}</span>
-          <span className="line-clamp-2 text-sm text-muted-foreground">{mission.objective}</span>
-          <span className="truncate text-xs text-muted-foreground">
-            {mission.teammate.name}
-            {mission.threads.length > 0 && (
+          <span className="truncate text-sm text-muted-foreground">
+            {mission.teammate.name} · {text}
+            {next && (
               <>
-                {' · '}
-                <Link href={`/app/threads/${mission.threads[0]!.id}`} className="hover:underline">
-                  {mission.threads.length === 1
-                    ? mission.threads[0]!.title
-                    : `${mission.threads.length} threads`}
-                </Link>
-              </>
-            )}
-            {mission.routines.length > 0 && (
-              <>
-                {' · '}
-                <Link href="/app/routines" className="hover:underline">
-                  {mission.routines.length} {mission.routines.length === 1 ? 'routine' : 'routines'}
-                </Link>
+                {' · next '}
+                {shortWakeTime(next.at)}
               </>
             )}
           </span>
-        </div>
-        {mission.number && <NumberBlock n={mission.number} />}
-        {mayArchive && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-7 shrink-0"
-                aria-label={`${mission.title}: more`}
-              >
-                <MoreHorizontal aria-hidden />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {mine && (
-                <DropdownMenuItem onSelect={onEdit}>
-                  <Pencil aria-hidden /> Edit
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onSelect={() => void archive()}>
-                <Archive aria-hidden />
-                <span className="flex flex-col">
-                  Archive
-                  <span className="text-xs text-muted-foreground">
-                    Pauses its routines, cancels its plan
-                  </span>
-                </span>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </div>
-      {error && <span className="text-xs text-destructive-text sm:ml-10">{error}</span>}
+        </span>
+        <span className="flex shrink-0 flex-col items-end">
+          <span className="font-semibold tabular-nums">
+            {latest ? number(latest.value, mission.number!.unit) : mission.week.outputs}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {latest ? mission.number!.label.toLowerCase() : 'this week'}
+          </span>
+        </span>
+        <ChevronRight
+          className={cn(
+            'size-4 shrink-0 text-muted-foreground transition-transform',
+            open && 'rotate-90',
+          )}
+          aria-hidden
+        />
+      </button>
 
-      <div className="flex flex-col gap-2 sm:ml-10">
-        {(approvals.length > 0 || needs.length > 0) && (
-          <Line label="Needs you">
-            {approvals.map((a) => (
-              <Approval
-                key={a.ticketId}
-                ticketId={a.ticketId!}
-                title={a.title}
-                draft={a.draft}
-                approveBy={a.at ?? null}
-                threadId={a.threadId}
-                onDone={onChanged}
-              />
-            ))}
-            {needs.map((n, i) => (
-              <span key={`${n.threadId}-${i}`} className="flex min-w-0 items-center gap-1.5">
-                <span className="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden />
-                {n.threadId ? (
-                  <Link href={`/app/threads/${n.threadId}`} className="truncate hover:underline">
+      {open && (
+        <div className="flex flex-col gap-3 px-4 pb-4 pl-9">
+          <p className="text-sm text-muted-foreground">{mission.objective}</p>
+          {(approvals.length > 0 || needs.length > 0) && (
+            <Line label="Waits on you">
+              {approvals.map((a) => (
+                <Approval
+                  key={a.ticketId}
+                  ticketId={a.ticketId!}
+                  title={a.title}
+                  draft={a.draft}
+                  approveBy={a.at ?? null}
+                  threadId={a.threadId}
+                  onDone={onChanged}
+                />
+              ))}
+              {needs.map((n, i) =>
+                n.threadId ? (
+                  <Link
+                    key={`${n.threadId}-${i}`}
+                    href={`/app/threads/${n.threadId}`}
+                    className="truncate hover:underline"
+                  >
                     {n.title}
                   </Link>
                 ) : (
-                  <span className="truncate">{n.title}</span>
-                )}
+                  <span key={i} className="truncate">
+                    {n.title}
+                  </span>
+                ),
+              )}
+            </Line>
+          )}
+          {next && (
+            <Line label="Next">
+              <span className="flex min-w-0 gap-1.5">
+                <span className="shrink-0 tabular-nums">{shortWakeTime(next.at)}</span>
+                <span className="truncate text-muted-foreground">{next.title}</span>
               </span>
-            ))}
+            </Line>
+          )}
+          <Line label="Went out">
+            {mission.outputs.length ? (
+              mission.outputs.map((o) => <OutputLine key={o.id} output={o} />)
+            ) : (
+              <span className="text-muted-foreground">Nothing recorded yet</span>
+            )}
           </Line>
-        )}
-        <Line label="Next">
-          {next && NextIcon ? (
-            <span className="flex min-w-0 items-center gap-1.5">
-              <NextIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="shrink-0 tabular-nums">{shortWakeTime(next.at)}</span>
-              <span className="truncate text-muted-foreground">{next.title}</span>
-            </span>
-          ) : (
-            <span className="text-muted-foreground">Nothing planned</span>
+          {mission.number && mission.number.series.length > 1 && (
+            <Line label={mission.number.label}>
+              <NumberBlock n={mission.number} />
+            </Line>
           )}
-        </Line>
-        <Line label="Last">
-          {mission.last?.kind === 'output' ? (
-            <OutputLine output={mission.last.output} />
-          ) : mission.last?.kind === 'run' ? (
-            <Link
-              href={`/app/threads/${mission.last.threadId}`}
-              className="line-clamp-2 hover:underline"
-            >
-              {mission.last.summary ?? 'A routine ran'}
-              <span className="text-muted-foreground"> · {timeAgo(mission.last.at)}</span>
-            </Link>
-          ) : (
-            <span className="text-muted-foreground">Nothing went out yet</span>
-          )}
-          {mission.outputs.length > 1 && (
-            <>
-              <button
-                type="button"
-                onClick={() => setOutputs((o) => !o)}
-                aria-expanded={outputs}
-                className="flex items-center gap-1 self-start text-xs text-muted-foreground hover:text-foreground"
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            {mission.threads.map((t) => (
+              <Link
+                key={t.id}
+                href={`/app/threads/${t.id}`}
+                className="hover:text-foreground hover:underline"
               >
-                {outputs ? 'Fewer' : `${mission.outputs.length - 1} more`}
-                <ChevronRight
-                  className={cn('size-3 transition-transform', outputs && 'rotate-90')}
-                  aria-hidden
-                />
-              </button>
-              {outputs && mission.outputs.slice(1).map((o) => <OutputLine key={o.id} output={o} />)}
-            </>
-          )}
-        </Line>
-      </div>
+                {t.title}
+              </Link>
+            ))}
+            {mission.routines.length > 0 && (
+              <Link href="/app/routines" className="hover:text-foreground hover:underline">
+                {running} {running === 1 ? 'routine' : 'routines'} running
+              </Link>
+            )}
+            {mayArchive && (
+              <span className="ml-auto flex gap-1">
+                {mine && (
+                  <Button size="sm" variant="ghost" onClick={onEdit}>
+                    <Pencil aria-hidden /> Edit
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => void archive()}
+                  tooltip="Pauses its routines and cancels its plan"
+                >
+                  <Archive aria-hidden /> Archive
+                </Button>
+              </span>
+            )}
+          </div>
+          {error && <span className="text-xs text-destructive-text">{error}</span>}
+        </div>
+      )}
     </li>
   )
 }
@@ -866,7 +899,7 @@ export function MissionsPage() {
       ) : (
         <ul className="rounded-xl border bg-card">
           {list.map((m) => (
-            <MissionCard key={m.id} mission={m} onChanged={reload} onEdit={() => setEditing(m)} />
+            <MissionLine key={m.id} mission={m} onChanged={reload} onEdit={() => setEditing(m)} />
           ))}
         </ul>
       )}

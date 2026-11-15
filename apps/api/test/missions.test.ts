@@ -410,9 +410,12 @@ test('outputs and the number are recorded, and the views read them', { skip }, a
     [1200, 1250],
   )
   assert.equal(mission.last?.kind, 'output')
+  // What went out this week, by kind.
+  assert.deepEqual(mission.week, { outputs: 1, byKind: { post: 1 } })
   assert.ok(mission.needs.some((n) => n.reason === 'approval' && n.title === 'Post: week'))
   assert.equal(mission.routines.length, 1)
-  assert.ok(mission.next)
+  // Next is its next planned action, never a routine's run.
+  assert.equal(mission.next?.kind, 'action')
 
   const week = await missionWeek(scoped(scope), new Date())
   const kinds = new Set(week.items.map((i) => i.kind))
