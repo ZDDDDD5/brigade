@@ -8,7 +8,7 @@
 // button, by the people allowed to. Ask talks about it with a teammate, as for any
 // library file (components/document-discussion.tsx): in the thread that saved it, else
 // in a new one, its mention in the reply box.
-import { toolName, type ToolView } from '@brigade/contracts'
+import { PreviewElement, toolName, type ToolView } from '@brigade/contracts'
 import {
   ChevronDown,
   ExternalLink,
@@ -17,13 +17,14 @@ import {
   Maximize2,
   MessageSquare,
   Minimize2,
+  SquareMousePointer,
   RotateCw,
   TriangleAlert,
   Wrench,
   X,
 } from 'lucide-react'
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useDashboard } from '@/components/dashboard'
 import { useDocumentDiscussion } from '@/components/document-discussion'
 import { libraryDocument, useOptionalDocumentPanel } from '@/components/document-panel'
@@ -47,6 +48,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { api } from '@/lib/api'
+import { useElementPicker, type ElementPicker } from '@/lib/element-pickers'
 import { answer, bridgeRequest, connectPort, isBye, type ToolConfirm } from '@/lib/tool-host'
 import { cn } from '@/lib/utils'
 
@@ -215,6 +217,13 @@ export function ToolPanel({
     }
     await discussion.ask()
   }, [discussion, inDocuments, documents, toolId, folder, onClose])
+  // Elements picked in the page go to the reply box of the thread beside it, else of the one
+  // open last; without one, the button opens the tool's thread first, as Ask does.
+  const picker = useElementPicker(threadId)
+  const select = useToolSelect(frame, folder, picker)
+  // Without a thread open, Select opens the tool's own thread first, when the person may write
+  // there: a new thread's composer takes no elements until its first message is sent.
+  const opensThread = !picker && !threadId && Boolean(discussion && view?.thread?.mayPrompt)
 
   function settle(yes: boolean) {
     if (!first) return
@@ -291,6 +300,29 @@ export function ToolPanel({
             </DropdownMenuContent>
           </DropdownMenu>
           <span className="flex-1" />
+          {view && select.available && (picker || opensThread) && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-pressed={select.on}
+              aria-label={select.on ? 'Stop selecting' : 'Select an element'}
+              tooltip={
+                select.on
+                  ? 'Stop selecting (Esc)'
+                  : picker
+                    ? 'Select elements in the tool and say what should change on each, then send them together'
+                    : `Select elements in the tool: opens its thread with ${discussion?.teammate?.name ?? 'its teammate'} first`
+              }
+              className={cn(select.on && 'bg-primary/12 text-primary hover:text-primary')}
+              onClick={() => {
+                if (picker) select.set(!select.on)
+                else if (opensThread) void ask()
+              }}
+            >
+              <SquareMousePointer aria-hidden />
+            </Button>
+          )}
           {discussion?.teammate && (
             <Button
               type="button"
@@ -347,6 +379,13 @@ export function ToolPanel({
             <X aria-hidden />
           </Button>
         </div>
+        {select.on && (
+          <p className="flex items-center gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground">
+            <SquareMousePointer aria-hidden className="size-4 shrink-0" />
+            Click an element to add it to your edits, then say what should change there. Esc to
+            stop.
+          </p>
+        )}
         <div className="relative min-h-0 flex-1 bg-background">
           {error ? (
             <p className="p-4 text-sm text-muted-foreground">{error}</p>
@@ -559,4 +598,80 @@ function ToolAccounts({
       </DialogContent>
     </Dialog>
   )
+}
+
+/**
+ * Picking elements in a tool's page, as in a thread's preview: the sandbox host adds the same
+ * script to its pages (contracts' element-select.ts), which says it is there once loaded. The
+ * page's origin is opaque (a sandboxed document): messages are told apart by the frame they come
+ * from. Where an element is goes as the tool's file in the library (`<folder>/index.html`), never
+ * as the page's address, which carries its token.
+ */
+function useToolSelect(
+  frame: RefObject<HTMLIFrameElement | null>,
+  folder: string,
+  picker: ElementPicker | undefined,
+) {
+  const [available, setAvailable] = useState(false)
+  const [on, setOn] = useState(false)
+  const latest = useRef({ on, picker, folder })
+  latest.current = { on, picker, folder }
+
+  const send = useCallback(
+    (value: boolean) =>
+      frame.current?.contentWindow?.postMessage(
+        { source: 'brigade', type: 'select', on: value },
+        '*',
+      ),
+    [frame],
+  )
+
+  useEffect(() => {
+    const listen = (e: MessageEvent) => {
+      const data = e.data as {
+        source?: string
+        type?: string
+        id?: unknown
+        element?: unknown
+        image?: unknown
+      } | null
+      if (e.source !== frame.current?.contentWindow || data?.source !== 'brigade-preview') return
+      const { picker, folder } = latest.current
+      if (data.type === 'ready') {
+        setAvailable(true)
+        // A page that loaded again starts with select mode off.
+        if (latest.current.on) send(true)
+      } else if (data.type === 'stopped') setOn(false)
+      else if (typeof data.id !== 'string' || !picker) return
+      else if (data.type === 'selected') {
+        const element = PreviewElement.safeParse(data.element)
+        if (!element.success) return
+        const page = `${folder}/${element.data.page.replace(/^\/t\/[^/]+\//, '') || 'index.html'}`
+        picker.handlers.current.element(data.id, { ...element.data, page: page.slice(0, 2000) })
+      } else if (data.type === 'captured')
+        picker.handlers.current.picture(
+          data.id,
+          data.image instanceof Blob && data.image.type === 'image/png' ? data.image : undefined,
+        )
+    }
+    window.addEventListener('message', listen)
+    return () => window.removeEventListener('message', listen)
+  }, [frame, send])
+
+  // No thread to pick for any more: select mode stops.
+  const can = Boolean(picker)
+  useEffect(() => {
+    if (can || !latest.current.on) return
+    setOn(false)
+    send(false)
+  }, [can, send])
+
+  const set = useCallback(
+    (value: boolean) => {
+      setOn(value)
+      send(value)
+    },
+    [send],
+  )
+  return { available, on, set }
 }

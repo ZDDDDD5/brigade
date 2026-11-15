@@ -131,6 +131,7 @@ import {
   useDesignEdits,
   withUnsent,
 } from '@/lib/pending-edits'
+import { registerElementPicker } from '@/lib/element-pickers'
 import { pendingThreads, useOpenedMessage } from '@/lib/pending-threads'
 import {
   api,
@@ -441,6 +442,11 @@ export function ThreadConversation({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- files.add, not the uploads list
   }, [files.add])
+  // A tool beside this thread, or in the document panel while it shows, picks for it too.
+  const pickRef = useRef(pickElement)
+  pickRef.current = pickElement
+  const mayPick = thread.data?.mayPrompt === true
+  useEffect(() => (mayPick ? registerElementPicker(id, pickRef) : undefined), [id, mayPick])
   // A picture that did not upload is left out: the element goes without it.
   const removeUpload = files.remove
   useEffect(() => {

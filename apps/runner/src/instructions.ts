@@ -546,6 +546,10 @@ function toolSkills(spec: ThreadSpec, libraryDir: string): ThreadSkill[] {
       '`read_tool_state`.\n' +
       '- Show a quiet message when an account is missing or not usable (`apps.list`: `usable` false is a personal ' +
       'account of someone else; `changed` true waits for someone to allow the tool again).',
+    'A person can also pick elements in the tool and say what should change on each: their message carries a ' +
+      "`<preview-element>` block for each, its `page` the tool's file in the library (`<folder>/index.html`), with " +
+      "its selector, text, HTML and their `note`, and a picture of it attached. Change the tool's files for it, " +
+      'not the page it drew.',
     '## Saving',
     'Check it with `check_design` on the folder (it renders like a design: screenshots and the errors its page logged), ' +
       `open the screenshots and fix what is off. Then save it with \`save_tool\` to a library path ending in \`${TOOL_SUFFIX}\`, ` +

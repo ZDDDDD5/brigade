@@ -279,6 +279,14 @@ describe('tools', { skip: !database && 'no database answers' }, () => {
     // The bridge carries the key the dashboard is given, and only this address's.
     assert.ok(view.body.bridgeKey)
     assert.ok(text.includes(`data-key="${view.body.bridgeKey}"`))
+    // Then the script that picks elements for the panel, drawing them with the module served here.
+    assert.ok(text.indexOf('data-brigade-tool-bridge') < text.indexOf('data-brigade-select'))
+    assert.ok(text.indexOf('data-brigade-select') < text.indexOf('<title>'))
+    const screenshot = `${env.DESIGN_URL}/t/${token}/__brigade/screenshot.mjs`
+    assert.ok(
+      text.includes(JSON.stringify(screenshot)),
+      'its module under the address scripts may come from',
+    )
     assert.match(csp, /connect-src [^;]*https:\/\/api\.example\.com/)
     assert.doesNotMatch(csp, /insecure\.example\.com/)
     assert.equal(html.headers.get('referrer-policy'), 'no-referrer')
@@ -295,6 +303,13 @@ describe('tools', { skip: !database && 'no database answers' }, () => {
     assert.equal(script.status, 200)
     assert.match(script.headers.get('content-type') ?? '', /^text\/plain/)
     assert.equal(script.headers.get('x-content-type-options'), 'nosniff')
+    const module = await page(
+      `${view.body.url.replace(/index\.html$/, '')}__brigade/screenshot.mjs`,
+    )
+    assert.equal(module.status, 200)
+    assert.match(module.headers.get('content-type') ?? '', /^text\/javascript/)
+    assert.equal(module.headers.get('access-control-allow-origin'), '*')
+    assert.match(await module.text(), /domToBlob/)
     // Its own scripts are.
     assert.match((await page(`${base}app.js`)).headers.get('content-type') ?? '', /javascript/)
     assert.equal((await page(`${base}_library/Film/clips/../secret/b.txt`)).status, 404)
