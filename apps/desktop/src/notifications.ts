@@ -63,7 +63,14 @@ function store(next: Device | undefined) {
 }
 
 let timer: ReturnType<typeof setInterval> | undefined
-let fetching = false
+/**
+ * Each start and stop begins a new generation: a fetch still in flight from an older one (the
+ * previous account's, before a sign-out) shows nothing and changes nothing once it answers.
+ */
+let generation = 0
+/** The generation whose fetch is in flight, and how to give it up. */
+let polling: number | undefined
+let inFlight: AbortController | undefined
 /** Shown notifications by tag: kept, so a click still finds its handler, and closable. */
 const shown = new Map<string, Notification>()
 
@@ -88,10 +95,13 @@ export async function disable() {
   const current = device()
   store(undefined)
   stop()
+  // Best effort, and briefly: signing out waits for it. Unfetched, the device is dropped after
+  // 30 days anyway, and its token is gone from here.
   if (current)
     await fetch(`${current.api}/api/desktop-notifications`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${current.token}` },
+      signal: AbortSignal.timeout(5_000),
     }).catch(() => {})
   return current?.deviceId
 }
@@ -107,18 +117,26 @@ export function start() {
 export function stop() {
   if (timer) clearInterval(timer)
   timer = undefined
+  generation++
+  inFlight?.abort()
+  inFlight = undefined
 }
 
 /** One fetch: what the API queued, shown. The API no longer knowing the device turns it off. */
 export async function fetchNow() {
   const current = device()
-  if (!current || fetching) return
-  fetching = true
+  if (!current || polling === generation) return
+  const mine = generation
+  polling = mine
+  const abort = new AbortController()
+  inFlight = abort
   try {
     const response = await fetch(`${current.api}/api/desktop-notifications`, {
       headers: { authorization: `Bearer ${current.token}` },
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(15_000)]),
     })
+    // Turned off, signed out or turned on again meanwhile: this answer is no one's now.
+    if (mine !== generation) return
     if (response.status === 401) {
       // Removed elsewhere (turned off in another window, or the person signed out).
       if (device()?.deviceId === current.deviceId) store(undefined)
@@ -126,11 +144,13 @@ export async function fetchNow() {
     }
     if (!response.ok) return
     const { messages } = (await response.json()) as { messages?: PushMessage[] }
+    if (mine !== generation) return
     for (const message of messages ?? []) show(message)
   } catch {
     // Offline or asleep: the next fetch tries again; the API keeps what is queued a while.
   } finally {
-    fetching = false
+    if (polling === mine) polling = undefined
+    if (inFlight === abort) inFlight = undefined
   }
 }
 

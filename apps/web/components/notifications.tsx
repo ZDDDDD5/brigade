@@ -127,6 +127,8 @@ export function NotificationsPanel() {
   useEffect(() => setPreset(settings.data?.preset), [settings.data?.preset])
 
   const publicKey = settings.data?.publicKey
+  // Brigade.app's own notifications need no push keys: only the browser's do.
+  const canTurnOn = !!publicKey || !!appNotifications()
 
   async function turnOn() {
     const app = appNotifications()
@@ -213,7 +215,7 @@ export function NotificationsPanel() {
 
   return (
     <div data-id="notifications-settings">
-      {settings.data && !publicKey ? (
+      {settings.data && !canTurnOn ? (
         <p className="text-muted-foreground text-sm">
           Notifications are not set up on this Brigade yet.
         </p>
@@ -247,7 +249,7 @@ export function NotificationsPanel() {
             {device === 'off' && (
               <div className="flex items-center justify-between gap-3">
                 <p className="text-muted-foreground text-sm">Off on this device.</p>
-                <Button size="sm" disabled={busy || !publicKey} onClick={() => void turnOn()}>
+                <Button size="sm" disabled={busy || !canTurnOn} onClick={() => void turnOn()}>
                   Turn on
                 </Button>
               </div>
