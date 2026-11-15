@@ -36,6 +36,15 @@ const Env = z.object({
   GOOGLE_MCP_CLIENT_ID: z.string().optional(),
   GOOGLE_MCP_CLIENT_SECRET: z.string().optional(),
   /**
+   * Brigade's Meta app (developers.facebook.com, use case "Create & manage ads with Marketing
+   * API"), for the Meta Ads App: its ID, secret, and the Facebook Login for Business
+   * configuration (a user access token with ads_read, ads_management and business_management).
+   * Valid OAuth redirect URI: {API_URL}/api/connections/oauth/meta/callback.
+   */
+  META_APP_ID: z.string().optional(),
+  META_APP_SECRET: z.string().optional(),
+  META_LOGIN_CONFIG_ID: z.string().optional(),
+  /**
    * Gmail push, for "Email received" triggers: a Pub/Sub topic in the OAuth client's Google
    * Cloud project, e.g. projects/acme/topics/brigade-gmail, that
    * gmail-api-push@system.gserviceaccount.com may publish to, with a push subscription

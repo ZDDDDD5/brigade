@@ -141,6 +141,8 @@ export const ConnectGoogle = z.object({
   returnTo: ReturnTo.optional(),
 })
 export const ConnectGitHub = z.object({ returnTo: ReturnTo.optional() })
+/** The Meta Ads App: a sign-in on Brigade's Meta app (Facebook Login for Business). */
+export const ConnectMeta = z.object({ returnTo: ReturnTo.optional() })
 /** An App whose account signs in on its MCP server's own OAuth. */
 export const ConnectMcp = z.object({
   kind: z.enum([
@@ -247,6 +249,18 @@ export const PickGoogleAdsCustomers = z.object({
         .string()
         .transform((v) => v.replace(/[\s-]/g, ''))
         .pipe(z.string().regex(/^\d{10}$/)),
+    )
+    .max(50),
+})
+/** Meta Ads: the ad accounts (act_<digits>) teammates reach through an account. */
+export const PickMetaAdAccounts = z.object({
+  ids: z
+    .array(
+      z
+        .string()
+        .trim()
+        .transform((v) => (v.startsWith('act_') ? v : `act_${v}`))
+        .pipe(z.string().regex(/^act_\d{1,20}$/)),
     )
     .max(50),
 })
