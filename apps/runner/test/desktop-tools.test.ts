@@ -481,7 +481,7 @@ test('on a Mac, agent-desktop runs through Brigade Computer Use, its answer and 
     writeFileSync(out, envelope({ ok: 1 }))
     return { exitCode: 0, output: '' }
   })
-  const exec = macDesktopExec(computer, binary)
+  const exec = macDesktopExec(computer, async () => binary)
   const out = await exec(['type', '@s1:e1', '--stdin'], { stdin: 'pa$$ word' })
   assert.deepEqual(JSON.parse(out).data, { ok: 1 })
   assert.equal(seenInput, 'pa$$ word')
@@ -513,18 +513,18 @@ test('on a Mac: no answer is an error with what it printed, and an old helper as
     return { exitCode: 134, output: '' }
   })
   await assert.rejects(
-    macDesktopExec(quiet.computer, { path: '/b' })(['snapshot']),
+    macDesktopExec(quiet.computer, async () => ({ path: '/b' }))(['snapshot']),
     /agent-desktop gave no answer: dyld: Library not loaded/,
   )
   const old = fakeComputer(async () => {
     throw new ComputerUseError('unknown_method', 'unknown method run')
   })
   await assert.rejects(
-    macDesktopExec(old.computer, { path: '/b' })(['snapshot']),
+    macDesktopExec(old.computer, async () => ({ path: '/b' }))(['snapshot']),
     /update Brigade\.app/,
   )
   await assert.rejects(
-    macDesktopExec(old.computer, undefined)(['snapshot']),
+    macDesktopExec(old.computer, async () => undefined)(['snapshot']),
     /missing from this runner/,
   )
 })
@@ -537,7 +537,7 @@ test('on a Mac, an interrupted turn cancels the command in the helper, or never 
         controller.signal.addEventListener('abort', () => reject(new Error('aborted'))),
       ),
   )
-  const running = macDesktopExec(computer, { path: '/b' })(['snapshot'], {
+  const running = macDesktopExec(computer, async () => ({ path: '/b' }))(['snapshot'], {
     signal: controller.signal,
   })
   // Once the helper runs it.
@@ -551,7 +551,9 @@ test('on a Mac, an interrupted turn cancels the command in the helper, or never 
   // Interrupted before: the helper is not asked at all.
   calls.length = 0
   await assert.rejects(
-    macDesktopExec(computer, { path: '/b' })(['snapshot'], { signal: AbortSignal.abort() }),
+    macDesktopExec(computer, async () => ({ path: '/b' }))(['snapshot'], {
+      signal: AbortSignal.abort(),
+    }),
     /aborted/,
   )
   assert.deepEqual(calls, [])
@@ -717,4 +719,124 @@ test('on a cloud computer, an interrupted call sends nothing, and two teammates 
   } finally {
     desk.done()
   }
+})
+
+test("a runner downloads agent-desktop once, checks it, and keeps only its own platform's binaries", async () => {
+  const { execFileSync } = await import('node:child_process')
+  const { createHash } = await import('node:crypto')
+  const { mkdtempSync, mkdirSync, rmSync, statSync, readdirSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { ensureAgentDesktop } = await import('../src/agent-desktop.js')
+  const root = mkdtempSync(join(tmpdir(), 'agent-desktop-'))
+  try {
+    // A tarball laid out as npm's: package/bin/<binaries>.
+    const bin = join(root, 'src', 'package', 'bin')
+    mkdirSync(bin, { recursive: true })
+    for (const name of [
+      'agent-desktop-linux-x64',
+      'agent-desktop-linux-clipboard-owner-linux-x64',
+      'agent-desktop-darwin-arm64',
+      'agent-desktop-macos-helper-darwin-arm64',
+      'agent-desktop-win32-x64.exe',
+    ])
+      writeFileSync(join(bin, name), `#!/bin/sh\necho ${name}\n`, { mode: 0o644 })
+    const tarball = join(root, 'package.tgz')
+    execFileSync('tar', ['-czf', tarball, '-C', join(root, 'src'), 'package'])
+    const bytes = readFileSync(tarball)
+    const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`
+    let fetched = 0
+    const fetch = (async () => {
+      fetched++
+      return new Response(bytes)
+    }) as unknown as typeof globalThis.fetch
+
+    // Not what was pinned: refused, nothing kept.
+    const wrong = join(root, 'wrong', '1.3.1')
+    await assert.rejects(
+      ensureAgentDesktop({ fromPackage: false, os: 'linux', cpu: 'x64', dir: wrong, fetch }),
+      /does not match the version pinned/,
+    )
+    assert.equal(existsSync(wrong), false)
+
+    // Two calls at once: one download, its platform's binaries only, runnable by others too.
+    const dir = join(root, 'install', 'agent-desktop', '1.3.1')
+    fetched = 0
+    const [a, b] = await Promise.all([
+      ensureAgentDesktop({ fromPackage: false, os: 'linux', cpu: 'x64', dir, fetch, integrity }),
+      ensureAgentDesktop({ fromPackage: false, os: 'linux', cpu: 'x64', dir, fetch, integrity }),
+    ])
+    assert.equal(fetched, 1)
+    assert.deepEqual(a, { path: join(dir, 'agent-desktop-linux-x64') })
+    assert.deepEqual(b, a)
+    assert.deepEqual(readdirSync(dir).sort(), [
+      'agent-desktop-linux-clipboard-owner-linux-x64',
+      'agent-desktop-linux-x64',
+    ])
+    assert.equal(statSync(a.path).mode & 0o777, 0o755)
+    assert.equal(statSync(dir).mode & 0o777, 0o755)
+    // Nothing left of the download beside it.
+    assert.deepEqual(readdirSync(join(root, 'install', 'agent-desktop')), ['1.3.1'])
+    // There already: no download.
+    await ensureAgentDesktop({ fromPackage: false, os: 'linux', cpu: 'x64', dir, fetch, integrity })
+    assert.equal(fetched, 1)
+
+    // A Mac: the binary and the helper it starts.
+    const mac = join(root, 'mac', '1.3.1')
+    const binary = await ensureAgentDesktop({
+      fromPackage: false,
+      os: 'darwin',
+      cpu: 'arm64',
+      dir: mac,
+      fetch,
+      integrity,
+    })
+    assert.deepEqual(binary, {
+      path: join(mac, 'agent-desktop-darwin-arm64'),
+      macosHelper: join(mac, 'agent-desktop-macos-helper-darwin-arm64'),
+    })
+
+    // npm down: an error, tried again at the next call.
+    const down = (async () =>
+      new Response('', { status: 503 })) as unknown as typeof globalThis.fetch
+    const later = join(root, 'later', '1.3.1')
+    await assert.rejects(
+      ensureAgentDesktop({
+        fromPackage: false,
+        os: 'linux',
+        cpu: 'x64',
+        dir: later,
+        fetch: down,
+        integrity,
+      }),
+      /npm answered 503/,
+    )
+    assert.ok(
+      await ensureAgentDesktop({
+        fromPackage: false,
+        os: 'linux',
+        cpu: 'x64',
+        dir: later,
+        fetch,
+        integrity,
+      }),
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('the version a runner downloads is the one pinned in the lockfile, and the bundle leaves it out', async () => {
+  const { AGENT_DESKTOP_INTEGRITY, AGENT_DESKTOP_VERSION } = await import('../src/agent-desktop.js')
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  // A devDependency: \`pnpm deploy --prod\` (bundle.sh) leaves it out of the runner's bundle, which
+  // the API serves as a Worker asset of at most 25 MiB.
+  assert.equal(pkg.dependencies['agent-desktop'], undefined)
+  assert.equal(pkg.devDependencies['agent-desktop'], AGENT_DESKTOP_VERSION)
+  const lock = readFileSync(new URL('../../../pnpm-lock.yaml', import.meta.url), 'utf8')
+  const entry = lock.indexOf(`\n  agent-desktop@${AGENT_DESKTOP_VERSION}:\n`)
+  assert.ok(entry > 0)
+  assert.match(
+    lock.slice(entry, entry + 300),
+    new RegExp(`integrity: ${AGENT_DESKTOP_INTEGRITY.replace(/[+/]/g, '\\$&')}`),
+  )
 })

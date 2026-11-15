@@ -53,9 +53,13 @@ const DESKTOP_OUTPUT_MAX = 32 * 1024 * 1024
  * outside the thread's namespaces, where the desktop is. Resolves to its output, which is its
  * answer even when it exits with an error.
  */
-export function teammateDesktopExec(user: string, binary: string | undefined): DesktopExec {
-  return (args, options = {}) =>
-    new Promise<string>((resolve, reject) => {
+export function teammateDesktopExec(
+  user: string,
+  find: () => Promise<string | undefined>,
+): DesktopExec {
+  return async (args, options = {}) => {
+    const binary = await find()
+    return new Promise<string>((resolve, reject) => {
       if (!binary) return reject(new Error('agent-desktop is missing from this runner'))
       // Interrupted already (while its browser started): nothing is run.
       if (options.signal?.aborted) return reject(new Error('aborted'))
@@ -116,6 +120,7 @@ export function teammateDesktopExec(user: string, binary: string | undefined): D
       child.stdin.on('error', () => undefined)
       child.stdin.end(options.stdin ?? '')
     })
+  }
 }
 
 /** Whether the helper started the teammate's own session bus (with its browser). */
