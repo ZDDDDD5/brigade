@@ -314,6 +314,7 @@ export function Footer({ featured = false }: { featured?: boolean }) {
           <a href="/docs">Docs</a>
           <Link href="/changelog">Changelog</Link>
           <Link href="/compare">Compare</Link>
+          <Link href="/guides">Guides</Link>
           <AuthLink href={SIGN_IN}>Sign in</AuthLink>
           <Link href="/privacy">Privacy</Link>
           <Link href="/terms">Terms</Link>
