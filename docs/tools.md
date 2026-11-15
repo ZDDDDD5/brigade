@@ -17,7 +17,10 @@ Tools are behind the `tools` feature (docs/feature-flags.md) while the team trie
   Brigade, where its calls fail), and reloads it.
 - **Ask <teammate>**, outside a thread: talks about the tool as about any library file, in the
   thread that saved it last when the member may write there, else in a new thread with the
-  teammate that saved it; the reply box holds the tool's mention.
+  teammate that saved it; the reply box holds the tool's mention. On a wide screen the tool moves
+  to the document panel first, so it stays beside that thread.
+- **Its mention** opens the tool, wherever it is clicked: in a message, the reply box or a
+  document. The document panel shows a tool's folder, or its `index.html`, as the tool.
 - **Accounts**, when the tool asks for Apps: each App it asks for, the accounts attached for it,
   and those the member may attach. A warning shows on the button while one is missing, or while
   the tool changed since its accounts were attached.
