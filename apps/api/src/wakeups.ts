@@ -4,6 +4,7 @@
 // live in the database and the minute tick fires them, so a restart or a deploy
 // loses none, and the API runs them the same on a server and on Workers.
 import {
+  ACTION_SOURCE,
   WAKEUPS_IN_A_ROW,
   WAKEUPS_PER_THREAD,
   wakeTime,
@@ -111,8 +112,14 @@ export async function firedInARow(db: ScopedDb, sessionId: string) {
     select: { data: true, at: true },
   })
   const last = messages.find((m) => (m.data as { memberId?: string | null }).memberId)
+  // A mission's actions (src/initiatives.ts) are its plan at work, not the teammate checking again.
   return db.wakeup.count({
-    where: { sessionId, status: 'fired', firedAt: { gt: last?.at ?? new Date(0) } },
+    where: {
+      sessionId,
+      status: 'fired',
+      firedAt: { gt: last?.at ?? new Date(0) },
+      OR: [{ sourceId: null }, { NOT: { sourceId: { startsWith: ACTION_SOURCE } } }],
+    },
   })
 }
 
@@ -312,11 +319,14 @@ async function fire(wakeup: {
     scope,
     thread,
     {
-      // A report's and a reply's note is the message itself, and so is a merge's and a goal's.
+      // A report's and a reply's note is the message itself, and so is a merge's, a goal's and a
+      // mission action's.
       text:
         wakeup.kind === 'wakeup' &&
         !wakeup.sourceId?.startsWith(MERGE_SOURCE) &&
-        !wakeup.sourceId?.startsWith(GOAL_SOURCE)
+        !wakeup.sourceId?.startsWith(GOAL_SOURCE) &&
+        // A mission's action (src/initiatives.ts): its prompt, or why it does not go.
+        !wakeup.sourceId?.startsWith(ACTION_SOURCE)
           ? prompt(wakeup, now, await memberTimezone(db, thread.startedByMemberId))
           : wakeup.note,
       memberId: null,

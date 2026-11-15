@@ -509,7 +509,11 @@ export const ModelName = {
   AccountLoginBackup: 'AccountLoginBackup',
   ComputerReplacement: 'ComputerReplacement',
   FeatureFlag: 'FeatureFlag',
-  SpecPull: 'SpecPull'
+  SpecPull: 'SpecPull',
+  Initiative: 'Initiative',
+  InitiativeAction: 'InitiativeAction',
+  InitiativeOutput: 'InitiativeOutput',
+  InitiativeValue: 'InitiativeValue'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -525,7 +529,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "user" | "analyticsFirst" | "adConversion" | "billingSubscription" | "authSession" | "authAccount" | "verification" | "rateLimit" | "organization" | "billingClosing" | "member" | "invitation" | "invitationSend" | "workspace" | "computer" | "runner" | "teammate" | "threadRead" | "threadPin" | "sidebarOrder" | "threadLater" | "homeDismissal" | "session" | "task" | "schedule" | "chiefDecision" | "chiefPass" | "goal" | "goalMeasurement" | "wakeup" | "replyWatch" | "threadTeammate" | "sessionEvent" | "coldEventChunk" | "threadEventVolume" | "workspaceEventDay" | "tokenUsage" | "account" | "pullRequest" | "pullRequestReview" | "comment" | "mcpClient" | "app" | "connection" | "vaultSecret" | "credential" | "credentialGrant" | "grant" | "connectionCall" | "trigger" | "subscription" | "ticket" | "document" | "listItem" | "listItemThread" | "listItemPull" | "libraryLock" | "listPin" | "documentPin" | "memoryLine" | "documentVersion" | "libraryObjectFolder" | "libraryObject" | "libraryFolder" | "libraryFolderGrant" | "libraryShare" | "toolState" | "toolAccount" | "documentAsset" | "bucketCleanup" | "workspaceCleanup" | "auditEntry" | "upload" | "attachment" | "threadAttachment" | "designSystem" | "skill" | "skillPack" | "previewRecipe" | "previewMachine" | "vmRun" | "previewVariable" | "project" | "projectRepository" | "pushDevice" | "desktopDevice" | "desktopMessage" | "pushNotice" | "playbookInstallation" | "playbookAction" | "playbookRun" | "playbookDryRun" | "threadFollow" | "mailAddress" | "mailProject" | "mailAlias" | "mailMessage" | "mailHtml" | "mailDomain" | "contact" | "contactHandle" | "opsAlert" | "heldCall" | "runnerCommand" | "specPart" | "triggerDelivery" | "inboundEvent" | "folderBackup" | "teammateBackup" | "accountLoginBackup" | "computerReplacement" | "featureFlag" | "specPull"
+    modelProps: "user" | "analyticsFirst" | "adConversion" | "billingSubscription" | "authSession" | "authAccount" | "verification" | "rateLimit" | "organization" | "billingClosing" | "member" | "invitation" | "invitationSend" | "workspace" | "computer" | "runner" | "teammate" | "threadRead" | "threadPin" | "sidebarOrder" | "threadLater" | "homeDismissal" | "session" | "task" | "schedule" | "chiefDecision" | "chiefPass" | "goal" | "goalMeasurement" | "wakeup" | "replyWatch" | "threadTeammate" | "sessionEvent" | "coldEventChunk" | "threadEventVolume" | "workspaceEventDay" | "tokenUsage" | "account" | "pullRequest" | "pullRequestReview" | "comment" | "mcpClient" | "app" | "connection" | "vaultSecret" | "credential" | "credentialGrant" | "grant" | "connectionCall" | "trigger" | "subscription" | "ticket" | "document" | "listItem" | "listItemThread" | "listItemPull" | "libraryLock" | "listPin" | "documentPin" | "memoryLine" | "documentVersion" | "libraryObjectFolder" | "libraryObject" | "libraryFolder" | "libraryFolderGrant" | "libraryShare" | "toolState" | "toolAccount" | "documentAsset" | "bucketCleanup" | "workspaceCleanup" | "auditEntry" | "upload" | "attachment" | "threadAttachment" | "designSystem" | "skill" | "skillPack" | "previewRecipe" | "previewMachine" | "vmRun" | "previewVariable" | "project" | "projectRepository" | "pushDevice" | "desktopDevice" | "desktopMessage" | "pushNotice" | "playbookInstallation" | "playbookAction" | "playbookRun" | "playbookDryRun" | "threadFollow" | "mailAddress" | "mailProject" | "mailAlias" | "mailMessage" | "mailHtml" | "mailDomain" | "contact" | "contactHandle" | "opsAlert" | "heldCall" | "runnerCommand" | "specPart" | "triggerDelivery" | "inboundEvent" | "folderBackup" | "teammateBackup" | "accountLoginBackup" | "computerReplacement" | "featureFlag" | "specPull" | "initiative" | "initiativeAction" | "initiativeOutput" | "initiativeValue"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -8891,6 +8895,302 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    Initiative: {
+      payload: Prisma.$InitiativePayload<ExtArgs>
+      fields: Prisma.InitiativeFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.InitiativeFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.InitiativeFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload>
+        }
+        findFirst: {
+          args: Prisma.InitiativeFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.InitiativeFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload>
+        }
+        findMany: {
+          args: Prisma.InitiativeFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload>[]
+        }
+        create: {
+          args: Prisma.InitiativeCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload>
+        }
+        createMany: {
+          args: Prisma.InitiativeCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.InitiativeCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload>[]
+        }
+        delete: {
+          args: Prisma.InitiativeDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload>
+        }
+        update: {
+          args: Prisma.InitiativeUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload>
+        }
+        deleteMany: {
+          args: Prisma.InitiativeDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.InitiativeUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.InitiativeUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload>[]
+        }
+        upsert: {
+          args: Prisma.InitiativeUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativePayload>
+        }
+        aggregate: {
+          args: Prisma.InitiativeAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateInitiative>
+        }
+        groupBy: {
+          args: Prisma.InitiativeGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.InitiativeGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.InitiativeCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.InitiativeCountAggregateOutputType> | number
+        }
+      }
+    }
+    InitiativeAction: {
+      payload: Prisma.$InitiativeActionPayload<ExtArgs>
+      fields: Prisma.InitiativeActionFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.InitiativeActionFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.InitiativeActionFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload>
+        }
+        findFirst: {
+          args: Prisma.InitiativeActionFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.InitiativeActionFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload>
+        }
+        findMany: {
+          args: Prisma.InitiativeActionFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload>[]
+        }
+        create: {
+          args: Prisma.InitiativeActionCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload>
+        }
+        createMany: {
+          args: Prisma.InitiativeActionCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.InitiativeActionCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload>[]
+        }
+        delete: {
+          args: Prisma.InitiativeActionDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload>
+        }
+        update: {
+          args: Prisma.InitiativeActionUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload>
+        }
+        deleteMany: {
+          args: Prisma.InitiativeActionDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.InitiativeActionUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.InitiativeActionUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload>[]
+        }
+        upsert: {
+          args: Prisma.InitiativeActionUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeActionPayload>
+        }
+        aggregate: {
+          args: Prisma.InitiativeActionAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateInitiativeAction>
+        }
+        groupBy: {
+          args: Prisma.InitiativeActionGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.InitiativeActionGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.InitiativeActionCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.InitiativeActionCountAggregateOutputType> | number
+        }
+      }
+    }
+    InitiativeOutput: {
+      payload: Prisma.$InitiativeOutputPayload<ExtArgs>
+      fields: Prisma.InitiativeOutputFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.InitiativeOutputFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.InitiativeOutputFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload>
+        }
+        findFirst: {
+          args: Prisma.InitiativeOutputFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.InitiativeOutputFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload>
+        }
+        findMany: {
+          args: Prisma.InitiativeOutputFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload>[]
+        }
+        create: {
+          args: Prisma.InitiativeOutputCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload>
+        }
+        createMany: {
+          args: Prisma.InitiativeOutputCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.InitiativeOutputCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload>[]
+        }
+        delete: {
+          args: Prisma.InitiativeOutputDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload>
+        }
+        update: {
+          args: Prisma.InitiativeOutputUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload>
+        }
+        deleteMany: {
+          args: Prisma.InitiativeOutputDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.InitiativeOutputUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.InitiativeOutputUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload>[]
+        }
+        upsert: {
+          args: Prisma.InitiativeOutputUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeOutputPayload>
+        }
+        aggregate: {
+          args: Prisma.InitiativeOutputAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateInitiativeOutput>
+        }
+        groupBy: {
+          args: Prisma.InitiativeOutputGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.InitiativeOutputGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.InitiativeOutputCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.InitiativeOutputCountAggregateOutputType> | number
+        }
+      }
+    }
+    InitiativeValue: {
+      payload: Prisma.$InitiativeValuePayload<ExtArgs>
+      fields: Prisma.InitiativeValueFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.InitiativeValueFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.InitiativeValueFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload>
+        }
+        findFirst: {
+          args: Prisma.InitiativeValueFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.InitiativeValueFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload>
+        }
+        findMany: {
+          args: Prisma.InitiativeValueFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload>[]
+        }
+        create: {
+          args: Prisma.InitiativeValueCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload>
+        }
+        createMany: {
+          args: Prisma.InitiativeValueCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.InitiativeValueCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload>[]
+        }
+        delete: {
+          args: Prisma.InitiativeValueDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload>
+        }
+        update: {
+          args: Prisma.InitiativeValueUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload>
+        }
+        deleteMany: {
+          args: Prisma.InitiativeValueDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.InitiativeValueUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.InitiativeValueUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload>[]
+        }
+        upsert: {
+          args: Prisma.InitiativeValueUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$InitiativeValuePayload>
+        }
+        aggregate: {
+          args: Prisma.InitiativeValueAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateInitiativeValue>
+        }
+        groupBy: {
+          args: Prisma.InitiativeValueGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.InitiativeValueGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.InitiativeValueCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.InitiativeValueCountAggregateOutputType> | number
+        }
+      }
+    }
   }
 } & {
   other: {
@@ -9300,7 +9600,8 @@ export const SessionScalarFieldEnum = {
   quiet: 'quiet',
   chiefDecisionId: 'chiefDecisionId',
   chiefPassId: 'chiefPassId',
-  chiefWordSeq: 'chiefWordSeq'
+  chiefWordSeq: 'chiefWordSeq',
+  initiativeId: 'initiativeId'
 } as const
 
 export type SessionScalarFieldEnum = (typeof SessionScalarFieldEnum)[keyof typeof SessionScalarFieldEnum]
@@ -9348,7 +9649,8 @@ export const ScheduleScalarFieldEnum = {
   parentSessionId: 'parentSessionId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  playbookInstallationId: 'playbookInstallationId'
+  playbookInstallationId: 'playbookInstallationId',
+  initiativeId: 'initiativeId'
 } as const
 
 export type ScheduleScalarFieldEnum = (typeof ScheduleScalarFieldEnum)[keyof typeof ScheduleScalarFieldEnum]
@@ -10893,6 +11195,87 @@ export const SpecPullScalarFieldEnum = {
 export type SpecPullScalarFieldEnum = (typeof SpecPullScalarFieldEnum)[keyof typeof SpecPullScalarFieldEnum]
 
 
+export const InitiativeScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  teammateId: 'teammateId',
+  projectId: 'projectId',
+  title: 'title',
+  objective: 'objective',
+  metricLabel: 'metricLabel',
+  metricUnit: 'metricUnit',
+  metricTarget: 'metricTarget',
+  createdByMemberId: 'createdByMemberId',
+  createdByTeammateId: 'createdByTeammateId',
+  archivedAt: 'archivedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InitiativeScalarFieldEnum = (typeof InitiativeScalarFieldEnum)[keyof typeof InitiativeScalarFieldEnum]
+
+
+export const InitiativeActionScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  initiativeId: 'initiativeId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  title: 'title',
+  instructions: 'instructions',
+  draft: 'draft',
+  dueAt: 'dueAt',
+  approveBy: 'approveBy',
+  status: 'status',
+  ticketId: 'ticketId',
+  decidedByMemberId: 'decidedByMemberId',
+  decidedAt: 'decidedAt',
+  firedAt: 'firedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InitiativeActionScalarFieldEnum = (typeof InitiativeActionScalarFieldEnum)[keyof typeof InitiativeActionScalarFieldEnum]
+
+
+export const InitiativeOutputScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  initiativeId: 'initiativeId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  actionId: 'actionId',
+  kind: 'kind',
+  channel: 'channel',
+  url: 'url',
+  summary: 'summary',
+  at: 'at',
+  metrics: 'metrics',
+  metricsAt: 'metricsAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InitiativeOutputScalarFieldEnum = (typeof InitiativeOutputScalarFieldEnum)[keyof typeof InitiativeOutputScalarFieldEnum]
+
+
+export const InitiativeValueScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  initiativeId: 'initiativeId',
+  teammateId: 'teammateId',
+  value: 'value',
+  note: 'note',
+  at: 'at'
+} as const
+
+export type InitiativeValueScalarFieldEnum = (typeof InitiativeValueScalarFieldEnum)[keyof typeof InitiativeValueScalarFieldEnum]
+
+
 export const SortOrder = {
   asc: 'asc',
   desc: 'desc'
@@ -11751,6 +12134,20 @@ export type EnumInboundEventStatusFieldRefInput<$PrismaModel> = FieldRefInputTyp
 export type ListEnumInboundEventStatusFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'InboundEventStatus[]'>
     
 
+
+/**
+ * Reference to a field of type 'InitiativeActionStatus'
+ */
+export type EnumInitiativeActionStatusFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'InitiativeActionStatus'>
+    
+
+
+/**
+ * Reference to a field of type 'InitiativeActionStatus[]'
+ */
+export type ListEnumInitiativeActionStatusFieldRefInput<$PrismaModel> = FieldRefInputType<$PrismaModel, 'InitiativeActionStatus[]'>
+    
+
 /**
  * Batch Payload for updateMany & deleteMany & createMany
  */
@@ -12015,6 +12412,10 @@ export type GlobalOmitConfig = {
   computerReplacement?: Prisma.ComputerReplacementOmit
   featureFlag?: Prisma.FeatureFlagOmit
   specPull?: Prisma.SpecPullOmit
+  initiative?: Prisma.InitiativeOmit
+  initiativeAction?: Prisma.InitiativeActionOmit
+  initiativeOutput?: Prisma.InitiativeOutputOmit
+  initiativeValue?: Prisma.InitiativeValueOmit
 }
 
 /* Types for Logging */

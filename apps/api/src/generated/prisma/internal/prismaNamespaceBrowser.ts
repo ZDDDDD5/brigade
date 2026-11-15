@@ -163,7 +163,11 @@ export const ModelName = {
   AccountLoginBackup: 'AccountLoginBackup',
   ComputerReplacement: 'ComputerReplacement',
   FeatureFlag: 'FeatureFlag',
-  SpecPull: 'SpecPull'
+  SpecPull: 'SpecPull',
+  Initiative: 'Initiative',
+  InitiativeAction: 'InitiativeAction',
+  InitiativeOutput: 'InitiativeOutput',
+  InitiativeValue: 'InitiativeValue'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -552,7 +556,8 @@ export const SessionScalarFieldEnum = {
   quiet: 'quiet',
   chiefDecisionId: 'chiefDecisionId',
   chiefPassId: 'chiefPassId',
-  chiefWordSeq: 'chiefWordSeq'
+  chiefWordSeq: 'chiefWordSeq',
+  initiativeId: 'initiativeId'
 } as const
 
 export type SessionScalarFieldEnum = (typeof SessionScalarFieldEnum)[keyof typeof SessionScalarFieldEnum]
@@ -600,7 +605,8 @@ export const ScheduleScalarFieldEnum = {
   parentSessionId: 'parentSessionId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  playbookInstallationId: 'playbookInstallationId'
+  playbookInstallationId: 'playbookInstallationId',
+  initiativeId: 'initiativeId'
 } as const
 
 export type ScheduleScalarFieldEnum = (typeof ScheduleScalarFieldEnum)[keyof typeof ScheduleScalarFieldEnum]
@@ -2143,6 +2149,87 @@ export const SpecPullScalarFieldEnum = {
 } as const
 
 export type SpecPullScalarFieldEnum = (typeof SpecPullScalarFieldEnum)[keyof typeof SpecPullScalarFieldEnum]
+
+
+export const InitiativeScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  teammateId: 'teammateId',
+  projectId: 'projectId',
+  title: 'title',
+  objective: 'objective',
+  metricLabel: 'metricLabel',
+  metricUnit: 'metricUnit',
+  metricTarget: 'metricTarget',
+  createdByMemberId: 'createdByMemberId',
+  createdByTeammateId: 'createdByTeammateId',
+  archivedAt: 'archivedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InitiativeScalarFieldEnum = (typeof InitiativeScalarFieldEnum)[keyof typeof InitiativeScalarFieldEnum]
+
+
+export const InitiativeActionScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  initiativeId: 'initiativeId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  title: 'title',
+  instructions: 'instructions',
+  draft: 'draft',
+  dueAt: 'dueAt',
+  approveBy: 'approveBy',
+  status: 'status',
+  ticketId: 'ticketId',
+  decidedByMemberId: 'decidedByMemberId',
+  decidedAt: 'decidedAt',
+  firedAt: 'firedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InitiativeActionScalarFieldEnum = (typeof InitiativeActionScalarFieldEnum)[keyof typeof InitiativeActionScalarFieldEnum]
+
+
+export const InitiativeOutputScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  initiativeId: 'initiativeId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  actionId: 'actionId',
+  kind: 'kind',
+  channel: 'channel',
+  url: 'url',
+  summary: 'summary',
+  at: 'at',
+  metrics: 'metrics',
+  metricsAt: 'metricsAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InitiativeOutputScalarFieldEnum = (typeof InitiativeOutputScalarFieldEnum)[keyof typeof InitiativeOutputScalarFieldEnum]
+
+
+export const InitiativeValueScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  initiativeId: 'initiativeId',
+  teammateId: 'teammateId',
+  value: 'value',
+  note: 'note',
+  at: 'at'
+} as const
+
+export type InitiativeValueScalarFieldEnum = (typeof InitiativeValueScalarFieldEnum)[keyof typeof InitiativeValueScalarFieldEnum]
 
 
 export const SortOrder = {

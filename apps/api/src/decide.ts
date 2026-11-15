@@ -28,6 +28,7 @@ import type { WorkspaceScope } from './scope.js'
 import { decidePromotion } from './playbook-autonomy.js'
 import { decideActivation } from './playbooks.js'
 import { decideSkillProposal } from './skills.js'
+import { decideMissionAction, type MissionActionPayload } from './initiatives.js'
 import { loadThread, noteAsker, specFor, teammateIn } from './thread-spec.js'
 import { handBack, joinThread, promptThread } from './work.js'
 
@@ -462,6 +463,8 @@ type TicketPayload = {
   playbookInstallationId?: string
   /** Brigade proposes a playbook's action act on its own: its owner, an owner or an admin decides. */
   playbookPromotion?: PlaybookPromotionPayload
+  /** A mission action's draft to approve before its deadline (src/initiatives.ts). */
+  missionAction?: MissionActionPayload['missionAction']
 }
 
 /**
@@ -572,6 +575,15 @@ export async function resolveTicket(
       // It would then act with no one checking: the playbook's owner (whose accounts it runs on)
       // or an owner or admin decides (decidePromotion checks which).
       await decidePromotion(db, scope, ticket, input.approved)
+      return { ok: true, live: false }
+    }
+    if (payload.missionAction) {
+      // A mission's draft: whoever may write in its thread, as for its other approvals, or an admin.
+      if (!isAdmin && (!ticket.session || !mayAnswer(scope, ticket.session)))
+        throw new HTTPException(403, {
+          message: 'Only who may write in the thread, or an admin, can decide',
+        })
+      await decideMissionAction(db, scope, ticket, input.approved, input.reason)
       return { ok: true, live: false }
     }
     if (payload.skillAction) {

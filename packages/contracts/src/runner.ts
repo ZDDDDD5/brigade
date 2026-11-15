@@ -264,6 +264,21 @@ export const ThreadSpec = z.object({
    * them. Older APIs leave it out: none.
    */
   tools: z.boolean().default(false),
+  /**
+   * The mission the thread works for (docs/missions.md), when its starter has the missions feature:
+   * its teammates plan actions and record what went out there. Older APIs leave it out: none.
+   */
+  mission: z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      objective: z.string(),
+      /** Its owner, the teammate it is delegated to. */
+      teammate: z.object({ id: z.string(), name: z.string() }),
+      /** Its number, when it follows one. */
+      number: z.object({ label: z.string(), unit: z.string().nullable() }).nullable(),
+    })
+    .nullish(),
   /** Set when the teammate is granted a GitHub connection: its repositories through git. */
   git: GitAccess.optional(),
   /** Every file given to the thread so far: each is put in the teammate's working folder before its turn. */
