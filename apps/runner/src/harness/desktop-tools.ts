@@ -547,9 +547,15 @@ const MAC_TIMEOUT = 90
  */
 export function macDesktopExec(
   computer: ComputerUse,
-  binary: AgentDesktopBinary | undefined,
+  find: (signal?: AbortSignal) => Promise<AgentDesktopBinary | undefined>,
 ): DesktopExec {
   return async (args, options = {}) => {
+    const binary = await find(options.signal).catch((error: unknown) => {
+      if (options.signal?.aborted) throw error
+      throw new Error(
+        `${error instanceof Error ? error.message : String(error)}: use computer_screenshot and computer_click meanwhile.`,
+      )
+    })
     if (!binary)
       throw new Error(
         'agent-desktop is missing from this runner: use computer_screenshot and computer_click meanwhile.',

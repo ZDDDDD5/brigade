@@ -15,8 +15,6 @@ quiet() {
 quiet $PNPM --filter @brigade/contracts build
 quiet $PNPM --filter @brigade/runner build
 quiet $PNPM --filter @brigade/runner --prod deploy "$OUT/runner"
-# agent-desktop ships each platform's binaries: runners run on macOS and Linux, never Windows.
-rm -f "$OUT"/runner/node_modules/.pnpm/agent-desktop@*/node_modules/agent-desktop/bin/*win32*
 # .modules.yaml is pnpm's record of the install, with its time and this machine's store path.
 rm -rf "$OUT/runner/src" "$OUT/runner/tsconfig.json" "$OUT/runner/scripts" "$OUT/runner/node_modules/.modules.yaml"
 mkdir -p bundle
@@ -30,3 +28,10 @@ else
 fi
 rm -rf "$OUT"
 ls -la bundle/brigade-runner.tgz
+# The API serves it as a Worker asset, and Workers take none past 25 MiB: a bigger bundle fails the
+# API's deploy (it did with agent-desktop's binaries in it, which runners now download instead).
+SIZE=$(wc -c <bundle/brigade-runner.tgz)
+if [ "$SIZE" -gt $((24 * 1024 * 1024)) ]; then
+  echo "The runner bundle is $SIZE bytes: past 24 MiB, near the 25 MiB a Worker asset may be" >&2
+  exit 1
+fi

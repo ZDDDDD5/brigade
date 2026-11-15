@@ -78,9 +78,12 @@ the terminal's app, so it has nothing to sweep).
 `computer_snapshot` and `computer_act` read an app's interface as a tree whose elements have refs, then act on a ref
 (click, type, set a value, select, toggle, expand, scroll…) through the OS's accessibility API, without moving the
 pointer or taking the keyboard focus. They run [agent-desktop](https://github.com/vercel-labs/agent-desktop), which
-the runner ships as a dependency: `apps/runner/src/agent-desktop.ts` calls the binary for its platform directly (the
-package's own launcher picks it in an install script, which the runner's bundle doesn't run), and `bundle.sh` leaves
-its Windows binaries out. The tree goes back as text, an element a line, without hidden elements and cut at 40 KB
+the runner's bundle doesn't carry: its binaries for every platform took the bundle past the 25 MiB a Worker asset may be
+(the API serves it as one), and `bundle.sh` now fails past 24 MiB. A runner downloads the version pinned in
+`apps/runner/src/agent-desktop.ts` from npm the first time a teammate uses it, checks it against the integrity pinned
+there (the lockfile's, which a test compares), and keeps only its own platform's binaries beside the runner
+(`<install dir>/agent-desktop/<version>`, which a runner update leaves and a cloud computer's teammate users can run).
+In the repository, the devDependency's copy is used. The tree goes back as text, an element a line, without hidden elements and cut at 40 KB
 (`renderTree`). The tools are in `apps/runner/src/harness/desktop-tools.ts`.
 
 - **On a Mac**, beside the tools above, agent-desktop runs through Brigade Computer Use's `run`, so it gets the
