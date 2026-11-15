@@ -547,6 +547,18 @@ export type ProjectRepository = Prisma.ProjectRepositoryModel
  */
 export type PushDevice = Prisma.PushDeviceModel
 /**
+ * Model DesktopDevice
+ * Brigade.app on a computer, which shows the person's notifications itself: Electron has no
+ * push service. The sweep (src/notifications.ts) queues each push for it as a DesktopMessage,
+ * and the app fetches them with its token (src/routes/desktop-notifications.ts).
+ */
+export type DesktopDevice = Prisma.DesktopDeviceModel
+/**
+ * Model DesktopMessage
+ * A push queued for a DesktopDevice until its next fetch, which takes it.
+ */
+export type DesktopMessage = Prisma.DesktopMessageModel
+/**
  * Model PushNotice
  * One thing a member was or will be notified of, by key (needs:<threadId>,
  * done:<taskId>, merged:<pullRequestId>, reply:<threadId>:<at>): so each is

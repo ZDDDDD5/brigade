@@ -1,5 +1,6 @@
 // Notifications: web push to the dashboard, installed as an app or open in a
-// browser. Sparse by design. A push says something waits on the member (the
+// browser, and Brigade.app, which has no push service: what would be pushed to it is
+// queued for it to fetch (DesktopMessage, routes/desktop-notifications.ts). Sparse by design. A push says something waits on the member (the
 // Needs you items that are theirs); with a preset, also each thread its teammate
 // declared done and each merged pull request, and replies in threads they started.
 // Nothing else.
@@ -48,6 +49,12 @@ const PUSHES_PER_HOUR = 4
 const FRESH_MS = 15 * 60_000
 /** What was sent is kept this long once over: past the cap's hour and the news window. */
 const KEEP_MS = 2 * 60 * 60_000
+/** Brigade.app fetches every 20 s: one that has not for this long is not running. */
+export const DESKTOP_ONLINE_MS = 2 * 60_000
+/** A queued push older than this is no longer news: the app came back too late for it. */
+export const DESKTOP_MESSAGE_MS = 15 * 60_000
+/** An app that has not fetched for this long is gone (uninstalled, another account). */
+const DESKTOP_GONE_MS = 30 * 24 * 60 * 60_000
 
 export const vapid = (): Vapid | null =>
   env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY
@@ -511,9 +518,23 @@ export async function workspaceItems(scope: Scope, members: Recipient[], now: Da
  */
 export async function sweep(now = new Date(), organizationId?: string) {
   const keys = vapid()
-  if (!keys) return
+  const at = now.getTime()
+  // Brigade.app's leftovers: pushes it did not fetch in time, and apps long gone. Everyone's,
+  // so only in the sweep of every organization (a test's sweep keeps to its own).
+  if (!organizationId) {
+    await prisma.desktopMessage.deleteMany({
+      where: { createdAt: { lt: new Date(at - DESKTOP_MESSAGE_MS) } },
+    })
+    await prisma.desktopDevice.deleteMany({
+      where: { lastSeenAt: { lt: new Date(at - DESKTOP_GONE_MS) } },
+    })
+  }
+  const devices = [
+    ...(keys ? [{ pushDevices: { some: {} } }] : []),
+    { desktopDevices: { some: { lastSeenAt: { gt: new Date(at - DESKTOP_ONLINE_MS) } } } },
+  ]
   const members = await prisma.member.findMany({
-    where: { ...(organizationId ? { organizationId } : {}), user: { pushDevices: { some: {} } } },
+    where: { ...(organizationId ? { organizationId } : {}), user: { OR: devices } },
     select: { id: true, organizationId: true, role: true, notify: true, userId: true },
   })
   const byOrganization = new Map<string, typeof members>()
@@ -543,7 +564,7 @@ export async function sweep(now = new Date(), organizationId?: string) {
 
 /** Bring a member's notices up to date with what is, and send what is due. */
 async function settle(
-  keys: Vapid,
+  keys: Vapid | null,
   member: { id: string; userId: string },
   organizationId: string,
   /** The organization's workspaces: a dashboard of any of them in view counts. */
@@ -659,10 +680,10 @@ async function settle(
     .filter((tag) => !items.some((i) => i.tag === tag))
   const message = compose([...due, ...remind], badge, [...new Set(close)])
 
-  const devices = await prisma.pushDevice.findMany({ where: { userId: member.userId } })
-  let delivered = false
+  const devices = keys ? await prisma.pushDevice.findMany({ where: { userId: member.userId } }) : []
+  let delivered = (await queueDesktop(member.userId, message, now)) > 0
   for (const device of devices) {
-    const result = await sendPush(keys, device, message, {
+    const result = await sendPush(keys!, device, message, {
       topic: message.tag,
       urgency: due.some((i) => i.needs) || remind.length ? 'high' : 'normal',
     })
@@ -686,6 +707,22 @@ async function settle(
     where: { memberId: member.id, resolvedAt: { not: null }, closedAt: null },
     data: { closedAt: now },
   })
+}
+
+/**
+ * Queues a push for each Brigade.app of the user's that is running (fetched lately): it shows
+ * it at its next fetch. How many took it.
+ */
+export async function queueDesktop(userId: string, message: PushMessage, now = new Date()) {
+  const running = await prisma.desktopDevice.findMany({
+    where: { userId, lastSeenAt: { gt: new Date(now.getTime() - DESKTOP_ONLINE_MS) } },
+    select: { id: true },
+  })
+  if (running.length)
+    await prisma.desktopMessage.createMany({
+      data: running.map((d) => ({ deviceId: d.id, message, createdAt: now })),
+    })
+  return running.length
 }
 
 /** The tag of a notice's notification, from its key: a thread's id, else the ticket's, playbook's or pull request's. */
@@ -730,22 +767,25 @@ export function compose(items: Item[], badge: number, close: string[]): PushMess
  */
 export async function sendTest(userId: string) {
   const keys = vapid()
-  if (!keys)
+  const message = {
+    title: 'Notifications are on',
+    body: 'Brigade will tell you here when something needs you.',
+    url: '/app',
+    tag: 'brigade-test',
+    close: [],
+  } satisfies PushMessage
+  const devices = keys ? await prisma.pushDevice.findMany({ where: { userId } }) : []
+  const apps = await prisma.desktopDevice.count({ where: { userId } })
+  if (!keys && !apps)
     return { devices: 0, sent: 0, errors: ['Notifications are not set up on this Brigade'] }
-  const devices = await prisma.pushDevice.findMany({ where: { userId } })
-  let sent = 0
+  let sent = await queueDesktop(userId, message)
   const errors: string[] = []
+  if (sent < apps) errors.push('Brigade.app isn’t running on one of your computers')
   for (const device of devices) {
     const result = await sendPush(
-      keys,
+      keys!,
       device,
-      {
-        title: 'Notifications are on',
-        body: 'Brigade will tell you here when something needs you.',
-        url: '/app',
-        tag: 'brigade-test',
-        close: [],
-      } satisfies PushMessage,
+      message,
       // A topic as real pushes have one: Apple refused those alone (BadWebPushTopic).
       { topic: 'brigade-test', ttlSeconds: 60, urgency: 'high' },
     )
@@ -753,5 +793,5 @@ export async function sendTest(userId: string) {
     if (result.status === 'sent') sent++
     if (result.status === 'failed') errors.push(result.detail)
   }
-  return { devices: devices.length, sent, errors }
+  return { devices: devices.length + apps, sent, errors }
 }

@@ -3,12 +3,13 @@
 // site; the draft's captures only from the new thread window.
 import { app, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron'
 import * as capture from './capture.js'
+import * as notifications from './notifications.js'
 import { startProviderSignIn } from './provider-sign-in.js'
 import { onDashboard } from './settings.js'
 import { dashboardFrame, kindOf, setFrameColors, setNarrow, type WindowKind } from './windows.js'
 
 /** The bridge's version: the dashboard checks it before using what came later. */
-export const BRIDGE_VERSION = 1
+export const BRIDGE_VERSION = 2
 
 function from(event: IpcMainEvent | IpcMainInvokeEvent): WindowKind | undefined {
   const frame = event.senderFrame
@@ -82,6 +83,26 @@ export function registerBridge() {
   // macOS: the page has no room for the traffic lights (too narrow for its sidebar).
   ipcMain.on('brigade:narrow', (event, value: unknown) => {
     if (from(event) === 'main') setNarrow(value === true)
+  })
+
+  // Notifications shown by the app itself (notifications.ts), turned on and off in the
+  // dashboard's Settings > Notifications, and off when the person signs out.
+  ipcMain.handle('brigade:notifications:status', (event) => {
+    if (!from(event)) throw new Error('Not allowed.')
+    return { on: !!notifications.device(), supported: notifications.supported() }
+  })
+  ipcMain.handle('brigade:notifications:enable', (event, input: unknown) => {
+    if (!from(event)) throw new Error('Not allowed.')
+    const { api, deviceId, token } = (input ?? {}) as Record<string, unknown>
+    if (typeof api !== 'string' || typeof deviceId !== 'string' || typeof token !== 'string')
+      throw new Error('A device is needed.')
+    if (!deviceId || deviceId.length > 100 || !token || token.length > 200)
+      throw new Error('A device is needed.')
+    notifications.enable({ api, deviceId, token })
+  })
+  ipcMain.handle('brigade:notifications:disable', (event) => {
+    if (!from(event)) throw new Error('Not allowed.')
+    return notifications.disable()
   })
 
   // What needs the member, on the Dock icon (macOS) or the launcher's (Linux).

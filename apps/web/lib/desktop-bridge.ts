@@ -27,6 +27,18 @@ export type DesktopBridge = {
     setNarrow: (narrow: boolean) => void
     setTitleBarColors: (colors: { color: string; symbolColor: string }) => void
   }
+  /** Whether the dashboard window has the keyboard, as the app says (undefined: not yet); older apps leave it out. */
+  focus?: {
+    focused: () => boolean | undefined
+    onChange: (handle: (focused: boolean) => void) => () => void
+  }
+  /** Notifications the app shows itself (apps/desktop/src/notifications.ts); older apps leave it out. */
+  notifications?: {
+    status: () => Promise<{ on: boolean; supported: boolean }>
+    enable: (device: { api: string; deviceId: string; token: string }) => Promise<void>
+    /** The device it fetched for, which the API then forgets, if it was on. */
+    disable: () => Promise<string | undefined>
+  }
   /** A provider's sign-in, done in the browser: its result comes back to the app. */
   providerSignIn: {
     /** A one-time value for the sign-in's return page, which only this app redeems. */

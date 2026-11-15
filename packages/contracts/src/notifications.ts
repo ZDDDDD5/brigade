@@ -37,3 +37,12 @@ export type PushMessage = {
   /** Tags of notifications to close: what they were about no longer waits. */
   close: string[]
 }
+
+/** Brigade.app on this computer turns its notifications on (apps/desktop/src/notifications.ts). */
+export const DesktopDeviceInput = z.object({ platform: z.enum(['darwin', 'win32', 'linux']) })
+
+/** The app's device, and the token it fetches its notifications with: given once. */
+export type DesktopDeviceCreated = { id: string; token: string }
+
+/** What Brigade.app's fetch takes: the pushes queued for it since, oldest first. */
+export type DesktopMessages = { messages: PushMessage[] }

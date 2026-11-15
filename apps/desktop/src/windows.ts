@@ -400,7 +400,15 @@ export function showDashboard(url = dashboard()) {
   // A Dock icon while the dashboard is open; the menu bar alone otherwise, as before.
   if (process.platform === 'darwin') void app.dock?.show()
   window.once('ready-to-show', () => bringUp(window, contents))
-  window.on('focus', () => contents.focus())
+  // Whether the person is looking: the dashboard's notifications wait meanwhile
+  // (apps/web/lib/use-live.ts). The window's, not its page's guess.
+  const focusChanged = () => contents.send('brigade:window-focus', window.isFocused())
+  window.on('focus', () => {
+    contents.focus()
+    focusChanged()
+  })
+  window.on('blur', focusChanged)
+  contents.on('dom-ready', focusChanged)
   // The page decides first: it keeps the window open while it has unsaved edits.
   window.on('close', (event) => {
     if (ctx.quitting || contents.isDestroyed()) return saveBounds(window)

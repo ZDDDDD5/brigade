@@ -2,14 +2,17 @@
 // Notifications: the panel in Settings > Notifications (NotificationsPanel), where they
 // turn them on for this device and pick a preset, and what the dashboard does for
 // them while open (useAppNotifications). The API decides what to send and when
-// (apps/api/src/notifications.ts); public/sw.js shows it.
-import type { NotificationSettings, NotifyPreset } from '@brigade/contracts'
+// (apps/api/src/notifications.ts); public/sw.js shows it, and in Brigade.app, which
+// has no push service, the app itself (apps/desktop/src/notifications.ts).
+import type { DesktopDeviceCreated, NotificationSettings, NotifyPreset } from '@brigade/contracts'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { api, useApi } from '@/lib/api'
-import { inDesktopApp, setDesktopBadge } from '@/lib/brigade-app'
+import { desktopPlatform, inDesktopApp, setDesktopBadge } from '@/lib/brigade-app'
+import { API_URL } from '@/lib/config'
+import { desktopBridge } from '@/lib/desktop-bridge'
 
 const PRESETS: { value: NotifyPreset; label: string; detail: string }[] = [
   {
@@ -29,7 +32,7 @@ const PRESETS: { value: NotifyPreset; label: string; detail: string }[] = [
   },
 ]
 
-// Brigade.app's windows (Electron) have no push service: notifications come to the browser.
+// Brigade.app's windows (Electron) have no push service: the app shows them itself (below).
 const supported = () =>
   typeof window !== 'undefined' &&
   !inDesktopApp() &&
@@ -96,7 +99,15 @@ export function useAppNotifications(needsYou: number) {
 
 type DeviceState = 'unsupported' | 'app' | 'install' | 'blocked' | 'off' | 'on'
 
+/** Brigade.app's own notifications, in an app recent enough to show them. */
+const appNotifications = () => (inDesktopApp() ? desktopBridge()?.notifications : undefined)
+
 async function deviceState(): Promise<DeviceState> {
+  const app = appNotifications()
+  if (app) {
+    const { on, supported } = await app.status()
+    return !supported ? 'unsupported' : on ? 'on' : 'off'
+  }
   if (!supported()) return inDesktopApp() ? 'app' : iosInBrowser() ? 'install' : 'unsupported'
   if (Notification.permission === 'denied') return 'blocked'
   const reg = await navigator.serviceWorker.getRegistration()
@@ -118,10 +129,21 @@ export function NotificationsPanel() {
   const publicKey = settings.data?.publicKey
 
   async function turnOn() {
-    if (!publicKey) return
+    const app = appNotifications()
+    if (!publicKey && !app) return
     setBusy(true)
     setNote(undefined)
     try {
+      if (app) {
+        // A device of the app's own, whose token it fetches its notifications with.
+        const platform = desktopPlatform()
+        const created = await api<DesktopDeviceCreated>('/notifications/desktop-devices', {
+          body: { platform },
+        })
+        await app.enable({ api: API_URL, deviceId: created.id, token: created.token })
+        return
+      }
+      if (!publicKey) return
       // Asked in the tap itself: Safari allows it only there.
       const permission = await Notification.requestPermission()
       if (permission !== 'granted') return
@@ -145,6 +167,12 @@ export function NotificationsPanel() {
   async function turnOff() {
     setBusy(true)
     try {
+      const app = appNotifications()
+      if (app) {
+        const id = await app.disable()
+        if (id) await api('/notifications/desktop-devices/remove', { body: { id } }).catch(() => {})
+        return
+      }
       const reg = await navigator.serviceWorker.getRegistration()
       const subscription = await reg?.pushManager.getSubscription()
       if (subscription) {
@@ -201,7 +229,8 @@ export function NotificationsPanel() {
             )}
             {device === 'app' && (
               <p className="text-muted-foreground text-sm">
-                Brigade.app doesn’t show notifications yet: turn them on in your browser.
+                This version of Brigade.app can’t show notifications: update it (Check for Updates…
+                in its menu), or turn them on in your browser.
               </p>
             )}
             {device === 'unsupported' && (

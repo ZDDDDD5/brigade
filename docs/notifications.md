@@ -1,8 +1,8 @@
 # Notifications
 
 Web push to the dashboard, installed as an app (Add to Home Screen on iPhone,
-Install in Chrome or Edge) or open in a browser. No email or other channel for
-now. The rule: **a push means something waits on you.** Everything else stays
+Install in Chrome or Edge) or open in a browser, and Brigade.app's own (below). No
+email or other channel for now. The rule: **a push means something waits on you.** Everything else stays
 in the dashboard.
 
 ## Decisions
@@ -71,7 +71,33 @@ in the dashboard.
   thread on click. `apps/web/app/manifest.ts` and the icons make the dashboard
   installable.
 - Presence: each dashboard socket says when it is in view (`presence`), so the
-  API knows who is looking (`isLooking` in `hub.ts`).
+  API knows who is looking (`isLooking` in `hub.ts`). In Brigade.app's dashboard
+  window, "in view" is the window having the keyboard, as the app tells the page
+  (`brigadeDesktop.focus`), not the page's own `document.hasFocus()`.
+
+## Brigade.app
+
+Electron has no push service, so web push can't reach Brigade.app's windows. The
+app shows notifications itself, from the menu bar, its windows open or not:
+
+- Settings, Notifications, This device, **Turn on** in the app registers a
+  `DesktopDevice` (`POST /api/notifications/desktop-devices`), whose token,
+  given once, the app keeps (encrypted with the system keychain where there is
+  one, `apps/desktop/src/notifications.ts`).
+- The sweep treats a running app (one that fetched in the last 2 minutes) as a
+  device: what it would push is queued for it as a `DesktopMessage`, by the same
+  rules and limits as web push. No VAPID keys needed.
+- The app fetches every 20 seconds (`GET /api/desktop-notifications`, its token
+  alone, no session), which takes what is queued and says it runs. Each push is a
+  system notification (Notification Center on macOS), one per thread by its tag;
+  a click opens the thread in the dashboard window; `close` and `badge` work as in
+  `sw.js`. Queued pushes older than 15 minutes are dropped, and apps that haven't
+  fetched for 30 days are removed.
+- Turn off, or signing out in the app, deletes the device (`DELETE
+/api/desktop-notifications` with its token). An app the API no longer knows
+  (401) forgets its token.
+- macOS asks once whether Brigade may show notifications: turning them on shows
+  one at once, so it asks then.
 
 ## Setup
 

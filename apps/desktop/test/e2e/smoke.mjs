@@ -27,7 +27,22 @@ const page = (
   title,
 ) => `<!doctype html><title>${title}</title><a id="out" href="https://example.com/">out</a>
 <script>window.seen = { bridge: !!window.brigadeDesktop, info: window.brigadeDesktop?.info ?? null }</script>`
+// Its API, for Brigade.app's own notifications: what the app fetched and removed, with which token.
+const apiCalls = []
 const server = createServer((req, res) => {
+  if (req.url.startsWith('/api/desktop-notifications')) {
+    apiCalls.push({ method: req.method, auth: req.headers.authorization })
+    res.setHeader('content-type', 'application/json')
+    if (req.method === 'DELETE') return res.writeHead(204).end()
+    const message = {
+      title: 'Sam has a question',
+      body: 'Ship it?',
+      url: '/app/threads/t1',
+      tag: 't1',
+      badge: 1,
+    }
+    return res.end(JSON.stringify({ messages: [message] }))
+  }
   res.setHeader('content-type', 'text/html')
   res.end(page(req.url))
 })
@@ -197,6 +212,44 @@ try {
   await main.waitForTimeout(500)
   const results = await main.evaluate(() => window.results)
   check('provider sign-in comes back', () => assert.deepEqual(results, [{ connected: 'conn_1' }]))
+
+  // Whether the person looks at it, as the window says (notifications wait meanwhile).
+  const focus = await main.evaluate(() => typeof window.brigadeDesktop.focus.focused())
+  check('window focus told to the page', () => assert.equal(focus, 'boolean'))
+
+  // Brigade.app's own notifications: turned on from the dashboard with the device the API made,
+  // fetched with its token, shown on the dashboard's site only, and turned off again.
+  const notifications = await main.evaluate(() => window.brigadeDesktop.notifications.status())
+  check('notifications off at first', () => assert.equal(notifications.on, false))
+  await main.evaluate(
+    (api) =>
+      window.brigadeDesktop.notifications.enable({ api, deviceId: 'device_1', token: 'token_1' }),
+    origin,
+  )
+  await waitFor(async () => apiCalls.some((c) => c.method === 'GET' && c.auth === 'Bearer token_1'))
+  const on = await main.evaluate(() => window.brigadeDesktop.notifications.status())
+  check('notifications fetched with the device token', () => assert.equal(on.on, true))
+  const targets = await app.evaluate(() => [
+    globalThis.brigadeTest.notifications.target('/app/threads/t1?workspace=w1'),
+    globalThis.brigadeTest.notifications.target('https://elsewhere.example/app'),
+  ])
+  check('a notification opens the dashboard only', () =>
+    assert.deepEqual(targets, [`${origin}/app/threads/t1?workspace=w1`, `${origin}/app`]),
+  )
+  const refusedApi = await main.evaluate(() =>
+    window.brigadeDesktop.notifications
+      .enable({ api: 'http://example.com', deviceId: 'd', token: 't' })
+      .then(
+        () => 'enabled',
+        () => 'refused',
+      ),
+  )
+  check('notifications from an API over http refused', () => assert.equal(refusedApi, 'refused'))
+  const removed = await main.evaluate(() => window.brigadeDesktop.notifications.disable())
+  check('notifications turned off', () => {
+    assert.equal(removed, 'device_1')
+    assert.ok(apiCalls.some((c) => c.method === 'DELETE' && c.auth === 'Bearer token_1'))
+  })
 
   // Another site loaded in a window by the app itself still gets no bridge.
   // The dashboard is a view in its window (windows.ts): found among all pages.
