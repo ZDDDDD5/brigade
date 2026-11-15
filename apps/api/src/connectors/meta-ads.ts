@@ -255,7 +255,7 @@ export const metricsOf = (m: Row = {}) => ({
 })
 const insightsOf = (row: Row) => metricsOf(row.insights?.data?.[0])
 
-const statusFilter = (activeOnly: boolean) =>
+const statusFilter = (activeOnly: boolean): Record<string, string> =>
   activeOnly ? { effective_status: JSON.stringify(['ACTIVE']) } : {}
 
 export const metaAds: ConnectorDefinition = {

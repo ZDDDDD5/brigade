@@ -230,6 +230,7 @@ export const ConnectorKind = {
   dataforseo: 'dataforseo',
   ahrefs: 'ahrefs',
   revenuecat: 'revenuecat',
+  meta_ads: 'meta_ads',
   expo: 'expo',
   vercel: 'vercel',
   mcp: 'mcp',
