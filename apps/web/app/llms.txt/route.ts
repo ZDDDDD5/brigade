@@ -2,6 +2,7 @@
 // and assistants that read it, with links to the pages that say more. Built with the site.
 // Every claim here must hold in the code and docs, like the landing page's.
 import { COMPARISONS } from '@/lib/compare'
+import { GUIDES } from '@/lib/guides'
 import { DOCS_GROUPS, DOCS_URL } from '@/lib/docs-pages'
 import { REPO_URL } from '@/lib/github-proof'
 import { SITE_URL } from '@/lib/page-metadata'
@@ -80,6 +81,10 @@ Founders and small teams who build with Claude Code or Codex and also run suppor
 ## Comparisons
 
 ${COMPARISONS.map((x) => `- [Brigade vs ${x.name}](${SITE_URL}/compare/${x.slug}): ${x.oneLiner}`).join('\n')}
+
+## Guides
+
+${GUIDES.map((g) => `- [${g.title}](${SITE_URL}/guides/${g.slug}): ${g.description}`).join('\n')}
 
 ## Docs
 

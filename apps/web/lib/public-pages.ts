@@ -10,6 +10,7 @@ export const PUBLIC_PAGES = [
   '/legal',
   '/changelog',
   '/compare',
+  '/guides',
 ] as const
 
 const pages = new Set<string>(PUBLIC_PAGES)
@@ -18,8 +19,12 @@ const pages = new Set<string>(PUBLIC_PAGES)
 const RELEASE_PAGE = /^\/changelog\/\d{4}-\d{2}-\d{2}$/
 // A comparison's page, /compare/<slug> (lib/compare.ts).
 const COMPARE_PAGE = /^\/compare\/[a-z0-9-]+$/
+// A guide's page, /guides/<slug> (lib/guides).
+const GUIDE_PAGE = /^\/guides\/[a-z0-9-]+$/
 
 export const isPublicPage = (pathname: string) => {
   const path = pathname.replace(/\/+$/, '') || '/'
-  return pages.has(path) || RELEASE_PAGE.test(path) || COMPARE_PAGE.test(path)
+  return (
+    pages.has(path) || RELEASE_PAGE.test(path) || COMPARE_PAGE.test(path) || GUIDE_PAGE.test(path)
+  )
 }
