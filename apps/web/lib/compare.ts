@@ -189,6 +189,85 @@ export const COMPARISONS: Comparison[] = [
     ],
   },
   {
+    slug: 'perplexity-teammates',
+    name: 'Perplexity Teammates',
+    logos: [{ src: '/compare/perplexity-teammates.png' }],
+    checked: 'November 15, 2026',
+    oneLiner:
+      'Perplexity’s AI agents for ongoing work, sold only with Perplexity Max at $200 a month, versus an open-source team that runs Claude Code and Codex on the Claude or ChatGPT plan you already pay for.',
+    about:
+      'Perplexity Teammates are agents that take on ongoing work (growth campaigns, bug triage, metrics, market research, support) inside Perplexity Computer. Each one runs in its own cloud environment that keeps working when your computer is closed, keeps its project’s goals, history and files between runs, connects to tools such as Slack, GitHub and Gmail, hands work to other teammates, and sends progress updates and approval requests. They launched on the web on November 4, 2026, reached the Mac app on November 13, and are available only to Perplexity Max subscribers.',
+    answer:
+      'Perplexity Teammates and Brigade share an idea: AI teammates that own ongoing work, on a computer of their own, and come back to you for approval. The differences are who pays for the AI and what you can see. Teammates come only with Perplexity Max, at $200 a month per person, on Perplexity’s models and infrastructure. Brigade runs the official Claude Code and Codex, signed in with your own accounts, so the Claude or ChatGPT plan you already pay for does the work; it is open source, free on your own computer, and your whole team works in the same threads.',
+    rows: [
+      row(
+        'What it is',
+        BRIGADE.what,
+        'Agents for ongoing work inside Perplexity Computer, each in its own cloud environment.',
+      ),
+      row(
+        'Who pays for AI',
+        BRIGADE.bill,
+        'Included in Perplexity Max; it doesn’t run on a Claude or ChatGPT plan you already have.',
+        'no',
+      ),
+      row(
+        'Price',
+        BRIGADE.price,
+        'Perplexity Max, $200 a month per person; not on Free or Pro.',
+        'no',
+      ),
+      row(
+        'Code',
+        'Each teammate is Claude Code or Codex: it writes, tests and ships code, with pull requests and previews.',
+        'GitHub access limited to the repositories you choose; one teammate can pass bugs to another that prepares fixes.',
+        'partly',
+      ),
+      row(
+        'How you stay in control',
+        BRIGADE.control,
+        'Progress updates and approval requests; you can take over a teammate’s desktop or redirect it.',
+        'partly',
+      ),
+      row(
+        'Where you talk to it',
+        'Brigade’s own app (web, or installed on your phone with push notifications), and with Cloud an email address per teammate.',
+        'Perplexity on the web and the Mac app, and Slack channels you add it to; iOS coming.',
+      ),
+      row(
+        'Your team',
+        'Invite your team: threads, lists, the library and memory are shared.',
+        'A Max subscription is per person; colleagues can assign work through a shared Slack channel.',
+        'partly',
+      ),
+      row('Open source', BRIGADE.open, 'No.', 'no'),
+    ],
+    pickThem: [
+      'You already pay for Perplexity Max and live in Perplexity for research.',
+      'You want your agents inside Slack channels with your colleagues.',
+    ],
+    pickBrigade: [
+      'You already pay for Claude or ChatGPT and don’t want a $200 second AI subscription.',
+      'You want Claude and GPT side by side, with the model you choose for each teammate.',
+      'You want teammates that write, test and ship your code, with previews to try it.',
+      'You want your whole team in the same threads, and the code to read or host yourself.',
+    ],
+    sources: [
+      {
+        label: 'Perplexity: Teammates',
+        url: 'https://www.perplexity.ai/hub/products/teammates',
+      },
+      {
+        label: 'iClarified: Perplexity launches Teammates AI agents for ongoing projects',
+        url: 'https://www.iclarified.com/103518/perplexity-launches-teammates-ai-agents-for-ongoing-projects',
+      },
+      {
+        label: 'Digital Trends: Perplexity Teammates come to the Mac app',
+        url: 'https://www.digitaltrends.com/computing/perplexity-teammates-bring-autonomous-ai-agents-to-the-mac-app/',
+      },
+    ],
+  },
+  {
     slug: 'rakazo',
     name: 'Rakazo',
     logos: [{ src: '/compare/rakazo.png' }],
