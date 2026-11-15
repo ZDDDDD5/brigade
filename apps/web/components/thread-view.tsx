@@ -4073,10 +4073,10 @@ export function QuestionCard({
           </div>
         )
       })}
-      {answer ? (
-        answer.action === 'declined' && answer.note && <SentInstead note={answer.note} />
-      ) : canAnswer ? (
-        <div className="flex flex-col gap-2">
+      {answer?.action === 'declined' && answer.note && <SentInstead note={answer.note} />}
+      {item.answer ? null : canAnswer ? (
+        // Hidden, not gone, while the answer goes: a note written in it comes back if it fails.
+        <div hidden={!!sending} className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <Button
               size="sm"
@@ -4325,8 +4325,9 @@ export function TicketCard({
         </p>
       )}
       {answer?.action === 'declined' && answer.note && <SentInstead note={answer.note} />}
-      {!done && canAnswer && !elseInline && (
-        <div className="mt-3 flex flex-col">
+      {!item.answer && canAnswer && !elseInline && (
+        // Hidden, not gone, while the answer goes: a note written in it comes back if it fails.
+        <div hidden={!!sending} className="mt-3 flex flex-col">
           <SomethingElse disabled={done} onSend={somethingElse} />
         </div>
       )}
@@ -4483,49 +4484,173 @@ function AskView({
         </CopyableCode>
       ) : null}
 
-      {disabled ? null : ask.type === 'approval' ? (
-        open ? (
+      {/* Hidden, not gone, while an answer goes: what was written in it comes back if it fails. */}
+      <div hidden={disabled} className="contents">
+        {ask.type === 'approval' ? (
+          open ? (
+            <div className="flex flex-col gap-2">
+              <Textarea
+                rows={3}
+                autoFocus
+                placeholder="What should change?"
+                aria-label="What should change"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">Send back to</span>
+                <Select value={sendTo || askerId || ''} onValueChange={setSendTo}>
+                  <SelectTrigger size="sm" aria-label="Send back to">
+                    <SelectValue placeholder={askerName} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(teammates.length
+                      ? teammates
+                      : askerId
+                        ? [{ id: askerId, name: askerName }]
+                        : []
+                    ).map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  disabled={!text.trim()}
+                  onClick={() =>
+                    onReply({
+                      type: 'approval',
+                      approved: false,
+                      changes: text.trim(),
+                      ...(sendTo && sendTo !== askerId ? { sendTo } : {}),
+                    })
+                  }
+                >
+                  Send
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => onReply({ type: 'approval', approved: true })}>
+                Approve
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+                Request changes
+              </Button>
+            </div>
+          )
+        ) : ask.type === 'decision' ? (
+          <div className="flex flex-wrap gap-2">
+            {ask.options?.length ? (
+              ask.options.map((o) => (
+                <Button
+                  key={o.id}
+                  size="sm"
+                  variant="outline"
+                  tooltip={o.description}
+                  onClick={() => onReply({ type: 'decision', optionId: o.id })}
+                >
+                  {o.label}
+                </Button>
+              ))
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => onReply({ type: 'decision', optionId: 'approve' })}
+                >
+                  Approve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onReply({ type: 'decision', optionId: 'decline' })}
+                >
+                  Decline
+                </Button>
+              </>
+            )}
+          </div>
+        ) : ask.type === 'variables' ? (
+          <VariablesAsk ask={ask} askerName={askerName} onReply={onReply} />
+        ) : ask.type === 'access' && ask.app ? (
+          <AppAccessAsk ask={{ ...ask, app: ask.app }} askerName={askerName} onReply={onReply} />
+        ) : ask.type === 'access' && ask.kind === 'credential' ? (
+          <CredentialAccess
+            ask={ask}
+            askerName={askerName}
+            onReply={onReply}
+            onSomethingElse={onSomethingElse}
+          />
+        ) : ask.type === 'access' ? (
+          // A connection asked for in words: given by hand on the Apps page.
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => onReply({ type: 'access', granted: true })}>
+              I&apos;ve given access
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <a href="/app/connections" target="_blank" rel="noreferrer">
+                Open Apps →
+              </a>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onReply({ type: 'access', granted: false })}
+            >
+              Decline
+            </Button>
+          </div>
+        ) : ask.type === 'action' && ask.browser && takeover ? (
+          <BrowserAction askerName={askerName} takeover={takeover} onReply={onReply} />
+        ) : ask.type === 'action' ? (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => onReply({ type: 'action', done: true })}>
+              Done
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onReply({ type: 'action', done: false })}
+            >
+              Can&apos;t do it
+            </Button>
+          </div>
+        ) : ask.secret ? (
+          <div className="flex flex-col gap-2">
+            <CredentialPicker value={text} onChange={setText} disabled={false} />
+            <Button
+              size="sm"
+              className="self-start"
+              disabled={!text}
+              onClick={() => onReply({ type: 'input', text })}
+            >
+              Submit
+            </Button>
+          </div>
+        ) : open ? (
           <div className="flex flex-col gap-2">
             <Textarea
               rows={3}
               autoFocus
-              placeholder="What should change?"
-              aria-label="What should change"
+              placeholder="Your answer"
+              aria-label="Your answer"
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-muted-foreground">Send back to</span>
-              <Select value={sendTo || askerId || ''} onValueChange={setSendTo}>
-                <SelectTrigger size="sm" aria-label="Send back to">
-                  <SelectValue placeholder={askerName} />
-                </SelectTrigger>
-                <SelectContent>
-                  {(teammates.length
-                    ? teammates
-                    : askerId
-                      ? [{ id: askerId, name: askerName }]
-                      : []
-                  ).map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex gap-2">
               <Button
                 size="sm"
                 disabled={!text.trim()}
-                onClick={() =>
-                  onReply({
-                    type: 'approval',
-                    approved: false,
-                    changes: text.trim(),
-                    ...(sendTo && sendTo !== askerId ? { sendTo } : {}),
-                  })
-                }
+                onClick={() => onReply({ type: 'input', text: text.trim() })}
               >
-                Send
+                Submit
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
                 Cancel
@@ -4533,129 +4658,11 @@ function AskView({
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => onReply({ type: 'approval', approved: true })}>
-              Approve
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-              Request changes
-            </Button>
-          </div>
-        )
-      ) : ask.type === 'decision' ? (
-        <div className="flex flex-wrap gap-2">
-          {ask.options?.length ? (
-            ask.options.map((o) => (
-              <Button
-                key={o.id}
-                size="sm"
-                variant="outline"
-                tooltip={o.description}
-                onClick={() => onReply({ type: 'decision', optionId: o.id })}
-              >
-                {o.label}
-              </Button>
-            ))
-          ) : (
-            <>
-              <Button size="sm" onClick={() => onReply({ type: 'decision', optionId: 'approve' })}>
-                Approve
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onReply({ type: 'decision', optionId: 'decline' })}
-              >
-                Decline
-              </Button>
-            </>
-          )}
-        </div>
-      ) : ask.type === 'variables' ? (
-        <VariablesAsk ask={ask} askerName={askerName} onReply={onReply} />
-      ) : ask.type === 'access' && ask.app ? (
-        <AppAccessAsk ask={{ ...ask, app: ask.app }} askerName={askerName} onReply={onReply} />
-      ) : ask.type === 'access' && ask.kind === 'credential' ? (
-        <CredentialAccess
-          ask={ask}
-          askerName={askerName}
-          onReply={onReply}
-          onSomethingElse={onSomethingElse}
-        />
-      ) : ask.type === 'access' ? (
-        // A connection asked for in words: given by hand on the Apps page.
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => onReply({ type: 'access', granted: true })}>
-            I&apos;ve given access
+          <Button size="sm" className="self-start" onClick={() => setOpen(true)}>
+            Provide details
           </Button>
-          <Button asChild size="sm" variant="outline">
-            <a href="/app/connections" target="_blank" rel="noreferrer">
-              Open Apps →
-            </a>
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onReply({ type: 'access', granted: false })}
-          >
-            Decline
-          </Button>
-        </div>
-      ) : ask.type === 'action' && ask.browser && takeover ? (
-        <BrowserAction askerName={askerName} takeover={takeover} onReply={onReply} />
-      ) : ask.type === 'action' ? (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => onReply({ type: 'action', done: true })}>
-            Done
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onReply({ type: 'action', done: false })}
-          >
-            Can&apos;t do it
-          </Button>
-        </div>
-      ) : ask.secret ? (
-        <div className="flex flex-col gap-2">
-          <CredentialPicker value={text} onChange={setText} disabled={false} />
-          <Button
-            size="sm"
-            className="self-start"
-            disabled={!text}
-            onClick={() => onReply({ type: 'input', text })}
-          >
-            Submit
-          </Button>
-        </div>
-      ) : open ? (
-        <div className="flex flex-col gap-2">
-          <Textarea
-            rows={3}
-            autoFocus
-            placeholder="Your answer"
-            aria-label="Your answer"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              disabled={!text.trim()}
-              onClick={() => onReply({ type: 'input', text: text.trim() })}
-            >
-              Submit
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <Button size="sm" className="self-start" onClick={() => setOpen(true)}>
-          Provide details
-        </Button>
-      )}
+        )}
+      </div>
     </>
   )
 }

@@ -454,69 +454,75 @@ export function NeedsYou({
   )
   const current = items[index]
 
-  /** The one shown was answered: say so, and remember which comes next. */
-  function showSent(label: string) {
-    if (!current) return
+  /** One was answered: say so, and remember which comes next. */
+  function showSent(item: Waiting, label: string) {
+    const at = items.findIndex((i) => i.key === item.key)
     setSent({
-      key: current.key,
+      key: item.key,
       label,
       // A playbook's approvals by its name, not how many were left.
-      title: current?.queue?.name ?? current?.title ?? '',
+      title: item.queue?.name ?? item.title,
       thread:
-        current?.ticket?.session?.id ??
-        current?.pull?.session?.id ??
-        current?.choice?.id ??
-        current?.failed?.id ??
-        current?.routine?.runId ??
+        item.ticket?.session?.id ??
+        item.pull?.session?.id ??
+        item.choice?.id ??
+        item.failed?.id ??
+        item.routine?.runId ??
         undefined,
-      next: (items[index + 1] ?? items[index - 1])?.key,
+      next: at < 0 ? items[0]?.key : (items[at + 1] ?? items[at - 1])?.key,
     })
   }
 
   /** Answered elsewhere (a playbook's last approval): say so, then ask for the list again. */
-  async function done(label: string) {
-    showSent(label)
+  async function done(item: Waiting, label: string) {
+    showSent(item, label)
     await onChange()
   }
 
-  const answer: Answer = async (label, request) => {
-    const key = current?.key
-    if (!key) return
-    const drop = () =>
-      setAnswering((a) => {
-        const next = new Set(a)
-        next.delete(key)
-        return next
-      })
-    showSent(label)
-    setError(undefined)
-    setAnswering((a) => new Set(a).add(key))
-    try {
-      await request()
-    } catch (e) {
-      // Back to it, as it was, with why: whatever was shown since.
-      drop()
-      setSent((s) => (s?.key === key ? undefined : s))
-      setCurrentKey(key)
-      setError(e instanceof Error ? e.message : String(e))
-      throw e
+  /**
+   * Answers this one: said at once, while its card stays mounted out of sight (what was written
+   * in it is kept), until the list is reloaded; one that did not go brings the card back.
+   */
+  const answerFor =
+    (item: Waiting): Answer =>
+    async (label, request) => {
+      const key = item.key
+      const drop = () =>
+        setAnswering((a) => {
+          const next = new Set(a)
+          next.delete(key)
+          return next
+        })
+      showSent(item, label)
+      setError(undefined)
+      setAnswering((a) => new Set(a).add(key))
+      try {
+        await request()
+      } catch (e) {
+        // Back to it, as it was, with why: whatever was shown since.
+        drop()
+        setSent((s) => (s?.key === key ? undefined : s))
+        setCurrentKey(key)
+        setError(e instanceof Error ? e.message : String(e))
+        throw e
+      }
+      try {
+        await onChange()
+      } finally {
+        drop()
+      }
     }
-    try {
-      await onChange()
-    } finally {
-      drop()
-    }
-  }
 
-  function resolve(id: string, approved: boolean, always?: boolean, edited?: EditedEmail) {
-    const t = tickets.find((x) => x.id === id)
-    // In the words of the button that was clicked.
-    return answer(t ? resolvedLabel(t, approved) : approved ? 'Allowed' : 'Denied', () =>
-      api(`/tickets/${id}/resolve`, {
-        body: { approved, ...(always ? { always } : {}), ...(edited ? { edited } : {}) },
-      }),
-    )
-  }
+  const resolveFor =
+    (item: Waiting) => (id: string, approved: boolean, always?: boolean, edited?: EditedEmail) => {
+      const t = tickets.find((x) => x.id === id)
+      // In the words of the button that was clicked.
+      return answerFor(item)(t ? resolvedLabel(t, approved) : approved ? 'Allowed' : 'Denied', () =>
+        api(`/tickets/${id}/resolve`, {
+          body: { approved, ...(always ? { always } : {}), ...(edited ? { edited } : {}) },
+        }),
+      )
+    }
 
   function go(key: string | undefined) {
     setSent(undefined)
@@ -529,12 +535,108 @@ export function NeedsYou({
 
   // The last one decided: one calm line, no yellow. The line under Home's greeting
   // already says nothing else is waiting.
-  if (sent && items.length === 0)
+  if (sent && items.length === 0 && answering.size === 0)
     return (
       <div role="status" className="flex rounded-2xl border px-4 py-3 sm:px-5">
         <SentLine sent={sent} />
       </div>
     )
+
+  /** The card that decides one, the same as in its thread. */
+  function cardFor(item: Waiting) {
+    return item.pull ? (
+      <div className="flex flex-col gap-1.5">
+        <From
+          teammate={item.pull.authorTeammate}
+          thread={item.pull.session}
+          note={pullWaits(item.pull)}
+        />
+        <PullCard
+          key={item.key}
+          repository={item.pull.repository}
+          number={item.pull.number}
+          title={item.pull.title}
+          open
+        />
+      </div>
+    ) : item.queue ? (
+      <div className="flex flex-col gap-1.5">
+        <From
+          teammate={item.queue.teammate}
+          note={`${item.queue.name} · ${toApprove(item.queue.count)}`}
+        />
+        <PlaybookApprovals
+          key={item.key}
+          installationId={item.queue.id}
+          onDecided={onChange}
+          onEmptied={(label) => done(item, label)}
+        />
+      </div>
+    ) : item.choice ? (
+      <ChoiceToMake key={item.key} choice={item.choice} onAnswer={answerFor(item)} />
+    ) : item.failed ? (
+      <div className="flex flex-col gap-1.5">
+        <From teammate={item.failed.teammate} thread={item.failed} note="failed" />
+        <FailureCard
+          key={item.key}
+          error={item.failed.error}
+          href={`/app/threads/${item.failed.id}`}
+          again={
+            // Never ran (its computer was offline): no turn to try again, a message starts it.
+            item.failed.error
+              ? {
+                  label: 'Try again',
+                  path: `/threads/${item.failed.id}/retry`,
+                  done: 'Tried again',
+                }
+              : null
+          }
+          onAnswer={answerFor(item)}
+        />
+      </div>
+    ) : item.routine ? (
+      <div className="flex flex-col gap-1.5">
+        <From
+          note={`Routine ${item.routine.title} · ${
+            item.routine.couldNotStart ? "couldn't start" : 'last run failed'
+          }`}
+        />
+        <FailureCard
+          key={item.key}
+          error={item.routine.error}
+          href={item.routine.runId ? `/app/threads/${item.routine.runId}` : '/app/routines'}
+          again={
+            item.routine.couldNotStart
+              ? {
+                  label: 'Run now',
+                  path: `/schedules/${item.routine.scheduleId}/run`,
+                  done: 'Started',
+                }
+              : item.routine.runId && item.routine.error
+                ? {
+                    label: 'Try again',
+                    path: `/threads/${item.routine.runId}/retry`,
+                    done: 'Tried again',
+                  }
+                : null
+          }
+          onAnswer={answerFor(item)}
+        />
+      </div>
+    ) : item.ticket && answersHere(item.ticket) ? (
+      <HarnessTicket key={item.key} ticket={item.ticket} onAnswer={answerFor(item)} />
+    ) : item.ticket ? (
+      // Approvals, caps and logins keep their row, which has their buttons.
+      <Card key={item.key} className="gap-0 overflow-hidden py-0">
+        <ul>
+          <TicketRow ticket={item.ticket} me={me} onResolve={resolveFor(item)} />
+        </ul>
+      </Card>
+    ) : null
+  }
+  // The one shown, unless what was done to it is; and those answered here, until they settle.
+  const shown = sent ? undefined : current
+  const cards = waiting.filter((i) => i === shown || answering.has(i.key))
 
   const others = sent ? items : items.filter((i) => i.key !== current?.key)
   const listed = others.slice(0, LISTED)
@@ -589,7 +691,7 @@ export function NeedsYou({
       </div>
       {error && <p className="text-sm text-destructive-text">{error}</p>}
 
-      {sent ? (
+      {sent && (
         <Card role="status" className="flex-row items-center gap-3 px-4 py-2.5">
           <SentLine sent={sent} />
           <Button
@@ -601,95 +703,13 @@ export function NeedsYou({
             <ChevronRight aria-hidden />
           </Button>
         </Card>
-      ) : current?.pull ? (
-        <div className="flex flex-col gap-1.5">
-          <From
-            teammate={current.pull.authorTeammate}
-            thread={current.pull.session}
-            note={pullWaits(current.pull)}
-          />
-          <PullCard
-            key={current.key}
-            repository={current.pull.repository}
-            number={current.pull.number}
-            title={current.pull.title}
-            open
-          />
+      )}
+      {/* The card shown, and those answered here whose requests go, mounted out of sight. */}
+      {cards.map((item) => (
+        <div key={item.key} hidden={item !== shown}>
+          {cardFor(item)}
         </div>
-      ) : current?.queue ? (
-        <div className="flex flex-col gap-1.5">
-          <From
-            teammate={current.queue.teammate}
-            note={`${current.queue.name} · ${toApprove(current.queue.count)}`}
-          />
-          <PlaybookApprovals
-            key={current.key}
-            installationId={current.queue.id}
-            onDecided={onChange}
-            onEmptied={done}
-          />
-        </div>
-      ) : current?.choice ? (
-        <ChoiceToMake key={current.key} choice={current.choice} onAnswer={answer} />
-      ) : current?.failed ? (
-        <div className="flex flex-col gap-1.5">
-          <From teammate={current.failed.teammate} thread={current.failed} note="failed" />
-          <FailureCard
-            key={current.key}
-            error={current.failed.error}
-            href={`/app/threads/${current.failed.id}`}
-            again={
-              // Never ran (its computer was offline): no turn to try again, a message starts it.
-              current.failed.error
-                ? {
-                    label: 'Try again',
-                    path: `/threads/${current.failed.id}/retry`,
-                    done: 'Tried again',
-                  }
-                : null
-            }
-            onAnswer={answer}
-          />
-        </div>
-      ) : current?.routine ? (
-        <div className="flex flex-col gap-1.5">
-          <From
-            note={`Routine ${current.routine.title} · ${
-              current.routine.couldNotStart ? "couldn't start" : 'last run failed'
-            }`}
-          />
-          <FailureCard
-            key={current.key}
-            error={current.routine.error}
-            href={current.routine.runId ? `/app/threads/${current.routine.runId}` : '/app/routines'}
-            again={
-              current.routine.couldNotStart
-                ? {
-                    label: 'Run now',
-                    path: `/schedules/${current.routine.scheduleId}/run`,
-                    done: 'Started',
-                  }
-                : current.routine.runId && current.routine.error
-                  ? {
-                      label: 'Try again',
-                      path: `/threads/${current.routine.runId}/retry`,
-                      done: 'Tried again',
-                    }
-                  : null
-            }
-            onAnswer={answer}
-          />
-        </div>
-      ) : current?.ticket && answersHere(current.ticket) ? (
-        <HarnessTicket key={current.key} ticket={current.ticket} onAnswer={answer} />
-      ) : current?.ticket ? (
-        // Approvals, caps and logins keep their row, which has their buttons.
-        <Card key={current.key} className="gap-0 overflow-hidden py-0">
-          <ul>
-            <TicketRow ticket={current.ticket} me={me} onResolve={resolve} />
-          </ul>
-        </Card>
-      ) : null}
+      ))}
 
       {listed.length > 0 && (
         <ul className="flex flex-col">
