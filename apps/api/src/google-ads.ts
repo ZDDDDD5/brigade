@@ -299,13 +299,34 @@ async function statusOf(config: AdsConfig, requestId: string): Promise<Status> {
 }
 
 /**
+ * Sign-ups from a Google ad whose conversion was never written (its write failed after the
+ * attribution was kept, src/analytics.ts recordSignup): written now, at the user's creation,
+ * as recordAdConversion would have. Within Google's 90 days only. How many.
+ */
+export async function recoverSignups(now = new Date()) {
+  const since = new Date(now.getTime() - MAX_AGE_MS)
+  return prisma.$executeRaw`
+    INSERT INTO "AdConversion" ("id", "userId", "kind", "at", "sendAfter")
+    SELECT gen_random_uuid()::text, u."id", 'sign_up', u."createdAt",
+           u."createdAt" + make_interval(secs => ${FIRST_DELAY_MS / 1000}::double precision)
+    FROM "User" u
+    WHERE u."createdAt" > ${since}
+      AND jsonb_typeof(u."attribution" -> 'adClick') = 'object'
+      AND NOT EXISTS (
+        SELECT 1 FROM "AdConversion" c WHERE c."userId" = u."id" AND c."kind" = 'sign_up'
+      )
+    ON CONFLICT ("userId", "kind") DO NOTHING`
+}
+
+/**
  * The `ad-conversions` job. First the requests Google took and has not said the outcome of:
  * confirmed, sent again later for a reason that may pass, or given up. Then the rows due, to
  * Google. A row Google refuses is given up with its error; any other failure stops the run, and
  * what is left waits for the next. Rows past Google's 90 days are given up.
  */
 export async function sendAdConversions(now = new Date(), config = adsConfig()) {
-  const result = { sent: 0, failed: 0, confirmed: 0, retried: 0 }
+  const result = { sent: 0, failed: 0, confirmed: 0, retried: 0, recovered: 0 }
+  result.recovered = await recoverSignups(now)
   if (!config) return result
   const giveUp = async (id: string, error: string) => {
     result.failed++

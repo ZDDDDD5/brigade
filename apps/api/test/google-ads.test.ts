@@ -43,7 +43,6 @@ const skip = (await reachable()) ? false : 'no database to reach (apps/api/.env 
 const ads = await import('../src/google-ads.js')
 const { parseSignupSource, signupProperties } = await import('../src/signup-source.js')
 const { prisma } = await import('../src/db.js')
-const analytics = await import('../src/analytics.js')
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const serviceAccount = JSON.stringify({
@@ -140,6 +139,9 @@ async function makeUser(attribution: object | null) {
       id: `ads-${run}-${userIds.length}`,
       email: `ads-${run}-${userIds.length}@example.com`,
       name: 'Ada',
+      // Signed up long ago: the job's recovery of sign-ups (recoverSignups) leaves them alone,
+      // and only the conversions each test writes are sent.
+      createdAt: new Date(Date.now() - 100 * 24 * 60 * 60_000),
       ...(attribution && { attribution }),
     },
   })
@@ -187,6 +189,8 @@ const failed = (reason: string) => ({
     { requestStatus: 'FAILED', errorInfo: { errorCounts: [{ reason }] } },
   ],
 })
+/** The job's counts but its recovered sign-ups: other tests' users count there too. */
+const withoutRecovered = ({ recovered: _, ...rest }: { recovered: number } & object) => rest
 const state = (userId: string) => prisma.adConversion.findFirstOrThrow({ where: { userId } })
 
 test(
@@ -214,28 +218,6 @@ test(
     assert.equal(rows[0]!.sendAfter.getTime(), at.getTime() + ads.FIRST_DELAY_MS)
   },
 )
-
-test('a sign-up and its conversion are kept together, or neither is', { skip }, async () => {
-  const user = await makeUser(null)
-  const context = {
-    path: '/sign-in/email-otp',
-    body: { signupSource: { gclid: 'g-atomic', lp: '/' } },
-  }
-  // The conversion cannot be written: the sign-up's attribution is not kept either.
-  await prisma.$executeRawUnsafe('ALTER TABLE "AdConversion" RENAME TO "AdConversionAway"')
-  try {
-    await assert.rejects(analytics.recordSignup(user, context))
-  } finally {
-    await prisma.$executeRawUnsafe('ALTER TABLE "AdConversionAway" RENAME TO "AdConversion"')
-  }
-  const before = await prisma.user.findUniqueOrThrow({ where: { id: user.id } })
-  assert.equal(before.attribution, null, 'nothing kept: the next try starts over')
-  // The next try keeps both.
-  await analytics.recordSignup(user, context)
-  const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } })
-  assert.equal((after.attribution as { channel: string }).channel, 'google_ads')
-  assert.equal((await state(user.id)).kind, 'sign_up')
-})
 
 test(
   'the job sends with a signed token, gives up a refused event, keeps the rest for later',
@@ -270,7 +252,7 @@ test(
     const google = stubGoogle([200, 400, 503])
     try {
       const result = await ads.sendAdConversions(now, config)
-      assert.deepEqual(result, { sent: 1, failed: 2, confirmed: 0, retried: 0 })
+      assert.deepEqual(withoutRecovered(result), { sent: 1, failed: 2, confirmed: 0, retried: 0 })
     } finally {
       google.restore()
     }
@@ -317,7 +299,7 @@ test(
     })
     try {
       const result = await ads.sendAdConversions(new Date(now.getTime() + HOUR), config)
-      assert.deepEqual(result, { sent: 2, failed: 0, confirmed: 0, retried: 0 })
+      assert.deepEqual(withoutRecovered(result), { sent: 2, failed: 0, confirmed: 0, retried: 0 })
     } finally {
       again.restore()
     }
@@ -371,7 +353,7 @@ test(
     })
     try {
       const result = await ads.sendAdConversions(later, config)
-      assert.deepEqual(result, { sent: 0, failed: 1, confirmed: 2, retried: 1 })
+      assert.deepEqual(withoutRecovered(result), { sent: 0, failed: 1, confirmed: 2, retried: 1 })
     } finally {
       check.restore()
     }
@@ -402,7 +384,7 @@ test(
     const down = stubGoogle([], { 'req-1': 503 })
     try {
       const result = await ads.sendAdConversions(new Date(later.getTime() + 7 * HOUR), config)
-      assert.deepEqual(result, { sent: 0, failed: 0, confirmed: 0, retried: 0 })
+      assert.deepEqual(withoutRecovered(result), { sent: 0, failed: 0, confirmed: 0, retried: 0 })
     } finally {
       down.restore()
     }

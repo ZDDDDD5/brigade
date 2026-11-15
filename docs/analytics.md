@@ -94,8 +94,10 @@ sign-up, and `parseSignupSource` keeps them on `User.attribution.adClick`, with 
 
 `src/google-ads.ts` then reports two conversions to Google Ads, each once per person: `sign_up`
 and `subscription` (the first one started, with its price). Each is an `AdConversion` row,
-written in the same transaction as what it counts (the attribution in `recordSignup`, the plan
-in `savePlan`, `src/billing.ts`), so neither is kept without the other. The `ad-conversions` job
+written with what it counts: the subscription's in `savePlan`'s transaction (`src/billing.ts`),
+so the plan is not saved without it and Stripe sends the event again; the sign-up's right after
+the attribution in `recordSignup`, and when that write fails (the sign-up still succeeds), the
+job's next run writes it from the attribution, at the user's creation (`recoverSignups`). The `ad-conversions` job
 (every 10 minutes) sends the rows to Google's Data Manager API (`events:ingest`, the way Google
 takes offline conversions from new integrations since June 2026), as the service account
 (`GOOGLE_ADS_SERVICE_ACCOUNT`, scope `datamanager`). Only the click id, the time, the row's id

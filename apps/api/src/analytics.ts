@@ -394,17 +394,17 @@ export async function recordSignup(
   }
   const source = parseSignupSource(raw)
   const method = signupMethod(context?.path)
-  // From a Google ad, the sign-up is Google Ads' conversion too (src/google-ads.ts): kept in the
-  // same transaction as the attribution, so neither is ever kept without the other.
-  const count = await prisma.$transaction(async (tx) => {
-    const { count } = await tx.user.updateMany({
-      where: { id: user.id, attribution: { equals: Prisma.DbNull } },
-      data: { attribution: { ...source, method } },
-    })
-    if (count > 0 && source.adClick)
-      await recordAdConversion(tx, user.id, 'sign_up', { attribution: source })
-    return count
+  const { count } = await prisma.user.updateMany({
+    where: { id: user.id, attribution: { equals: Prisma.DbNull } },
+    data: { attribution: { ...source, method } },
   })
+  // From a Google ad, the sign-up is Google Ads' conversion too (src/google-ads.ts). Should
+  // this write fail, the `ad-conversions` job writes it from the attribution kept above.
+  if (count > 0 && source.adClick)
+    await recordAdConversion(prisma, user.id, 'sign_up', { attribution: source }).catch(
+      (error: unknown) =>
+        console.warn(`sign-up conversion of ${user.id} left to the job: ${String(error)}`),
+    )
   if (count === 0) return
   if (!analyticsOn()) return
   const internal = isInternalEmail(user.email)
