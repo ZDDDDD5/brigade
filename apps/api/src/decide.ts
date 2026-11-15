@@ -583,6 +583,9 @@ export async function resolveTicket(
         throw new HTTPException(403, {
           message: 'Only who may write in the thread, or an admin, can decide',
         })
+      // Deciding takes part in the thread: from then on its teammate works for whoever asks there,
+      // so a member's own Apps no longer answer another's decision (thread-spec.ts askedBy).
+      if (ticket.session) await noteAsker(db, ticket.session.id, scope.memberId)
       await decideMissionAction(db, scope, ticket, input.approved, input.reason)
       return { ok: true, live: false }
     }

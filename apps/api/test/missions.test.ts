@@ -51,6 +51,7 @@ const {
   threadInitiative,
 } = await import('../src/initiatives.js')
 const { firedInARow } = await import('../src/wakeups.js')
+const { resolveTicket } = await import('../src/decide.js')
 
 const id = randomUUID().slice(0, 8)
 const ids = {
@@ -433,4 +434,109 @@ test('without the feature, the tools refuse and the spec has no mission', { skip
     { name: 'list_actions' },
   )
   assert.match((result as { error: string }).error, /not open/)
+})
+
+test(
+  'another member deciding a draft takes part in the thread, through the tickets route',
+  { skip },
+  async () => {
+    // Bob, an admin: his decision makes the thread one several people ask in, so Ada's own Apps no
+    // longer answer what he decided (thread-spec.ts askedBy).
+    const bob = { user: `user-missions-bob-${id}`, member: `mem-missions-bob-${id}` }
+    await prisma.user.create({
+      data: { id: bob.user, name: 'Bob', email: `${bob.user}@example.com` },
+    })
+    await prisma.member.create({
+      data: { id: bob.member, organizationId: ids.organization, userId: bob.user, role: 'admin' },
+    })
+    try {
+      const home = await thread({ initiativeId: missionId, askedByMemberId: ids.member })
+      const planned = (await call(home.id, {
+        name: 'plan_action',
+        at: inMinutes(120),
+        title: 'Post: asked',
+        instructions: 'Publish',
+        draft: 'Asked.',
+      })) as { actionId: string }
+      const action = await prisma.initiativeAction.findUniqueOrThrow({
+        where: { id: planned.actionId },
+      })
+      await resolveTicket(
+        { ...scope, userId: bob.user, memberId: bob.member, role: 'admin' },
+        action.ticketId!,
+        { approved: true },
+      )
+      assert.equal(
+        (await prisma.initiativeAction.findUniqueOrThrow({ where: { id: action.id } })).status,
+        'planned',
+      )
+      assert.equal(
+        (await prisma.session.findUniqueOrThrow({ where: { id: home.id } })).askedByMemberId,
+        '*',
+      )
+    } finally {
+      await prisma.member.deleteMany({ where: { id: bob.member } })
+      await prisma.user.deleteMany({ where: { id: bob.user } })
+    }
+  },
+)
+
+test(
+  'an action planned by a teammate absent from the mission’s thread goes to that thread’s teammate',
+  { skip },
+  async () => {
+    // Cody works in a sub-thread of Maya's mission thread, where he has no seat.
+    const cody = await prisma.teammate.create({ data: { ...scope, name: 'Cody' } })
+    const child = await prisma.session.create({
+      data: {
+        ...scope,
+        teammateId: cody.id,
+        startedByMemberId: ids.member,
+        computerId,
+        title: 'Cody’s part',
+        status: 'idle',
+        origin: 'child',
+        parentId: mainId,
+        parentTeammateId: maya.id,
+      } as never,
+    })
+    await prisma.threadTeammate.create({
+      data: { ...scope, sessionId: child.id, teammateId: cody.id },
+    })
+    const planned = (await handleInitiativeCall(
+      scoped(scope),
+      scope,
+      { id: child.id, startedByMemberId: ids.member, workspaceId: scope.workspaceId },
+      { id: cody.id, name: 'Cody' },
+      { name: 'plan_action', at: inMinutes(30), title: 'Post: Cody', instructions: 'Publish' },
+    )) as { actionId: string; threadId: string }
+    assert.equal(planned.threadId, mainId)
+    await due(planned.actionId, { dueAt: new Date(Date.now() - 1_000) })
+    await runDueActions(scope.workspaceId)
+    const wakeup = await prisma.wakeup.findFirstOrThrow({
+      where: { sourceId: `action:${planned.actionId}:run` },
+    })
+    assert.equal(wakeup.teammateId, maya.id)
+    assert.notEqual(wakeup.status, 'missed')
+  },
+)
+
+test('Next is what will still happen, not a declined or expired action', { skip }, async () => {
+  const [before] = await listMissions(scoped(scope), member())
+  const declined = (await call(mainId, {
+    name: 'plan_action',
+    at: inMinutes(10),
+    title: 'Post: soonest, declined',
+    instructions: 'Publish',
+    draft: 'No.',
+    approveBy: inMinutes(6),
+  })) as { actionId: string }
+  const action = await prisma.initiativeAction.findUniqueOrThrow({
+    where: { id: declined.actionId },
+  })
+  const ticket = await prisma.ticket.findUniqueOrThrow({ where: { id: action.ticketId! } })
+  await decideMissionAction(scoped(scope), member(), ticket, false)
+  const [after] = await listMissions(scoped(scope), member())
+  assert.notEqual(after?.next?.actionId, declined.actionId)
+  assert.equal(after?.next?.key, before?.next?.key)
 })

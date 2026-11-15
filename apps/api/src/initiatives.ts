@@ -479,7 +479,7 @@ export async function decideMissionAction(
 }
 
 /** A scoped client, or its transaction. */
-type Tx = Pick<ScopedDb, 'wakeup'>
+type Tx = Pick<ScopedDb, 'wakeup' | 'threadTeammate' | 'session'>
 
 /**
  * The wake-up that tells an action's thread about it: its run, or why it does not go. Keyed by
@@ -509,7 +509,7 @@ async function noteAction(
       organizationId: action.organizationId,
       workspaceId: action.workspaceId,
       sessionId: action.sessionId,
-      teammateId: action.teammateId,
+      teammateId: await recipientIn(tx, action.sessionId, action.teammateId),
       note:
         text.note ??
         actionDroppedMessage({
@@ -523,6 +523,25 @@ async function noteAction(
     } as never,
     select: { id: true },
   })
+}
+
+/**
+ * Who an action's note goes to in its thread: the teammate that planned it while it is there, else
+ * the thread's own teammate. Planned from a sub-thread or a run, the action goes to the mission's
+ * thread, where its teammate may not be: a wake-up to someone absent is only marked missed
+ * (wakeups.ts), and the action, already fired, would never run.
+ */
+async function recipientIn(tx: Tx, sessionId: string, teammateId: string) {
+  const seat = await tx.threadTeammate.findFirst({
+    where: { sessionId, teammateId, teammate: { archivedAt: null } },
+    select: { teammateId: true },
+  })
+  if (seat) return seat.teammateId
+  const thread = await tx.session.findFirst({
+    where: { id: sessionId },
+    select: { teammateId: true },
+  })
+  return thread?.teammateId ?? teammateId
 }
 
 /** Workspaces with an action due, or a draft whose deadline passed (src/jobs.ts). */
@@ -1029,7 +1048,14 @@ export async function listMissions(
         pausedAt: iso(r.pausedAt),
       })),
       number: numbers.get(m.id) ?? null,
-      next: agenda.find((i) => i.missionId === m.id && i.kind !== 'approval') ?? null,
+      // What comes next: not an action that will not go (declined, expired) or already went.
+      next:
+        agenda.find(
+          (i) =>
+            i.missionId === m.id &&
+            i.kind !== 'approval' &&
+            (!i.status || i.status === 'planned' || i.status === 'awaiting_approval'),
+        ) ?? null,
       needs: needs.get(m.id) ?? [],
       last: shown[0]
         ? { kind: 'output' as const, output: shown[0] }
