@@ -100,35 +100,45 @@ function shortcutsMenu(): MenuItemConstructorOptions {
 }
 
 /** A shortcut's action, shown with its keys while they are registered. */
-function action(kind: shortcuts.Kind, click: () => void): MenuItemConstructorOptions {
+function action(
+  kind: shortcuts.Kind,
+  click: () => void,
+  label = shortcuts.actionLabel(kind),
+): MenuItemConstructorOptions {
   const keys = capture.registered[kind]
   return {
-    label: shortcuts.actionLabel(kind),
+    label,
     click,
     ...(keys && { accelerator: shortcuts.accelerator(keys), registerAccelerator: false }),
   }
 }
 
-function trayMenu() {
+/**
+ * What both menus show: the menu-bar menu (the tray) and, on macOS, the app menu while a
+ * Brigade window is in front. Built from the same state each time, so they never disagree.
+ * The tray writes its labels in sentence case, the app menu in macOS's title case.
+ */
+function items() {
   const runs = runnerSupported()
-  const update = updates.menuItem()
   const settings = loadSettings()
-  const template: MenuItemConstructorOptions[] = [
-    { label: label(ctx.supervisor.status), enabled: false },
-    ...(runs ? [workspaceMenu()] : []),
-    { type: 'separator' },
-    // The actions first: what the menu is opened for. Then the dashboard, then settings.
-    action('newThread', () => capture.show()),
-    ...(shortcuts.kinds().includes('screenshot')
-      ? [action('screenshot', () => void capture.take())]
-      : []),
-    { type: 'separator' },
-    { label: 'Open dashboard', click: () => showDashboard() },
-    { label: 'Open in browser', click: () => void shell.openExternal(dashboard()) },
-    ...(setup.hasSetup() ? [{ label: 'Set up Brigade…', click: () => setup.show() }] : []),
-    { type: 'separator' },
-    {
-      label: 'Keep screen awake',
+  const update = updates.menuItem()
+  const screenshot = shortcuts.kinds().includes('screenshot')
+  return {
+    runs,
+    status: { label: label(ctx.supervisor.status), enabled: false },
+    workspace: workspaceMenu(),
+    newThread: (title?: string) => action('newThread', () => capture.show(), title),
+    screenshot: (title?: string) =>
+      screenshot ? [action('screenshot', () => void capture.take(), title)] : [],
+    openDashboard: (title = 'Open dashboard') => ({ label: title, click: () => showDashboard() }),
+    openInBrowser: (title = 'Open in browser') => ({
+      label: title,
+      click: () => void shell.openExternal(dashboard()),
+    }),
+    setUp: (title = 'Set up Brigade…'): MenuItemConstructorOptions[] =>
+      setup.hasSetup() ? [{ label: title, click: () => setup.show() }] : [],
+    keepAwake: (title = 'Keep screen awake'): MenuItemConstructorOptions => ({
+      label: title,
       type: 'checkbox',
       checked: !!settings.keepAwake,
       click: (item) => {
@@ -136,10 +146,11 @@ function trayMenu() {
           s.keepAwake = item.checked
         })
         keepAwake(item.checked)
+        refreshMenu()
       },
-    },
-    {
-      label: 'Open at login',
+    }),
+    openAtLogin: (title = 'Open at login'): MenuItemConstructorOptions => ({
+      label: title,
       type: 'checkbox',
       checked: autostart.isEnabled(),
       click: () => {
@@ -147,22 +158,48 @@ function trayMenu() {
         else autostart.enable()
         refreshMenu()
       },
-    },
-    shortcutsMenu(),
-    { type: 'separator' },
-    {
+    }),
+    shortcuts: shortcutsMenu(),
+    update: (title?: string): MenuItemConstructorOptions => ({
       ...update,
+      // Only the plain "Check for updates" takes another label: its state shows otherwise.
+      ...(title && update.label === 'Check for updates…' && { label: title }),
       click: () => {
         if (update.label.startsWith('Restart')) void updates.restartToUpdate()
         else updates.check(true)
       },
-    },
-    ...(runs
-      ? [
-          { label: 'Restart runner', click: () => void ctx.supervisor.start() },
-          { label: 'Show logs', click: showLogs },
-        ]
-      : []),
+    }),
+    restartRunner: (title = 'Restart runner'): MenuItemConstructorOptions => ({
+      label: title,
+      click: () => void ctx.supervisor.start(),
+    }),
+    showLogs: (title = 'Show logs'): MenuItemConstructorOptions => ({
+      label: title,
+      click: showLogs,
+    }),
+  }
+}
+
+function trayMenu() {
+  const it = items()
+  const template: MenuItemConstructorOptions[] = [
+    it.status,
+    ...(it.runs ? [it.workspace] : []),
+    { type: 'separator' },
+    // The actions first: what the menu is opened for. Then the dashboard, then settings.
+    it.newThread(),
+    ...it.screenshot(),
+    { type: 'separator' },
+    it.openDashboard(),
+    it.openInBrowser(),
+    ...it.setUp(),
+    { type: 'separator' },
+    it.keepAwake(),
+    it.openAtLogin(),
+    it.shortcuts,
+    { type: 'separator' },
+    it.update(),
+    ...(it.runs ? [it.restartRunner(), it.showLogs()] : []),
     { type: 'separator' },
     {
       label: 'Quit Brigade',
@@ -193,6 +230,7 @@ export function refreshMenu() {
   pending = true
   setImmediate(() => {
     pending = false
+    setAppMenu()
     if (!tray || tray.isDestroyed()) return
     tray.setContextMenu(trayMenu())
     showCount()
@@ -214,25 +252,49 @@ export function createTray() {
 }
 
 /**
- * macOS's app menu, live while one of Brigade's windows is in front. Electron's default one
- * quits on ⌘Q, runner and all; here ⌘Q closes only that window, and Brigade stays in the menu
- * bar. Edit keeps copy and paste working; View reloads and goes back in the dashboard.
+ * macOS's app menu, live while one of Brigade's windows is in front: what the menu-bar menu
+ * holds, laid out as on a Mac. Brigade: About, updates, settings and this Mac's runner; File:
+ * the actions. Electron's default menu quits on ⌘Q, runner and all; here ⌘Q closes only the
+ * window, and Brigade stays in the menu bar (Quit Brigade quits). Edit keeps copy and paste
+ * working; View reloads and goes back in the dashboard.
  */
 export function setAppMenu() {
   if (process.platform !== 'darwin') return Menu.setApplicationMenu(null)
+  const it = items()
   const front = () => BrowserWindow.getFocusedWindow()
   // The page in front: the dashboard's view in its window (windows.ts), else the window's own.
   const page = () => webContents.getFocusedWebContents() ?? front()?.webContents
+  const runner: MenuItemConstructorOptions[] = it.runs
+    ? [it.workspace, it.restartRunner('Restart Runner'), it.showLogs('Show Logs')]
+    : []
+  const setUp = it.setUp('Set Up Brigade…')
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       {
         label: 'Brigade',
         submenu: [
           { role: 'about' },
+          it.update('Check for Updates…'),
           { type: 'separator' },
-          { label: 'Open dashboard', click: () => showDashboard() },
+          it.openAtLogin('Open at Login'),
+          it.keepAwake('Keep Screen Awake'),
+          it.shortcuts,
+          ...(runner.length || setUp.length
+            ? [{ type: 'separator' } as const, ...runner, ...setUp]
+            : []),
           { type: 'separator' },
           { label: 'Close Window', accelerator: 'Command+Q', click: () => front()?.close() },
+          { label: 'Quit Brigade', click: () => app.quit() },
+        ],
+      },
+      {
+        label: 'File',
+        submenu: [
+          it.newThread('New Thread'),
+          ...it.screenshot('Take a Screenshot'),
+          { type: 'separator' },
+          it.openDashboard('Open Dashboard'),
+          it.openInBrowser('Open in Browser'),
         ],
       },
       {
