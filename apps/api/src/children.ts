@@ -679,6 +679,8 @@ export async function noteChildEvents(
     chiefDecisionId?: string | null
   },
   events: { event: { type: string; at: string; message?: string; retrying?: boolean } }[],
+  /** quiet: a turn's end played again (settleStrandedChildren): one still held tells nobody. */
+  options: { quiet?: boolean } = {},
 ) {
   if (!session.parentId) return
   const scope: Scope = { organizationId: session.organizationId, workspaceId: session.workspaceId }
@@ -735,7 +737,7 @@ export async function noteChildEvents(
         event.type === 'turn.completed' &&
         ((await reviewHold(db, session.id)) || (await wakeupHold(db, session.id)))
       ) {
-        await parentChanged(scope, session.parentId)
+        if (!options.quiet) await parentChanged(scope, session.parentId)
         continue
       }
       if (
@@ -818,14 +820,106 @@ export async function settleOverdueChildren(workspaceId?: string) {
       { organizationId: c.organizationId, workspaceId: c.workspaceId },
       c.id,
     ).catch((error: unknown) => console.error(`child ${c.id}: could not report`, error))
+  // Turns whose end never reached Brigade's report keeping (an API restart cut it short).
+  await settleStrandedChildren(workspaceId)
   // And followers a report did not reach.
   await wakeWaitingFollowers(workspaceId)
+}
+
+/** A child's turn ended this long ago, and nothing changed it since: its end was settled by now. */
+export const STRANDED_AFTER_MS = 2 * 60_000
+/** One without a report is looked at this long after its turn ended: a hold may keep it longer. */
+export const STRANDED_WITHIN_MS = 60 * 60_000
+
+/**
+ * Children whose turn ended but whose report never went on: what the end of a turn does
+ * (noteChildEvents) runs once its events are stored, and is not awaited, so an API restart at that
+ * moment (a deploy) drops it, and nothing else brings it. Idle a while, with no report delivered
+ * nor a conversation's due: one with a report in (and no other child its parent waits for still
+ * at work, which settles it); one without, whose turn ended within the hour (one a review or a
+ * wake-up holds stays held: it is only looked at again).
+ */
+function strandedWhere(now: Date) {
+  return {
+    parentId: { not: null },
+    reportDeliveredAt: null,
+    reportDueAt: null,
+    status: { notIn: ['starting', 'running', 'waiting'] },
+    updatedAt: { lte: new Date(now.getTime() - STRANDED_AFTER_MS) },
+    OR: [
+      {
+        report: { not: Prisma.DbNull },
+        NOT: {
+          awaited: true,
+          parent: {
+            children: {
+              some: { awaited: true, reportDeliveredAt: null, report: { equals: Prisma.DbNull } },
+            },
+          },
+        },
+      },
+      {
+        report: { equals: Prisma.DbNull },
+        updatedAt: { gte: new Date(now.getTime() - STRANDED_WITHIN_MS) },
+      },
+    ],
+  } satisfies Prisma.SessionWhereInput
+}
+
+type StoredEvent = { type: string; at: string; message?: string; retrying?: boolean }
+
+/**
+ * Each stranded child's turn end, played again as it came (noteChildEvents): its last message
+ * read too when its report predates it, as the one cut short may have been that message's own.
+ * Each step claims what it changes, so one the first try did settle is not settled twice.
+ */
+export async function settleStrandedChildren(workspaceId?: string, now = new Date()) {
+  const stranded = await prisma.session.findMany({
+    where: { ...(workspaceId ? { workspaceId } : {}), ...strandedWhere(now) },
+    select: {
+      id: true,
+      organizationId: true,
+      workspaceId: true,
+      parentId: true,
+      chiefDecisionId: true,
+      report: true,
+    },
+    take: 100,
+  })
+  for (const child of stranded) {
+    const last = async (types: string[]) =>
+      (await prisma.sessionEvent.findFirst({
+        where: { sessionId: child.id, type: { in: types } },
+        orderBy: { seq: 'desc' },
+        select: { seq: true, data: true },
+      })) ?? null
+    const [ended, asked] = await Promise.all([
+      last(['turn.completed', 'error']),
+      last(['message.user']),
+    ])
+    const end = ended?.data as StoredEvent | undefined
+    // No turn ended since its last message (one still to come, or tried again): nothing to settle.
+    if (!ended || !end || end.retrying === true || (asked && asked.seq > ended.seq)) continue
+    const report = reportOf(child.report)
+    const message = asked?.data as StoredEvent | undefined
+    const events = [
+      ...(message && (!report || Date.parse(report.at) < Date.parse(message.at)) ? [message] : []),
+      end,
+    ]
+    await noteChildEvents(
+      child,
+      events.map((event) => ({ event })),
+      { quiet: true },
+    ).catch((error: unknown) =>
+      console.error(`child ${child.id}: could not settle its turn`, error),
+    )
+  }
 }
 
 /** Workspaces with children or followers due to hear now (src/jobs.ts). */
 export async function dueChildren(now = new Date()) {
   const busy = ['starting', 'running', 'waiting'] as const
-  const [overdue, quiet, followers] = await Promise.all([
+  const [overdue, quiet, followers, stranded] = await Promise.all([
     prisma.session.findMany({
       where: { awaited: true, reportDeliveredAt: null, awaitUntil: { lte: now } },
       distinct: ['workspaceId'],
@@ -844,8 +938,13 @@ export async function dueChildren(now = new Date()) {
       distinct: ['workspaceId'],
       select: { workspaceId: true },
     }),
+    prisma.session.findMany({
+      where: strandedWhere(now),
+      distinct: ['workspaceId'],
+      select: { workspaceId: true },
+    }),
   ])
-  return [...overdue, ...quiet, ...followers].map((r) => r.workspaceId)
+  return [...overdue, ...quiet, ...followers, ...stranded].map((r) => r.workspaceId)
 }
 
 /** The children a thread has at work: started, and no report yet. */
