@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { checkedOn, COMPARISONS } from '../lib/compare'
+import { DESCRIPTION_MAX } from '../lib/page-metadata'
 import { isPublicPage } from '../lib/public-pages'
 
 const web = join(import.meta.dirname, '..')
@@ -34,5 +35,13 @@ test('the README lists every comparison', () => {
     assert.ok(
       readme.includes(`(https://www.brigade.lol/compare/${x.slug})`),
       `README.md has no link to /compare/${x.slug}`,
+    )
+})
+
+test('each comparison has a search description that fits a result', () => {
+  for (const x of COMPARISONS)
+    assert.ok(
+      (x.description ?? x.oneLiner).length <= DESCRIPTION_MAX,
+      `${x.slug}: its one-liner is past ${DESCRIPTION_MAX} characters, so give it a description`,
     )
 })

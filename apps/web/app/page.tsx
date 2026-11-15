@@ -10,12 +10,13 @@ import { c } from '@/components/landing/parts'
 import { Plans } from '@/components/landing/plans'
 import { Tiles } from '@/components/landing/sections'
 import { RedirectIfSignedIn } from '@/components/redirect-if-signed-in'
+import { DEMO_URL } from '@/lib/demo/flag'
 import { getProofNumbers, REPO_URL } from '@/lib/github-proof'
 import { pageMetadata, SITE_URL } from '@/lib/page-metadata'
 
 const title = 'Brigade · AI teammates that run your whole company'
 const description =
-  'AI teammates that write your code, answer your customers, run your marketing and chase your leads, on the Claude or ChatGPT plan you already pay for. Free on your own computer, open source.'
+  'AI teammates that code, answer customers, run marketing and chase leads on the Claude or ChatGPT plan you already pay for. Open source, free on your computer.'
 
 // Static: prerendered at build, never revalidated. Its GitHub numbers are read at build
 // too (next.config.ts, lib/github-proof.ts), so rendering it never calls GitHub.
@@ -60,7 +61,7 @@ const jsonLd = {
       isAccessibleForFree: true,
       license: 'https://opensource.org/licenses/MIT',
       softwareHelp: { '@type': 'WebPage', url: `${SITE_URL}/docs` },
-      sameAs: [REPO_URL, 'https://demo.brigade.lol'],
+      sameAs: [REPO_URL, `${DEMO_URL}/app`],
       publisher: { '@id': ORG_ID },
       offers: [
         { '@type': 'Offer', name: 'Free', price: '0', priceCurrency: 'USD' },

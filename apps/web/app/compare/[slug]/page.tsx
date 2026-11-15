@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import {
   CompareClose,
@@ -26,27 +27,56 @@ const heading = (name: string) => `Brigade vs ${name}`
 export async function generateMetadata({ params }: Props) {
   const x = findComparison((await params).slug)
   if (!x) return {}
-  return pageMetadata(`/compare/${x.slug}`, `${heading(x.name)} · Brigade`, x.oneLiner)
+  return pageMetadata(
+    `/compare/${x.slug}`,
+    `${heading(x.name)} · Brigade`,
+    x.description ?? x.oneLiner,
+  )
 }
+
+/** "November 11, 2026" as 2026-11-11. */
+const isoDay = (day: string) => new Date(`${day} 00:00:00 UTC`).toISOString().slice(0, 10)
 
 export default async function Comparison({ params }: Props) {
   const x = findComparison((await params).slug)
   if (!x) notFound()
   const url = `${SITE_URL}/compare/${x.slug}`
-  // The page's answers, for search engines that read questions and answers.
+  const others = COMPARISONS.filter((o) => o.slug !== x.slug)
+  // The page as an article, and its answers, for search engines that read questions and answers.
   const jsonLd = {
     '@context': 'https://schema.org',
-    '@type': 'FAQPage',
-    url,
-    mainEntity: [
-      { q: `What is the difference between Brigade and ${x.name}?`, a: x.answer },
-      { q: `When should I pick ${x.name}?`, a: x.pickThem.join(' ') },
-      { q: 'When should I pick Brigade?', a: x.pickBrigade.join(' ') },
-    ].map(({ q, a }) => ({
-      '@type': 'Question',
-      name: q,
-      acceptedAnswer: { '@type': 'Answer', text: a },
-    })),
+    '@graph': [
+      {
+        '@type': 'Article',
+        headline: heading(x.name),
+        description: x.description ?? x.oneLiner,
+        url,
+        mainEntityOfPage: url,
+        image: `${SITE_URL}/opengraph-image.png`,
+        dateModified: isoDay(checkedOn(x)),
+        author: { '@id': `${SITE_URL}/#organization` },
+        publisher: {
+          '@type': 'Organization',
+          '@id': `${SITE_URL}/#organization`,
+          name: 'Brigade',
+          url: `${SITE_URL}/`,
+          logo: `${SITE_URL}/icon.png`,
+        },
+      },
+      {
+        '@type': 'FAQPage',
+        url,
+        mainEntity: [
+          { q: `What is the difference between Brigade and ${x.name}?`, a: x.answer },
+          { q: `When should I pick ${x.name}?`, a: x.pickThem.join(' ') },
+          { q: 'When should I pick Brigade?', a: x.pickBrigade.join(' ') },
+        ].map(({ q, a }) => ({
+          '@type': 'Question',
+          name: q,
+          acceptedAnswer: { '@type': 'Answer', text: a },
+        })),
+      },
+    ],
   }
   return (
     <ComparePage>
@@ -149,6 +179,20 @@ export default async function Comparison({ params }: Props) {
       <section className={c('vs-sec vs-about')} aria-labelledby="about">
         <h2 id="about">What {x.name} is</h2>
         <p>{x.about}</p>
+      </section>
+
+      <section className={c('vs-sec')} aria-labelledby="more">
+        <h2 id="more">More comparisons</h2>
+        <ul className={c('vs-more')}>
+          {others.map((o) => (
+            <li key={o.slug}>
+              <Link href={`/compare/${o.slug}`}>
+                <Logos logos={o.logos} size="sm" />
+                Brigade vs {o.name}
+              </Link>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <CompareClose title="Meet your AI teammates" />

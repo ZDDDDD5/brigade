@@ -5,6 +5,7 @@ import { Footer } from '@/components/landing/closing'
 import { Header } from '@/components/landing/hero'
 import { c } from '@/components/landing/parts'
 import { REPO_URL } from '@/lib/github-proof'
+import { fitDescription, SITE_URL } from '@/lib/page-metadata'
 import { findRelease, releaseName, RELEASES, releaseDate } from '@/lib/changelog'
 
 type Props = { params: Promise<{ slug: string }> }
@@ -20,16 +21,49 @@ export async function generateMetadata({ params }: Props) {
   if (!release) return {}
   return changelogMetadata(
     `/changelog/${release.slug}`,
-    `${releaseName(release)} · Brigade changelog`,
+    pageTitle(releaseName(release)),
     release.summary,
   )
 }
 
+/** "<title> · Brigade changelog", or "<title> · Brigade" when that would run past 60 characters. */
+const pageTitle = (title: string) =>
+  `${title} · Brigade changelog`.length <= 60
+    ? `${title} · Brigade changelog`
+    : `${title} · Brigade`
+
 export default async function Release({ params }: Props) {
   const release = findRelease((await params).slug)
   if (!release) notFound()
+  // RELEASES runs newest first.
+  const at = RELEASES.indexOf(release)
+  const newer = RELEASES[at - 1]
+  const older = RELEASES[at + 1]
+  const url = `${SITE_URL}/changelog/${release.slug}`
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'BlogPosting',
+    headline: releaseName(release),
+    description: fitDescription(release.summary),
+    url,
+    mainEntityOfPage: url,
+    image: `${SITE_URL}/opengraph-image.png`,
+    datePublished: release.slug,
+    author: { '@id': `${SITE_URL}/#organization` },
+    publisher: {
+      '@type': 'Organization',
+      '@id': `${SITE_URL}/#organization`,
+      name: 'Brigade',
+      url: `${SITE_URL}/`,
+      logo: `${SITE_URL}/icon.png`,
+    },
+  }
   return (
     <div className={c('page')}>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, '\\u003c') }}
+      />
       <Header />
       <main>
         <article className={c('log release')} aria-labelledby="release-title">
@@ -64,6 +98,22 @@ export default async function Release({ params }: Props) {
                 </ul>
               </section>
             ))}
+            <nav className={c('log-pager')} aria-label="Other releases">
+              {older ? (
+                <Link href={`/changelog/${older.slug}`} rel="prev">
+                  <span>← Older</span>
+                  {older.title}
+                </Link>
+              ) : (
+                <span />
+              )}
+              {newer && (
+                <Link href={`/changelog/${newer.slug}`} rel="next">
+                  <span>Newer →</span>
+                  {newer.title}
+                </Link>
+              )}
+            </nav>
           </div>
         </article>
       </main>

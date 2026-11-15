@@ -54,7 +54,7 @@ const body = () => `# Brigade
 
 Not to be confused with other open-source projects named Brigade, such as spinabot/brigade (a personal multi-agent runtime) or escoffier-labs/brigade (a coding-agent task record): this Brigade is the one at brigade.lol, with its code at github.com/gmpetrov/brigade.
 
-Website: ${SITE_URL}. Docs: ${DOCS_URL}. Source code: ${REPO_URL}. Live demo, no sign-up: https://demo.brigade.lol.
+Website: ${SITE_URL}. Docs: ${DOCS_URL}. Source code: ${REPO_URL}. Live demo, no sign-up: https://demo.brigade.lol/app.
 
 ## Key facts
 
