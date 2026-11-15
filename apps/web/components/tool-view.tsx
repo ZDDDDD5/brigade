@@ -26,6 +26,7 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDashboard } from '@/components/dashboard'
 import { useDocumentDiscussion } from '@/components/document-discussion'
+import { libraryDocument, useOptionalDocumentPanel } from '@/components/document-panel'
 import { SidePanel } from '@/components/side-panel'
 import { Button } from '@/components/ui/button'
 import {
@@ -59,6 +60,7 @@ export function ToolPanel({
   threadId,
   onClose,
   libraryLink = true,
+  inDocuments = false,
 }: {
   folder: string
   /** Shown beside this thread: its messages go to it. */
@@ -66,6 +68,8 @@ export function ToolPanel({
   onClose: () => void
   /** A button to the tool in the library (not when already there). */
   libraryLink?: boolean
+  /** Shown by the document panel, which stays open from page to page. */
+  inDocuments?: boolean
 }) {
   const { me } = useDashboard()
   const [view, setView] = useState<ToolView>()
@@ -198,6 +202,18 @@ export function ToolPanel({
     [toolId, threadId, folder],
   )
   const discussion = useDocumentDiscussion(file)
+  const documents = useOptionalDocumentPanel()
+  // Ask opens a thread as the page: on a wide screen the tool moves to the document panel first,
+  // which stays beside it. Below, a panel covers the page: it steps aside for the thread.
+  const ask = useCallback(async () => {
+    if (!discussion) return
+    const wide = window.matchMedia('(min-width: 1280px)').matches
+    if (!inDocuments && wide && documents && toolId) {
+      documents.open(libraryDocument({ id: toolId, path: folder }))
+      onClose()
+    }
+    await discussion.ask()
+  }, [discussion, inDocuments, documents, toolId, folder, onClose])
 
   function settle(yes: boolean) {
     if (!first) return
@@ -281,7 +297,7 @@ export function ToolPanel({
               size="sm"
               tooltip={`Talk about this tool with ${discussion.teammate.name}`}
               aria-label={`Ask ${discussion.teammate.name}`}
-              onClick={() => void discussion.ask()}
+              onClick={() => void ask()}
             >
               <MessageSquare aria-hidden />
               <span className="max-sm:hidden">Ask {discussion.teammate.name}</span>

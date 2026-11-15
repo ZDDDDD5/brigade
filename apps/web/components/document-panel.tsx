@@ -9,7 +9,7 @@
 // swipe down on a phone), it folds into a round button, with what it shows
 // kept as it was: under a thread's Preview, else at the top right of the page
 // (DocumentsButton). A click on it brings it back.
-import type { EditTarget, LibraryFile } from '@brigade/contracts'
+import { toolFolderOf, type EditTarget, type LibraryFile } from '@brigade/contracts'
 import {
   ArrowUpRight,
   BookOpen,
@@ -31,6 +31,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { useDashboard } from '@/components/dashboard'
 import { useDocumentDiscussion } from '@/components/document-discussion'
 import { useHandOff } from '@/components/list-items'
 import { DocumentEditor } from '@/components/document-editor'
@@ -41,6 +42,7 @@ import { FileHistory } from '@/components/library-history'
 import { TextFile } from '@/components/library-text-file'
 import { PUBLIC_LINK, ShareButton, useShare } from '@/components/share-button'
 import { PanelExpandButton, SidePanel } from '@/components/side-panel'
+import { ToolPanel } from '@/components/tool-view'
 import { Button } from '@/components/ui/button'
 import { Hint } from '@/components/ui/tooltip'
 import {
@@ -411,7 +413,9 @@ export function DocumentPanel() {
     minimize,
     restore,
     setAsked,
+    remove,
   } = useDocumentPanel()
+  const { me } = useDashboard()
   // Minimized, it stays mounted, hidden: an edit not saved yet is still there when it is back.
   const current = shown ?? minimized
   useMinimizeShortcut(Boolean(shown), Boolean(minimized), minimize, restore)
@@ -458,6 +462,17 @@ export function DocumentPanel() {
   )
   if (!current) return null
   const target = current.target
+  // A tool (its folder, as its mention names it, or its page) opens as the tool, not as its
+  // `index.html`; minimized, it is put away (its page reloads when it is back).
+  const tool = target.kind === 'library' && path ? toolFolderOf(path) : undefined
+  if (
+    tool &&
+    (path === tool || path === `${tool}/index.html`) &&
+    (me.features?.includes('tools') ?? false)
+  )
+    return shown ? (
+      <ToolPanel key={tool} folder={tool} onClose={() => remove(target)} inDocuments />
+    ) : null
   const view: FileView =
     target.kind === 'library' ? fileView(current.title, current, looked.file) : 'editor'
   const contentType = looked.file?.contentType ?? current.contentType
