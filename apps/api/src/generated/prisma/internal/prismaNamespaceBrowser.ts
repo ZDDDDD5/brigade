@@ -136,6 +136,8 @@ export const ModelName = {
   Project: 'Project',
   ProjectRepository: 'ProjectRepository',
   PushDevice: 'PushDevice',
+  DesktopDevice: 'DesktopDevice',
+  DesktopMessage: 'DesktopMessage',
   PushNotice: 'PushNotice',
   PlaybookInstallation: 'PlaybookInstallation',
   PlaybookAction: 'PlaybookAction',
@@ -1660,6 +1662,28 @@ export const PushDeviceScalarFieldEnum = {
 } as const
 
 export type PushDeviceScalarFieldEnum = (typeof PushDeviceScalarFieldEnum)[keyof typeof PushDeviceScalarFieldEnum]
+
+
+export const DesktopDeviceScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  tokenHash: 'tokenHash',
+  platform: 'platform',
+  lastSeenAt: 'lastSeenAt',
+  createdAt: 'createdAt'
+} as const
+
+export type DesktopDeviceScalarFieldEnum = (typeof DesktopDeviceScalarFieldEnum)[keyof typeof DesktopDeviceScalarFieldEnum]
+
+
+export const DesktopMessageScalarFieldEnum = {
+  id: 'id',
+  deviceId: 'deviceId',
+  message: 'message',
+  createdAt: 'createdAt'
+} as const
+
+export type DesktopMessageScalarFieldEnum = (typeof DesktopMessageScalarFieldEnum)[keyof typeof DesktopMessageScalarFieldEnum]
 
 
 export const PushNoticeScalarFieldEnum = {

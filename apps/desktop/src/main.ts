@@ -18,6 +18,7 @@ import { createTray, keepAwake, refreshMenu, setAppMenu } from './menu.js'
 import { runnerSupported, Supervisor } from './runner.js'
 import { loadSettings, updateSettings } from './settings.js'
 import * as setup from './setup.js'
+import * as notifications from './notifications.js'
 import { startUpdates } from './updates.js'
 import { dashboardWindow, handleLinks, setUpSession, showDashboard } from './windows.js'
 
@@ -96,13 +97,14 @@ function start() {
   capture.applyShortcuts()
   if (settings.keepAwake) keepAwake(true)
   void ctx.supervisor.start()
+  notifications.start()
   setup.showIfNeeded()
   linuxLinks()
 
   // The smoke test (test/e2e/smoke.mjs) reaches the app's parts from Playwright.
   if (process.env.BRIGADE_DESKTOP_TEST === '1')
     Object.assign(globalThis, {
-      brigadeTest: { capture, setup, showDashboard, dashboardWindow, ctx },
+      brigadeTest: { capture, setup, showDashboard, dashboardWindow, notifications, ctx },
     })
 
   ready = true

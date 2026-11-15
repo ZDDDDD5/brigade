@@ -23,27 +23,28 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model User {
-  id              String           @id
-  name            String
-  email           String           @unique
-  emailVerified   Boolean          @default(false)
-  image           String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  authSessions    AuthSession[]
-  authAccounts    AuthAccount[]
-  members         Member[]
-  invitations     Invitation[]
-  pushDevices     PushDevice[]
+  id                String           @id
+  name              String
+  email             String           @unique
+  emailVerified     Boolean          @default(false)
+  image             String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  authSessions      AuthSession[]
+  authAccounts      AuthAccount[]
+  members           Member[]
+  invitations       Invitation[]
+  pushDevices       PushDevice[]
+  desktopDevices    DesktopDevice[]
   /// Where the person came from when they signed up (src/signup-source.ts): set once, never
   /// changed. Utm values, the referrer's host, the first page and the derived channel; no URL.
-  attribution     Json?
+  attribution       Json?
   /// What they answered to onboarding's questions (role, team size, first work, where they
   /// heard of Brigade; @brigade/contracts' OnboardingAnswers), set once. `{}`: all skipped;
   /// null: never asked (invited, or here before the questions).
   onboardingAnswers Json?
-  analyticsFirsts AnalyticsFirst[]
-  adConversions   AdConversion[]
+  analyticsFirsts   AnalyticsFirst[]
+  adConversions     AdConversion[]
 }
 
 /// The product analytics events a person has sent once already (src/analytics.ts): the next
@@ -2912,6 +2913,37 @@ model PushDevice {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+/// Brigade.app on a computer, which shows the person's notifications itself: Electron has no
+/// push service. The sweep (src/notifications.ts) queues each push for it as a DesktopMessage,
+/// and the app fetches them with its token (src/routes/desktop-notifications.ts).
+model DesktopDevice {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the app's token. The token itself is never stored.
+  tokenHash  String           @unique
+  /// darwin, win32, linux.
+  platform   String?
+  /// Its last fetch: the app runs, so pushes queue for it.
+  lastSeenAt DateTime         @default(now())
+  createdAt  DateTime         @default(now())
+  messages   DesktopMessage[]
+
+  @@index([userId])
+}
+
+/// A push queued for a DesktopDevice until its next fetch, which takes it.
+model DesktopMessage {
+  id        String        @id @default(cuid())
+  deviceId  String
+  device    DesktopDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  /// @brigade/contracts' PushMessage.
+  message   Json
+  createdAt DateTime      @default(now())
+
+  @@index([deviceId, createdAt])
 }
 
 /// One thing a member was or will be notified of, by key (needs:<threadId>,

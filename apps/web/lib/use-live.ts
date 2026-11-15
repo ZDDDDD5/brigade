@@ -1,6 +1,7 @@
 'use client'
 import { ApiToBrowser, type BrowserToApi } from '@brigade/contracts'
 import { useEffect, useRef } from 'react'
+import { desktopBridge } from './desktop-bridge'
 import { keepAlive, liveSocket, reconnectDelay } from './live-socket'
 
 type Listener = (message: ApiToBrowser) => void
@@ -20,7 +21,11 @@ function open() {
   let stopped = false
   let dropped = false
   let alive: (() => void) | undefined
-  const visible = () => document.visibilityState === 'visible' && document.hasFocus()
+  // In Brigade.app's dashboard window, whether the window has the keyboard as the app says: its
+  // page's own document.hasFocus() may not follow the window (apps/desktop/src/windows.ts).
+  const desktop = desktopBridge()?.focus
+  const visible = () =>
+    document.visibilityState === 'visible' && (desktop?.focused() ?? document.hasFocus())
   // Whether the member is looking at this dashboard: notifications wait meanwhile. Each
   // message holds for a little over a minute, so it is repeated while in view; a dashboard out of
   // view says so once, and then only that it is still there (keepAlive), which lets the
@@ -55,7 +60,9 @@ function open() {
   document.addEventListener('visibilitychange', presence)
   window.addEventListener('focus', presence)
   window.addEventListener('blur', presence)
+  const offDesktop = desktop?.onChange(() => presence())
   return () => {
+    offDesktop?.()
     clearInterval(repeat)
     document.removeEventListener('visibilitychange', presence)
     window.removeEventListener('focus', presence)

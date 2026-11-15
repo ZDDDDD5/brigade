@@ -1,4 +1,5 @@
 import { API_URL } from './config'
+import { desktopBridge } from './desktop-bridge'
 
 // Whether this browser was signed in when it last asked, kept in a cookie of the
 // dashboard's own: the session cookie is the API's, out of reach here. The landing
@@ -53,6 +54,11 @@ export async function clearBrowserData() {
   try {
     const reg = await navigator.serviceWorker?.getRegistration()
     await (await reg?.pushManager.getSubscription())?.unsubscribe()
+  } catch {}
+  // Brigade.app's own notifications (apps/desktop/src/notifications.ts): it stops fetching the
+  // previous member's, and the API forgets that device.
+  try {
+    await desktopBridge()?.notifications?.disable()
   } catch {}
 }
 

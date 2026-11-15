@@ -39,6 +39,7 @@ import { library } from './routes/library.js'
 import { lists } from './routes/lists.js'
 import { boardRoutes } from './routes/board.js'
 import { notifications } from './routes/notifications.js'
+import { desktopNotifications } from './routes/desktop-notifications.js'
 import { projects } from './routes/projects.js'
 import { home } from './routes/home.js'
 import { pulls } from './routes/pulls.js'
@@ -216,6 +217,8 @@ app.use('/api/connections/oauth/*', signInFirst)
 app.route('/api/bucket', localBucket)
 // Library files behind their public links (src/library-shares.ts): the token alone, no session.
 app.route('/api/shared', shared)
+// Brigade.app's notifications, fetched with its device's token, no session.
+app.route('/api/desktop-notifications', desktopNotifications)
 app.route('/api/errors', errors)
 app.route('/api', workspaces)
 app.route('/api', members)

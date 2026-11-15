@@ -23,6 +23,13 @@ function listen(channel: string, handle: (...args: unknown[]) => void) {
   }
 }
 
+/** Whether the dashboard window has the keyboard, as the app says; unknown until it does. */
+let focused: boolean | undefined
+if (info?.window === 'main')
+  ipcRenderer.on('brigade:window-focus', (_event, value: unknown) => {
+    focused = value === true
+  })
+
 if (info)
   contextBridge.exposeInMainWorld('brigadeDesktop', {
     info,
@@ -47,6 +54,19 @@ if (info)
       /** The band above the page, and Windows' buttons, in the page's colors, as #rrggbb. */
       setTitleBarColors: (colors: { color: string; symbolColor: string }) =>
         ipcRenderer.send('brigade:title-bar-colors', colors),
+    },
+    /** The dashboard window has the keyboard (the app in front): its notifications wait. */
+    focus: {
+      focused: () => focused,
+      onChange: (handle: (focused: boolean) => void) =>
+        listen('brigade:window-focus', (value) => handle(value === true)),
+    },
+    /** Notifications the app shows itself (apps/desktop/src/notifications.ts). */
+    notifications: {
+      status: () => ipcRenderer.invoke('brigade:notifications:status'),
+      enable: (device: { api: string; deviceId: string; token: string }) =>
+        ipcRenderer.invoke('brigade:notifications:enable', device),
+      disable: () => ipcRenderer.invoke('brigade:notifications:disable'),
     },
     providerSignIn: {
       start: () => ipcRenderer.invoke('brigade:provider-sign-in:start'),

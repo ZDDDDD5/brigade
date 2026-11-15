@@ -11,7 +11,10 @@ system tray on Windows and Linux) and:
 - on macOS, takes screenshots for that window and lets teammates use the Mac's apps through
   Brigade Computer Use.app (`apps/computer-use-macos`), which it ships inside;
 - walks a new member through what is missing (`src/setup.ts`, `page/setup.html`), opens at login
-  (`src/autostart.ts`) and updates itself (`src/updates.ts`).
+  (`src/autostart.ts`) and updates itself (`src/updates.ts`);
+- shows the person's notifications itself once turned on in Settings, Notifications: Electron has
+  no web push, so it fetches what the API queues for it (`src/notifications.ts`,
+  `docs/notifications.md`).
 
 The dashboard window has no title bar on macOS (traffic lights over the sidebar's first row) and
 Windows (the system's buttons over the top right); Linux keeps the desktop's own

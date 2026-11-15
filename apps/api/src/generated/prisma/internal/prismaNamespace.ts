@@ -482,6 +482,8 @@ export const ModelName = {
   Project: 'Project',
   ProjectRepository: 'ProjectRepository',
   PushDevice: 'PushDevice',
+  DesktopDevice: 'DesktopDevice',
+  DesktopMessage: 'DesktopMessage',
   PushNotice: 'PushNotice',
   PlaybookInstallation: 'PlaybookInstallation',
   PlaybookAction: 'PlaybookAction',
@@ -523,7 +525,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "user" | "analyticsFirst" | "adConversion" | "billingSubscription" | "authSession" | "authAccount" | "verification" | "rateLimit" | "organization" | "billingClosing" | "member" | "invitation" | "invitationSend" | "workspace" | "computer" | "runner" | "teammate" | "threadRead" | "threadPin" | "sidebarOrder" | "threadLater" | "homeDismissal" | "session" | "task" | "schedule" | "chiefDecision" | "chiefPass" | "goal" | "goalMeasurement" | "wakeup" | "replyWatch" | "threadTeammate" | "sessionEvent" | "coldEventChunk" | "threadEventVolume" | "workspaceEventDay" | "tokenUsage" | "account" | "pullRequest" | "pullRequestReview" | "comment" | "mcpClient" | "app" | "connection" | "vaultSecret" | "credential" | "credentialGrant" | "grant" | "connectionCall" | "trigger" | "subscription" | "ticket" | "document" | "listItem" | "listItemThread" | "listItemPull" | "libraryLock" | "listPin" | "documentPin" | "memoryLine" | "documentVersion" | "libraryObjectFolder" | "libraryObject" | "libraryFolder" | "libraryFolderGrant" | "libraryShare" | "toolState" | "toolAccount" | "documentAsset" | "bucketCleanup" | "workspaceCleanup" | "auditEntry" | "upload" | "attachment" | "threadAttachment" | "designSystem" | "skill" | "skillPack" | "previewRecipe" | "previewMachine" | "vmRun" | "previewVariable" | "project" | "projectRepository" | "pushDevice" | "pushNotice" | "playbookInstallation" | "playbookAction" | "playbookRun" | "playbookDryRun" | "threadFollow" | "mailAddress" | "mailProject" | "mailAlias" | "mailMessage" | "mailHtml" | "mailDomain" | "contact" | "contactHandle" | "opsAlert" | "heldCall" | "runnerCommand" | "specPart" | "triggerDelivery" | "inboundEvent" | "folderBackup" | "teammateBackup" | "accountLoginBackup" | "computerReplacement" | "featureFlag" | "specPull"
+    modelProps: "user" | "analyticsFirst" | "adConversion" | "billingSubscription" | "authSession" | "authAccount" | "verification" | "rateLimit" | "organization" | "billingClosing" | "member" | "invitation" | "invitationSend" | "workspace" | "computer" | "runner" | "teammate" | "threadRead" | "threadPin" | "sidebarOrder" | "threadLater" | "homeDismissal" | "session" | "task" | "schedule" | "chiefDecision" | "chiefPass" | "goal" | "goalMeasurement" | "wakeup" | "replyWatch" | "threadTeammate" | "sessionEvent" | "coldEventChunk" | "threadEventVolume" | "workspaceEventDay" | "tokenUsage" | "account" | "pullRequest" | "pullRequestReview" | "comment" | "mcpClient" | "app" | "connection" | "vaultSecret" | "credential" | "credentialGrant" | "grant" | "connectionCall" | "trigger" | "subscription" | "ticket" | "document" | "listItem" | "listItemThread" | "listItemPull" | "libraryLock" | "listPin" | "documentPin" | "memoryLine" | "documentVersion" | "libraryObjectFolder" | "libraryObject" | "libraryFolder" | "libraryFolderGrant" | "libraryShare" | "toolState" | "toolAccount" | "documentAsset" | "bucketCleanup" | "workspaceCleanup" | "auditEntry" | "upload" | "attachment" | "threadAttachment" | "designSystem" | "skill" | "skillPack" | "previewRecipe" | "previewMachine" | "vmRun" | "previewVariable" | "project" | "projectRepository" | "pushDevice" | "desktopDevice" | "desktopMessage" | "pushNotice" | "playbookInstallation" | "playbookAction" | "playbookRun" | "playbookDryRun" | "threadFollow" | "mailAddress" | "mailProject" | "mailAlias" | "mailMessage" | "mailHtml" | "mailDomain" | "contact" | "contactHandle" | "opsAlert" | "heldCall" | "runnerCommand" | "specPart" | "triggerDelivery" | "inboundEvent" | "folderBackup" | "teammateBackup" | "accountLoginBackup" | "computerReplacement" | "featureFlag" | "specPull"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -6817,6 +6819,154 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    DesktopDevice: {
+      payload: Prisma.$DesktopDevicePayload<ExtArgs>
+      fields: Prisma.DesktopDeviceFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.DesktopDeviceFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.DesktopDeviceFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload>
+        }
+        findFirst: {
+          args: Prisma.DesktopDeviceFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.DesktopDeviceFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload>
+        }
+        findMany: {
+          args: Prisma.DesktopDeviceFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload>[]
+        }
+        create: {
+          args: Prisma.DesktopDeviceCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload>
+        }
+        createMany: {
+          args: Prisma.DesktopDeviceCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.DesktopDeviceCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload>[]
+        }
+        delete: {
+          args: Prisma.DesktopDeviceDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload>
+        }
+        update: {
+          args: Prisma.DesktopDeviceUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload>
+        }
+        deleteMany: {
+          args: Prisma.DesktopDeviceDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.DesktopDeviceUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.DesktopDeviceUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload>[]
+        }
+        upsert: {
+          args: Prisma.DesktopDeviceUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopDevicePayload>
+        }
+        aggregate: {
+          args: Prisma.DesktopDeviceAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateDesktopDevice>
+        }
+        groupBy: {
+          args: Prisma.DesktopDeviceGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.DesktopDeviceGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.DesktopDeviceCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.DesktopDeviceCountAggregateOutputType> | number
+        }
+      }
+    }
+    DesktopMessage: {
+      payload: Prisma.$DesktopMessagePayload<ExtArgs>
+      fields: Prisma.DesktopMessageFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.DesktopMessageFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.DesktopMessageFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload>
+        }
+        findFirst: {
+          args: Prisma.DesktopMessageFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.DesktopMessageFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload>
+        }
+        findMany: {
+          args: Prisma.DesktopMessageFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload>[]
+        }
+        create: {
+          args: Prisma.DesktopMessageCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload>
+        }
+        createMany: {
+          args: Prisma.DesktopMessageCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.DesktopMessageCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload>[]
+        }
+        delete: {
+          args: Prisma.DesktopMessageDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload>
+        }
+        update: {
+          args: Prisma.DesktopMessageUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload>
+        }
+        deleteMany: {
+          args: Prisma.DesktopMessageDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.DesktopMessageUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.DesktopMessageUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload>[]
+        }
+        upsert: {
+          args: Prisma.DesktopMessageUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$DesktopMessagePayload>
+        }
+        aggregate: {
+          args: Prisma.DesktopMessageAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateDesktopMessage>
+        }
+        groupBy: {
+          args: Prisma.DesktopMessageGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.DesktopMessageGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.DesktopMessageCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.DesktopMessageCountAggregateOutputType> | number
+        }
+      }
+    }
     PushNotice: {
       payload: Prisma.$PushNoticePayload<ExtArgs>
       fields: Prisma.PushNoticeFieldRefs
@@ -10262,6 +10412,28 @@ export const PushDeviceScalarFieldEnum = {
 export type PushDeviceScalarFieldEnum = (typeof PushDeviceScalarFieldEnum)[keyof typeof PushDeviceScalarFieldEnum]
 
 
+export const DesktopDeviceScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  tokenHash: 'tokenHash',
+  platform: 'platform',
+  lastSeenAt: 'lastSeenAt',
+  createdAt: 'createdAt'
+} as const
+
+export type DesktopDeviceScalarFieldEnum = (typeof DesktopDeviceScalarFieldEnum)[keyof typeof DesktopDeviceScalarFieldEnum]
+
+
+export const DesktopMessageScalarFieldEnum = {
+  id: 'id',
+  deviceId: 'deviceId',
+  message: 'message',
+  createdAt: 'createdAt'
+} as const
+
+export type DesktopMessageScalarFieldEnum = (typeof DesktopMessageScalarFieldEnum)[keyof typeof DesktopMessageScalarFieldEnum]
+
+
 export const PushNoticeScalarFieldEnum = {
   id: 'id',
   organizationId: 'organizationId',
@@ -11815,6 +11987,8 @@ export type GlobalOmitConfig = {
   project?: Prisma.ProjectOmit
   projectRepository?: Prisma.ProjectRepositoryOmit
   pushDevice?: Prisma.PushDeviceOmit
+  desktopDevice?: Prisma.DesktopDeviceOmit
+  desktopMessage?: Prisma.DesktopMessageOmit
   pushNotice?: Prisma.PushNoticeOmit
   playbookInstallation?: Prisma.PlaybookInstallationOmit
   playbookAction?: Prisma.PlaybookActionOmit
