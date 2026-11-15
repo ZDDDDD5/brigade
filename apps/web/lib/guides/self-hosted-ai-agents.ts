@@ -21,7 +21,7 @@ export const selfHostedAiAgents: Guide = {
 The phrase covers three quite different setups:
 
 1. **Your agent, a cloud model.** The agent software (its loop, memory, tools and the bridges to your chat apps) runs on your laptop, a Mac mini or a VPS, and it calls Claude, GPT or another hosted model. This is what most people mean in 2026: it's how OpenClaw and Hermes Agent are usually run.
-2. **Fully local.** The agent *and* the model run on your hardware, with Ollama, LM Studio or LocalAI serving an open-weight model. Nothing leaves your machine.
+2. **Fully local.** The agent *and* the model run on your hardware, with Ollama, LM Studio or LocalAI serving an open-weight model. Your prompts never go to a model provider, though the agent's own tools (a web search, an email it sends) still reach the internet.
 3. **A self-hosted platform for a team.** A server you deploy for many people to build and run agents or chat: Dify, n8n, Open WebUI, AnythingLLM.
 
 One thing to be clear-eyed about: in setup 1, **your data still goes to the model provider** every time the agent thinks. Self-hosting the agent gives you control over the tools, logs and credentials, not over the model.
@@ -58,7 +58,7 @@ An agent that calls a cloud model needs very little computing power. Most of its
 
 - **Quality.** Open models are now good at bounded, well-specified tasks. On long agent runs with many tool calls, frontier cloud models still win, and that's exactly the kind of work an agent does.
 - **Cost.** For one person or a small team, a subscription or an API is still cheaper than buying hardware that runs a near-frontier model.
-- **Privacy.** Fully local is the only setup where nothing leaves your machine. If that's a hard requirement (health data, client contracts), it's worth the trade.
+- **Privacy.** Fully local is the only setup where your prompts and data never go to a model provider; only what the agent's tools send (a search, an email) leaves your machine. If that's a hard requirement (health data, client contracts), it's worth the trade.
 
 The pragmatic setup many people land on is hybrid: routine work on a local model, hard work sent to a frontier one.
 
