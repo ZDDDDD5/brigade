@@ -42,6 +42,7 @@ import { reconcileVmRuns } from './vm-costs.js'
 import { dueWakeups, fireDueWakeups } from './wakeups.js'
 import { dueSnoozes, wakeDueSnoozes } from './later.js'
 import { dueGoals, measureDueGoals } from './goals.js'
+import { sendAdConversions } from './google-ads.js'
 import { dueWorkspaceCleanups, sweepDeletedWorkspaces } from './workspace-delete.js'
 
 /** One run of a job: for a workspace, for one row (an event a webhook kept), or for all (null). */
@@ -119,6 +120,9 @@ export const JOBS = {
   // What VMs ran (src/vm-costs.ts): runs settled against the provider's own list of its VMs.
   'vm-runs': { every: 60, run: (_key, now) => reconcileVmRuns(now) },
   'github-redeliver': { every: 600, run: () => redeliverFailed() },
+  // Every 10 minutes: sign-ups and subscriptions of people who came from a Google ad, to Google
+  // Ads (src/google-ads.ts). Nothing without its settings.
+  'ad-conversions': { every: 600, run: (_key, now) => sendAdConversions(now) },
   // Hourly: uploads abandoned mid-way or never sent with a message; files no document refers
   // to; library files in the trash long enough; images a runner uploaded after their thread was
   // deleted; finished rows of the work kept in the database; mail left in its box past its time.

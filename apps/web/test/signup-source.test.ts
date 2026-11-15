@@ -21,9 +21,17 @@ test('the first page reads utm, the external referrer, its path and a paid click
       ref: 'news.ycombinator.com',
       lp: '/how-it-works',
       paid: '1',
+      gclid: 'x',
     },
   )
   assert.deepEqual(sourceOf(at('https://www.brigade.lol/'), ''), { lp: '/' })
+  // Another network's click id says it was paid for, and is not carried.
+  assert.deepEqual(sourceOf(at('https://www.brigade.lol/?fbclid=abc'), ''), { lp: '/', paid: '1' })
+  assert.deepEqual(carried('?gclid=Cj0K-x_1&wbraid=w1&utm_source=google'), {
+    utm_source: 'google',
+    gclid: 'Cj0K-x_1',
+    wbraid: 'w1',
+  })
 })
 
 test("Brigade's own pages are no referrer", () => {

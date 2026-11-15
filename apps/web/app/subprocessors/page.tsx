@@ -38,7 +38,7 @@ const SUBPROCESSORS = [
   },
   {
     name: 'Google LLC',
-    does: 'Sign in with Google; Gmail notifications for connected Google Apps',
+    does: 'Sign in with Google; Gmail notifications for connected Google Apps; measuring our Google ads (the click id of a sign-up or subscription that came from one)',
     where: 'United States',
   },
   { name: 'GitHub, Inc.', does: 'Repository access, when connected', where: 'United States' },

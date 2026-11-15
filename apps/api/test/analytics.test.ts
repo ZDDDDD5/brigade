@@ -419,12 +419,50 @@ test(
 )
 
 test(
+  "a Google ad's sign-up keeps its click id for Google Ads, and PostHog never sees it",
+  { skip },
+  async () => {
+    withKey()
+    sent.length = 0
+    const email = `ad-${run}@example.com`
+    const user = await signUp(email, {
+      signupSource: {
+        utm_source: 'google',
+        ref: 'www.google.com',
+        lp: '/',
+        paid: '1',
+        gclid: 'Cj0KCQ-ad_1',
+      },
+    })
+    assert.deepEqual(user.attribution, {
+      channel: 'google_ads',
+      source: 'google',
+      referrer: 'google.com',
+      landingPage: '/',
+      adClick: { gclid: 'Cj0KCQ-ad_1' },
+      method: 'email_code',
+    })
+    const rows = await prisma.adConversion.findMany({ where: { userId: user.id } })
+    assert.deepEqual(
+      rows.map((r) => r.kind),
+      ['sign_up'],
+      'its sign-up is waiting for Google Ads',
+    )
+    await analytics.flushAnalytics()
+    const signedUp = events().find((e) => e.event === 'signed_up')
+    assert.equal(signedUp?.properties.$set_once.signup_channel, 'google_ads')
+    assert.ok(!JSON.stringify(sent).includes('Cj0KCQ-ad_1'), 'the click id never goes to PostHog')
+  },
+)
+
+test(
   'a sign-up with nothing to say is direct; signing in again changes nothing',
   { skip },
   async () => {
     const email = `direct-${run}@example.com`
     const user = await signUp(email, {})
     assert.equal((user.attribution as { channel: string }).channel, 'direct')
+    assert.equal(await prisma.adConversion.count({ where: { userId: user.id } }), 0)
     const second = await signUp(email, { signupSource: { utm_source: 'x' } })
     assert.equal((second.attribution as { channel: string }).channel, 'direct')
   },

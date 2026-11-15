@@ -517,10 +517,6 @@ export type BillingSubscriptionOrderByRelationAggregateInput = {
   _count?: Prisma.SortOrder
 }
 
-export type NullableDateTimeFieldUpdateOperationsInput = {
-  set?: Date | string | null
-}
-
 export type BillingSubscriptionCreateNestedManyWithoutWorkspaceInput = {
   create?: Prisma.XOR<Prisma.BillingSubscriptionCreateWithoutWorkspaceInput, Prisma.BillingSubscriptionUncheckedCreateWithoutWorkspaceInput> | Prisma.BillingSubscriptionCreateWithoutWorkspaceInput[] | Prisma.BillingSubscriptionUncheckedCreateWithoutWorkspaceInput[]
   connectOrCreate?: Prisma.BillingSubscriptionCreateOrConnectWithoutWorkspaceInput | Prisma.BillingSubscriptionCreateOrConnectWithoutWorkspaceInput[]

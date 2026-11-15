@@ -14,6 +14,7 @@ import { identifyWorkspace, personOfMember, trackLater } from './analytics.js'
 import { env } from './config.js'
 import { prisma, type Prisma } from './db.js'
 import { noteFailure } from './ops/failures.js'
+import { recordAdConversion } from './google-ads.js'
 
 export const billingEnabled = () => !!env.STRIPE_SECRET_KEY
 
@@ -188,6 +189,12 @@ function trackPlanChange(
   if (!event) return
   const userId = subscription.metadata?.userId
   const price = subscription.items.data[0]?.price
+  // Of a person who came from a Google ad: Google Ads' conversion, with its price.
+  if (event === 'subscription_started' && userId)
+    void recordAdConversion(userId, 'subscription', {
+      ...(price?.unit_amount != null && { value: price.unit_amount / 100 }),
+      ...(price?.currency && { currency: price.currency }),
+    })
   const months = (Date.now() - subscription.start_date * 1000) / (30.44 * 24 * 60 * 60_000)
   void prisma.workspace
     .findUnique({ where: { id: workspaceId }, select: { organizationId: true } })

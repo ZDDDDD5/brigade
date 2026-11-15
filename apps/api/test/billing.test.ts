@@ -669,6 +669,11 @@ test('a subscription saved is sent once committed, with the plan as saved', { sk
     customer: 'cus_tracked',
     metadata: { workspaceId: ws.tracked!, userId: ids.owner },
   })
+  // The member came from a Google ad: the subscription is Google Ads' conversion too.
+  await prisma.user.update({
+    where: { id: ids.owner },
+    data: { attribution: { channel: 'google_ads', adClick: { gclid: 'g-billing' } } },
+  })
   const posted = await postedDuring(async () => {
     const { committed } = await prisma.$transaction(async (tx) => {
       const saved = await billing.savePlan(tx, ws.tracked!, started as never)
@@ -683,6 +688,11 @@ test('a subscription saved is sent once committed, with the plan as saved', { sk
   assert.equal(event.distinct_id, ids.owner)
   const group = posted.find((e) => e.event === '$groupidentify')
   assert.equal(group?.properties.$group_set.plan, 'cloud', 'the plan read after the commit')
+  const conversion = await prisma.adConversion.findFirst({
+    where: { userId: ids.owner, kind: 'subscription' },
+  })
+  assert.ok(conversion, 'kept for Google Ads')
+  assert.equal(conversion.value, null, "this test's price has no amount")
 })
 
 test('a subscription rolled back sends nothing', { skip }, async () => {

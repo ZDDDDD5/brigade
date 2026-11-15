@@ -43,6 +43,7 @@ model User {
   /// null: never asked (invited, or here before the questions).
   onboardingAnswers Json?
   analyticsFirsts AnalyticsFirst[]
+  adConversions   AdConversion[]
 }
 
 /// The product analytics events a person has sent once already (src/analytics.ts): the next
@@ -54,6 +55,29 @@ model AnalyticsFirst {
   at     DateTime @default(now())
 
   @@id([userId, event])
+}
+
+/// A conversion of a person who came from a Google ad (src/google-ads.ts): their sign-up, then
+/// their first subscription. Kept when it happens, sent to Google Ads by the `ad-conversions`
+/// job, once: `sentAt` once Google took it, `failedAt` and `error` once it never will.
+model AdConversion {
+  id       String    @id @default(cuid())
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// `sign_up` or `subscription`.
+  kind     String
+  /// When it happened, as reported to Google.
+  at       DateTime  @default(now())
+  /// The subscription's first price, in its currency's units (e.g. 99), when it has one.
+  value    Float?
+  currency String?
+  attempts Int       @default(0)
+  sentAt   DateTime?
+  failedAt DateTime?
+  error    String?
+
+  @@unique([userId, kind])
+  @@index([sentAt, failedAt])
 }
 
 /// A workspace's paid plan (src/billing.ts): Cloud, which gives it the cloud computer. It

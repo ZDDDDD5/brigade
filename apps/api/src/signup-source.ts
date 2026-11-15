@@ -3,12 +3,14 @@
 // in the sign-up and sign-in links' address; the sign-up page sends them with the code
 // (POST /api/auth/sign-in/email-otp, `signupSource`) or through Google's round trip (the OAuth
 // state's `additionalData.signupSource`). Kept once on the user (User.attribution), never
-// changed. All of it came from the browser: each value is checked and cut short here, and
+// changed. A Google ad's click ids are kept too, for Google Ads' conversions (src/google-ads.ts),
+// and never sent to PostHog. All of it came from the browser: each value is checked and cut short here, and
 // no full URL is ever kept.
 
 export const CHANNELS = [
   'twitter',
   'google_organic',
+  'google_ads',
   'hacker_news',
   'product_hunt',
   'github',
@@ -31,6 +33,20 @@ export type SignupSource = {
   referrer?: string
   /** The first page seen on the site, its path only. */
   landingPage?: string
+  /**
+   * A Google ad's click ids, as the ad's link carried them: the sign-up and a subscription are
+   * reported to Google Ads with them (src/google-ads.ts). Never sent to PostHog.
+   */
+  adClick?: AdClick
+}
+
+export type AdClick = { gclid?: string; gbraid?: string; wbraid?: string }
+
+/** A click id as Google writes them (base64url-like), or nothing. */
+function clickId(value: unknown) {
+  if (typeof value !== 'string') return undefined
+  const id = value.trim()
+  return id.length > 0 && id.length <= 200 && /^[A-Za-z0-9_\-.~=]+$/.test(id) ? id : undefined
 }
 
 /** A utm value as given, without what could not be a utm value. */
@@ -104,7 +120,7 @@ export function channelOfUtm(source: string, medium?: string): Channel {
   if (['chatgpt', 'openai', 'perplexity', 'claude', 'gemini', 'chatgpt.com'].includes(s))
     return 'ai_search'
   if (s === 'google')
-    return ['cpc', 'ppc', 'paid', 'paidsearch'].includes(m) ? 'other' : 'google_organic'
+    return ['cpc', 'ppc', 'paid', 'paidsearch'].includes(m) ? 'google_ads' : 'google_organic'
   if (['bing', 'duckduckgo', 'ddg'].includes(s)) return 'other_search'
   if (s === 'newsletter' || m === 'email' || m === 'newsletter') return 'newsletter'
   // A host given as the source: as its referrer would be.
@@ -126,11 +142,21 @@ export function parseSignupSource(raw: unknown): SignupSource {
   const referrer = hostOf(input.ref)
   const landingPage = pathOf(input.lp)
   const paid = input.paid === true || input.paid === '1'
-  const channel: Channel = source
-    ? channelOfUtm(source, medium)
-    : referrer
-      ? channelOfReferrer(referrer, paid)
-      : 'direct'
+  const adClick: AdClick = {}
+  for (const key of ['gclid', 'gbraid', 'wbraid'] as const) {
+    const id = clickId(input[key])
+    if (id) adClick[key] = id
+  }
+  const googleAd = Object.keys(adClick).length > 0
+  // A Google ad's click is Google Ads whatever else the address says: an ad's own utm_source
+  // (often "google") or another's left in its final URL.
+  const channel: Channel = googleAd
+    ? 'google_ads'
+    : source
+      ? channelOfUtm(source, medium)
+      : referrer
+        ? channelOfReferrer(referrer, paid)
+        : 'direct'
   return {
     channel,
     ...(source && { source }),
@@ -138,6 +164,7 @@ export function parseSignupSource(raw: unknown): SignupSource {
     ...(campaign && { campaign }),
     ...(referrer && { referrer }),
     ...(landingPage && { landingPage }),
+    ...(googleAd && { adClick }),
   }
 }
 

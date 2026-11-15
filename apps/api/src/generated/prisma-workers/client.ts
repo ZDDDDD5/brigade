@@ -50,6 +50,13 @@ export type User = Prisma.UserModel
  */
 export type AnalyticsFirst = Prisma.AnalyticsFirstModel
 /**
+ * Model AdConversion
+ * A conversion of a person who came from a Google ad (src/google-ads.ts): their sign-up, then
+ * their first subscription. Kept when it happens, sent to Google Ads by the `ad-conversions`
+ * job, once: `sentAt` once Google took it, `failedAt` and `error` once it never will.
+ */
+export type AdConversion = Prisma.AdConversionModel
+/**
  * Model BillingSubscription
  * A workspace's paid plan (src/billing.ts): Cloud, which gives it the cloud computer. It
  * only ever holds Stripe's current state for its subscription. A row with no

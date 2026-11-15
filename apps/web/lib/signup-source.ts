@@ -13,11 +13,18 @@ export const SOURCE_KEYS = [
   'ref',
   'lp',
   'paid',
+  // A Google ad's click id, kept on the account so its sign-up and subscription can be reported
+  // to Google Ads as conversions (apps/api/src/google-ads.ts).
+  'gclid',
+  'gbraid',
+  'wbraid',
 ] as const
 export type SignupSource = Partial<Record<(typeof SOURCE_KEYS)[number], string>>
 
 /** Ad click ids: the visit was paid for (a Google ad is not organic search). */
 const CLICK_IDS = ['gclid', 'gbraid', 'wbraid', 'msclkid', 'fbclid', 'twclid', 'li_fat_id']
+/** Google's, whose value is carried too: the conversion is reported with it. */
+const GOOGLE_CLICK_IDS = ['gclid', 'gbraid', 'wbraid'] as const
 
 /** The referrer's host, when it is another site's (not Brigade's own pages). */
 export function externalReferrer(referrer: string, here: string) {
@@ -60,6 +67,12 @@ export function sourceOf(
     ...(ref && { ref }),
     lp: location.pathname,
     ...(CLICK_IDS.some((id) => query.has(id)) && { paid: '1' }),
+    ...Object.fromEntries(
+      GOOGLE_CLICK_IDS.flatMap((id) => {
+        const value = query.get(id)?.slice(0, 200)
+        return value ? [[id, value]] : []
+      }),
+    ),
   } satisfies SignupSource
 }
 

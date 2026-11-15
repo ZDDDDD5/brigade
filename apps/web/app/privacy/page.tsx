@@ -69,13 +69,20 @@ export default function Privacy() {
         </li>
         <li>
           <strong>Usage:</strong> where you came from when you signed up (such as the site that
-          linked to us, or a campaign&apos;s name in the link), and which features you use and when.
-          Never the content of your workspace or your email address.
+          linked to us, a campaign&apos;s name in the link, or the click id of our Google ad you
+          clicked), and which features you use and when. Never the content of your workspace or your
+          email address.
         </li>
       </ul>
       <p>
-        We set only the cookies Brigade needs to work, such as the one that keeps you signed in. We
-        don&apos;t use advertising or tracking cookies.
+        In Brigade itself, we set only the cookies Brigade needs to work, such as the one that keeps
+        you signed in. On this website, we are also trying Google&apos;s tag, which sets
+        Google&apos;s cookies to measure visits and our ads.
+      </p>
+      <p>
+        When you sign up after clicking one of our Google ads, we tell Google Ads that the click led
+        to a sign-up, and later to a subscription: we send the ad&apos;s click id, the time and the
+        plan&apos;s price, never your name, email address or anything from your workspace.
       </p>
       <p>
         We use PostHog, in the EU, to measure visits and how Brigade is used. On this website it
