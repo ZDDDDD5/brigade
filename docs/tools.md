@@ -24,7 +24,8 @@ Tools are behind the `tools` feature (docs/feature-flags.md) while the team trie
   picture, for the person to say what should change there and send it with their other edits. It
   goes to the thread the tool is beside, else, in the document panel, to the thread open last
   (`apps/web/lib/element-pickers.ts`); with none open, the button opens the tool's thread first,
-  as Ask does. Its `page` is the tool's file in the library (`<folder>/index.html`), never the
+  as Ask does, when the person may write there. Otherwise it does not show: a new thread's
+  composer takes no elements until its first message is sent. Its `page` is the tool's file in the library (`<folder>/index.html`), never the
   page's address, which carries its token. The sandbox host adds the same script as the preview's
   proxy to the tool's pages, after the bridge (`elementSelectScript` in contracts'
   `element-select.ts`), and serves modern-screenshot under the tool's own address

@@ -220,6 +220,9 @@ export function ToolPanel({
   // open last; without one, the button opens the tool's thread first, as Ask does.
   const picker = useElementPicker(threadId)
   const select = useToolSelect(frame, folder, picker)
+  // Without a thread open, Select opens the tool's own thread first, when the person may write
+  // there: a new thread's composer takes no elements until its first message is sent.
+  const opensThread = !picker && !threadId && Boolean(discussion && view?.thread?.mayPrompt)
 
   function settle(yes: boolean) {
     if (!first) return
@@ -296,7 +299,7 @@ export function ToolPanel({
             </DropdownMenuContent>
           </DropdownMenu>
           <span className="flex-1" />
-          {view && select.available && (picker || discussion) && (
+          {view && select.available && (picker || opensThread) && (
             <Button
               type="button"
               variant="ghost"
@@ -311,7 +314,10 @@ export function ToolPanel({
                     : `Select elements in the tool: opens its thread with ${discussion?.teammate?.name ?? 'its teammate'} first`
               }
               className={cn(select.on && 'bg-primary/12 text-primary hover:text-primary')}
-              onClick={() => (picker ? select.set(!select.on) : void ask())}
+              onClick={() => {
+                if (picker) select.set(!select.on)
+                else if (opensThread) void ask()
+              }}
             >
               <SquareMousePointer aria-hidden />
             </Button>
