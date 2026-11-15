@@ -4,18 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "prisma generate && node scripts/playbooks.mjs && tsc -p tsconfig.json",
-    "dev": "node scripts/playbooks.mjs && tsx watch --env-file-if-exists=.env src/index.ts",
+    "build": "prisma generate && node scripts/playbooks.mjs && node scripts/screenshot.mjs && tsc -p tsconfig.json",
+    "dev": "node scripts/playbooks.mjs && node scripts/screenshot.mjs && tsx watch --env-file-if-exists=.env src/index.ts",
     "start": "node --env-file-if-exists=.env dist/index.js",
-    "typecheck": "prisma generate && node scripts/playbooks.mjs && tsc -p tsconfig.json --noEmit && node scripts/typecheck-workers.mjs",
+    "typecheck": "prisma generate && node scripts/playbooks.mjs && node scripts/screenshot.mjs && tsc -p tsconfig.json --noEmit && node scripts/typecheck-workers.mjs",
     "clean": "rm -rf dist .turbo",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
-    "test": "node scripts/playbooks.mjs && node --expose-gc --import tsx --test test/*.test.ts",
+    "test": "node scripts/playbooks.mjs && node scripts/screenshot.mjs && node --expose-gc --import tsx --test test/*.test.ts",
     "vapid": "node scripts/vapid.mjs",
     "stripe:setup": "node --env-file-if-exists=.env scripts/stripe-setup.mjs",
-    "playbooks": "node scripts/playbooks.mjs"
+    "playbooks": "node scripts/playbooks.mjs",
+    "screenshot": "node scripts/screenshot.mjs"
   },
   "dependencies": {
     "@blocknote/core": "0.56.0",
@@ -33,6 +34,7 @@
     "hono": "4.13.13",
     "linkedom": "0.18.14",
     "mammoth": "1.13.0",
+    "modern-screenshot": "4.7.0",
     "parse5": "8.0.1",
     "pg": "8.23.1",
     "prisma": "7.10.1",

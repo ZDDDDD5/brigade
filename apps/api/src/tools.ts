@@ -18,6 +18,7 @@ import {
   ToolManifest,
   toolFolderOf,
   addToHead,
+  elementSelectScript,
   LIBRARY_READ_MAX,
   type ToolAccount,
   type ToolCall,
@@ -52,6 +53,7 @@ import { isMcp, mcpOperation } from './mcp-tools.js'
 import { rateLimit } from './routes/events.js'
 import type { WorkspaceScope } from './scope.js'
 import { serveObject } from './serve-object.js'
+import { SCREENSHOT_MODULE } from './generated/screenshot.js'
 import { toolBridgeScript } from './tool-bridge.js'
 
 // ---------------------------------------------------------------------------
@@ -909,7 +911,16 @@ async function serveLibraryFile(c: Context, scope: Scope, row: Row) {
  */
 const toolScripts = (token: string) => `${env.DESIGN_URL}/t/${token}/`
 
-/** A tool's files under `/t/<token>/`, and the library files it reads under `_library/`. */
+/**
+ * Where a tool page loads modern-screenshot from, under its own address (its scripts may come
+ * only from there), once a person picked an element in it: never a file of the tool's.
+ */
+const TOOL_SCREENSHOT = '__brigade/screenshot.mjs'
+
+/**
+ * A tool's files under `/t/<token>/`, the library files it reads under `_library/`, and the
+ * module that draws an element picked in it (TOOL_SCREENSHOT).
+ */
 export const toolPages = new Hono().get('/:token/*', async (c) => {
   if (separateHost && c.req.header('host') !== designHost) return c.text('Not found', 404)
   const token = c.req.param('token')
@@ -927,6 +938,15 @@ export const toolPages = new Hono().get('/:token/*', async (c) => {
     const row = await libraryRow(db, path)
     return row ? serveLibraryFile(c, scope, row) : c.text('Not found', 404)
   }
+  if (rest.join('/') === TOOL_SCREENSHOT)
+    return c.body(SCREENSHOT_MODULE, 200, {
+      'content-type': 'text/javascript; charset=utf-8',
+      'x-content-type-options': 'nosniff',
+      'referrer-policy': 'no-referrer',
+      // Imported by a sandboxed page, whose origin is opaque: a cross-origin request.
+      'access-control-allow-origin': '*',
+      'cache-control': 'private, max-age=3600',
+    })
   const row = await libraryRow(db, [folder, ...rest].join('/'))
   if (!row) return c.text('Not found', 404)
   const html = row.contentType === 'text/html'
@@ -947,7 +967,9 @@ export const toolPages = new Hono().get('/:token/*', async (c) => {
   if (!html) return serveObject(c, fileKey(scope, row), headers)
   const page = addToHead(
     new TextDecoder().decode(await readLibraryFile(scope, row)),
-    toolBridgeScript(bridgeKey(token)),
+    // The bridge, then picking elements for the panel's select mode (contracts' element-select.ts).
+    toolBridgeScript(bridgeKey(token)) +
+      `<script data-brigade-select>${elementSelectScript(`${toolScripts(token)}${TOOL_SCREENSHOT}`)}</script>`,
     { first: true },
   )
   return c.body(new TextEncoder().encode(page), 200, headers)

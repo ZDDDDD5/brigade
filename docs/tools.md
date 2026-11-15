@@ -19,6 +19,18 @@ Tools are behind the `tools` feature (docs/feature-flags.md) while the team trie
   thread that saved it last when the member may write there, else in a new thread with the
   teammate that saved it; the reply box holds the tool's mention. On a wide screen the tool moves
   to the document panel first, so it stays beside that thread.
+- **Select an element** (the pointer button, once the page says it can): as in a thread's preview
+  (docs/previews.md), a click on an element of the tool puts it in a thread's reply box, with its
+  picture, for the person to say what should change there and send it with their other edits. It
+  goes to the thread the tool is beside, else, in the document panel, to the thread open last
+  (`apps/web/lib/element-pickers.ts`); with none open, the button opens the tool's thread first,
+  as Ask does. Its `page` is the tool's file in the library (`<folder>/index.html`), never the
+  page's address, which carries its token. The sandbox host adds the same script as the preview's
+  proxy to the tool's pages, after the bridge (`elementSelectScript` in contracts'
+  `element-select.ts`), and serves modern-screenshot under the tool's own address
+  (`/t/<token>/__brigade/screenshot.mjs`, from `src/generated/screenshot.ts`), the only place its
+  scripts may come from. The page's origin is opaque, so the library cannot read default styles
+  from a frame of its own: it writes every style out instead.
 - **Its mention** opens the tool, wherever it is clicked: in a message, the reply box or a
   document. The document panel shows a tool's folder, or its `index.html`, as the tool.
 - **Accounts**, when the tool asks for Apps: each App it asks for, the accounts attached for it,
