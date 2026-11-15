@@ -1,5 +1,5 @@
 diff --git a/dist/bridge/index.mjs b/dist/bridge/index.mjs
-index adbfe4a..ca2125c 100644
+index adbfe4a2c734c4ed8cf7a805886d6a1579849a68..ca2125c7ee2306e38adcb98a67374b80831b78a5 100644
 --- a/dist/bridge/index.mjs
 +++ b/dist/bridge/index.mjs
 @@ -903,6 +903,7 @@ function createAppServerEventHandler({ stepTracker, emitStreamEvent, emitWarning
@@ -224,7 +224,7 @@ index adbfe4a..ca2125c 100644
  	};
  }
 diff --git a/dist/bridge/package.json b/dist/bridge/package.json
-index 0d2a70b..7db6a01 100644
+index 0d2a70be87bc6e51a8e0c08d5e62cae492067b0a..7db6a01ef71bc4e6a0e9a9cde3e8df3fc0cba3a8 100644
 --- a/dist/bridge/package.json
 +++ b/dist/bridge/package.json
 @@ -4,7 +4,7 @@
@@ -237,7 +237,7 @@ index 0d2a70b..7db6a01 100644
    }
  }
 diff --git a/dist/bridge/pnpm-lockfile.yaml b/dist/bridge/pnpm-lockfile.yaml
-index 61299ae..6312100 100644
+index 61299ae437d9fb81e16f012f3b3f330b53abcfbc..631210060f6cedfa0846ba979ad48c3ac9a4ee33 100644
 --- a/dist/bridge/pnpm-lockfile.yaml
 +++ b/dist/bridge/pnpm-lockfile.yaml
 @@ -9,51 +9,51 @@ importers:
@@ -354,3 +354,43 @@ index 61299ae..6312100 100644
      optional: true
  
    ws@8.21.0: {}
+diff --git a/dist/index.js b/dist/index.js
+index 63f47e51d59442ffec84ff18e9d24c679f938519..028e3695f78816b33c03b0bb013d46a9e4db86d9 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -739,7 +739,9 @@ function createSession({ sessionId, channel, proc, model, reasoningEffort, webSe
+ 			instructions,
+ 			tools
+ 		});
+-		const restartThread = latestThreadId != null && (skillsResult.changed || latestTurnConfigurationFingerprint?.startsWith("v2:") === true && latestTurnConfigurationFingerprint !== nextFingerprint);
++		// Brigade: "v3:" fingerprints (fingerprintCodexTurnConfiguration). A "v2:" one, saved before,
++		// restarts nothing: it covered each tool's description and input too.
++		const restartThread = latestThreadId != null && (skillsResult.changed || latestTurnConfigurationFingerprint?.startsWith("v3:") === true && latestTurnConfigurationFingerprint !== nextFingerprint);
+ 		latestTurnConfigurationFingerprint = nextFingerprint;
+ 		if (restartThread) pendingResumeThreadId = void 0;
+ 		return { restartThread };
+@@ -1071,15 +1073,22 @@ function createSession({ sessionId, channel, proc, model, reasoningEffort, webSe
+ 		}
+ 	};
+ }
++/**
++* Brigade: what a change of restarts the Codex thread, which then starts anew without its
++* conversation. Its instructions, and which tools it has, by name: thread/resume takes no tools,
++* so a thread keeps those it started with, and a tool added since is only in a new thread. Not
++* what each tool says or takes: changed by an update, the runner tells the thread so in its next
++* message (apps/runner/src/harness/tool-changes.ts), and the thread keeps its conversation.
++*/
+ function fingerprintCodexTurnConfiguration({ instructions, tools }) {
+ 	const canonical = JSON.stringify({
+ 		instructions: instructions ?? null,
+-		tools
++		tools: (tools ?? []).map((tool) => tool.name).sort()
+ 	}, (_key, value) => {
+ 		if (value == null || typeof value !== "object" || Array.isArray(value)) return value;
+ 		return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0));
+ 	});
+-	return `v2:${createHash("sha256").update(canonical).digest("hex")}`;
++	return `v3:${createHash("sha256").update(canonical).digest("hex")}`;
+ }
+ //#endregion
+ //#region src/index.ts

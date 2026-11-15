@@ -83,6 +83,13 @@ import {
   type WaitingApproval,
   type WaitingCall,
 } from './closed-turn.js'
+import {
+  changedTools,
+  toolChangesNote,
+  toolDigests,
+  toolSpecs,
+  type ToolSpec,
+} from './tool-changes.js'
 import { claudeSettingsEnv } from './claude-settings.js'
 import { CODEX_SETTINGS } from './codex-settings.js'
 import { harnessEnv } from './env.js'
@@ -221,6 +228,11 @@ type SavedState = {
   resume?: unknown
   /** Recent conversation, for the handoff when the thread moves to another account. */
   transcript: Transcript
+  /**
+   * The definitions of Brigade's tools the conversation was given, by name (toolDigests): it
+   * keeps them when it resumes, so a definition changed since is told in the next message.
+   */
+  tools?: Record<string, string>
   /** The thread's latest arrival on this computer (ThreadSpec.moved) taken in. */
   movedAt?: string
   /** It arrived from this computer, and no turn has run here since: the next starts from the transcript. */
@@ -479,6 +491,8 @@ function createAgent(
     }),
     /** Brigade's tools, by name. */
     tools: Object.keys(tools),
+    /** Their definitions, as the harness gives them (tool-changes.ts). */
+    specs: toolSpecs(tools),
   }
 }
 
@@ -490,6 +504,11 @@ type Live = {
   credentials: ThreadCredentials
   /** The connector tools, effort and suggestions the agent was made with (agentKey). */
   made: string
+  /**
+   * Its tools' definitions (toolDigests), and those changed since the conversation was given
+   * them, which the next message tells it (withToolChanges): emptied once told.
+   */
+  tools: { digests: Record<string, string>; changed: ToolSpec[] }
 }
 
 /**
@@ -513,6 +532,17 @@ export const agentKey = (spec: ThreadSpec) =>
   ])
 
 type TurnStream = Awaited<ReturnType<Live['agent']['stream']>>['fullStream']
+
+/**
+ * A message to the session, after what changed in its tools since its conversation was given
+ * them (tool-changes.ts), told once: the turn that ran with it keeps them as given (run).
+ */
+function withToolChanges(live: Live, prompt: string) {
+  const note = toolChangesNote(live.tools.changed)
+  if (!note) return prompt
+  live.tools.changed = []
+  return `${note}\n\n${prompt}`
+}
 
 /**
  * A session stopped mid-turn saves that turn as `continueFrom`, with what it
@@ -780,6 +810,14 @@ export class HarnessThread {
           this.approvals.clear()
         }
         if (result?.status === 'idle') this.saved.recoveries = 0
+        // The turn ran: its conversation has its tools as they are now, any change told
+        // (withToolChanges). One that failed tells them again in the next session.
+        if (
+          (result?.status === 'idle' || result?.status === 'waiting') &&
+          this.live &&
+          this.live.tools.changed.length === 0
+        )
+          this.saved.tools = this.live.tools.digests
         await this.persist().catch((error) =>
           console.warn(`could not save thread state: ${errorMessage(error)}`),
         )
@@ -1644,24 +1682,30 @@ export class HarnessThread {
                   const call = this.approvals.get(input.approvalId)
                   this.approvals.delete(input.approvalId)
                   if (input.approved) approvedAgain = call
-                  return approvalAfterRestart(call, input.approved, input.reason)
+                  return withToolChanges(
+                    live,
+                    approvalAfterRestart(call, input.approved, input.reason),
+                  )
                 })(),
                 abortSignal: streamSignal(),
               })
             : closed && (input.kind === 'answer' || input.kind === 'ticket')
               ? await live.agent.stream({
                   session: live.session,
-                  prompt: answerAfterRestart(
-                    input.kind === 'answer'
-                      ? this.answerResult(input.questionId, input.answer)
-                      : this.ticketResult(input.requestId, input.answer),
+                  prompt: withToolChanges(
+                    live,
+                    answerAfterRestart(
+                      input.kind === 'answer'
+                        ? this.answerResult(input.questionId, input.answer)
+                        : this.ticketResult(input.requestId, input.answer),
+                    ),
                   ),
                   abortSignal: streamSignal(),
                 })
               : input.kind === 'prompt' || input.kind === 'resume'
                 ? await live.agent.stream({
                     session: live.session,
-                    prompt: say(text!),
+                    prompt: withToolChanges(live, say(text!)),
                     abortSignal: streamSignal(),
                   })
                 : input.kind === 'answer' || input.kind === 'ticket'
@@ -1737,7 +1781,7 @@ export class HarnessThread {
           (
             await live.agent.stream({
               session: live.session,
-              prompt: ask,
+              prompt: withToolChanges(live, ask),
               abortSignal: streamSignal(),
             })
           ).fullStream,
@@ -2150,7 +2194,7 @@ export class HarnessThread {
       readFile: (file) => this.readFile(file, 1024 * 1024, 'A secret file'),
     })
     const computer = this.computerUse()
-    const { agent, tools } = createAgent(
+    const { agent, tools, specs } = createAgent(
       this.spec,
       (call) => this.callWithFiles(call),
       credentials,
@@ -2242,16 +2286,28 @@ export class HarnessThread {
       ...(resume ? { resumeFrom: resume as never } : {}),
     })
     sandbox.dropAdopted()
+    return this.begin(
+      { agent, session, sandbox, account, credentials, made: agentKey(this.spec) },
+      specs,
+      resume,
+    )
+  }
+
+  /** The session started, resuming `resume` if any, with tools as `specs` defines them. */
+  private begin(live: Omit<Live, 'tools'>, specs: ToolSpec[], resume: unknown): Live {
     this.frozen = frozenMidRun(resume)
-    this.live = {
-      agent,
-      session,
-      sandbox,
-      account,
-      credentials,
-      made: agentKey(this.spec),
+    // A resumed conversation keeps the tool definitions it was given (tool-changes.ts): those
+    // changed since go in the next message. A new one is given them all as they are now, and so
+    // is one saved before Brigade kept what it was given.
+    const known = resume ? this.saved?.tools : undefined
+    const digests = toolDigests(specs)
+    this.live = { ...live, tools: { digests, changed: changedTools(known, specs) } }
+    this.saved = {
+      transcript: [],
+      ...this.saved,
+      accountId: live.account.id,
+      ...(known ? {} : { tools: digests }),
     }
-    this.saved = { transcript: [], ...this.saved, accountId: account.id }
     return this.live
   }
 

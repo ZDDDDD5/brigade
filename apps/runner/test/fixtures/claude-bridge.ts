@@ -18,7 +18,7 @@ const mcpSdkDir = () =>
   resolve(dirname(require.resolve('@modelcontextprotocol/sdk/server/index.js')), '../../..')
 
 /** What the bootstrap's pnpm install would put there: the bridge's own MCP SDK, ws and zod, a fake Agent SDK. */
-async function fakeInstall(dir: string, sdk: string) {
+export async function fakeInstall(dir: string, sdk: string) {
   const modules = join(dir, 'node_modules')
   await mkdir(join(modules, '@anthropic-ai', 'claude-agent-sdk'), { recursive: true })
   await writeFile(

@@ -49,7 +49,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 `
 
 /** What the bootstrap's pnpm install would put there: the bridge's own ws, and the stand-in. */
-async function fakeInstall(dir: string) {
+export async function fakeInstall(dir: string) {
   const modules = join(dir, 'node_modules')
   const codex = join(modules, '@openai', 'codex')
   await mkdir(join(codex, 'bin'), { recursive: true })

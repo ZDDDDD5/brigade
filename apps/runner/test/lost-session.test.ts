@@ -184,6 +184,7 @@ async function setup(options: Options = {}) {
         account: spec.account,
         credentials: { cleanup: async () => {} },
         made: JSON.stringify([null, [], undefined]),
+        tools: { digests: {}, changed: [] },
       }
       return this.live
     },
