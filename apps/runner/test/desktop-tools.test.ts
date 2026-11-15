@@ -840,3 +840,69 @@ test('the version a runner downloads is the one pinned in the lockfile, and the 
     new RegExp(`integrity: ${AGENT_DESKTOP_INTEGRITY.replace(/[+/]/g, '\\$&')}`),
   )
 })
+
+test('a stalled download fails at its deadline, and a caller that gives up stops only its own wait', async () => {
+  const { execFileSync } = await import('node:child_process')
+  const { createHash } = await import('node:crypto')
+  const { mkdtempSync, mkdirSync, rmSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { ensureAgentDesktop } = await import('../src/agent-desktop.js')
+  const root = mkdtempSync(join(tmpdir(), 'agent-desktop-stall-'))
+  try {
+    const bin = join(root, 'src', 'package', 'bin')
+    mkdirSync(bin, { recursive: true })
+    for (const name of ['agent-desktop-linux-x64', 'agent-desktop-linux-clipboard-owner-linux-x64'])
+      writeFileSync(join(bin, name), '#!/bin/sh\n')
+    const tarball = join(root, 'package.tgz')
+    execFileSync('tar', ['-czf', tarball, '-C', join(root, 'src'), 'package'])
+    const bytes = readFileSync(tarball)
+    const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`
+    // Headers, then the first bytes, then nothing: the body never ends, whatever the signal.
+    const stalled = (async () =>
+      new Response(
+        new ReadableStream({
+          start: (controller) => controller.enqueue(bytes.subarray(0, 100)),
+        }),
+      )) as unknown as typeof globalThis.fetch
+    const dir = join(root, 'stalled', '1.3.1')
+    const options = { fromPackage: false, os: 'linux' as const, cpu: 'x64', dir, integrity }
+
+    // Past its deadline: an error, for every caller.
+    const started = Date.now()
+    await assert.rejects(
+      Promise.all([
+        ensureAgentDesktop({ ...options, fetch: stalled, deadlineMs: 200 }),
+        ensureAgentDesktop({ ...options, fetch: stalled, deadlineMs: 200 }),
+      ]),
+      /no answer from npm within/,
+    )
+    assert.ok(Date.now() - started < 5000)
+    assert.equal(existsSync(dir), false)
+
+    // A caller whose turn was interrupted stops waiting; the download goes on for the other.
+    let release: () => void = () => undefined
+    const slow = (async () => {
+      await new Promise<void>((resolve) => (release = resolve))
+      return new Response(bytes)
+    }) as unknown as typeof globalThis.fetch
+    const controller = new AbortController()
+    const leaving = ensureAgentDesktop({ ...options, fetch: slow, signal: controller.signal })
+    const staying = ensureAgentDesktop({ ...options, fetch: slow })
+    controller.abort()
+    await assert.rejects(leaving, /aborted/)
+    release()
+    assert.deepEqual(await staying, { path: join(dir, 'agent-desktop-linux-x64') })
+    // Interrupted before it asked: no wait at all.
+    await assert.rejects(
+      ensureAgentDesktop({
+        ...options,
+        dir: join(root, 'other'),
+        fetch: slow,
+        signal: AbortSignal.abort(),
+      }),
+      /aborted/,
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})

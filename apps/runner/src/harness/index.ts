@@ -1863,7 +1863,10 @@ export class HarnessThread {
 
   /** On a member's Mac: agent-desktop through Brigade Computer Use, beside the other computer tools. */
   private macDesktop(computer: ComputerUse): Desktop {
-    return { exec: macDesktopExec(computer, () => ensureAgentDesktop()), where: 'mac' }
+    return {
+      exec: macDesktopExec(computer, (signal) => ensureAgentDesktop(signal ? { signal } : {})),
+      where: 'mac',
+    }
   }
 
   /**
@@ -1875,7 +1878,10 @@ export class HarnessThread {
     const user = this.runAs
     if (!user || process.platform !== 'linux') return
     return {
-      exec: teammateDesktopExec(user, async () => (await ensureAgentDesktop()).path),
+      exec: teammateDesktopExec(
+        user,
+        async (signal) => (await ensureAgentDesktop(signal ? { signal } : {})).path,
+      ),
       where: 'cloud',
       ready: async () => {
         touchBrowser(this.spec.teammate.id)

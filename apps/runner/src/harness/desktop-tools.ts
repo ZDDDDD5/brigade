@@ -547,10 +547,11 @@ const MAC_TIMEOUT = 90
  */
 export function macDesktopExec(
   computer: ComputerUse,
-  find: () => Promise<AgentDesktopBinary | undefined>,
+  find: (signal?: AbortSignal) => Promise<AgentDesktopBinary | undefined>,
 ): DesktopExec {
   return async (args, options = {}) => {
-    const binary = await find().catch((error: unknown) => {
+    const binary = await find(options.signal).catch((error: unknown) => {
+      if (options.signal?.aborted) throw error
       throw new Error(
         `${error instanceof Error ? error.message : String(error)}: use computer_screenshot and computer_click meanwhile.`,
       )

@@ -55,10 +55,10 @@ const DESKTOP_OUTPUT_MAX = 32 * 1024 * 1024
  */
 export function teammateDesktopExec(
   user: string,
-  find: () => Promise<string | undefined>,
+  find: (signal?: AbortSignal) => Promise<string | undefined>,
 ): DesktopExec {
   return async (args, options = {}) => {
-    const binary = await find()
+    const binary = await find(options.signal)
     return new Promise<string>((resolve, reject) => {
       if (!binary) return reject(new Error('agent-desktop is missing from this runner'))
       // Interrupted already (while its browser started): nothing is run.

@@ -81,9 +81,13 @@ function binaryNames(os: string, cpu: string) {
 
 let downloading: Promise<AgentDesktopBinary> | undefined
 
+/** The longest a download may take, its body included: a stalled one fails, and the next call tries again. */
+export const DOWNLOAD_DEADLINE_MS = 120_000
+
 /**
  * agent-desktop's binary for this computer, downloaded first if the runner hasn't it yet. One
- * download at a time; a failed one is tried again at the next call.
+ * download at a time, which fails past its deadline; a failed one is tried again at the next
+ * call. A caller's `signal` stops its own wait only: the download goes on for the others.
  */
 export function ensureAgentDesktop(
   options: {
@@ -94,6 +98,8 @@ export function ensureAgentDesktop(
     /** Tests: the integrity their own tarball has, and no devDependency's copy. */
     integrity?: string
     fromPackage?: boolean
+    deadlineMs?: number
+    signal?: AbortSignal
   } = {},
 ): Promise<AgentDesktopBinary> {
   const os = options.os ?? platform()
@@ -102,10 +108,40 @@ export function ensureAgentDesktop(
   const have = agentDesktopBinary(os, cpu, dir, options.fromPackage ?? true)
   if (have) return Promise.resolve(have)
   const integrity = options.integrity ?? AGENT_DESKTOP_INTEGRITY
-  downloading ??= download(os, cpu, dir, options.fetch ?? fetch, integrity).finally(() => {
+  const signal = options.signal
+  if (signal?.aborted) return Promise.reject(new Error('aborted'))
+  downloading ??= withDeadline(
+    (deadline) => download(os, cpu, dir, options.fetch ?? fetch, integrity, deadline),
+    options.deadlineMs ?? DOWNLOAD_DEADLINE_MS,
+  ).finally(() => {
     downloading = undefined
   })
-  return downloading
+  const shared = downloading
+  if (!signal) return shared
+  return new Promise<AgentDesktopBinary>((resolve, reject) => {
+    const abort = () => reject(new Error('aborted'))
+    signal.addEventListener('abort', abort, { once: true })
+    shared.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+  })
+}
+
+/**
+ * `work` given a signal that aborts at the deadline, and failing then whether or not it heeds it
+ * (a fetch does, body included; anything else is left behind).
+ */
+function withDeadline<T>(work: (signal: AbortSignal) => Promise<T>, ms: number) {
+  const controller = new AbortController()
+  let timer: NodeJS.Timeout | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(
+        `agent-desktop could not be downloaded: no answer from npm within ${Math.round(ms / 1000)} seconds`,
+      )
+      controller.abort(error)
+      reject(error)
+    }, ms)
+  })
+  return Promise.race([work(controller.signal), late]).finally(() => clearTimeout(timer))
 }
 
 async function download(
@@ -114,15 +150,18 @@ async function download(
   dir: string,
   get: typeof fetch,
   pinned: string,
+  deadline: AbortSignal,
 ) {
   const names = binaryNames(os, cpu)
   if (!names) throw new Error(`agent-desktop does not run on ${os} ${cpu}`)
-  const response = await get(TARBALL).catch((error: unknown) => {
+  const response = await get(TARBALL, { signal: deadline }).catch((error: unknown) => {
     throw new Error(`agent-desktop could not be downloaded: ${String(error)}`)
   })
   if (!response.ok)
     throw new Error(`agent-desktop could not be downloaded: npm answered ${response.status}`)
   const bytes = Buffer.from(await response.arrayBuffer())
+  // Past the deadline already: what comes after (writing, unpacking) isn't started.
+  if (deadline.aborted) throw deadline.reason
   const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`
   if (integrity !== pinned)
     throw new Error('agent-desktop was not used: its download does not match the version pinned')
