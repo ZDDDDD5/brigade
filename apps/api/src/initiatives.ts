@@ -37,7 +37,8 @@ import { board } from './board.js'
 import { reportOf } from './children.js'
 import { Prisma, prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { featuresOfMember } from './features.js'
-import { hubs, threadUpdated } from './hub.js'
+import { hubs, scheduleUpdated, threadUpdated } from './hub.js'
+import { noteAsker } from './thread-spec.js'
 import type { WorkspaceScope } from './scope.js'
 import { fireNow } from './wakeups.js'
 
@@ -308,6 +309,12 @@ export async function handleInitiativeCall(
         ...(op.archive ? { archivedAt: new Date() } : {}),
       },
     })
+    // Its work over: its plan cancelled, its routines paused (retireMission).
+    if (op.archive)
+      schedulesChanged(
+        scope,
+        (await db.$transaction((tx) => retireMission(tx, mission.id))).schedules,
+      )
     await audit({
       ...scope,
       actor,
@@ -1196,6 +1203,97 @@ export async function missionWeek(db: ScopedDb, from: Date): Promise<MissionWeek
 
 // ---- Made and changed from the Missions page ----
 
+type LiveTx = Pick<ScopedDb, 'session' | 'schedule' | 'initiativeAction' | 'ticket'>
+
+/**
+ * Threads moving to a mission (or out of any): their live work follows them. Routines reporting to
+ * them take the new mission; actions not run yet move with them, or, out of any mission, are
+ * cancelled with their approval tickets. What went out stays where it was recorded.
+ */
+async function moveThreads(tx: LiveTx, threadIds: string[], to: string | null) {
+  if (!threadIds.length) return { schedules: [] as string[] }
+  const schedules = await tx.schedule.findMany({
+    where: { parentSessionId: { in: threadIds } },
+    select: { id: true },
+  })
+  if (schedules.length)
+    await tx.schedule.updateMany({
+      where: { id: { in: schedules.map((r) => r.id) } },
+      data: { initiativeId: to },
+    })
+  const live = { sessionId: { in: threadIds }, status: { in: ['planned', 'awaiting_approval'] } }
+  if (to) await tx.initiativeAction.updateMany({ where: live as never, data: { initiativeId: to } })
+  else await cancelLive(tx, live)
+  await tx.session.updateMany({ where: { id: { in: threadIds } }, data: { initiativeId: to } })
+  return { schedules: schedules.map((r) => r.id) }
+}
+
+/** Actions not run yet, cancelled, and their approval tickets closed. */
+async function cancelLive(tx: LiveTx, where: object) {
+  const actions = await tx.initiativeAction.findMany({
+    where: where as never,
+    select: { id: true, ticketId: true },
+  })
+  if (!actions.length) return
+  await tx.initiativeAction.updateMany({
+    where: {
+      id: { in: actions.map((a) => a.id) },
+      status: { in: ['planned', 'awaiting_approval'] },
+    },
+    data: { status: 'cancelled' },
+  })
+  const tickets = actions.flatMap((a) => (a.ticketId ? [a.ticketId] : []))
+  if (tickets.length)
+    await tx.ticket.updateMany({
+      where: { id: { in: tickets }, status: 'open' },
+      data: { status: 'resolved', resolvedAt: new Date() },
+    })
+}
+
+/**
+ * A mission archived, its work over: its plan is cancelled and its routines paused, so nothing goes
+ * on out of sight of the Missions page. Unarchiving brings neither back.
+ */
+async function retireMission(tx: LiveTx, missionId: string) {
+  await cancelLive(tx, {
+    initiativeId: missionId,
+    status: { in: ['planned', 'awaiting_approval'] },
+  })
+  const threads = await tx.session.findMany({
+    where: { initiativeId: missionId, parentId: null },
+    select: { id: true },
+  })
+  const schedules = await tx.schedule.findMany({
+    where: {
+      pausedAt: null,
+      OR: [
+        { initiativeId: missionId },
+        ...(threads.length ? [{ parentSessionId: { in: threads.map((t) => t.id) } }] : []),
+      ],
+    },
+    select: { id: true },
+  })
+  if (schedules.length)
+    await tx.schedule.updateMany({
+      where: { id: { in: schedules.map((r) => r.id) } },
+      data: { pausedAt: new Date(), nextRunAt: null },
+    })
+  return { schedules: schedules.map((r) => r.id) }
+}
+
+const schedulesChanged = (scope: Scope, ids: string[]) => {
+  for (const id of ids) void hubs.get(scope.workspaceId).broadcast(scheduleUpdated(id))
+}
+
+/**
+ * A member who changes a mission speaks in its threads: its words reach their teammates' next turns
+ * (their spec's mission), so they count as asking there (thread-spec.ts askedBy), and a member's own
+ * Apps no longer answer another's word.
+ */
+async function noteMember(db: ScopedDb, scope: WorkspaceScope, threadIds: string[]) {
+  for (const id of new Set(threadIds)) await noteAsker(db, id, scope.memberId)
+}
+
 /**
  * The threads a member gives a mission: at the top (a sub-thread or a routine's run belongs to its
  * parent's or its routine's), and ones they may write in, or any for an admin, as for closing one.
@@ -1257,13 +1355,11 @@ export async function createMission(db: ScopedDb, scope: WorkspaceScope, input: 
         createdByMemberId: scope.memberId,
       } as never,
     })
-    if (threads.length)
-      await tx.session.updateMany({
-        where: { id: { in: threads } },
-        data: { initiativeId: row.id },
-      })
-    return row
+    const moved = await moveThreads(tx, threads, row.id)
+    return { ...row, schedules: moved.schedules }
   })
+  await noteMember(db, scope, threads)
+  schedulesChanged(scope, mission.schedules)
   await audit({
     ...scope,
     actor: { type: 'member', id: scope.memberId },
@@ -1303,7 +1399,7 @@ export async function updateMission(
   const removed = input.threadIds
     ? current.map((t) => t.id).filter((t) => !input.threadIds!.includes(t))
     : []
-  await db.$transaction(async (tx) => {
+  const schedules = await db.$transaction(async (tx) => {
     await tx.initiative.update({
       where: { id },
       data: {
@@ -1314,14 +1410,30 @@ export async function updateMission(
         ...(input.archived !== undefined ? { archivedAt: input.archived ? new Date() : null } : {}),
       },
     })
-    if (added.length)
-      await tx.session.updateMany({ where: { id: { in: added } }, data: { initiativeId: id } })
-    if (removed.length)
-      await tx.session.updateMany({
-        where: { id: { in: removed }, initiativeId: id },
-        data: { initiativeId: null },
-      })
+    const touched = [
+      ...(await moveThreads(tx, added, id)).schedules,
+      ...(await moveThreads(tx, removed, null)).schedules,
+    ]
+    if (input.archived) touched.push(...(await retireMission(tx, id)).schedules)
+    return touched
   })
+  // Its words, owner or number reach its threads' teammates: the member speaks in each of them.
+  const speaks =
+    !!input.title ||
+    !!input.objective ||
+    !!teammateId ||
+    input.metric !== undefined ||
+    input.archived !== undefined
+  const threadsNow = speaks
+    ? (
+        await db.session.findMany({
+          where: { initiativeId: id, parentId: null },
+          select: { id: true },
+        })
+      ).map((t) => t.id)
+    : []
+  await noteMember(db, scope, [...added, ...threadsNow])
+  schedulesChanged(scope, [...new Set(schedules)])
   await audit({
     ...scope,
     actor: { type: 'member', id: scope.memberId },

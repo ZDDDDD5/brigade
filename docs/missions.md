@@ -42,7 +42,16 @@ People read "Mission". In code and in the database it is an **Initiative** (`Ini
   objective, its owner, an optional number, and the threads it gathers (the whole set, on edit). A
   thread given is one at the top (a sub-thread belongs to its parent's), and one the member may write
   in, or any for an admin. A thread belongs to one mission at most: given to another, it moves.
-  Viewers make and change none. Archived, a mission leaves the page and its threads stop carrying it.
+  Viewers make and change none.
+- A thread that moves to another mission takes its live work along: the routines reporting to it,
+  and its actions not run yet. Taken out of any mission, its actions not run yet are cancelled (their
+  approval tickets close) and its routines belong to none. What went out stays where it was recorded.
+- A member who changes a mission's words, owner or number, archives it or gives it a thread speaks in
+  its threads: they count as asking there (`noteAsker`, as for a decision on a ticket), since the
+  teammates read the mission in their next turns. A thread's existing sub-threads keep their asker.
+- Archived (from the page or `update_mission`), its work is over: its actions not run yet are
+  cancelled and its routines paused; it leaves the page and its threads stop carrying it.
+  Unarchiving brings neither back.
 
 The seed makes two (`apps/api/prisma/seed-missions.ts`).
 

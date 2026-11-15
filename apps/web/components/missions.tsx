@@ -341,7 +341,13 @@ function MissionCard({
               <Pencil aria-hidden /> Edit
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => void archive()}>
-              <Archive aria-hidden /> Archive
+              <Archive aria-hidden />
+              <span className="flex flex-col">
+                Archive
+                <span className="text-xs text-muted-foreground">
+                  Pauses its routines, cancels its plan
+                </span>
+              </span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -696,3 +696,152 @@ test(
     assert.ok(!(await listMissions(scoped(scope), member())).some((m) => m.id === made.id))
   },
 )
+
+test('a member who changes a mission speaks in its threads', { skip }, async () => {
+  const bob = { user: `user-missions-bob2-${id}`, member: `mem-missions-bob2-${id}` }
+  await prisma.user.create({
+    data: { id: bob.user, name: 'Bob', email: `${bob.user}@example.com` },
+  })
+  await prisma.member.create({
+    data: { id: bob.member, organizationId: ids.organization, userId: bob.user, role: 'admin' },
+  })
+  try {
+    const adas = await thread({ askedByMemberId: ids.member })
+    const made = await createMission(scoped(scope), member(), {
+      title: 'Ada’s',
+      objective: 'Hers',
+      teammateId: maya.id,
+      threadIds: [adas.id],
+    })
+    assert.equal(
+      (await prisma.session.findUniqueOrThrow({ where: { id: adas.id } })).askedByMemberId,
+      ids.member,
+    )
+    // Bob rewrites its objective: Maya reads it in Ada's thread, so Bob asks there too.
+    await updateMission(
+      scoped(scope),
+      { ...scope, userId: bob.user, memberId: bob.member, role: 'admin' },
+      made.id,
+      { objective: 'Post every hour' },
+    )
+    assert.equal(
+      (await prisma.session.findUniqueOrThrow({ where: { id: adas.id } })).askedByMemberId,
+      '*',
+    )
+  } finally {
+    await prisma.member.deleteMany({ where: { id: bob.member } })
+    await prisma.user.deleteMany({ where: { id: bob.user } })
+  }
+})
+
+test(
+  'a thread moving between missions takes its routines and plan; out of any, its plan stops',
+  { skip },
+  async () => {
+    const from = await createMission(scoped(scope), member(), {
+      title: 'From',
+      objective: 'A',
+      teammateId: maya.id,
+      threadIds: [],
+    })
+    const to = await createMission(scoped(scope), member(), {
+      title: 'To',
+      objective: 'B',
+      teammateId: maya.id,
+      threadIds: [],
+    })
+    const moving = await thread({})
+    await updateMission(scoped(scope), member(), from.id, { threadIds: [moving.id] })
+    const routine = await prisma.schedule.create({
+      data: {
+        ...scope,
+        teammateId: maya.id,
+        title: 'Daily',
+        instructions: 'Comment',
+        cron: '0 9 * * *',
+        timezone: 'Europe/Paris',
+        ownerMemberId: ids.member,
+        parentSessionId: moving.id,
+        initiativeId: from.id,
+        nextRunAt: new Date(Date.now() + 3_600_000),
+      },
+    })
+    const planned = (await call(moving.id, {
+      name: 'plan_action',
+      at: inMinutes(60),
+      title: 'Post: moving',
+      instructions: 'Publish',
+      draft: 'Moving.',
+    })) as { actionId: string }
+    await updateMission(scoped(scope), member(), to.id, { threadIds: [moving.id] })
+    assert.equal(
+      (await prisma.schedule.findUniqueOrThrow({ where: { id: routine.id } })).initiativeId,
+      to.id,
+    )
+    assert.equal(
+      (await prisma.initiativeAction.findUniqueOrThrow({ where: { id: planned.actionId } }))
+        .initiativeId,
+      to.id,
+    )
+    // Its plan still answers in its new mission.
+    assert.ok(
+      !('error' in (await call(moving.id, { name: 'cancel_action', actionId: planned.actionId }))),
+    )
+
+    const second = (await call(moving.id, {
+      name: 'plan_action',
+      at: inMinutes(60),
+      title: 'Post: leaving',
+      instructions: 'Publish',
+      draft: 'Leaving.',
+    })) as { actionId: string }
+    await updateMission(scoped(scope), member(), to.id, { threadIds: [] })
+    const left = await prisma.initiativeAction.findUniqueOrThrow({ where: { id: second.actionId } })
+    assert.equal(left.status, 'cancelled')
+    assert.equal(
+      (await prisma.ticket.findUniqueOrThrow({ where: { id: left.ticketId! } })).status,
+      'resolved',
+    )
+    assert.equal(
+      (await prisma.schedule.findUniqueOrThrow({ where: { id: routine.id } })).initiativeId,
+      null,
+    )
+  },
+)
+
+test('an archived mission stops: its plan cancelled, its routines paused', { skip }, async () => {
+  const kept = await thread({})
+  const made = await createMission(scoped(scope), member(), {
+    title: 'Ending',
+    objective: 'Over soon',
+    teammateId: maya.id,
+    threadIds: [kept.id],
+  })
+  const routine = await prisma.schedule.create({
+    data: {
+      ...scope,
+      teammateId: maya.id,
+      title: 'Weekly',
+      instructions: 'Sum up',
+      cron: '0 17 * * 0',
+      timezone: 'Europe/Paris',
+      ownerMemberId: ids.member,
+      parentSessionId: kept.id,
+      nextRunAt: new Date(Date.now() + 3_600_000),
+    },
+  })
+  const planned = (await call(kept.id, {
+    name: 'plan_action',
+    at: inMinutes(60),
+    title: 'Post: approved',
+    instructions: 'Publish',
+  })) as { actionId: string }
+  await updateMission(scoped(scope), member(), made.id, { archived: true })
+  assert.equal(
+    (await prisma.initiativeAction.findUniqueOrThrow({ where: { id: planned.actionId } })).status,
+    'cancelled',
+  )
+  const paused = await prisma.schedule.findUniqueOrThrow({ where: { id: routine.id } })
+  assert.ok(paused.pausedAt)
+  assert.equal(paused.nextRunAt, null)
+})
