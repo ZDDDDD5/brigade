@@ -205,8 +205,11 @@ function layout() {
   markBand(window)
 }
 
-/** The style that sizes the window's own page's band, and the height it gives. */
-let bandStyle: { key: string; top: number } | undefined
+/** The style that sizes the window's own page's band, the height it gives, and the page it
+ * went into: the window's page once loaded (`hostPage`, 0 while it loads). */
+let bandStyle: { key: string; top: number; page: number } | undefined
+let hostPage = 0
+let hostPages = 0
 let marking = Promise.resolve()
 
 /**
@@ -219,10 +222,14 @@ function markBand(window: BrowserWindow) {
   marking = marking
     .then(async () => {
       const top = band()
-      if (host.isDestroyed() || host.isLoading() || bandStyle?.top === top) return
+      const page = hostPage
+      if (host.isDestroyed() || !page) return
+      if (bandStyle?.page === page && bandStyle.top === top) return
       const key = await host.insertCSS(`#band{height:${top}px}`)
-      const previous = bandStyle?.key
-      bandStyle = { key, top }
+      // Reloaded meanwhile: the style went with the old page, the new one marks its own.
+      if (page !== hostPage) return
+      const previous = bandStyle?.page === page ? bandStyle.key : undefined
+      bandStyle = { key, top, page }
       if (previous) await host.removeInsertedCSS(previous)
     })
     .catch(() => {})
@@ -367,8 +374,12 @@ export function showDashboard(url = dashboard()) {
   window.webContents.on('will-navigate', (event) => event.preventDefault())
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   bandStyle = undefined
+  hostPage = 0
+  window.webContents.on('did-start-loading', () => {
+    hostPage = 0
+  })
   window.webContents.on('did-finish-load', () => {
-    bandStyle = undefined
+    hostPage = ++hostPages
     markBand(window)
   })
   void window.loadFile(join(__dirname, '..', 'page', 'window.html'))

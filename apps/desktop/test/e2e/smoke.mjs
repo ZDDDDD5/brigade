@@ -132,9 +132,10 @@ try {
   // Only the band above the view moves the window: a drag area under the view takes its clicks
   // on macOS (0.4.2: nothing in the dashboard could be clicked).
   const host = app.windows().find((w) => w.url().endsWith('window.html'))
+  // Its height follows the view: a timeout here still reports what it found, below.
   await waitFor(() =>
     host.evaluate((top) => getComputedStyle(band).height === `${top}px`, top).catch(() => false),
-  )
+  ).catch(() => {})
   const drag = await host.evaluate(() => {
     const region = (el) =>
       ['app-region', '-webkit-app-region'].some(
