@@ -38,6 +38,11 @@ export const THREAD_TOOLS = [
   // A goal's contract and summary are the thread's (docs/goals.md).
   'propose_goal',
   'goal_report',
+  // A mission's plan is the thread's: what it will do, and when (docs/missions.md).
+  'create_mission',
+  'update_mission',
+  'plan_action',
+  'cancel_action',
   // What it waits on and what wakes it: child threads, wake-ups and reviews, whose news comes
   // back to the thread, not to the sub-agent that asked.
   'start_child',

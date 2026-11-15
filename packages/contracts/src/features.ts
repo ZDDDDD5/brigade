@@ -52,6 +52,13 @@ export const FEATURES = {
       'Google warns at sign-in that the app is unverified.',
     default: false,
   },
+  missions: {
+    description:
+      'Missions (docs/missions.md): ongoing work a member delegates to a teammate, with its threads, ' +
+      'routines, planned actions and what went out, on a Missions page with its week. An experiment, ' +
+      'tried by the team first.',
+    default: false,
+  },
 } as const satisfies Record<string, { description: string; default: boolean }>
 
 export type Feature = keyof typeof FEATURES

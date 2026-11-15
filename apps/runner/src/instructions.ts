@@ -156,6 +156,10 @@ export function instructions(
     !spec.parent && !spec.playbook && !scheduledRun(spec) && DONE,
     // Set up only from a thread a person started: the API refuses them elsewhere.
     startedByPerson(spec) && SCHEDULES,
+    // A thread of a mission (the missions feature, docs/missions.md): its plan and what went out.
+    spec.mission
+      ? mission(spec.mission)
+      : spec.missions && startedByPerson(spec) && MAKING_MISSIONS,
     // A dry run starts none: nobody would answer it.
     !spec.playbook?.dryRun && children(spec),
     spec.playbook
@@ -1062,6 +1066,39 @@ const SCHEDULES =
   'with this conversation. A reply to an email you send from this thread (with Gmail, or with email_send from ' +
   'your own address) wakes you here by itself, with the reply, and so does mail to a sign-up address you made ' +
   'with email_new_address: no wake-up is needed to check for it.'
+
+/** Where Missions are open, in a thread of none yet: when to make one (docs/missions.md). */
+const MAKING_MISSIONS =
+  '## Missions\n\n' +
+  'When the person delegates ongoing work to you here, with no end date (grow an account, answer a ' +
+  'community, keep a channel going), make it a mission with `create_mission`, once they asked for that ' +
+  'work or agreed: a title, its objective in a line, and the number that says whether it works when ' +
+  'there is one. The Missions page then shows them what is planned, what waits on them and what went ' +
+  'out, without opening this thread. Not for a one-off task or a deliverable: those are threads, and ' +
+  'lists for checklists. One mission per initiative: say so in your reply when you make one.'
+
+/** A thread of a mission (docs/missions.md): what it is, and how its plan and outputs are kept. */
+const mission = (m: NonNullable<ThreadSpec['mission']>) =>
+  '## Mission\n\n' +
+  `This thread works for the mission "${m.title}" (${m.objective}), owned by ${m.teammate.name}` +
+  (m.number
+    ? `, which follows ${m.number.label}${m.number.unit ? ` (${m.number.unit})` : ''}`
+    : '') +
+  '. A mission is ongoing work a person delegated: the Missions page shows them, for each mission, what ' +
+  'is planned, what waits on them and what went out, without opening its threads and files. Keep it true:\n\n' +
+  '- A dated action (a post at a set time, a launch-day reply) is `plan_action`, not a line in a file or a ' +
+  'wake-up: Brigade prompts this thread at its time. When it needs approval, give its `draft`: a person ' +
+  'approves it before `approveBy` from a ticket and the Missions page, or it does not go, so plan it early ' +
+  'enough for them. Do not also open a ticket for it. `list_actions` and `cancel_action` change the plan.\n' +
+  '- Most of the work is not dated (daily comments, a loop looking for openings): it stays in routines, ' +
+  'never forced into planned actions.\n' +
+  '- Once something went out (a post, a comment, a reply), `record_output` it with its link, and later ' +
+  'its numbers with its outputId: this replaces a hand-kept log. ' +
+  (m.number ? "When you read the mission's number, `record_number` it. " : '') +
+  'Where Brigade has no App (LinkedIn, X through your browser), it sees neither what went out nor its numbers: ' +
+  'record only what you saw, and say so when a number is your reading.\n' +
+  '- Sub-threads, routines and threads you start from here belong to the mission too.\n' +
+  '- When the person changes the mission, or ends it, `update_mission` (title, objective, number, archive).'
 
 /** What people call a child thread: Brigade shows them as sub-threads. */
 const SUB_THREAD =

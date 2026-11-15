@@ -27,6 +27,7 @@ import { featuresOfMember } from './features.js'
 import { gitAccess } from './git.js'
 import { specItems } from './lists.js'
 import { folderRules } from './library-folders.js'
+import { threadInitiative } from './initiatives.js'
 import { projectCatalog, threadProject } from './projects.js'
 import { accountRef, usableAccounts } from './routes/accounts.js'
 
@@ -280,6 +281,13 @@ export async function specFor(
   // Tools (docs/tools.md): for teammates of a thread whose starter has the feature.
   const tools =
     !passing && (await featuresOfMember(thread.startedByMemberId, thread.workspaceId)).has('tools')
+  // Missions (docs/missions.md): the mission the thread works for, when its starter has the feature.
+  // Not in Chief's pass nor a playbook's run, which their own briefs steer.
+  const mission = passing || playbook ? null : await threadInitiative(db, thread)
+  const missions =
+    !passing &&
+    !playbook &&
+    (await featuresOfMember(thread.startedByMemberId, thread.workspaceId)).has('missions')
   // An MCP connector's tools come from its server; a runner too old to know its kind gets none.
   const protocol = await hubs.get(thread.workspaceId).runnerProtocol(thread.computerId)
   const scope = { organizationId: thread.organizationId, workspaceId: thread.workspaceId }
@@ -363,6 +371,9 @@ export async function specFor(
     // Older runners ignore it, and offer no command on the machine.
     machine,
     tools,
+    // Older runners ignore them, and offer no mission tools.
+    missions,
+    mission,
     playbook: playbook
       ? {
           installationId: playbook.installationId,

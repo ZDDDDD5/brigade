@@ -130,6 +130,8 @@ import {
   credentialTools,
   doneTools,
   goalTools,
+  missionTools,
+  createMissionTools,
   imageTools,
   libraryTools,
   machineTools,
@@ -438,6 +440,12 @@ function createAgent(
           ? goalTools(callSchedule, { top: true })
           : spec.parent && !spec.playbook
             ? goalTools(callSchedule, { top: false })
+            : {}),
+        // Missions (docs/missions.md): in a thread of one, its plan and what went out.
+        ...(spec.mission
+          ? missionTools(callSchedule, spec.mission)
+          : spec.missions && startedByPerson(spec)
+            ? createMissionTools(callSchedule)
             : {}),
         // Declaring the thread done, in a thread a person talks to: a child reports, a playbook decides.
         // A schedule's run ends with its turn.

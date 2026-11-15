@@ -402,6 +402,11 @@ model Workspace {
   specPulls        SpecPull[]
   vmRuns           VmRun[]
 
+  /// Its missions (docs/missions.md), named Initiative in code.
+  initiatives       Initiative[]
+  initiativeActions InitiativeAction[]
+  initiativeOutputs InitiativeOutput[]
+  initiativeValues  InitiativeValue[]
   @@index([organizationId])
 }
 
@@ -525,6 +530,8 @@ model Teammate {
   playbookInstallations PlaybookInstallation[]
   backups               TeammateBackup[]
 
+  /// The missions it owns (docs/missions.md).
+  initiatives           Initiative[]
   @@index([workspaceId])
 }
 
@@ -816,6 +823,12 @@ model Session {
   /// Its goals (docs/goals.md): at most one proposed, active or paused at a time.
   goals Goal[]
 
+  /// The mission it belongs to (docs/missions.md), named Initiative in code: set on its main threads;
+  /// a sub-thread or a routine's run belongs to its parent's, or its routine's.
+  initiativeId      String?
+  initiative        Initiative?        @relation(fields: [initiativeId], references: [id], onDelete: SetNull)
+  initiativeActions InitiativeAction[]
+  initiativeOutputs InitiativeOutput[]
   @@index([workspaceId, createdAt])
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([projectId, createdAt])
@@ -827,6 +840,7 @@ model Session {
   @@index([playbookRunId])
   @@index([workspaceId, doneAt])
   @@index([startedFromId])
+  @@index([initiativeId])
 }
 
 /// One AgentEvent with its sequence number. Append-only.
@@ -928,9 +942,13 @@ model Schedule {
   playbookInstallationId String?
   playbookInstallation   PlaybookInstallation? @relation(fields: [playbookInstallationId], references: [id], onDelete: Cascade)
 
+  /// The mission whose routine it is (docs/missions.md).
+  initiativeId           String?
+  initiative             Initiative?           @relation(fields: [initiativeId], references: [id], onDelete: SetNull)
   @@index([nextRunAt])
   @@index([workspaceId])
   @@index([teammateId])
+  @@index([initiativeId])
 }
 
 /// wakeup: a teammate's own (set_wakeup). report: its children's reports, brought back to it (src/children.ts).
@@ -2871,6 +2889,7 @@ model Project {
   /// Its name in its agents' addresses (riley.<slug>@), once one was used.
   mailProject            MailProject?
 
+  initiatives            Initiative[]
   @@unique([workspaceId, name])
   @@index([workspaceId])
 }
@@ -3737,4 +3756,137 @@ model SpecPull {
 
   @@id([documentId, pullRequestId])
   @@index([pullRequestId])
+}
+
+/// A mission (docs/missions.md): ongoing work a member delegates to a teammate, its owner. Named
+/// Initiative in code so it can't be taken for the Tasks board's old missions (Task.parentId).
+/// Its threads and routines point to it; its plan is its InitiativeAction rows, what went out its
+/// InitiativeOutput rows, and its number, when it follows one, a goal's measurements in one of its
+/// threads or the values its teammate declares (InitiativeValue).
+model Initiative {
+  id                  String             @id @default(cuid())
+  organizationId      String
+  workspaceId         String
+  workspace           Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Its owner, the teammate it is delegated to.
+  teammateId          String
+  teammate            Teammate           @relation(fields: [teammateId], references: [id], onDelete: Cascade)
+  projectId           String?
+  project             Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title               String
+  /// What it is for, in a line.
+  objective           String
+  /// The number it follows, when it follows one: its name, its unit, and where it aims.
+  metricLabel         String?
+  metricUnit          String?
+  metricTarget        Float?
+  /// Who made it: a member, or a teammate from a thread.
+  createdByMemberId   String?
+  createdByTeammateId String?
+  archivedAt          DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  sessions            Session[]
+  schedules           Schedule[]
+  actions             InitiativeAction[]
+  outputs             InitiativeOutput[]
+  values              InitiativeValue[]
+
+  @@index([workspaceId, archivedAt])
+}
+
+enum InitiativeActionStatus {
+  /// It runs at its time: it needs no approval, or a person approved its draft.
+  planned
+  /// Its draft waits for a person, before approveBy (its ticket, ticketId).
+  awaiting_approval
+  declined
+  /// Nobody approved its draft before approveBy: it does not go.
+  expired
+  /// Prompted into its thread at its time, as a wake-up (sourceId action:<id>:run).
+  fired
+  cancelled
+}
+
+/// A dated action a mission's teammate planned (plan_action): at dueAt Brigade prompts its thread
+/// with its instructions, as a wake-up. One with a draft needs a person's approval before approveBy.
+model InitiativeAction {
+  id                String                 @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  workspace         Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  initiativeId      String
+  initiative        Initiative             @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  /// The thread it runs in: the mission's thread it was planned from (a sub-thread's or a run's parent).
+  sessionId         String
+  session           Session                @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// The teammate that planned it, prompted at its time.
+  teammateId        String
+  title             String
+  instructions      String
+  draft             String?
+  dueAt             DateTime
+  approveBy         DateTime?
+  status            InitiativeActionStatus @default(planned)
+  /// Its approval ticket, while it has a draft.
+  ticketId          String?
+  decidedByMemberId String?
+  decidedAt         DateTime?
+  firedAt           DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  outputs           InitiativeOutput[]
+
+  @@index([status, dueAt])
+  @@index([status, approveBy])
+  @@index([initiativeId, dueAt])
+}
+
+/// What went out for a mission (record_output): a post, a comment, a reply, with its link, then its
+/// numbers. Brigade sees neither where it went out nor its numbers: they are its teammate's word.
+model InitiativeOutput {
+  id             String            @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  initiativeId   String
+  initiative     Initiative        @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  sessionId      String?
+  session        Session?          @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  teammateId     String?
+  actionId       String?
+  action         InitiativeAction? @relation(fields: [actionId], references: [id], onDelete: SetNull)
+  /// post, comment, reply, article, email or other (OutputKind).
+  kind           String
+  /// Where it went out: linkedin, x, reddit r/selfhosted.
+  channel        String
+  url            String?
+  summary        String
+  /// When it went out.
+  at             DateTime
+  /// Its numbers as last read: { views: 1200, likes: 31 }.
+  metrics        Json              @default("{}")
+  metricsAt      DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([initiativeId, at])
+}
+
+/// A value of a mission's number its teammate declared (record_number), read by hand where Brigade
+/// has no App (LinkedIn analytics). A goal's measurements, when one of its threads has a goal, are
+/// Brigade's own and read from GoalMeasurement instead.
+model InitiativeValue {
+  id             String     @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  initiativeId   String
+  initiative     Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  teammateId     String?
+  value          Float
+  note           String?
+  at             DateTime   @default(now())
+
+  @@index([initiativeId, at])
 }

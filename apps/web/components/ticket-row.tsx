@@ -38,6 +38,7 @@ export function resolvedLabel(t: Ticket, approved: boolean) {
   if (t.payload.skillAction) return approved ? 'Skill added' : 'Declined'
   if (t.payload.triggerAction) return approved ? 'Trigger added' : 'Declined'
   if (t.payload.playbookActivation) return approved ? 'Activated' : 'Declined'
+  if (t.payload.missionAction) return approved ? 'Approved' : 'Declined'
   if (t.payload.source === 'harness') return 'Declined'
   if (
     t.type === 'sign_in' ||
@@ -214,6 +215,18 @@ export function TicketRow({
           : 'For the member who started the thread'}
       </span>
     )
+  } else if (open && t.type === 'approval' && t.payload.missionAction && (admin || starter)) {
+    // A mission's draft (docs/missions.md): approved, it goes at its time; past its deadline, never.
+    actions = (
+      <>
+        <Button size="sm" onClick={() => decide(true)}>
+          Approve
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
+          Decline
+        </Button>
+      </>
+    )
   } else if (open && t.type === 'approval' && (admin || starter)) {
     actions = (
       <>
@@ -335,6 +348,32 @@ export function TicketRow({
             2,
           )}
         </Detail>
+      )}
+      {t.payload.missionAction && (
+        <div className="mt-1.5 flex flex-col gap-1.5">
+          <p className="text-sm text-muted-foreground">
+            For the mission {t.payload.missionAction.mission}: goes out{' '}
+            {new Date(t.payload.missionAction.dueAt).toLocaleString(undefined, {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}{' '}
+            if approved before{' '}
+            {new Date(t.payload.missionAction.approveBy).toLocaleString(undefined, {
+              weekday: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+            .
+          </p>
+          {t.payload.draft && (
+            <p className="rounded-lg bg-secondary px-3 py-2 text-sm whitespace-pre-wrap">
+              {t.payload.draft}
+            </p>
+          )}
+        </div>
       )}
       {t.payload.skillAction && t.payload.skill && <SkillProposalDetail ticket={t} />}
       {t.payload.triggerAction && t.payload.instructions !== undefined && (

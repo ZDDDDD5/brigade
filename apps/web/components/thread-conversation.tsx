@@ -954,7 +954,9 @@ export function ThreadConversation({
       ticket.type === 'approval' &&
       (ticket.payload.skillAction ||
         ticket.payload.playbookActivation ||
-        ticket.payload.playbookPromotion),
+        ticket.payload.playbookPromotion ||
+        // A mission's draft to approve (docs/missions.md), planned with no event of its own.
+        ticket.payload.missionAction),
   )
   const ticketCard = (tickets: typeof t.tickets, className: string) => (
     <Card className={cn('gap-0 overflow-hidden py-0', className)}>

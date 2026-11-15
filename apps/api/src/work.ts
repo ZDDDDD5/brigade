@@ -527,6 +527,8 @@ export async function startThread(
     listItemIds?: string[]
     /** The project it works in; its context comes with the first turn. */
     projectId?: string | null
+    /** The mission it belongs to (docs/missions.md): one started from a mission's thread. */
+    initiativeId?: string | null
     /** How hard its teammates think; none: the harness's default. */
     effort?: Effort | null
     /** The playbook run it is the root thread of: out of the sidebar until a person takes part. */
@@ -609,6 +611,7 @@ export async function startThread(
         title: input.title.slice(0, 120),
         ...(input.startedFromId ? { startedFromId: input.startedFromId } : {}),
         ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(input.initiativeId ? { initiativeId: input.initiativeId } : {}),
         ...(input.effort ? { effort: input.effort } : {}),
         ...(input.playbookRunId ? { playbookRunId: input.playbookRunId } : {}),
         ...(input.quiet ? { quiet: true } : {}),

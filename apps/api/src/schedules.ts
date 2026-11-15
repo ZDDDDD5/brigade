@@ -36,6 +36,7 @@ import { actingTeammate, loadThread, shownAccounts } from './thread-spec.js'
 import { projectWhere, usableProject } from './projects.js'
 import { handleListCall, isListOperation } from './lists.js'
 import { handleWakeup, isWakeupOperation } from './wakeups.js'
+import { handleInitiativeCall, isInitiativeOperation, missionIdOfThread } from './initiatives.js'
 import { completeThread, isDoneOperation } from './thread-done.js'
 import { startThread } from './work.js'
 
@@ -173,6 +174,8 @@ export async function createSchedule(
     projectId?: string | null | undefined
     /** Its runs are children of this thread and report to it. */
     parentSessionId?: string | null
+    /** The mission it is a routine of (docs/missions.md). */
+    initiativeId?: string | null
   },
   by: { memberId: string; teammateId?: string },
 ) {
@@ -190,6 +193,7 @@ export async function createSchedule(
       createdByTeammateId: by.teammateId ?? null,
       projectId: projectId ?? null,
       parentSessionId: input.parentSessionId ?? null,
+      initiativeId: input.initiativeId ?? null,
       nextRunAt: upcoming(input.cron, input.timezone),
     } as never,
   })
@@ -559,6 +563,11 @@ export async function handleScheduleCall(
     const output = await handleChiefCall(db, scope, session, teammate, op)
     return 'error' in output ? fail(output.error) : done(output)
   }
+  // And missions (docs/missions.md): actions planned, outputs and numbers recorded.
+  if (isInitiativeOperation(op)) {
+    const output = await handleInitiativeCall(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
   // And goals (docs/goals.md): a contract proposed, where one stands, and its summary.
   if (isGoalOperation(op)) {
     const output = await handleGoalCall(db, scope, session, teammate, op)
@@ -658,6 +667,8 @@ export async function handleScheduleCall(
           projectId: session.projectId,
           // Its runs report to this thread, unless asked to stand alone.
           parentSessionId: op.attachToThread === false ? null : session.id,
+          // Made in a mission's thread, it is the mission's routine (docs/missions.md).
+          initiativeId: await missionIdOfThread(db, session.id),
         },
         // Owned by the thread's starter: they asked, and its runs spend their accounts.
         { memberId: person, teammateId: teammate.id },

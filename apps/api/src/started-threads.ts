@@ -22,6 +22,7 @@ import { reopenThread } from './thread-done.js'
 import { askedBy, findTeammate, loadThread, noSuchTeammate } from './thread-spec.js'
 import { firedInARow } from './wakeups.js'
 import { promptThread, startThread } from './work.js'
+import { missionIdOfThread } from './initiatives.js'
 
 type StartedThreadOperation = Extract<
   ScheduleOperation,
@@ -115,6 +116,8 @@ export async function startThreadFrom(
       askedByMemberId: await askedBy(db, session.id),
       ...(lines ? { listItemIds: lines.ids } : {}),
       projectId,
+      // Started from a mission's thread, it is the mission's too (docs/missions.md).
+      initiativeId: await missionIdOfThread(db, session.id),
       // Started on Chief's word: its work goes on it too (src/chief-answers.ts).
       chiefWord: session.chiefWordSeq != null,
     })

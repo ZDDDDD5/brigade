@@ -755,3 +755,31 @@ export type FeatureFlag = Prisma.FeatureFlagModel
  * row is its file's; a design's is its design.json's.
  */
 export type SpecPull = Prisma.SpecPullModel
+/**
+ * Model Initiative
+ * A mission (docs/missions.md): ongoing work a member delegates to a teammate, its owner. Named
+ * Initiative in code so it can't be taken for the Tasks board's old missions (Task.parentId).
+ * Its threads and routines point to it; its plan is its InitiativeAction rows, what went out its
+ * InitiativeOutput rows, and its number, when it follows one, a goal's measurements in one of its
+ * threads or the values its teammate declares (InitiativeValue).
+ */
+export type Initiative = Prisma.InitiativeModel
+/**
+ * Model InitiativeAction
+ * A dated action a mission's teammate planned (plan_action): at dueAt Brigade prompts its thread
+ * with its instructions, as a wake-up. One with a draft needs a person's approval before approveBy.
+ */
+export type InitiativeAction = Prisma.InitiativeActionModel
+/**
+ * Model InitiativeOutput
+ * What went out for a mission (record_output): a post, a comment, a reply, with its link, then its
+ * numbers. Brigade sees neither where it went out nor its numbers: they are its teammate's word.
+ */
+export type InitiativeOutput = Prisma.InitiativeOutputModel
+/**
+ * Model InitiativeValue
+ * A value of a mission's number its teammate declared (record_number), read by hand where Brigade
+ * has no App (LinkedIn analytics). A goal's measurements, when one of its threads has a goal, are
+ * Brigade's own and read from GoalMeasurement instead.
+ */
+export type InitiativeValue = Prisma.InitiativeValueModel

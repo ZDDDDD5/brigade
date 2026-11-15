@@ -4402,3 +4402,266 @@ export function goalTools(call: ScheduleCaller, options: { top: boolean }): Reco
 /** What propose_goal says on an API from before goals. */
 const GOALS_UNKNOWN =
   "Brigade's server does not have goals yet: it is older than this computer's runner. Tell the person, and work on what they asked as a usual request."
+
+/**
+ * Missions (docs/missions.md): in a thread of a mission (the spec's `mission`), its teammates plan
+ * dated actions Brigade runs at their time, and record what went out and the mission's number. The
+ * API checks the thread belongs to the mission.
+ */
+const METRIC_SCHEMA: JSONSchema7 = {
+  type: 'object',
+  description:
+    'The number it follows, when one says whether it works: "Followers", with its target',
+  properties: {
+    label: { type: 'string', description: 'Its name: "Followers"' },
+    unit: { type: 'string', description: 'Its unit, if any: "€", "%"' },
+    target: { type: 'number', description: 'Where it aims, if said: 2000' },
+  },
+  required: ['label'],
+}
+
+type MetricInput = { label: string; unit?: string; target?: number }
+
+/**
+ * A mission made of the work delegated in this thread (docs/missions.md), where its starter has
+ * the feature, in a thread a person started at the top that belongs to none yet.
+ */
+export function createMissionTools(call: ScheduleCaller): Record<string, Tool> {
+  return {
+    create_mission: tool({
+      description:
+        'Make this thread a mission: ongoing work the person delegated to you (grow an account, answer a community, ' +
+        'keep a channel going), with no end date. It shows on the Missions page with its plan, what waits on the ' +
+        'person and what went out; this thread, its sub-threads and routines, and what you start from here belong ' +
+        'to it. Only once the person delegated ongoing work or agreed to it: never for a one-off task or a deliverable.',
+      inputSchema: jsonSchema<{ title: string; objective: string; metric?: MetricInput }>({
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'A few words: "Grow LinkedIn for brigade.lol"' },
+          objective: {
+            type: 'string',
+            description:
+              'What it is for, in one line: "2,000 followers by January, two posts a week"',
+          },
+          metric: METRIC_SCHEMA,
+        },
+        required: ['title', 'objective'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'create_mission',
+            title: input.title,
+            objective: input.objective,
+            ...(input.metric ? { metric: input.metric } : {}),
+          },
+          toolCallId,
+          toolName: 'create_mission',
+          input,
+        }),
+    }),
+  }
+}
+
+export function missionTools(
+  call: ScheduleCaller,
+  mission: { number: { label: string; unit: string | null } | null },
+): Record<string, Tool> {
+  const tools: Record<string, Tool> = {
+    update_mission: tool({
+      description:
+        "Change this thread's mission when the person changes it: its title, objective or number (metric: null " +
+        'drops it); archive: true once the person ends the work.',
+      inputSchema: jsonSchema<{
+        title?: string
+        objective?: string
+        metric?: MetricInput | null
+        archive?: boolean
+      }>({
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          objective: { type: 'string' },
+          metric: { anyOf: [METRIC_SCHEMA, { type: 'null' }] },
+          archive: { type: 'boolean' },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'update_mission',
+            ...(input.title ? { title: input.title } : {}),
+            ...(input.objective ? { objective: input.objective } : {}),
+            ...(input.metric !== undefined ? { metric: input.metric } : {}),
+            ...(input.archive ? { archive: true } : {}),
+          },
+          toolCallId,
+          toolName: 'update_mission',
+          input,
+        }),
+    }),
+    plan_action: tool({
+      description:
+        "Plan a dated action of this thread's mission (a post at 14:30 Monday, a reply once a thread opens): at its time " +
+        'Brigade prompts the mission’s thread with your instructions, as a wake-up does, and it shows on the Missions ' +
+        'page’s week. With a draft, a person approves it on a ticket before approveBy, or it does not go: at its time ' +
+        'you get the approved draft. Use it only for what is truly dated; opportunistic work stays in routines.',
+      inputSchema: jsonSchema<{
+        at: string
+        title: string
+        instructions: string
+        draft?: string
+        approveBy?: string
+      }>({
+        type: 'object',
+        properties: {
+          at: {
+            type: 'string',
+            description: 'When it runs: ISO 8601 with its offset, e.g. "2026-11-17T14:30:00+01:00"',
+          },
+          title: {
+            type: 'string',
+            description: 'What it is, in a few words: "LinkedIn post: routines"',
+          },
+          instructions: {
+            type: 'string',
+            description: 'What to do then, standing alone: the prompt you get at its time',
+          },
+          draft: {
+            type: 'string',
+            description:
+              'The exact text a person approves before it goes out, when it needs approval',
+          },
+          approveBy: {
+            type: 'string',
+            description:
+              'With a draft: approved by then (ISO 8601), or it does not go. Default: 15 minutes before `at`',
+          },
+        },
+        required: ['at', 'title', 'instructions'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'plan_action',
+            at: input.at,
+            title: input.title,
+            instructions: input.instructions,
+            ...(input.draft ? { draft: input.draft } : {}),
+            ...(input.approveBy ? { approveBy: input.approveBy } : {}),
+          },
+          toolCallId,
+          toolName: 'plan_action',
+          input,
+        }),
+    }),
+    list_actions: tool({
+      description:
+        "The mission's planned actions, with their ids and states (planned, awaiting_approval), and the latest that ran, were declined or expired.",
+      inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
+      execute: (input, { toolCallId }) =>
+        call({ operation: { name: 'list_actions' }, toolCallId, toolName: 'list_actions', input }),
+    }),
+    cancel_action: tool({
+      description:
+        'Cancel a planned action of the mission that has not run (its approval ticket closes too).',
+      inputSchema: jsonSchema<{ actionId: string }>({
+        type: 'object',
+        properties: { actionId: { type: 'string', description: 'From list_actions' } },
+        required: ['actionId'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: { name: 'cancel_action', actionId: input.actionId },
+          toolCallId,
+          toolName: 'cancel_action',
+          input,
+        }),
+    }),
+    record_output: tool({
+      description:
+        'Record what went out for the mission (a post, a comment, a reply…) with its link, once it is out: it shows on ' +
+        'the Missions page, instead of a log file. Later, call it again with its outputId and metrics to add the numbers ' +
+        'you read where it went out (views, likes, comments). Brigade sees neither: they are your word, so record only ' +
+        'what you saw.',
+      inputSchema: jsonSchema<{
+        outputId?: string
+        kind?: string
+        channel?: string
+        url?: string
+        summary?: string
+        at?: string
+        actionId?: string
+        metrics?: Record<string, number>
+      }>({
+        type: 'object',
+        properties: {
+          outputId: { type: 'string', description: 'To update one recorded before: its id' },
+          kind: {
+            type: 'string',
+            enum: ['post', 'comment', 'reply', 'article', 'email', 'other'],
+          },
+          channel: { type: 'string', description: 'Where: "linkedin", "x", "reddit r/selfhosted"' },
+          url: { type: 'string', description: 'Its link' },
+          summary: { type: 'string', description: 'What it was, in a line' },
+          at: { type: 'string', description: 'When it went out (ISO 8601); default now' },
+          actionId: { type: 'string', description: 'The planned action it carried out, if any' },
+          metrics: {
+            type: 'object',
+            additionalProperties: { type: 'number' },
+            description: 'Its numbers as read: { "views": 1200, "likes": 31 }',
+          },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'record_output',
+            ...(input.outputId ? { outputId: input.outputId } : {}),
+            ...(input.kind
+              ? { kind: input.kind as 'post' | 'comment' | 'reply' | 'article' | 'email' | 'other' }
+              : {}),
+            ...(input.channel ? { channel: input.channel } : {}),
+            ...(input.url ? { url: input.url } : {}),
+            ...(input.summary ? { summary: input.summary } : {}),
+            ...(input.at ? { at: input.at } : {}),
+            ...(input.actionId ? { actionId: input.actionId } : {}),
+            ...(input.metrics ? { metrics: input.metrics } : {}),
+          },
+          toolCallId,
+          toolName: 'record_output',
+          input,
+        }),
+    }),
+  }
+  if (mission.number)
+    tools.record_number = tool({
+      description:
+        `Record the mission's number, ${mission.number.label}${mission.number.unit ? ` (${mission.number.unit})` : ''}, ` +
+        'as you read it now where it lives (an analytics page). The Missions page draws its trend. Your word: record only ' +
+        'what you read.',
+      inputSchema: jsonSchema<{ value: number; note?: string }>({
+        type: 'object',
+        properties: {
+          value: { type: 'number' },
+          note: {
+            type: 'string',
+            description: 'Where it was read: "LinkedIn analytics, followers"',
+          },
+        },
+        required: ['value'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'record_number',
+            value: input.value,
+            ...(input.note ? { note: input.note } : {}),
+          },
+          toolCallId,
+          toolName: 'record_number',
+          input,
+        }),
+    })
+  return tools
+}

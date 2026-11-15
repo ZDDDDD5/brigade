@@ -30,6 +30,7 @@ import {
   UsersRound,
   FolderKanban,
   SquareKanban,
+  Target,
   type LucideIcon,
 } from 'lucide-react'
 import Link from 'next/link'
@@ -604,6 +605,21 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
+                    {/* Ongoing work delegated to teammates (docs/missions.md), behind its feature. */}
+                    {data.features?.includes('missions') && (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          asChild
+                          tooltip="Missions"
+                          isActive={pathname.startsWith('/app/missions')}
+                        >
+                          <Link href="/app/missions">
+                            <Target />
+                            <span>Missions</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )}
                     <SidebarMenuItem>
                       <SidebarMenuButton
                         asChild

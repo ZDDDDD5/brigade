@@ -517,3 +517,15 @@ export const InboundEventStatus = {
 } as const
 
 export type InboundEventStatus = (typeof InboundEventStatus)[keyof typeof InboundEventStatus]
+
+
+export const InitiativeActionStatus = {
+  planned: 'planned',
+  awaiting_approval: 'awaiting_approval',
+  declined: 'declined',
+  expired: 'expired',
+  fired: 'fired',
+  cancelled: 'cancelled'
+} as const
+
+export type InitiativeActionStatus = (typeof InitiativeActionStatus)[keyof typeof InitiativeActionStatus]
