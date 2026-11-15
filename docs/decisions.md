@@ -321,6 +321,30 @@ choices made where it is silent. The code and the other pages in [docs/](.) are 
   starting. Not continued: a harness approval or question pending when the runner died without warning (as before,
   answering it fails), the later teammates of a message several were asked, and a turn whose start never reached the
   API before the runner died.
+- **A resumed conversation keeps its tools' old definitions; the next message gives the new ones**
+  (`apps/runner/src/harness/tool-changes.ts`). Neither harness lets a conversation take a tool's new description or
+  input once it has it. Claude Code (2.1.319) sends a deferred tool's definition as it first sent it for the rest of
+  the conversation, in each new process too: it reads them back from the transcript's `deferred_tools_record` rows
+  ("seeded … deferred tool(s) the previous process sent"), and a new tool search finds the kept one again. So on
+  Nov 15, after the update that gave `computer_act` its `steps`, a Mac thread's requests to Claude's API still had
+  the old `computer_act` 40 minutes later, while the bridge served the new one. Codex keeps a thread's dynamic tools from
+  its `thread/start` (0.167: `thread/resume` and `turn/start` take none). Starting a new conversation would lose the
+  old one, and rewriting Claude Code's transcript would depend on its internals. Instead, the runner keeps a hash of
+  each tool's definition the conversation was given (`tools` in the thread's state file), and the first message
+  to the session after one changed (an update, an App's operation described anew) starts with a
+  `<brigade-tool-changes>` note: each changed tool's current description and input schema (40,000 characters at
+  most; the rest by name). Calls with the new inputs work: the harness checks them against the tools as they are now.
+  The hashes are written once a turn with the note ran (idle or waiting), so a turn that failed tells it again. A
+  conversation started anew is given the tools as they are, and told nothing. One resumed from a state saved before
+  this (no `tools`) cannot say what changed: its first message gives the current definitions of Brigade's own tools
+  (not the Apps', which an update of the runner does not bring), smallest first, the rest by name. A turn frozen
+  or handed over by the update goes on with the definitions it started with, which keeps it lossless (`withTools`
+  drops them only when a tool's name changed); the note comes with the next message. Codex's adapter started a new
+  thread, without the conversation, whenever any tool's definition changed (its turn configuration fingerprint);
+  the Codex patch makes that fingerprint cover the instructions and the tools' names only ("v3:"), and a "v2:" one
+  saved before restarts nothing. A tool added or removed still starts a new Codex thread, as before: one it did not
+  start with cannot reach it otherwise. Tested in `apps/runner/test/tool-changes.test.ts`, through the patched
+  bridges and their stand-ins.
 - **Commands to runners** (`apps/api/src/runner-commands.ts`). Each command with a `commandId` (a message, a
   person's answer, a retry, a takeover) is a `RunnerCommand` row before it is sent. It is still sent at once; the row
   is the safety net. Runners from protocol 43 (`OUTBOX_PROTOCOL`) acknowledge each by id (`command.ack`) and ignore an

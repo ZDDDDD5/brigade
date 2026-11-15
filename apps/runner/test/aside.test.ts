@@ -180,6 +180,7 @@ async function setup({
       account: spec.account,
       credentials: { cleanup: async () => {} },
       made: JSON.stringify([null, [], undefined]),
+      tools: { digests: {}, changed: [] },
     },
   })
   const run = (input: Parameters<HarnessThread['run']>[0]) =>
