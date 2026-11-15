@@ -859,6 +859,18 @@ export type GoogleAdsCustomer = {
   managerName?: string | null
 }
 
+/** A Meta ad account a Facebook sign-in reaches (GET /connections/:id/meta-ads/accounts). */
+export type MetaAdAccount = {
+  /** act_<digits> */
+  id: string
+  name: string | null
+  currency?: string
+  timeZone?: string
+  business?: string | null
+  /** Only in the list of what the account reaches: ACTIVE, DISABLED, CLOSED… */
+  status?: string
+}
+
 export type Connection = {
   id: string
   appId: string
@@ -877,6 +889,7 @@ export type Connection = {
     | 'google_search_console'
     | 'google_analytics'
     | 'google_ads'
+    | 'meta_ads'
     | 'stripe'
     | 'github'
     | 'webhook'
@@ -906,8 +919,8 @@ export type Connection = {
   externalAccount: string | null
   /** Where a person manages the account at the provider, e.g. a GitHub installation's settings. */
   externalUrl: string | null
-  /** What its owner picked after signing in: Google Ads' customer accounts. */
-  settings?: { customers?: GoogleAdsCustomer[] } | null
+  /** What its owner picked after signing in: Google Ads' customer accounts, Meta's ad accounts. */
+  settings?: { customers?: GoogleAdsCustomer[]; accounts?: MetaAdAccount[] } | null
   status: 'active' | 'needs_reauth' | 'removed'
   createdAt: string
   grants: { teammateId: string; scope: 'read' | 'read_write' }[]

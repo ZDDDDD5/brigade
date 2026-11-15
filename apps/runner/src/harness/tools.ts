@@ -421,6 +421,7 @@ export const TICKET_APP_KINDS = [
   'google_search_console',
   'google_analytics',
   'google_ads',
+  'meta_ads',
   'stripe',
   'github',
   'cloudflare',
