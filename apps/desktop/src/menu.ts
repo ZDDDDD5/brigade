@@ -23,7 +23,7 @@ import { dashboard, loadSettings, updateSettings } from './settings.js'
 import * as setup from './setup.js'
 import * as shortcuts from './shortcuts.js'
 import * as updates from './updates.js'
-import { showDashboard } from './windows.js'
+import { dashboardContents, dashboardWindow, showDashboard } from './windows.js'
 import * as workspaces from './workspaces.js'
 
 const assets = join(__dirname, '..', 'assets')
@@ -263,8 +263,14 @@ export function setAppMenu() {
   if (process.platform !== 'darwin') return Menu.setApplicationMenu(null)
   const it = items()
   const front = () => BrowserWindow.getFocusedWindow()
-  // The page in front: the dashboard's view in its window (windows.ts), else the window's own.
-  const page = () => webContents.getFocusedWebContents() ?? front()?.webContents
+  // The page in front: the dashboard's page when its window is in front, even with the keyboard in
+  // the find bar over it (find.ts), else the focused page, else the window's own.
+  const page = () => {
+    const window = front()
+    const shown = dashboardContents()
+    if (window && window === dashboardWindow() && shown) return shown
+    return webContents.getFocusedWebContents() ?? window?.webContents
+  }
   const runner: MenuItemConstructorOptions[] = it.runs
     ? [it.workspace, it.restartRunner('Restart Runner'), it.showLogs('Show Logs')]
     : []
