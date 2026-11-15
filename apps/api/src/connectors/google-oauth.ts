@@ -10,8 +10,9 @@ export type GoogleKind =
   | 'google_sheets'
   | 'google_search_console'
   | 'google_analytics'
+  | 'google_ads'
 
-// Neither Search Console nor Analytics says whose account it is, and Calendar's list can be left
+// Neither Search Console, Analytics nor Google Ads says whose account it is, and Calendar's list can be left
 // unticked: the address comes from userinfo.
 const EMAIL = 'https://www.googleapis.com/auth/userinfo.email'
 
@@ -41,6 +42,8 @@ export const GOOGLE_SCOPES: Record<GoogleKind, string[]> = {
   // webmasters, not webmasters.readonly: submitting sitemaps and adding properties write.
   google_search_console: ['https://www.googleapis.com/auth/webmasters', EMAIL],
   google_analytics: ['https://www.googleapis.com/auth/analytics.readonly', EMAIL],
+  // adwords is Google Ads' only scope: it reads and changes campaigns. Sensitive, not restricted.
+  google_ads: ['https://www.googleapis.com/auth/adwords', EMAIL],
 }
 
 export const isGoogleKind = (kind: string): kind is GoogleKind => kind in GOOGLE_SCOPES
@@ -53,6 +56,9 @@ export type GoogleCredential = {
 
 export const googleConfigured = () => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET)
 /** The second Google client, for Google's MCP servers (the Google Cloud App). */
+/** Google Ads also needs Brigade's developer token, sent with every call. */
+export const googleAdsConfigured = () =>
+  googleConfigured() && Boolean(env.GOOGLE_ADS_DEVELOPER_TOKEN)
 export const googleMcpConfigured = () =>
   Boolean(env.GOOGLE_MCP_CLIENT_ID && env.GOOGLE_MCP_CLIENT_SECRET)
 export const googleRedirectUri = () => `${env.API_URL}/api/connections/oauth/google/callback`
@@ -127,6 +133,7 @@ export async function googleAccount(kind: GoogleKind, accessToken: string) {
   if (
     kind === 'google_search_console' ||
     kind === 'google_analytics' ||
+    kind === 'google_ads' ||
     kind === 'google_calendar'
   ) {
     const user = (await fetch('https://openidconnect.googleapis.com/v1/userinfo', {

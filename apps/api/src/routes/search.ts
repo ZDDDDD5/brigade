@@ -116,6 +116,7 @@ const CONNECTION_KIND: Record<string, string> = {
   google_sheets_mcp: 'Google Sheets (MCP)',
   google_search_console: 'Google Search Console',
   google_analytics: 'Google Analytics',
+  google_ads: 'Google Ads',
   stripe: 'Stripe',
   github: 'GitHub',
   webhook: 'Custom app',

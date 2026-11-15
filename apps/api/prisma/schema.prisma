@@ -1556,6 +1556,8 @@ enum ConnectorKind {
   /// Search Console and Analytics (GA4), on Brigade's Google client like Gmail.
   google_search_console
   google_analytics
+  /// Google Ads, on Brigade's Google client and its developer token, behind the google_ads feature.
+  google_ads
   /// Brigade's own addresses on its mail domain (mails.brigade.lol), received and sent through
   /// Resend with Brigade's key: an agent's address, or a project's inbox. No credential.
   email
@@ -1641,6 +1643,9 @@ model Connection {
   externalUrl       String?
   /// The MCP server the account signed in to, when its App has one per data region (Mixpanel).
   mcpUrl            String?
+  /// What its owner picked after signing in, by App: Google Ads' customer accounts teammates
+  /// reach ({ customers: [{ id, loginCustomerId, name, … }] }). Never a credential.
+  settings          Json?
   status            ConnectionStatus @default(active)
   vaultSecretId     String?          @unique
   vaultSecret       VaultSecret?     @relation(fields: [vaultSecretId], references: [id], onDelete: SetNull)

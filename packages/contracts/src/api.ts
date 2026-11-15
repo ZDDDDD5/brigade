@@ -136,6 +136,7 @@ export const ConnectGoogle = z.object({
     'google_sheets',
     'google_search_console',
     'google_analytics',
+    'google_ads',
   ]),
   returnTo: ReturnTo.optional(),
 })
@@ -237,6 +238,17 @@ export const UpdateConnection = z.object({
   inbox: z.boolean().optional(),
   /** A mailbox (Gmail, an Email App address): how the email its teammates send goes. */
   sendPolicy: SendPolicy.optional(),
+})
+/** Google Ads: the customer accounts (10-digit IDs) teammates reach through an account. */
+export const PickGoogleAdsCustomers = z.object({
+  ids: z
+    .array(
+      z
+        .string()
+        .transform((v) => v.replace(/[\s-]/g, ''))
+        .pipe(z.string().regex(/^\d{10}$/)),
+    )
+    .max(50),
 })
 /** An App's tools that no teammate gets, on any of its accounts. */
 export const UpdateApp = z.object({ disabledTools: z.array(z.string().max(100)).max(200) })

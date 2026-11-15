@@ -703,6 +703,7 @@ async function callableAccount(
           appId: true,
           vaultSecretId: true,
           mcpUrl: true,
+          settings: true,
           updatedAt: true,
           app: { select: { name: true, mcp: true, disabledTools: true, updatedAt: true } },
         },
@@ -813,6 +814,7 @@ export async function callToolOperation(
     callId,
     keepFile: noFiles,
     openFile: noFiles,
+    settings: connection.settings,
     // Gmail reads what Brigade keeps of its mailbox: its workspace and account.
     ...(connection.kind === 'gmail' ? { scope, connectionId: connection.id } : {}),
   }
