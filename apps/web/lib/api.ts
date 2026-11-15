@@ -846,6 +846,19 @@ export function subscribeToCloud(from: 'billing' | 'onboarding' = 'billing') {
 export const computerName = (c: { kind: string; name: string }) =>
   c.kind === 'cloud' ? 'Cloud computer' : c.name
 
+/** A Google Ads customer account a Google sign-in reaches (GET /connections/:id/google-ads/customers). */
+export type GoogleAdsCustomer = {
+  id: string
+  loginCustomerId: string
+  name: string | null
+  currency?: string
+  timeZone?: string
+  /** Only in the list of what the account reaches. */
+  manager?: boolean
+  status?: string
+  managerName?: string | null
+}
+
 export type Connection = {
   id: string
   appId: string
@@ -863,6 +876,7 @@ export type Connection = {
     | 'google_sheets'
     | 'google_search_console'
     | 'google_analytics'
+    | 'google_ads'
     | 'stripe'
     | 'github'
     | 'webhook'
@@ -892,6 +906,8 @@ export type Connection = {
   externalAccount: string | null
   /** Where a person manages the account at the provider, e.g. a GitHub installation's settings. */
   externalUrl: string | null
+  /** What its owner picked after signing in: Google Ads' customer accounts. */
+  settings?: { customers?: GoogleAdsCustomer[] } | null
   status: 'active' | 'needs_reauth' | 'removed'
   createdAt: string
   grants: { teammateId: string; scope: 'read' | 'read_write' }[]

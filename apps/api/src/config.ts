@@ -36,6 +36,12 @@ const Env = z.object({
   GOOGLE_MCP_CLIENT_ID: z.string().optional(),
   GOOGLE_MCP_CLIENT_SECRET: z.string().optional(),
   /**
+   * Google Ads: the developer token of Brigade's Google Ads manager account (API Center), sent
+   * with every Google Ads API call, whoever's account it reaches. Brigade's own, never a
+   * customer's. Without it the Google Ads App cannot be connected.
+   */
+  GOOGLE_ADS_DEVELOPER_TOKEN: z.string().optional(),
+  /**
    * Gmail push, for "Email received" triggers: a Pub/Sub topic in the OAuth client's Google
    * Cloud project, e.g. projects/acme/topics/brigade-gmail, that
    * gmail-api-push@system.gserviceaccount.com may publish to, with a push subscription

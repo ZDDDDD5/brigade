@@ -33,6 +33,7 @@ export const BUILT_IN: Kind[] = [
   'google_sheets',
   'google_search_console',
   'google_analytics',
+  'google_ads',
   'github',
   'cloudflare',
   'google_cloud',
