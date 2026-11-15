@@ -195,7 +195,12 @@ export type MissionActionPayload = {
 export async function handleInitiativeCall(
   db: ScopedDb,
   scope: Scope,
-  session: { id: string; startedByMemberId: string; workspaceId: string; playbookRunId?: string | null },
+  session: {
+    id: string
+    startedByMemberId: string
+    workspaceId: string
+    playbookRunId?: string | null
+  },
   teammate: { id: string; name: string },
   op: InitiativeOperation,
 ): Promise<object | { error: string }> {
@@ -621,17 +626,20 @@ export const isActionSource = (sourceId: string | null | undefined) =>
 
 const TEAMMATE = { select: { id: true, name: true } } as const
 
-const outputView = (o: {
-  id: string
-  kind: string
-  channel: string
-  url: string | null
-  summary: string
-  at: Date
-  metrics: unknown
-  metricsAt: Date | null
-  teammateId: string | null
-}, names: Map<string, string>): MissionOutput => ({
+const outputView = (
+  o: {
+    id: string
+    kind: string
+    channel: string
+    url: string | null
+    summary: string
+    at: Date
+    metrics: unknown
+    metricsAt: Date | null
+    teammateId: string | null
+  },
+  names: Map<string, string>,
+): MissionOutput => ({
   id: o.id,
   kind: OutputKind.catch('other').parse(o.kind),
   channel: o.channel,
@@ -707,7 +715,9 @@ async function agendaOf(
   to: Date,
 ): Promise<MissionAgendaItem[]> {
   const items: MissionAgendaItem[] = []
-  const threadIds = missions.flatMap((m) => m.sessions.filter((s) => !s.archivedAt).map((s) => s.id))
+  const threadIds = missions.flatMap((m) =>
+    m.sessions.filter((s) => !s.archivedAt).map((s) => s.id),
+  )
   const missionOfThread = new Map(
     missions.flatMap((m) => m.sessions.map((s) => [s.id, m.id] as const)),
   )
@@ -716,9 +726,7 @@ async function agendaOf(
       if (r.pausedAt) continue
       let runs: Date[] = []
       try {
-        runs = nextRuns(r.cron, r.timezone, 200, new Date(from.getTime() - 1)).filter(
-          (d) => d < to,
-        )
+        runs = nextRuns(r.cron, r.timezone, 200, new Date(from.getTime() - 1)).filter((d) => d < to)
       } catch {
         continue
       }
@@ -779,10 +787,15 @@ async function agendaOf(
     })
   }
   const names = new Map(missions.map((m) => [m.teammate.id, m.teammate.name]))
-  const teammates = await teammateNames(db, actions.map((a) => a.teammateId))
+  const teammates = await teammateNames(
+    db,
+    actions.map((a) => a.teammateId),
+  )
   for (const [id, name] of teammates) names.set(id, name)
   for (const a of actions) {
-    const teammate = names.has(a.teammateId) ? { id: a.teammateId, name: names.get(a.teammateId)! } : null
+    const teammate = names.has(a.teammateId)
+      ? { id: a.teammateId, name: names.get(a.teammateId)! }
+      : null
     if (a.dueAt >= from && a.dueAt < to)
       items.push({
         key: `action:${a.id}`,
@@ -817,7 +830,10 @@ async function agendaOf(
 async function teammateNames(db: ScopedDb, ids: (string | null)[]) {
   const wanted = [...new Set(ids.filter((id): id is string => !!id))]
   const rows = wanted.length
-    ? await db.teammate.findMany({ where: { id: { in: wanted } }, select: { id: true, name: true } })
+    ? await db.teammate.findMany({
+        where: { id: { in: wanted } },
+        select: { id: true, name: true },
+      })
     : []
   return new Map(rows.map((t) => [t.id, t.name]))
 }
@@ -908,6 +924,7 @@ async function needsOf(
         title: true,
         approveBy: true,
         ticketId: true,
+        draft: true,
       },
     }),
   ])
@@ -935,6 +952,8 @@ async function needsOf(
       title: a.title,
       reason: 'approval',
       ...(a.ticketId ? { ticketId: a.ticketId } : {}),
+      draft: a.draft,
+      at: iso(a.approveBy),
     })
   for (const card of view.cards) {
     if (card.column !== 'needs_you') continue
@@ -973,7 +992,10 @@ export async function listMissions(
       take: 200,
     }),
   ])
-  const names = await teammateNames(db, outputs.map((o) => o.teammateId))
+  const names = await teammateNames(
+    db,
+    outputs.map((o) => o.teammateId),
+  )
   const routineIds = missions.flatMap((m) => m.routines.map((r) => r.id))
   const runs = routineIds.length
     ? await db.session.findMany({
@@ -987,7 +1009,8 @@ export async function listMissions(
     const mine = outputs.filter((o) => o.initiativeId === m.id).slice(0, OUTPUTS_SHOWN)
     const routineSet = new Set(m.routines.map((r) => r.id))
     const lastRun = runs.find(
-      (r) => r.scheduleId && routineSet.has(r.scheduleId) && reportOf(r.report)?.status !== 'nothing',
+      (r) =>
+        r.scheduleId && routineSet.has(r.scheduleId) && reportOf(r.report)?.status !== 'nothing',
     )
     const shown = mine.map((o) => outputView(o, names))
     return {

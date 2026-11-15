@@ -4432,18 +4432,23 @@ export function missionTools(
             type: 'string',
             description: 'When it runs: ISO 8601 with its offset, e.g. "2026-11-17T14:30:00+01:00"',
           },
-          title: { type: 'string', description: 'What it is, in a few words: "LinkedIn post: routines"' },
+          title: {
+            type: 'string',
+            description: 'What it is, in a few words: "LinkedIn post: routines"',
+          },
           instructions: {
             type: 'string',
             description: 'What to do then, standing alone: the prompt you get at its time',
           },
           draft: {
             type: 'string',
-            description: 'The exact text a person approves before it goes out, when it needs approval',
+            description:
+              'The exact text a person approves before it goes out, when it needs approval',
           },
           approveBy: {
             type: 'string',
-            description: 'With a draft: approved by then (ISO 8601), or it does not go. Default: 15 minutes before `at`',
+            description:
+              'With a draft: approved by then (ISO 8601), or it does not go. Default: 15 minutes before `at`',
           },
         },
         required: ['at', 'title', 'instructions'],
@@ -4471,7 +4476,8 @@ export function missionTools(
         call({ operation: { name: 'list_actions' }, toolCallId, toolName: 'list_actions', input }),
     }),
     cancel_action: tool({
-      description: 'Cancel a planned action of the mission that has not run (its approval ticket closes too).',
+      description:
+        'Cancel a planned action of the mission that has not run (its approval ticket closes too).',
       inputSchema: jsonSchema<{ actionId: string }>({
         type: 'object',
         properties: { actionId: { type: 'string', description: 'From list_actions' } },
@@ -4551,7 +4557,10 @@ export function missionTools(
         type: 'object',
         properties: {
           value: { type: 'number' },
-          note: { type: 'string', description: 'Where it was read: "LinkedIn analytics, followers"' },
+          note: {
+            type: 'string',
+            description: 'Where it was read: "LinkedIn analytics, followers"',
+          },
         },
         required: ['value'],
       }),

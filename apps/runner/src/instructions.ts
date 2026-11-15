@@ -1069,7 +1069,9 @@ const SCHEDULES =
 const mission = (m: NonNullable<ThreadSpec['mission']>) =>
   '## Mission\n\n' +
   `This thread works for the mission "${m.title}" (${m.objective}), owned by ${m.teammate.name}` +
-  (m.number ? `, which follows ${m.number.label}${m.number.unit ? ` (${m.number.unit})` : ''}` : '') +
+  (m.number
+    ? `, which follows ${m.number.label}${m.number.unit ? ` (${m.number.unit})` : ''}`
+    : '') +
   '. A mission is ongoing work a person delegated: the Missions page shows them, for each mission, what ' +
   'is planned, what waits on them and what went out, without opening its threads and files. Keep it true:\n\n' +
   '- A dated action (a post at a set time, a launch-day reply) is `plan_action`, not a line in a file or a ' +
@@ -1080,7 +1082,7 @@ const mission = (m: NonNullable<ThreadSpec['mission']>) =>
   'never forced into planned actions.\n' +
   '- Once something went out (a post, a comment, a reply), `record_output` it with its link, and later ' +
   'its numbers with its outputId: this replaces a hand-kept log. ' +
-  (m.number ? 'When you read the mission\'s number, `record_number` it. ' : '') +
+  (m.number ? "When you read the mission's number, `record_number` it. " : '') +
   'Where Brigade has no App (LinkedIn, X through your browser), it sees neither what went out nor its numbers: ' +
   'record only what you saw, and say so when a number is your reading.\n' +
   '- Sub-threads, routines and threads you start from here belong to the mission too.'

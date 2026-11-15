@@ -1142,6 +1142,16 @@ export type Ticket = {
     input?: unknown
     resetsAt?: string
     reason?: string
+    /** A mission action's draft to approve before its deadline (docs/missions.md). */
+    missionAction?: {
+      actionId: string
+      missionId: string
+      mission: string
+      title: string
+      dueAt: string
+      approveBy: string
+    }
+    draft?: string
     /** A member asks an owner or admin to activate a playbook they installed. */
     playbookActivation?: boolean
     playbookInstallationId?: string

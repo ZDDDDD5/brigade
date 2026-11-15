@@ -212,7 +212,10 @@ export type MissionNeed = {
   threadId: string | null
   title: string
   reason: string
+  /** A draft to approve: its ticket, its text and its deadline. */
   ticketId?: string
+  draft?: string | null
+  at?: string | null
 }
 
 export type MissionOutput = {

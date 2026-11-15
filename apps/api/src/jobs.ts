@@ -72,7 +72,11 @@ export const JOBS = {
   // Goals under way (src/goals.ts): measured between turns, and ended once over, as due.
   goals: { every: 60, due: () => dueGoals(), run: (key) => measureDueGoals(ws(key)) },
   // Missions' planned actions (src/initiatives.ts): drafts past their deadline expire, actions due run.
-  missions: { every: 60, due: (now) => dueActions(now), run: (key, now) => runDueActions(ws(key), now) },
+  missions: {
+    every: 60,
+    due: (now) => dueActions(now),
+    run: (key, now) => runDueActions(ws(key), now),
+  },
   // Chief's daily pass for the members who have it on, in their morning (src/chief-pass.ts).
   'chief-pass': { every: 60, due: duePasses, run: (key, now) => runDuePasses(ws(key), now) },
   subscriptions: { every: 60, due: dueSubscriptions, run: (key) => readSubscriptions(ws(key)) },
