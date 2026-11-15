@@ -258,7 +258,10 @@ export function snapshotEntry(input: SnapshotInput, where: Desktop['where']): Ba
       ...(input.root ? { root: input.root } : {}),
       ...(input.skeleton ? { skeleton: true } : {}),
       ...(input.bounds ? { include_bounds: true } : {}),
-      ...(input.surface && input.surface !== 'window' ? { surface: input.surface } : {}),
+      // A root ref already names its element, in whichever surface: agent-desktop refuses both.
+      ...(input.surface && input.surface !== 'window' && !input.root
+        ? { surface: input.surface }
+        : {}),
       ...(input.maxDepth
         ? { max_depth: Math.min(Math.max(Math.round(input.maxDepth), 1), 50) }
         : {}),
@@ -314,7 +317,9 @@ export function snapshotArgs(input: SnapshotInput, where: Desktop['where']) {
     ...(input.root ? ['--root', input.root] : []),
     ...(input.skeleton ? ['--skeleton'] : []),
     ...(input.bounds ? ['--include-bounds'] : []),
-    ...(input.surface && input.surface !== 'window' ? ['--surface', input.surface] : []),
+    ...(input.surface && input.surface !== 'window' && !input.root
+      ? ['--surface', input.surface]
+      : []),
     ...(input.maxDepth
       ? ['--max-depth', String(Math.min(Math.max(Math.round(input.maxDepth), 1), 50))]
       : []),
@@ -492,6 +497,13 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
           }
         : {}),
       tree: tree.text,
+      // A drill into a region renumbers its refs in the same snapshot: those read before for it
+      // now point elsewhere or nowhere (STALE_REF).
+      ...(read.root
+        ? {
+            refs: 'Refs inside this region are new: use these, not those an earlier read gave for it.',
+          }
+        : {}),
       ...(tree.left
         ? {
             cut: `${tree.left} more elements are not shown: narrow it with skeleton: true, then root on the region you need.`,
@@ -839,14 +851,18 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
             }
           }
         }
+        // The action closed what was read (Close, Delete, Save): no window left is its result.
+        const gone = !after && !!afterError && /WINDOW_NOT_FOUND|APP_NOT_FOUND/.test(afterError)
         const check =
           after || input.observe === false
             ? {}
-            : {
-                check: afterError
-                  ? `Could not read the window after it (${afterError}): take a new snapshot to check it.`
-                  : 'Take a new snapshot to check it worked.',
-              }
+            : gone
+              ? { closed: 'No window of the app is open any more: the action closed it.' }
+              : {
+                  check: afterError
+                    ? `Could not read the window after it (${afterError}): take a new snapshot to check it.`
+                    : 'Take a new snapshot to check it worked.',
+                }
         if (!many) return { ...check, ...done[0], ...(after ? { after } : {}) }
         return {
           done: done.length,
@@ -886,19 +902,18 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
   return tools
 }
 
-/** Keys and text delivered to one app's own process, whatever is in front (computer_key, computer_type). */
+/** Text for a named app's focused field, whatever is in front (computer_type), and its windows. */
 export type AppInput = {
-  press: (app: string, key: string, signal?: AbortSignal) => Promise<{ delivery?: string }>
   type: (app: string, text: string, signal?: AbortSignal) => Promise<{ delivery?: string }>
   /** The app's windows a person can see (none yet while it opens). */
   windows: (app: string, signal?: AbortSignal) => Promise<{ id: string; title?: string }[]>
 }
 
 /**
- * On a Mac, a key or text for a named app goes to that app's process (agent-desktop's `press
- * --app`, and `type` into the element that has its keyboard focus), not to whatever is in front:
- * bringing the app forward, then sending, let another app come in between (the person, Brigade.app,
- * a parallel call) and get the input. The app is not brought to the front.
+ * On a Mac, text for a named app goes into the element that has its keyboard focus (agent-desktop's
+ * `type`), not to whatever is in front, and the app is not brought forward. Keys don't come here:
+ * a key sent to an app's process missed its Open and Save panels, which run in a process of their
+ * own, so computer_key sends the keyboard's while the app is in front.
  */
 export function macAppInput(desktop: Desktop): AppInput {
   const delivery = (data: Record<string, unknown>) => {
@@ -911,8 +926,6 @@ export function macAppInput(desktop: Desktop): AppInput {
       ...(options.signal ? { signal: options.signal } : {}),
     }).catch((error: unknown) => explain(error, desktop.where))
   return {
-    press: async (app, key, signal) =>
-      delivery(await call(['press', '--app', app, key], { signal })),
     type: async (app, text, signal) => {
       // The field with the keyboard focus: only one that takes text counts, since AppKit marks
       // the cells of a list focused too.

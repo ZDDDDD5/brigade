@@ -53,7 +53,7 @@ import {
   type ScheduleOperation,
   GoalContractInput,
 } from '@brigade/contracts'
-import { ComputerUseError, type RequestOptions } from '../computer-use.js'
+import { ComputerUseError, Line, type RequestOptions } from '../computer-use.js'
 import type { AppInput } from './desktop-tools.js'
 import type { LibraryOperation, StagedFile } from '../uploads.js'
 import type { Arrivals, Cut } from './arrivals.js'
@@ -3888,6 +3888,8 @@ export function computerUseTools(
     }
     return apps?.find((running) => running.active)
   }
+  /** Keys for a named app, one after the other (computer_key). */
+  const namedKeys = new Line()
   const inFront = async (signal?: AbortSignal) => (await frontApp(signal))?.name ?? 'unknown'
   /** Whether an app as computer_apps lists it is the one named (its name, bundle id or .app). */
   const isApp = (app: { name?: string; bundleId?: string } | undefined, named: string) => {
@@ -4033,9 +4035,10 @@ export function computerUseTools(
     computer_key: tool({
       description:
         'Press a key or a shortcut: "return", "escape", "tab", "cmd+n", "cmd+shift+t", "down". Name the ' +
-        'app it is for: it goes to that app, even when another comes to the front meanwhile. An app behind ' +
-        'others takes no key, so it is refused there unless front: true brings the app forward first ' +
-        "(taking the person's focus). Without app, it goes to the app in front, which the answer names (front). " +
+        'app it is for: it is sent only while that app is in front, to what has its focus (a dialog or sheet ' +
+        'of it too), and the answer warns if another app came in front. An app behind others takes no key, ' +
+        "so it is refused there unless front: true brings the app forward first (taking the person's focus). " +
+        'Without app, it goes to the app in front, which the answer names (front). ' +
         ABOUT_COMPUTER,
       inputSchema: jsonSchema<{ key: string; app?: string; front?: boolean }>({
         type: 'object',
@@ -4052,40 +4055,49 @@ export function computerUseTools(
         required: ['key'],
       }),
       execute: async (input, { abortSignal }) => {
-        const target = named(input.app)
-        if (target && input.app) {
-          // An app behind others takes no key: it has no window with the keyboard, and its menus,
-          // which shortcuts go through, are off (Cmd+S to TextEdit behind Chrome did nothing).
-          const front = await frontApp(abortSignal)
-          let brought = false
-          if (!isApp(front, input.app)) {
-            if (!input.front)
-              throw new Error(
-                `${input.app} is behind ${front?.name ?? 'another app'}, and an app behind others takes no key ` +
-                  '(its menus, which shortcuts go through, are off there), so nothing was sent. If the person ' +
-                  `is not using the Mac, call again with front: true: it brings ${input.app} to the front first, ` +
-                  'taking their focus. Text for one of its fields goes in from behind: computer_act on its ref, ' +
-                  'or computer_type with app.',
-              )
-            const opened = (await computer.request(
-              'open_app',
-              { app: input.app },
-              abortSignal,
-            )) as {
-              name?: string
-              active?: boolean
+        if (input.app) {
+          const app = input.app
+          // One named key at a time: the app checked (or brought) in front, the key sent, and the
+          // front checked again, with no other named key in between.
+          return namedKeys.run(async () => {
+            // An app behind others takes no key: it has no window with the keyboard, and its menus,
+            // which shortcuts go through, are off (Cmd+S to TextEdit behind Chrome did nothing).
+            const front = await frontApp(abortSignal)
+            let brought = false
+            if (!isApp(front, app)) {
+              if (!input.front)
+                throw new Error(
+                  `${app} is behind ${front?.name ?? 'another app'}, and an app behind others takes no key ` +
+                    '(its menus, which shortcuts go through, are off there), so nothing was sent. If the person ' +
+                    `is not using the Mac, call again with front: true: it brings ${app} to the front first, ` +
+                    'taking their focus. Text for one of its fields goes in from behind: computer_act on its ref, ' +
+                    'or computer_type with app.',
+                )
+              const opened = (await computer.request('open_app', { app }, abortSignal)) as {
+                name?: string
+                active?: boolean
+              }
+              if (opened.active === false)
+                throw new Error(
+                  `${opened.name ?? app} did not come to the front, so nothing was sent.`,
+                )
+              brought = true
             }
-            if (opened.active === false)
-              throw new Error(
-                `${opened.name ?? input.app} did not come to the front, so nothing was sent.`,
-              )
-            brought = true
-          }
-          return {
-            to: input.app,
-            ...(brought ? { broughtToFront: true } : {}),
-            ...(await target.press(input.app, input.key, abortSignal)),
-          }
+            // Sent as the keyboard's, to what has the focus: an app's Open and Save panels run in a
+            // process of their own, which a key sent to the app's process never reached (Cmd+Shift+G
+            // and Return in TextEdit's save sheet did nothing, said delivered).
+            await computer.request('key', { key: input.key }, abortSignal)
+            const after = await frontApp(abortSignal)
+            return {
+              to: app,
+              ...(brought ? { broughtToFront: true } : {}),
+              ...(isApp(after, app)
+                ? {}
+                : {
+                    warning: `${after?.name ?? 'Another app'} was in front right after it was sent: look where it went before going on.`,
+                  }),
+            }
+          }, abortSignal)
         }
         const front = await inFront(abortSignal)
         await computer.request('key', { key: input.key }, abortSignal)

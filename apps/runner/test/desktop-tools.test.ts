@@ -224,8 +224,7 @@ test("a snapshot reads the app asked for; on a cloud computer the teammate's bro
       '--root',
       '@s1:e3',
       '--skeleton',
-      '--surface',
-      'sheet',
+      // A root names its element already: agent-desktop refuses a surface beside it.
       '--max-depth',
       '3',
       '--timeout-ms',
@@ -1258,17 +1257,15 @@ test('on a Mac, a key for an app goes to its process, and text into its one focu
       : envelope({ disposition: { delivery: 'delivered_verified' } }),
   )
   const input = macAppInput({ exec, where: 'mac' })
-  assert.deepEqual(await input.press('TextEdit', 'cmd+b'), { delivery: 'delivered_verified' })
   assert.deepEqual(await input.type('TextEdit', 'Bonjour 👋'), { delivery: 'delivered_verified' })
   assert.deepEqual(
     calls.map((c) => c.args),
     [
-      ['press', '--app', 'TextEdit', 'cmd+b'],
       ['find', '--app', 'TextEdit', '--state', 'focused'],
       ['type', '@s9:e2', '--stdin'],
     ],
   )
-  assert.equal(calls[2]!.stdin, 'Bonjour 👋')
+  assert.equal(calls[1]!.stdin, 'Bonjour 👋')
 })
 
 test('text for an app with no single focused field is not typed', async () => {
@@ -1437,4 +1434,83 @@ test("waiting for an app's window: an app not there yet is no window; a Stop is 
     macAppInput({ exec: stopped, where: 'mac' }).windows('TextEdit'),
     (error: unknown) => error instanceof ComputerUseError && error.code === 'stopped',
   )
+})
+
+test('plain siblings of one role in a row (a ruler’s markers) are one line', () => {
+  const ruler: DesktopNode = {
+    role: 'ruler',
+    ref_id: '@s1:e5',
+    children: [
+      ...Array.from({ length: 15 }, () => ({ role: 'rulermarker' })),
+      { role: 'rulermarker', name: 'Left margin' },
+    ],
+  }
+  assert.equal(
+    renderTree(ruler).text,
+    ['ruler @s1:e5', '  … 15 × rulermarker', '  rulermarker "Left margin"'].join('\n'),
+  )
+  // Three are shown as they are.
+  assert.equal(
+    renderTree({
+      role: 'group',
+      children: [{ role: 'x' }, { role: 'x' }, { role: 'x' }],
+    }).text.split('\n').length,
+    4,
+  )
+})
+
+test('an action that closes the window it read says so, rather than to take a new snapshot', async () => {
+  const { exec } = fakeExec((args) => {
+    const entries = entriesOf(args)
+    if (!entries)
+      return envelope({
+        app: 'TextEdit',
+        snapshot_id: 's1',
+        tree: { role: 'window', name: 'test.rtf' },
+      })
+    return envelope({
+      results: entries.map((entry) =>
+        entry.command === 'snapshot'
+          ? {
+              command: 'snapshot',
+              ok: false,
+              error: { code: 'WINDOW_NOT_FOUND', message: 'no window' },
+            }
+          : {
+              command: entry.command,
+              ok: true,
+              data: { disposition: { delivery: 'delivered_unverified' } },
+            },
+      ),
+    })
+  })
+  const tools = desktopTools({ exec, where: 'mac' })
+  await tools.computer_snapshot!.execute!({ app: 'TextEdit' }, options())
+  const result = (await tools.computer_act!.execute!(
+    { ref: '@s1:e22', action: 'click' },
+    options(),
+  )) as Record<string, any>
+  assert.equal(result.check, undefined)
+  assert.match(result.closed, /the action closed it/)
+})
+
+test('a root and a surface together read the root alone, which agent-desktop takes', async () => {
+  assert.deepEqual(
+    snapshotEntry({ app: 'TextEdit', surface: 'sheet', root: '@s1:e11' }, 'mac').args,
+    {
+      app: 'TextEdit',
+      interactive_only: true,
+      compact: true,
+      root: '@s1:e11',
+      timeout_ms: 8000,
+    },
+  )
+  const { exec } = fakeExec(() =>
+    envelope({ app: 'TextEdit', snapshot_id: 's1', tree: { role: 'table', ref_id: '@s1:e12' } }),
+  )
+  const read = (await desktopTools({ exec, where: 'mac' }).computer_snapshot!.execute!(
+    { app: 'TextEdit', root: '@s1:e11' },
+    options(),
+  )) as Record<string, any>
+  assert.match(read.refs, /Refs inside this region are new/)
 })
