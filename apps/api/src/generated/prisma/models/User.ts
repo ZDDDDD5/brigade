@@ -212,6 +212,7 @@ export type UserWhereInput = {
   invitations?: Prisma.InvitationListRelationFilter
   pushDevices?: Prisma.PushDeviceListRelationFilter
   analyticsFirsts?: Prisma.AnalyticsFirstListRelationFilter
+  adConversions?: Prisma.AdConversionListRelationFilter
 }
 
 export type UserOrderByWithRelationInput = {
@@ -230,6 +231,7 @@ export type UserOrderByWithRelationInput = {
   invitations?: Prisma.InvitationOrderByRelationAggregateInput
   pushDevices?: Prisma.PushDeviceOrderByRelationAggregateInput
   analyticsFirsts?: Prisma.AnalyticsFirstOrderByRelationAggregateInput
+  adConversions?: Prisma.AdConversionOrderByRelationAggregateInput
 }
 
 export type UserWhereUniqueInput = Prisma.AtLeast<{
@@ -251,6 +253,7 @@ export type UserWhereUniqueInput = Prisma.AtLeast<{
   invitations?: Prisma.InvitationListRelationFilter
   pushDevices?: Prisma.PushDeviceListRelationFilter
   analyticsFirsts?: Prisma.AnalyticsFirstListRelationFilter
+  adConversions?: Prisma.AdConversionListRelationFilter
 }, "id" | "email">
 
 export type UserOrderByWithAggregationInput = {
@@ -299,6 +302,7 @@ export type UserCreateInput = {
   invitations?: Prisma.InvitationCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateInput = {
@@ -317,6 +321,7 @@ export type UserUncheckedCreateInput = {
   invitations?: Prisma.InvitationUncheckedCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceUncheckedCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserUpdateInput = {
@@ -335,6 +340,7 @@ export type UserUpdateInput = {
   invitations?: Prisma.InvitationUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateInput = {
@@ -353,6 +359,7 @@ export type UserUncheckedUpdateInput = {
   invitations?: Prisma.InvitationUncheckedUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUncheckedUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUncheckedUpdateManyWithoutUserNestedInput
 }
 
 export type UserCreateManyInput = {
@@ -458,6 +465,20 @@ export type UserUpdateOneRequiredWithoutAnalyticsFirstsNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutAnalyticsFirstsInput, Prisma.UserUpdateWithoutAnalyticsFirstsInput>, Prisma.UserUncheckedUpdateWithoutAnalyticsFirstsInput>
 }
 
+export type UserCreateNestedOneWithoutAdConversionsInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutAdConversionsInput, Prisma.UserUncheckedCreateWithoutAdConversionsInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutAdConversionsInput
+  connect?: Prisma.UserWhereUniqueInput
+}
+
+export type UserUpdateOneRequiredWithoutAdConversionsNestedInput = {
+  create?: Prisma.XOR<Prisma.UserCreateWithoutAdConversionsInput, Prisma.UserUncheckedCreateWithoutAdConversionsInput>
+  connectOrCreate?: Prisma.UserCreateOrConnectWithoutAdConversionsInput
+  upsert?: Prisma.UserUpsertWithoutAdConversionsInput
+  connect?: Prisma.UserWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.UserUpdateToOneWithWhereWithoutAdConversionsInput, Prisma.UserUpdateWithoutAdConversionsInput>, Prisma.UserUncheckedUpdateWithoutAdConversionsInput>
+}
+
 export type UserCreateNestedOneWithoutAuthSessionsInput = {
   create?: Prisma.XOR<Prisma.UserCreateWithoutAuthSessionsInput, Prisma.UserUncheckedCreateWithoutAuthSessionsInput>
   connectOrCreate?: Prisma.UserCreateOrConnectWithoutAuthSessionsInput
@@ -543,6 +564,7 @@ export type UserCreateWithoutAnalyticsFirstsInput = {
   members?: Prisma.MemberCreateNestedManyWithoutUserInput
   invitations?: Prisma.InvitationCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutAnalyticsFirstsInput = {
@@ -560,6 +582,7 @@ export type UserUncheckedCreateWithoutAnalyticsFirstsInput = {
   members?: Prisma.MemberUncheckedCreateNestedManyWithoutUserInput
   invitations?: Prisma.InvitationUncheckedCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceUncheckedCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutAnalyticsFirstsInput = {
@@ -593,6 +616,7 @@ export type UserUpdateWithoutAnalyticsFirstsInput = {
   members?: Prisma.MemberUpdateManyWithoutUserNestedInput
   invitations?: Prisma.InvitationUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutAnalyticsFirstsInput = {
@@ -610,6 +634,95 @@ export type UserUncheckedUpdateWithoutAnalyticsFirstsInput = {
   members?: Prisma.MemberUncheckedUpdateManyWithoutUserNestedInput
   invitations?: Prisma.InvitationUncheckedUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUncheckedUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUncheckedUpdateManyWithoutUserNestedInput
+}
+
+export type UserCreateWithoutAdConversionsInput = {
+  id: string
+  name: string
+  email: string
+  emailVerified?: boolean
+  image?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  attribution?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  onboardingAnswers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  authSessions?: Prisma.AuthSessionCreateNestedManyWithoutUserInput
+  authAccounts?: Prisma.AuthAccountCreateNestedManyWithoutUserInput
+  members?: Prisma.MemberCreateNestedManyWithoutUserInput
+  invitations?: Prisma.InvitationCreateNestedManyWithoutInviterInput
+  pushDevices?: Prisma.PushDeviceCreateNestedManyWithoutUserInput
+  analyticsFirsts?: Prisma.AnalyticsFirstCreateNestedManyWithoutUserInput
+}
+
+export type UserUncheckedCreateWithoutAdConversionsInput = {
+  id: string
+  name: string
+  email: string
+  emailVerified?: boolean
+  image?: string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  attribution?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  onboardingAnswers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  authSessions?: Prisma.AuthSessionUncheckedCreateNestedManyWithoutUserInput
+  authAccounts?: Prisma.AuthAccountUncheckedCreateNestedManyWithoutUserInput
+  members?: Prisma.MemberUncheckedCreateNestedManyWithoutUserInput
+  invitations?: Prisma.InvitationUncheckedCreateNestedManyWithoutInviterInput
+  pushDevices?: Prisma.PushDeviceUncheckedCreateNestedManyWithoutUserInput
+  analyticsFirsts?: Prisma.AnalyticsFirstUncheckedCreateNestedManyWithoutUserInput
+}
+
+export type UserCreateOrConnectWithoutAdConversionsInput = {
+  where: Prisma.UserWhereUniqueInput
+  create: Prisma.XOR<Prisma.UserCreateWithoutAdConversionsInput, Prisma.UserUncheckedCreateWithoutAdConversionsInput>
+}
+
+export type UserUpsertWithoutAdConversionsInput = {
+  update: Prisma.XOR<Prisma.UserUpdateWithoutAdConversionsInput, Prisma.UserUncheckedUpdateWithoutAdConversionsInput>
+  create: Prisma.XOR<Prisma.UserCreateWithoutAdConversionsInput, Prisma.UserUncheckedCreateWithoutAdConversionsInput>
+  where?: Prisma.UserWhereInput
+}
+
+export type UserUpdateToOneWithWhereWithoutAdConversionsInput = {
+  where?: Prisma.UserWhereInput
+  data: Prisma.XOR<Prisma.UserUpdateWithoutAdConversionsInput, Prisma.UserUncheckedUpdateWithoutAdConversionsInput>
+}
+
+export type UserUpdateWithoutAdConversionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  emailVerified?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  image?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  attribution?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  onboardingAnswers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  authSessions?: Prisma.AuthSessionUpdateManyWithoutUserNestedInput
+  authAccounts?: Prisma.AuthAccountUpdateManyWithoutUserNestedInput
+  members?: Prisma.MemberUpdateManyWithoutUserNestedInput
+  invitations?: Prisma.InvitationUpdateManyWithoutInviterNestedInput
+  pushDevices?: Prisma.PushDeviceUpdateManyWithoutUserNestedInput
+  analyticsFirsts?: Prisma.AnalyticsFirstUpdateManyWithoutUserNestedInput
+}
+
+export type UserUncheckedUpdateWithoutAdConversionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  email?: Prisma.StringFieldUpdateOperationsInput | string
+  emailVerified?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  image?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  attribution?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  onboardingAnswers?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  authSessions?: Prisma.AuthSessionUncheckedUpdateManyWithoutUserNestedInput
+  authAccounts?: Prisma.AuthAccountUncheckedUpdateManyWithoutUserNestedInput
+  members?: Prisma.MemberUncheckedUpdateManyWithoutUserNestedInput
+  invitations?: Prisma.InvitationUncheckedUpdateManyWithoutInviterNestedInput
+  pushDevices?: Prisma.PushDeviceUncheckedUpdateManyWithoutUserNestedInput
+  analyticsFirsts?: Prisma.AnalyticsFirstUncheckedUpdateManyWithoutUserNestedInput
 }
 
 export type UserCreateWithoutAuthSessionsInput = {
@@ -627,6 +740,7 @@ export type UserCreateWithoutAuthSessionsInput = {
   invitations?: Prisma.InvitationCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutAuthSessionsInput = {
@@ -644,6 +758,7 @@ export type UserUncheckedCreateWithoutAuthSessionsInput = {
   invitations?: Prisma.InvitationUncheckedCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceUncheckedCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutAuthSessionsInput = {
@@ -677,6 +792,7 @@ export type UserUpdateWithoutAuthSessionsInput = {
   invitations?: Prisma.InvitationUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutAuthSessionsInput = {
@@ -694,6 +810,7 @@ export type UserUncheckedUpdateWithoutAuthSessionsInput = {
   invitations?: Prisma.InvitationUncheckedUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUncheckedUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUncheckedUpdateManyWithoutUserNestedInput
 }
 
 export type UserCreateWithoutAuthAccountsInput = {
@@ -711,6 +828,7 @@ export type UserCreateWithoutAuthAccountsInput = {
   invitations?: Prisma.InvitationCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutAuthAccountsInput = {
@@ -728,6 +846,7 @@ export type UserUncheckedCreateWithoutAuthAccountsInput = {
   invitations?: Prisma.InvitationUncheckedCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceUncheckedCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutAuthAccountsInput = {
@@ -761,6 +880,7 @@ export type UserUpdateWithoutAuthAccountsInput = {
   invitations?: Prisma.InvitationUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutAuthAccountsInput = {
@@ -778,6 +898,7 @@ export type UserUncheckedUpdateWithoutAuthAccountsInput = {
   invitations?: Prisma.InvitationUncheckedUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUncheckedUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUncheckedUpdateManyWithoutUserNestedInput
 }
 
 export type UserCreateWithoutMembersInput = {
@@ -795,6 +916,7 @@ export type UserCreateWithoutMembersInput = {
   invitations?: Prisma.InvitationCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutMembersInput = {
@@ -812,6 +934,7 @@ export type UserUncheckedCreateWithoutMembersInput = {
   invitations?: Prisma.InvitationUncheckedCreateNestedManyWithoutInviterInput
   pushDevices?: Prisma.PushDeviceUncheckedCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutMembersInput = {
@@ -845,6 +968,7 @@ export type UserUpdateWithoutMembersInput = {
   invitations?: Prisma.InvitationUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutMembersInput = {
@@ -862,6 +986,7 @@ export type UserUncheckedUpdateWithoutMembersInput = {
   invitations?: Prisma.InvitationUncheckedUpdateManyWithoutInviterNestedInput
   pushDevices?: Prisma.PushDeviceUncheckedUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUncheckedUpdateManyWithoutUserNestedInput
 }
 
 export type UserCreateWithoutInvitationsInput = {
@@ -879,6 +1004,7 @@ export type UserCreateWithoutInvitationsInput = {
   members?: Prisma.MemberCreateNestedManyWithoutUserInput
   pushDevices?: Prisma.PushDeviceCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutInvitationsInput = {
@@ -896,6 +1022,7 @@ export type UserUncheckedCreateWithoutInvitationsInput = {
   members?: Prisma.MemberUncheckedCreateNestedManyWithoutUserInput
   pushDevices?: Prisma.PushDeviceUncheckedCreateNestedManyWithoutUserInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutInvitationsInput = {
@@ -929,6 +1056,7 @@ export type UserUpdateWithoutInvitationsInput = {
   members?: Prisma.MemberUpdateManyWithoutUserNestedInput
   pushDevices?: Prisma.PushDeviceUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutInvitationsInput = {
@@ -946,6 +1074,7 @@ export type UserUncheckedUpdateWithoutInvitationsInput = {
   members?: Prisma.MemberUncheckedUpdateManyWithoutUserNestedInput
   pushDevices?: Prisma.PushDeviceUncheckedUpdateManyWithoutUserNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUncheckedUpdateManyWithoutUserNestedInput
 }
 
 export type UserCreateWithoutPushDevicesInput = {
@@ -963,6 +1092,7 @@ export type UserCreateWithoutPushDevicesInput = {
   members?: Prisma.MemberCreateNestedManyWithoutUserInput
   invitations?: Prisma.InvitationCreateNestedManyWithoutInviterInput
   analyticsFirsts?: Prisma.AnalyticsFirstCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionCreateNestedManyWithoutUserInput
 }
 
 export type UserUncheckedCreateWithoutPushDevicesInput = {
@@ -980,6 +1110,7 @@ export type UserUncheckedCreateWithoutPushDevicesInput = {
   members?: Prisma.MemberUncheckedCreateNestedManyWithoutUserInput
   invitations?: Prisma.InvitationUncheckedCreateNestedManyWithoutInviterInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedCreateNestedManyWithoutUserInput
+  adConversions?: Prisma.AdConversionUncheckedCreateNestedManyWithoutUserInput
 }
 
 export type UserCreateOrConnectWithoutPushDevicesInput = {
@@ -1013,6 +1144,7 @@ export type UserUpdateWithoutPushDevicesInput = {
   members?: Prisma.MemberUpdateManyWithoutUserNestedInput
   invitations?: Prisma.InvitationUpdateManyWithoutInviterNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUpdateManyWithoutUserNestedInput
 }
 
 export type UserUncheckedUpdateWithoutPushDevicesInput = {
@@ -1030,6 +1162,7 @@ export type UserUncheckedUpdateWithoutPushDevicesInput = {
   members?: Prisma.MemberUncheckedUpdateManyWithoutUserNestedInput
   invitations?: Prisma.InvitationUncheckedUpdateManyWithoutInviterNestedInput
   analyticsFirsts?: Prisma.AnalyticsFirstUncheckedUpdateManyWithoutUserNestedInput
+  adConversions?: Prisma.AdConversionUncheckedUpdateManyWithoutUserNestedInput
 }
 
 
@@ -1044,6 +1177,7 @@ export type UserCountOutputType = {
   invitations: number
   pushDevices: number
   analyticsFirsts: number
+  adConversions: number
 }
 
 export type UserCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -1053,6 +1187,7 @@ export type UserCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.I
   invitations?: boolean | UserCountOutputTypeCountInvitationsArgs
   pushDevices?: boolean | UserCountOutputTypeCountPushDevicesArgs
   analyticsFirsts?: boolean | UserCountOutputTypeCountAnalyticsFirstsArgs
+  adConversions?: boolean | UserCountOutputTypeCountAdConversionsArgs
 }
 
 /**
@@ -1107,6 +1242,13 @@ export type UserCountOutputTypeCountAnalyticsFirstsArgs<ExtArgs extends runtime.
   where?: Prisma.AnalyticsFirstWhereInput
 }
 
+/**
+ * UserCountOutputType without action
+ */
+export type UserCountOutputTypeCountAdConversionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.AdConversionWhereInput
+}
+
 
 export type UserSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -1124,6 +1266,7 @@ export type UserSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = r
   invitations?: boolean | Prisma.User$invitationsArgs<ExtArgs>
   pushDevices?: boolean | Prisma.User$pushDevicesArgs<ExtArgs>
   analyticsFirsts?: boolean | Prisma.User$analyticsFirstsArgs<ExtArgs>
+  adConversions?: boolean | Prisma.User$adConversionsArgs<ExtArgs>
   _count?: boolean | Prisma.UserCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["user"]>
 
@@ -1171,6 +1314,7 @@ export type UserInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = 
   invitations?: boolean | Prisma.User$invitationsArgs<ExtArgs>
   pushDevices?: boolean | Prisma.User$pushDevicesArgs<ExtArgs>
   analyticsFirsts?: boolean | Prisma.User$analyticsFirstsArgs<ExtArgs>
+  adConversions?: boolean | Prisma.User$adConversionsArgs<ExtArgs>
   _count?: boolean | Prisma.UserCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type UserIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {}
@@ -1185,6 +1329,7 @@ export type $UserPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs =
     invitations: Prisma.$InvitationPayload<ExtArgs>[]
     pushDevices: Prisma.$PushDevicePayload<ExtArgs>[]
     analyticsFirsts: Prisma.$AnalyticsFirstPayload<ExtArgs>[]
+    adConversions: Prisma.$AdConversionPayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -1605,6 +1750,7 @@ export interface Prisma__UserClient<T, Null = never, ExtArgs extends runtime.Typ
   invitations<T extends Prisma.User$invitationsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$invitationsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$InvitationPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   pushDevices<T extends Prisma.User$pushDevicesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$pushDevicesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$PushDevicePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   analyticsFirsts<T extends Prisma.User$analyticsFirstsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$analyticsFirstsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$AnalyticsFirstPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  adConversions<T extends Prisma.User$adConversionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.User$adConversionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$AdConversionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -2177,6 +2323,30 @@ export type User$analyticsFirstsArgs<ExtArgs extends runtime.Types.Extensions.In
   take?: number
   skip?: number
   distinct?: Prisma.AnalyticsFirstScalarFieldEnum | Prisma.AnalyticsFirstScalarFieldEnum[]
+}
+
+/**
+ * User.adConversions
+ */
+export type User$adConversionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the AdConversion
+   */
+  select?: Prisma.AdConversionSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the AdConversion
+   */
+  omit?: Prisma.AdConversionOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.AdConversionInclude<ExtArgs> | null
+  where?: Prisma.AdConversionWhereInput
+  orderBy?: Prisma.AdConversionOrderByWithRelationInput | Prisma.AdConversionOrderByWithRelationInput[]
+  cursor?: Prisma.AdConversionWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.AdConversionScalarFieldEnum | Prisma.AdConversionScalarFieldEnum[]
 }
 
 /**

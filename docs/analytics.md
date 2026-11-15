@@ -15,13 +15,18 @@ Three rules hold everywhere:
 
 ## Settings
 
-| Variable                         | Where                                        | What                                                                                                                                                                                               |
-| -------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POSTHOG_KEY`                    | `brigade-api` secret (`wrangler secret put`) | The project's API key (`phc_…`). Without it the API sends nothing.                                                                                                                                 |
-| `POSTHOG_HOST`                   | `brigade-api`, optional                      | Ingestion address. Default `https://eu.i.posthog.com`.                                                                                                                                             |
-| `POSTHOG_INTERNAL_EMAIL_DOMAINS` | `brigade-api` secret, optional               | Domains, comma-separated, whose people are Brigade's own: their events carry `internal: true`.                                                                                                     |
-| `NEXT_PUBLIC_POSTHOG_KEY`        | `brigade-web` build variable (Workers Build) | The same key, inlined into the website at build time. Without it the site loads nothing. Never in the demo.                                                                                        |
-| `NEXT_PUBLIC_GOOGLE_TAG_ID`      | `brigade-web` build variable (Workers Build) | **Temporary trial, to be removed.** Google's tag (`GTM-…` or `G-…`) on the site's public pages. Unlike PostHog it sets cookies, and no banner asks first. Empty: nothing loads. Never in the demo. |
+| Variable                            | Where                                        | What                                                                                                                                                                                               |
+| ----------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTHOG_KEY`                       | `brigade-api` secret (`wrangler secret put`) | The project's API key (`phc_…`). Without it the API sends nothing.                                                                                                                                 |
+| `POSTHOG_HOST`                      | `brigade-api`, optional                      | Ingestion address. Default `https://eu.i.posthog.com`.                                                                                                                                             |
+| `POSTHOG_INTERNAL_EMAIL_DOMAINS`    | `brigade-api` secret, optional               | Domains, comma-separated, whose people are Brigade's own: their events carry `internal: true`.                                                                                                     |
+| `NEXT_PUBLIC_POSTHOG_KEY`           | `brigade-web` build variable (Workers Build) | The same key, inlined into the website at build time. Without it the site loads nothing. Never in the demo.                                                                                        |
+| `GOOGLE_ADS_CUSTOMER_ID`            | `brigade-api` secret                         | The Google Ads account's id (`123-456-7890`). With the next three, sign-ups and subscriptions from Google ads are sent to it (below).                                                              |
+| `GOOGLE_ADS_LOGIN_CUSTOMER_ID`      | `brigade-api` secret, optional               | Its manager account's id, when the service account reaches the account through one.                                                                                                                |
+| `GOOGLE_ADS_SIGNUP_ACTION_ID`       | `brigade-api` secret                         | The id of the conversion action for sign-ups (Goals → Conversions; type "Import from clicks").                                                                                                     |
+| `GOOGLE_ADS_SUBSCRIPTION_ACTION_ID` | `brigade-api` secret                         | The id of the conversion action for subscriptions, of the same type.                                                                                                                               |
+| `GOOGLE_ADS_SERVICE_ACCOUNT`        | `brigade-api` secret                         | The JSON key of a Google Cloud service account with access to the Google Ads account, in a project where the Data Manager API is on.                                                               |
+| `NEXT_PUBLIC_GOOGLE_TAG_ID`         | `brigade-web` build variable (Workers Build) | **Temporary trial, to be removed.** Google's tag (`GTM-…` or `G-…`) on the site's public pages. Unlike PostHog it sets cookies, and no banner asks first. Empty: nothing loads. Never in the demo. |
 
 Locally, in tests, previews and self-hosted Brigades none is set, so nothing is sent. PostHog's
 project must have cookieless mode turned on in its settings, or it drops the website's events.
@@ -59,6 +64,7 @@ The channel is `utm_source`'s when there is one, else the referrer's:
 | Referrer                                                         | Channel              |
 | ---------------------------------------------------------------- | -------------------- |
 | `x.com`, `t.co`, `twitter.com`                                   | `twitter`            |
+| a Google ad's click id (`gclid`, `gbraid`, `wbraid`), any source | `google_ads`         |
 | `google.*` (no ad click)                                         | `google_organic`     |
 | `news.ycombinator.com`                                           | `hacker_news`        |
 | `producthunt.com`                                                | `product_hunt`       |
@@ -78,6 +84,45 @@ The person's properties, set once by `signed_up`: `signup_channel`, `signup_sour
 onboarding's questions (`@brigade/contracts`' `ONBOARDING_QUESTIONS`, also kept on
 `User.onboardingAnswers`): `role`, `team_size`, `first_work` and `heard_from`, each an option's id;
 a question skipped sets nothing.
+
+## Google Ads
+
+A visit from a Google ad has a click id in its address (`gclid`, or `gbraid`/`wbraid` on iOS).
+Unlike other networks' (which only set `paid`), Google's travel with the rest of the source to
+sign-up, and `parseSignupSource` keeps them on `User.attribution.adClick`, with the channel
+`google_ads` (also for `utm_source=google&utm_medium=cpc`). They never go to PostHog.
+
+`src/google-ads.ts` then reports two conversions to Google Ads, each once per person: `sign_up`
+and `subscription` (the first one started, with its price). Each is an `AdConversion` row,
+written with what it counts: the subscription's in `savePlan`'s transaction (`src/billing.ts`),
+so the plan is not saved without it and Stripe sends the event again; the sign-up's right after
+the attribution in `recordSignup`, and when that write fails (the sign-up still succeeds), the
+job's next run writes it from the attribution, at the user's creation (`recoverSignups`). The `ad-conversions` job
+(every 10 minutes) sends the rows to Google's Data Manager API (`events:ingest`, the way Google
+takes offline conversions from new integrations since June 2026), as the service account
+(`GOOGLE_ADS_SERVICE_ACCOUNT`, scope `datamanager`). Only the click id, the time, the row's id
+(Google's `transactionId`, so a row sent twice counts once) and the price: no email address or
+name.
+
+- A row is first sent 6 hours after it happened (`sendAfter`): Google refuses a click it has
+  not processed yet.
+- Google takes a request at once and processes it later. The row keeps the request's id; from
+  half an hour on, each run reads its status (`requestStatus:retrieve`): `SUCCESS` (or a
+  duplicate) sets `confirmedAt`; a click too recent, Google's internal error or an account too
+  new sends it again 6 hours later; any other reason gives it up (`failedAt`, `error`). A
+  request with no final status after 3 days is sent again.
+- A 400 when sending is the event's own fault: that row is given up. Anything else (the key,
+  access, quota, Google down) stops the run, counts an attempt and is reported
+  (`noteFailure('google-ads')`); after 20 attempts, or past Google's 90 days, the row is given
+  up.
+- Without the settings above, rows wait and go once they are set.
+- No consent signal is sent: the site has no consent banner. Google may then not attribute
+  conversions of people in the EEA, the UK and Switzerland.
+
+Setting it up: in Google Ads, create the two conversion actions (Goals → Conversions → New →
+Import → "Other data sources or CRMs" → Track conversions from clicks); in a Google Cloud
+project, turn on the Data Manager API, create a service account and add its email as a user of
+the Google Ads account (Admin → Access and security, Standard access); then set the five values as `brigade-api` secrets (`wrangler secret put`): a deploy drops plain variables missing from `wrangler.jsonc`.
 
 ## The API's events
 

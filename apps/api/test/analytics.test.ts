@@ -419,12 +419,79 @@ test(
 )
 
 test(
+  "a Google ad's sign-up keeps its click id for Google Ads, and PostHog never sees it",
+  { skip },
+  async () => {
+    withKey()
+    sent.length = 0
+    const email = `ad-${run}@example.com`
+    const user = await signUp(email, {
+      signupSource: {
+        utm_source: 'google',
+        ref: 'www.google.com',
+        lp: '/',
+        paid: '1',
+        gclid: 'Cj0KCQ-ad_1',
+      },
+    })
+    assert.deepEqual(user.attribution, {
+      channel: 'google_ads',
+      source: 'google',
+      referrer: 'google.com',
+      landingPage: '/',
+      adClick: { gclid: 'Cj0KCQ-ad_1' },
+      method: 'email_code',
+    })
+    const rows = await prisma.adConversion.findMany({ where: { userId: user.id } })
+    assert.deepEqual(
+      rows.map((r) => r.kind),
+      ['sign_up'],
+      'its sign-up is waiting for Google Ads',
+    )
+    await analytics.flushAnalytics()
+    const signedUp = events().find((e) => e.event === 'signed_up')
+    assert.equal(signedUp?.properties.$set_once.signup_channel, 'google_ads')
+    assert.ok(!JSON.stringify(sent).includes('Cj0KCQ-ad_1'), 'the click id never goes to PostHog')
+  },
+)
+
+test(
+  "a Google ad's sign-up whose conversion cannot be written is recovered by the job",
+  { skip },
+  async () => {
+    const { sendAdConversions } = await import('../src/google-ads.js')
+    const email = `ad-recovered-${run}@example.com`
+    // The conversion's write fails during the real sign-up: the sign-up still succeeds.
+    await prisma.$executeRawUnsafe('ALTER TABLE "AdConversion" RENAME TO "AdConversionAway"')
+    let user
+    try {
+      user = await signUp(email, { signupSource: { gclid: 'g-recovered', lp: '/' } })
+    } finally {
+      await prisma.$executeRawUnsafe('ALTER TABLE "AdConversionAway" RENAME TO "AdConversion"')
+    }
+    assert.deepEqual((user.attribution as { adClick: object }).adClick, { gclid: 'g-recovered' })
+    assert.equal(await prisma.adConversion.count({ where: { userId: user.id } }), 0)
+    // The job's next run writes it, at the sign-up's time, even before Google Ads is set up.
+    const result = await sendAdConversions(new Date(), null)
+    assert.ok(result.recovered >= 1)
+    const row = await prisma.adConversion.findFirstOrThrow({ where: { userId: user.id } })
+    assert.equal(row.kind, 'sign_up')
+    assert.equal(row.at.getTime(), user.createdAt.getTime())
+    assert.equal(row.sendAfter.getTime(), user.createdAt.getTime() + 6 * 60 * 60_000)
+    // Once only.
+    await sendAdConversions(new Date(), null)
+    assert.equal(await prisma.adConversion.count({ where: { userId: user.id } }), 1)
+  },
+)
+
+test(
   'a sign-up with nothing to say is direct; signing in again changes nothing',
   { skip },
   async () => {
     const email = `direct-${run}@example.com`
     const user = await signUp(email, {})
     assert.equal((user.attribution as { channel: string }).channel, 'direct')
+    assert.equal(await prisma.adConversion.count({ where: { userId: user.id } }), 0)
     const second = await signUp(email, { signupSource: { utm_source: 'x' } })
     assert.equal((second.attribution as { channel: string }).channel, 'direct')
   },

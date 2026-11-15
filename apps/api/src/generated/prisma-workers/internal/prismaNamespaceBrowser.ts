@@ -53,6 +53,7 @@ export const AnyNull = runtime.AnyNull
 export const ModelName = {
   User: 'User',
   AnalyticsFirst: 'AnalyticsFirst',
+  AdConversion: 'AdConversion',
   BillingSubscription: 'BillingSubscription',
   AuthSession: 'AuthSession',
   AuthAccount: 'AuthAccount',
@@ -201,6 +202,25 @@ export const AnalyticsFirstScalarFieldEnum = {
 } as const
 
 export type AnalyticsFirstScalarFieldEnum = (typeof AnalyticsFirstScalarFieldEnum)[keyof typeof AnalyticsFirstScalarFieldEnum]
+
+
+export const AdConversionScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  kind: 'kind',
+  at: 'at',
+  value: 'value',
+  currency: 'currency',
+  sendAfter: 'sendAfter',
+  attempts: 'attempts',
+  requestId: 'requestId',
+  sentAt: 'sentAt',
+  confirmedAt: 'confirmedAt',
+  failedAt: 'failedAt',
+  error: 'error'
+} as const
+
+export type AdConversionScalarFieldEnum = (typeof AdConversionScalarFieldEnum)[keyof typeof AdConversionScalarFieldEnum]
 
 
 export const BillingSubscriptionScalarFieldEnum = {

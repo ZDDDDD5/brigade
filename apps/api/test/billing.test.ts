@@ -258,6 +258,7 @@ before(async () => {
     'fenced',
     'tracked',
     'rolledBack',
+    'adFailed',
   ])
     ws[name] = (
       await prisma.workspace.create({ data: { organizationId: ids.organization, name } })
@@ -669,6 +670,11 @@ test('a subscription saved is sent once committed, with the plan as saved', { sk
     customer: 'cus_tracked',
     metadata: { workspaceId: ws.tracked!, userId: ids.owner },
   })
+  // The member came from a Google ad: the subscription is Google Ads' conversion too.
+  await prisma.user.update({
+    where: { id: ids.owner },
+    data: { attribution: { channel: 'google_ads', adClick: { gclid: 'g-billing' } } },
+  })
   const posted = await postedDuring(async () => {
     const { committed } = await prisma.$transaction(async (tx) => {
       const saved = await billing.savePlan(tx, ws.tracked!, started as never)
@@ -683,7 +689,42 @@ test('a subscription saved is sent once committed, with the plan as saved', { sk
   assert.equal(event.distinct_id, ids.owner)
   const group = posted.find((e) => e.event === '$groupidentify')
   assert.equal(group?.properties.$group_set.plan, 'cloud', 'the plan read after the commit')
+  const conversion = await prisma.adConversion.findFirst({
+    where: { userId: ids.owner, kind: 'subscription' },
+  })
+  assert.ok(conversion, 'kept for Google Ads')
+  assert.equal(conversion.value, null, "this test's price has no amount")
 })
+
+test(
+  'a subscription whose Google Ads conversion cannot be kept is not saved either',
+  { skip },
+  async () => {
+    const started = subscription({
+      customer: 'cus_ad_failed',
+      metadata: { workspaceId: ws.adFailed!, userId: ids.member },
+    })
+    await prisma.user.update({
+      where: { id: ids.member },
+      data: { attribution: { channel: 'google_ads', adClick: { gclid: 'g-member' } } },
+    })
+    await prisma.$executeRawUnsafe('ALTER TABLE "AdConversion" RENAME TO "AdConversionAway"')
+    try {
+      await assert.rejects(
+        prisma.$transaction((tx) => billing.savePlan(tx, ws.adFailed!, started as never)),
+      )
+    } finally {
+      await prisma.$executeRawUnsafe('ALTER TABLE "AdConversionAway" RENAME TO "AdConversion"')
+    }
+    assert.equal(await statusOf(ws.adFailed!), undefined, 'not saved: Stripe sends it again')
+    await prisma.$transaction((tx) => billing.savePlan(tx, ws.adFailed!, started as never))
+    assert.equal(await statusOf(ws.adFailed!), 'active')
+    assert.equal(
+      await prisma.adConversion.count({ where: { userId: ids.member, kind: 'subscription' } }),
+      1,
+    )
+  },
+)
 
 test('a subscription rolled back sends nothing', { skip }, async () => {
   const started = subscription({

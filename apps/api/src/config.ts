@@ -211,6 +211,20 @@ const Env = z.object({
    * (phc_…). Without it, nothing is sent: locally, in tests, previews and self-hosted.
    */
   POSTHOG_KEY: z.string().optional(),
+  /**
+   * Google Ads' conversions (src/google-ads.ts, docs/analytics.md "Google Ads"): sign-ups and
+   * subscriptions of people who came from a Google ad, sent through Google's Data Manager API.
+   * The Google Ads account's id (digits, no dashes), its manager's when the service account
+   * reaches it through one, the ids of the two conversion actions (type "Import from clicks"),
+   * and the service account's JSON key (a secret). Without all but the manager, nothing is
+   * sent: conversions wait, and go once they are set (within Google's 90 days). Checked where
+   * used, so a mistyped value turns them off rather than stopping the API.
+   */
+  GOOGLE_ADS_CUSTOMER_ID: z.string().optional(),
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID: z.string().optional(),
+  GOOGLE_ADS_SIGNUP_ACTION_ID: z.string().optional(),
+  GOOGLE_ADS_SUBSCRIPTION_ACTION_ID: z.string().optional(),
+  GOOGLE_ADS_SERVICE_ACCOUNT: z.string().optional(),
   /** PostHog's ingestion address: its EU cloud unless set. */
   POSTHOG_HOST: z.url().default('https://eu.i.posthog.com'),
   /**

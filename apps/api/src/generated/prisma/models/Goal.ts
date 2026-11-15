@@ -910,14 +910,6 @@ export type EnumGoalStatusFieldUpdateOperationsInput = {
   set?: $Enums.GoalStatus
 }
 
-export type NullableFloatFieldUpdateOperationsInput = {
-  set?: number | null
-  increment?: number
-  decrement?: number
-  multiply?: number
-  divide?: number
-}
-
 export type GoalCreateNestedOneWithoutMeasurementsInput = {
   create?: Prisma.XOR<Prisma.GoalCreateWithoutMeasurementsInput, Prisma.GoalUncheckedCreateWithoutMeasurementsInput>
   connectOrCreate?: Prisma.GoalCreateOrConnectWithoutMeasurementsInput

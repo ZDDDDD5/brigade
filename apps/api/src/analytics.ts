@@ -18,6 +18,7 @@ import {
 } from './analytics-events.js'
 import { env } from './config.js'
 import { onScopedWrite, prisma, Prisma } from './db.js'
+import { recordAdConversion } from './google-ads.js'
 import { parseSignupSource, signupProperties } from './signup-source.js'
 
 export type { AnalyticsProps } from './analytics-events.js'
@@ -397,7 +398,15 @@ export async function recordSignup(
     where: { id: user.id, attribution: { equals: Prisma.DbNull } },
     data: { attribution: { ...source, method } },
   })
-  if (count === 0 || !analyticsOn()) return
+  // From a Google ad, the sign-up is Google Ads' conversion too (src/google-ads.ts). Should
+  // this write fail, the `ad-conversions` job writes it from the attribution kept above.
+  if (count > 0 && source.adClick)
+    await recordAdConversion(prisma, user.id, 'sign_up', { attribution: source }).catch(
+      (error: unknown) =>
+        console.warn(`sign-up conversion of ${user.id} left to the job: ${String(error)}`),
+    )
+  if (count === 0) return
+  if (!analyticsOn()) return
   const internal = isInternalEmail(user.email)
   track('signed_up', {
     distinctId: user.id,

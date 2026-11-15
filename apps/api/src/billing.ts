@@ -14,6 +14,7 @@ import { identifyWorkspace, personOfMember, trackLater } from './analytics.js'
 import { env } from './config.js'
 import { prisma, type Prisma } from './db.js'
 import { noteFailure } from './ops/failures.js'
+import { recordAdConversion } from './google-ads.js'
 
 export const billingEnabled = () => !!env.STRIPE_SECRET_KEY
 
@@ -162,7 +163,22 @@ export async function savePlan(
     ? tx.billingSubscription.update({ where: { id: row.id }, data: state })
     : tx.billingSubscription.create({ data: { workspaceId, plan: CLOUD_PLAN.name, ...state } }))
   const before = row?.status ?? null
+  // Of a person who came from a Google ad: Google Ads' conversion, with its price, kept with
+  // the plan (src/google-ads.ts).
+  const userId = subscription.metadata?.userId
+  if (userId && startedNow(before, subscription.status)) {
+    const price = item?.price
+    await recordAdConversion(tx, userId, 'subscription', {
+      ...(price?.unit_amount != null && { value: price.unit_amount / 100 }),
+      ...(price?.currency && { currency: price.currency }),
+    })
+  }
   return { saved, committed: () => trackPlanChange(workspaceId, before, subscription) }
+}
+
+/** A subscription that gives the plan now, and did not before: it started. */
+function startedNow(before: string | null, after: string) {
+  return !(before && entitles(before)) && (after === 'active' || after === 'trialing')
 }
 
 /**
@@ -177,14 +193,13 @@ function trackPlanChange(
   const after = subscription.status
   if (before === after) return
   identifyWorkspace(workspaceId)
-  const event =
-    !(before && entitles(before)) && (after === 'active' || after === 'trialing')
-      ? 'subscription_started'
-      : after === 'canceled'
-        ? 'subscription_canceled'
-        : after === 'past_due' || after === 'unpaid'
-          ? 'payment_failed'
-          : null
+  const event = startedNow(before, after)
+    ? 'subscription_started'
+    : after === 'canceled'
+      ? 'subscription_canceled'
+      : after === 'past_due' || after === 'unpaid'
+        ? 'payment_failed'
+        : null
   if (!event) return
   const userId = subscription.metadata?.userId
   const price = subscription.items.data[0]?.price
