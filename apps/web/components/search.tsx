@@ -17,9 +17,11 @@ import {
   KeyRound,
   MessagesSquare,
   Monitor,
+  Palette,
   Plug,
   Search as SearchIcon,
   UserRound,
+  Wrench,
   X,
   Zap,
   type LucideIcon,
@@ -59,6 +61,8 @@ const GROUPS: { kind: Item['kind']; label: string; icon: LucideIcon }[] = [
   { kind: 'ticket', label: 'Tickets', icon: Inbox },
   { kind: 'automation', label: 'Routines', icon: CalendarClock },
   { kind: 'file', label: 'Library', icon: FileText },
+  { kind: 'design', label: 'Designs', icon: Palette },
+  { kind: 'tool', label: 'Tools', icon: Wrench },
   { kind: 'memory', label: 'Memory', icon: Brain },
   { kind: 'connection', label: 'Apps', icon: Plug },
   { kind: 'trigger', label: 'Triggers', icon: Zap },
@@ -86,6 +90,11 @@ function hrefOf(r: SearchResult) {
       return '/app/routines'
     case 'file':
       return `/app/library?file=${r.id}`
+    // A design or a tool opens as itself, in the library: its id is its folder.
+    case 'design':
+      return `/app/library?design=${encodeURIComponent(r.id)}`
+    case 'tool':
+      return `/app/library?tool=${encodeURIComponent(r.id)}`
     case 'memory':
       return '/app/library?tab=memory'
     case 'connection':
