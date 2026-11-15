@@ -531,7 +531,8 @@ export function NeedsYou({
   }
 
   // Nothing waiting: the line under Home's greeting says so.
-  if (!current && !sent) return null
+  // Not while an answer goes: its card stays mounted until it settles (answerFor).
+  if (!current && !sent && answering.size === 0) return null
 
   // The last one decided: one calm line, no yellow. The line under Home's greeting
   // already says nothing else is waiting.
@@ -694,14 +695,17 @@ export function NeedsYou({
       {sent && (
         <Card role="status" className="flex-row items-center gap-3 px-4 py-2.5">
           <SentLine sent={sent} />
-          <Button
-            className="flex-none"
-            size="sm"
-            onClick={() => go(items.some((i) => i.key === sent.next) ? sent.next : items[0]?.key)}
-          >
-            Next
-            <ChevronRight aria-hidden />
-          </Button>
+          {/* None left: nothing next, and the one answered stays said until it settles. */}
+          {items.length > 0 && (
+            <Button
+              className="flex-none"
+              size="sm"
+              onClick={() => go(items.some((i) => i.key === sent.next) ? sent.next : items[0]?.key)}
+            >
+              Next
+              <ChevronRight aria-hidden />
+            </Button>
+          )}
         </Card>
       )}
       {/* The card shown, and those answered here whose requests go, mounted out of sight. */}
