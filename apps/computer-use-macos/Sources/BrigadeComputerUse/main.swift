@@ -6,7 +6,7 @@
 import AppKit
 import Foundation
 
-let version = "2"
+let version = "3"
 
 /// Who is using the computer: one teammate turn at a time, which the person can stop.
 @MainActor
@@ -138,6 +138,23 @@ func makeHandler(_ sessions: Sessions) -> Handler {
       return ["ok": true]
     case "key":
       guard let key = params["key"] as? String else { throw HelperError("invalid_argument", "key is required") }
+      // For a named app: sent only if it is in front at this moment, checked and sent in one go on
+      // the main actor, so no other request comes between. It goes to what has the keyboard, the
+      // app's Open and Save panels too, which run in a process of their own and which a key
+      // posted to the app's process never reached.
+      if let app = params["app"] as? String, !app.isEmpty {
+        return try await MainActor.run {
+          let target = try Apps.find(app)
+          let front = NSWorkspace.shared.frontmostApplication
+          guard front?.processIdentifier == target.processIdentifier else {
+            throw HelperError(
+              "not_front",
+              "\(target.localizedName ?? app) is not in front (\(front?.localizedName ?? "another app") is), so nothing was sent")
+          }
+          try Input.key(key)
+          return ["ok": true, "to": target.localizedName ?? app] as [String: Any]
+        }
+      }
       try Input.key(key)
       return ["ok": true]
     case "apps":

@@ -419,9 +419,15 @@ export function renderTree(
       }
       // Siblings of one role with nothing to tell them apart (a ruler's 15 markers): one line.
       const plain = (node: DesktopNode) =>
+        // Nothing a line would show but its role: a description, a state or a frame tells it apart.
         !node.ref_id &&
         !node.name &&
-        (node.value === undefined || node.value === '') &&
+        (node.value === undefined || node.value === null || node.value === '') &&
+        !node.description &&
+        !node.placeholder &&
+        !node.states?.some((state) => state !== 'hidden') &&
+        !node.bounds &&
+        !node.children_count &&
         !node.children?.length
       if (plain(children[i]!)) {
         let end = i

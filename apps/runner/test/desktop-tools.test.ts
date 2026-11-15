@@ -1257,15 +1257,17 @@ test('on a Mac, a key for an app goes to its process, and text into its one focu
       : envelope({ disposition: { delivery: 'delivered_verified' } }),
   )
   const input = macAppInput({ exec, where: 'mac' })
+  assert.deepEqual(await input.press('TextEdit', 'cmd+b'), { delivery: 'delivered_verified' })
   assert.deepEqual(await input.type('TextEdit', 'Bonjour 👋'), { delivery: 'delivered_verified' })
   assert.deepEqual(
     calls.map((c) => c.args),
     [
+      ['press', '--app', 'TextEdit', 'cmd+b'],
       ['find', '--app', 'TextEdit', '--state', 'focused'],
       ['type', '@s9:e2', '--stdin'],
     ],
   )
-  assert.equal(calls[1]!.stdin, 'Bonjour 👋')
+  assert.equal(calls[2]!.stdin, 'Bonjour 👋')
 })
 
 test('text for an app with no single focused field is not typed', async () => {
@@ -1513,4 +1515,17 @@ test('a root and a surface together read the root alone, which agent-desktop tak
     options(),
   )) as Record<string, any>
   assert.match(read.refs, /Refs inside this region are new/)
+})
+
+test('siblings that a description, a state or a frame tells apart are not folded', () => {
+  const statuses: DesktopNode = {
+    role: 'group',
+    children: ['Success', 'Warning', 'Error', 'Pending'].map((description, i) => ({
+      role: 'image',
+      description,
+      bounds: { x: i * 10, y: 0, width: 8, height: 8 },
+    })),
+  }
+  assert.match(renderTree(statuses).text, /Success[\s\S]*Warning[\s\S]*Error[\s\S]*Pending/)
+  assert.doesNotMatch(renderTree(statuses).text, /× image/)
 })

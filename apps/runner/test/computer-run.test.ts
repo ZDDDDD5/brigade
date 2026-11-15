@@ -133,20 +133,35 @@ test('a command whose turn was interrupted, or that waited too long, leaves the 
   assert.equal(ran, 1)
 })
 
-test('a key for a named app goes to what has its focus while it is in front, one named key at a time', async () => {
-  // Cody's interleaving (review of #856): two named-app keys in parallel, each bringing its app forward.
-  let front = 'Finder'
-  const deliveries: { key: string; app: string }[] = []
+/** A fake helper: version 3 checks a named app is in front as it sends, as main.swift does. */
+function helper(version: string, state: { front: string }) {
+  const deliveries: string[] = []
   const { use, calls } = computer(async (call) => {
+    if (call.method === 'status') return { version }
+    if (call.method === 'apps') return { apps: [{ name: state.front, active: true }] }
     if (call.method === 'open_app') {
       await new Promise((resolve) => setTimeout(resolve, 5))
-      front = call.params.app as string
-      return { name: front, active: true }
+      state.front = call.params.app as string
+      return { name: state.front, active: true }
     }
-    if (call.method === 'apps') return { apps: [{ name: front, active: true }] }
-    if (call.method === 'key') deliveries.push({ key: call.params.key as string, app: front })
+    if (call.method === 'key') {
+      const app = call.params.app as string | undefined
+      if (app && app !== state.front)
+        throw new ComputerUseError(
+          'not_front',
+          `${app} is not in front (${state.front} is), so nothing was sent`,
+        )
+      deliveries.push(`${call.params.key as string} -> ${state.front}`)
+    }
     return { ok: true }
   })
+  return { use, calls, deliveries }
+}
+
+test('a key for a named app is checked and sent by the helper in one go, to what has the keyboard', async () => {
+  // Cody's interleaving (review of #856): two named keys in parallel, each bringing its app forward.
+  const state = { front: 'Finder' }
+  const { use, calls, deliveries } = helper('3', state)
   const tools = computerUseTools(use)
   const answers = await Promise.all([
     tools.computer_key!.execute!({ app: 'TextEdit', key: 'cmd+a', front: true }, options()),
@@ -156,34 +171,63 @@ test('a key for a named app goes to what has its focus while it is in front, one
     { to: 'TextEdit', broughtToFront: true },
     { to: 'Calculator', broughtToFront: true },
   ])
-  assert.deepEqual(deliveries, [
-    { key: 'cmd+a', app: 'TextEdit' },
-    { key: 'escape', app: 'Calculator' },
-  ])
-  // The keyboard's key, not a key for the app's process: a save sheet's Cmd+Shift+G reaches the
-  // panel, which runs in a process of its own.
+  assert.deepEqual(deliveries, ['cmd+a -> TextEdit', 'escape -> Calculator'])
+  // The keyboard's key with its app, which the helper checks: a save sheet's Cmd+Shift+G reaches
+  // the panel, which runs in a process of its own.
   assert.deepEqual(
     calls.filter((c) => c.method === 'key').map((c) => c.params),
-    [{ key: 'cmd+a' }, { key: 'escape' }],
+    [
+      { key: 'cmd+a', app: 'TextEdit' },
+      { key: 'escape', app: 'Calculator' },
+    ],
   )
 })
 
+test('another app coming to the front between the check and the key: nothing is sent', async () => {
+  // Cody's case (review of #874): computer_open_app for Calculator after computer_key's check.
+  const state = { front: 'TextEdit' }
+  const { use, deliveries } = helper('3', state)
+  const tools = computerUseTools(use)
+  const realRequest = use.request
+  use.request = async (method, params, signal, options) => {
+    if (method === 'key') state.front = 'Calculator'
+    return realRequest(method, params, signal, options)
+  }
+  await assert.rejects(
+    tools.computer_key!.execute!({ app: 'TextEdit', key: 'cmd+w' }, options()) as Promise<unknown>,
+    /TextEdit is not in front \(Calculator is\), so nothing was sent: another app came to the front/,
+  )
+  assert.deepEqual(deliveries, [])
+})
+
+test("with an older helper, a named key goes to the app's process, and says what it misses", async () => {
+  const state = { front: 'TextEdit' }
+  const { use, calls } = helper('2', state)
+  const pressed: string[] = []
+  const appInput: AppInput = {
+    press: async (app, key) => {
+      pressed.push(`${key} -> ${app}`)
+      return { delivery: 'delivered_unverified' }
+    },
+    type: async () => ({}),
+    windows: async () => [],
+  }
+  const answer = (await computerUseTools(use, appInput).computer_key!.execute!(
+    { app: 'TextEdit', key: 'cmd+b' },
+    options(),
+  )) as Record<string, string>
+  assert.equal(answer.delivery, 'delivered_unverified')
+  assert.match(
+    answer.note!,
+    /Open and Save panels don't get keys this way until Brigade.app is updated/,
+  )
+  assert.deepEqual(pressed, ['cmd+b -> TextEdit'])
+  assert.ok(calls.every((c) => c.method !== 'key'))
+})
+
 test('a key for an app behind another is refused, unless front: true brings it forward first', async () => {
-  let front = 'Google Chrome'
-  const { use, calls } = computer(async (call) => {
-    if (call.method === 'apps')
-      return {
-        apps: [
-          { name: front, active: true },
-          { name: 'TextEdit', active: false },
-        ],
-      }
-    if (call.method === 'open_app') {
-      front = 'TextEdit'
-      return { name: 'TextEdit', active: true }
-    }
-    return { ok: true }
-  })
+  const state = { front: 'Google Chrome' }
+  const { use, calls, deliveries } = helper('3', state)
   const tools = computerUseTools(use)
   await assert.rejects(
     tools.computer_key!.execute!({ key: 'cmd+s', app: 'TextEdit' }, options()) as Promise<unknown>,
@@ -197,14 +241,13 @@ test('a key for an app behind another is refused, unless front: true brings it f
     await tools.computer_key!.execute!({ key: 'cmd+s', app: 'TextEdit', front: true }, options()),
     { to: 'TextEdit', broughtToFront: true },
   )
-  assert.deepEqual(
-    calls.slice(1).map((c) => c.method),
-    ['apps', 'open_app', 'key', 'apps'],
-  )
+  assert.deepEqual(deliveries, ['cmd+s -> TextEdit'])
   // Already in front (by its bundle id here): sent as it is.
-  const inFront = computer(async () => ({
-    apps: [{ name: 'TextEdit', bundleId: 'com.apple.TextEdit', active: true }],
-  }))
+  const inFront = computer(async (call) =>
+    call.method === 'status'
+      ? { version: '3' }
+      : { apps: [{ name: 'TextEdit', bundleId: 'com.apple.TextEdit', active: true }] },
+  )
   assert.deepEqual(
     await computerUseTools(inFront.use).computer_key!.execute!(
       { key: 'cmd+b', app: 'com.apple.textedit' },
@@ -214,23 +257,10 @@ test('a key for an app behind another is refused, unless front: true brings it f
   )
 })
 
-test('a key whose app lost the front as it was sent says so', async () => {
-  let asked = 0
-  const { use } = computer(async (call) =>
-    call.method === 'apps'
-      ? { apps: [{ name: ++asked === 1 ? 'TextEdit' : 'Brigade', active: true }] }
-      : { ok: true },
-  )
-  const answer = (await computerUseTools(use).computer_key!.execute!(
-    { key: 'return', app: 'TextEdit' },
-    options(),
-  )) as Record<string, string>
-  assert.match(answer.warning!, /Brigade was in front right after it was sent/)
-})
-
 test('opening an app answers once a window of it is there, with its windows', async () => {
   let asked = 0
   const appInput: AppInput = {
+    press: async () => ({}),
     type: async () => ({}),
     windows: async () => (++asked < 3 ? [] : [{ id: 'w-1', title: 'Open' }]),
   }
@@ -272,6 +302,7 @@ test('a key without an app goes to the app in front, which the answer names', as
 test('opening an app: a Stop while waiting for its window ends the call with the Stop', async () => {
   let asked = 0
   const appInput: AppInput = {
+    press: async () => ({}),
     type: async () => ({}),
     windows: async () => {
       asked++
@@ -295,6 +326,7 @@ test('opening an app: a Stop while waiting for its window ends the call with the
 test('text for a named app goes into its focused field from behind, and nothing through the keyboard', async () => {
   const typed: string[] = []
   const appInput: AppInput = {
+    press: async () => ({}),
     type: async (app, text) => {
       typed.push(`${app}:${text}`)
       return { delivery: 'delivered_verified' }

@@ -902,8 +902,10 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
   return tools
 }
 
-/** Text for a named app's focused field, whatever is in front (computer_type), and its windows. */
+/** Keys and text for a named app's own process, whatever is in front, and its windows. */
 export type AppInput = {
+  /** A key to the app's process (`press --app`): its Open and Save panels don't get it. */
+  press: (app: string, key: string, signal?: AbortSignal) => Promise<{ delivery?: string }>
   type: (app: string, text: string, signal?: AbortSignal) => Promise<{ delivery?: string }>
   /** The app's windows a person can see (none yet while it opens). */
   windows: (app: string, signal?: AbortSignal) => Promise<{ id: string; title?: string }[]>
@@ -911,9 +913,9 @@ export type AppInput = {
 
 /**
  * On a Mac, text for a named app goes into the element that has its keyboard focus (agent-desktop's
- * `type`), not to whatever is in front, and the app is not brought forward. Keys don't come here:
- * a key sent to an app's process missed its Open and Save panels, which run in a process of their
- * own, so computer_key sends the keyboard's while the app is in front.
+ * `type`), not to whatever is in front, and the app is not brought forward. A key goes to the app's
+ * process (`press --app`) only with a Brigade Computer Use too old to check the app is in front as
+ * it sends one: that misses the app's Open and Save panels, which run in a process of their own.
  */
 export function macAppInput(desktop: Desktop): AppInput {
   const delivery = (data: Record<string, unknown>) => {
@@ -926,6 +928,8 @@ export function macAppInput(desktop: Desktop): AppInput {
       ...(options.signal ? { signal: options.signal } : {}),
     }).catch((error: unknown) => explain(error, desktop.where))
   return {
+    press: async (app, key, signal) =>
+      delivery(await call(['press', '--app', app, key], { signal })),
     type: async (app, text, signal) => {
       // The field with the keyboard focus: only one that takes text counts, since AppKit marks
       // the cells of a list focused too.

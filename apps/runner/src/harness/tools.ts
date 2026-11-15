@@ -3888,6 +3888,16 @@ export function computerUseTools(
     }
     return apps?.find((running) => running.active)
   }
+  /** Whether Brigade Computer Use checks a named app is in front as it sends a key (version 3). */
+  let checking: Promise<boolean> | undefined
+  const checksFront = (signal?: AbortSignal) =>
+    (checking ??= computer
+      .request('status', {}, signal)
+      .then((status) => Number((status as { version?: unknown }).version) >= 3)
+      .catch(() => {
+        checking = undefined
+        return false
+      }))
   /** Keys for a named app, one after the other (computer_key). */
   const namedKeys = new Line()
   const inFront = async (signal?: AbortSignal) => (await frontApp(signal))?.name ?? 'unknown'
@@ -4035,8 +4045,8 @@ export function computerUseTools(
     computer_key: tool({
       description:
         'Press a key or a shortcut: "return", "escape", "tab", "cmd+n", "cmd+shift+t", "down". Name the ' +
-        'app it is for: it is sent only while that app is in front, to what has its focus (a dialog or sheet ' +
-        'of it too), and the answer warns if another app came in front. An app behind others takes no key, ' +
+        'app it is for: it is sent only if that app is in front as it goes, to what has its focus (its ' +
+        'dialogs and sheets too); nothing is sent otherwise. An app behind others takes no key, ' +
         "so it is refused there unless front: true brings the app forward first (taking the person's focus). " +
         'Without app, it goes to the app in front, which the answer names (front). ' +
         ABOUT_COMPUTER,
@@ -4083,19 +4093,28 @@ export function computerUseTools(
                 )
               brought = true
             }
-            // Sent as the keyboard's, to what has the focus: an app's Open and Save panels run in a
-            // process of their own, which a key sent to the app's process never reached (Cmd+Shift+G
-            // and Return in TextEdit's save sheet did nothing, said delivered).
-            await computer.request('key', { key: input.key }, abortSignal)
-            const after = await frontApp(abortSignal)
+            // The helper checks the app is in front and sends the key in one go, to what has the
+            // keyboard: the app's Open and Save panels too, which run in a process of their own and
+            // which a key for the app's process never reached (Cmd+Shift+G in TextEdit's save sheet).
+            if (await checksFront(abortSignal)) {
+              try {
+                await computer.request('key', { key: input.key, app }, abortSignal)
+              } catch (error) {
+                if (error instanceof ComputerUseError && error.code === 'not_front')
+                  throw new Error(
+                    `${error.message}: another app came to the front meanwhile. Look at the screen before trying again.`,
+                  )
+                throw error
+              }
+              return { to: app, ...(brought ? { broughtToFront: true } : {}) }
+            }
+            // An older helper: to the app's process, which its Open and Save panels don't get.
+            const target = named(app)!
             return {
               to: app,
               ...(brought ? { broughtToFront: true } : {}),
-              ...(isApp(after, app)
-                ? {}
-                : {
-                    warning: `${after?.name ?? 'Another app'} was in front right after it was sent: look where it went before going on.`,
-                  }),
+              ...(await target.press(app, input.key, abortSignal)),
+              note: "Sent to the app's process: its Open and Save panels don't get keys this way until Brigade.app is updated (Check for Updates…).",
             }
           }, abortSignal)
         }
