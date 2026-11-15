@@ -6,6 +6,46 @@ import { cn } from '@/lib/utils'
 
 export type ProviderKind = Connection['kind']
 
+const KINDS: Record<ProviderKind, true> = {
+  gmail: true,
+  google_calendar: true,
+  google_drive: true,
+  google_docs: true,
+  google_sheets: true,
+  google_search_console: true,
+  google_analytics: true,
+  google_ads: true,
+  stripe: true,
+  github: true,
+  webhook: true,
+  cloudflare: true,
+  google_cloud: true,
+  google_drive_mcp: true,
+  google_docs_mcp: true,
+  google_sheets_mcp: true,
+  neon: true,
+  supabase: true,
+  atlassian: true,
+  notion: true,
+  linear: true,
+  mixpanel: true,
+  resend: true,
+  replicate: true,
+  openrouter: true,
+  posthog: true,
+  dataforseo: true,
+  ahrefs: true,
+  revenuecat: true,
+  expo: true,
+  vercel: true,
+  email: true,
+  mcp: true,
+}
+
+/** A kind as a tool or playbook names it: a built-in App's, else a custom MCP server's. */
+export const providerKind = (kind: string): ProviderKind =>
+  Object.hasOwn(KINDS, kind) ? (kind as ProviderKind) : 'mcp'
+
 /**
  * Each service's own mark: Google's Gmail, Calendar, Drive, Docs and Sheets icons, Search
  * Console's 2025 icon, Analytics' bars, Google Ads' bars and dot, Stripe's app icon, Cloudflare's cloud, Google Cloud's
