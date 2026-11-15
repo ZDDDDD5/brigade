@@ -165,6 +165,7 @@ export function instructions(
     !spec.playbook && APP_ACCOUNTS,
     unavailableApps(spec),
     credentials(browser),
+    doItYourself(browser),
     ...memoryParts(spec, memory),
     '## Memory',
     MEMORY_RULES +
@@ -1301,6 +1302,23 @@ const credentials = (browser: Browser) =>
   ]
     .filter(Boolean)
     .join('\n\n')
+
+/**
+ * Steps left to the person: teammates ended replies with "Two things are left: resubmit the sitemap
+ * in Search Console" while an App of theirs or their browser could do it, and the member had to
+ * write back "do it yourself".
+ */
+const doItYourself = (browser: Browser) =>
+  '## Steps left to the person\n\n' +
+  'Before you leave a step to the person ("Two things are left: resubmit the sitemap in Search Console", ' +
+  '"set this variable in the dashboard"), check whether you can do it yourself: a tool of yours (an App account ' +
+  'that reaches it, `list_apps` for one of the workspace you could be granted)' +
+  (browser.ready ? ', your browser with a login from the vault' : '') +
+  ', or a command. If you can, do it in the same turn and say it is done. When it sends, publishes or changes ' +
+  'something outside, and the person has not asked for it yet, offer it as a button that names it ("Resubmit ' +
+  'the sitemap") rather than telling them how to do it. When an account or login is all you lack, ask for it ' +
+  'with a ticket (see App accounts and Credentials). Leave to the person, in words, only what needs them: a ' +
+  'decision, or a step only a person can do (a phone call, a payment, a check on their own device).'
 
 /**
  * Who decides whether this thread's pull requests get a review by another teammate: the

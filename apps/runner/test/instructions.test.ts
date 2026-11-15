@@ -96,6 +96,18 @@ test('a thread asks for an App account it lacks with a ticket, rather than guess
   assert.doesNotMatch(text, /does not show at all/)
 })
 
+test('a thread does a follow-up step itself when a tool or its browser can, rather than handing it back', () => {
+  const spec = testSpec('')
+  const memory = threadMemory(spec, { workspace: '', teammate: '', lines: {} }, '/threads/s1', now)
+  const text = instructions(spec, memory, '/library', { ready: true })
+  assert.match(text, /## Steps left to the person\n\n/)
+  assert.match(text, /check whether you can do it yourself/)
+  assert.match(text, /your browser with a login from the vault/)
+  // Without a browser, it is not offered as a way.
+  const noBrowser = instructions(spec, memory, '/library', { ready: false })
+  assert.doesNotMatch(noBrowser, /your browser with a login from the vault/)
+})
+
 test('an account it cannot use now is named, with the ticket that reconnects it', () => {
   const grant = (connectionId: string, kind: string, label: string, account: string | null) => ({
     connectionId,
