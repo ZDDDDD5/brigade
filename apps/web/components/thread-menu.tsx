@@ -36,7 +36,7 @@ import { Hint } from '@/components/ui/tooltip'
 import { renamedHere } from '@/components/streamed-title'
 import { useThreadPanel } from '@/components/thread-panel'
 import { api, type Thread, type ThreadSummary } from '@/lib/api'
-import { setPinned, useShownPins } from '@/lib/optimistic-pins'
+import { changeThread, setPinned, useShownThreads } from '@/lib/optimistic-threads'
 import { wakeLabel } from '@/lib/snooze'
 
 type Action = 'preview' | 'pin' | 'later' | 'rename' | 'done' | 'archive' | 'delete'
@@ -67,7 +67,10 @@ export function useThreadMenu({
   admin: boolean
   /** Rename picked: where the title is edited is the caller's. */
   onRename: () => void
-  /** Something changed: ask for the lists again. Pin waits for it before it stops showing ahead. */
+  /**
+   * Something changed: ask for the lists again. Pin, Snooze, Done and Archive wait for it before
+   * they stop showing ahead.
+   */
   onChanged: () => unknown
   onDeleted: (id: string) => void
 }) {
@@ -83,12 +86,13 @@ export function useThreadMenu({
   // archives it, its starter deletes it, and admins do all of them.
   const mayChange = starter || !!thread.othersMayPrompt || admin
   const mayDelete = starter || admin
-  // Pin shows at once (lib/optimistic-pins.ts): as clicked, while its request goes.
-  const shownPin = useShownPins().get(thread.id)
-  const pinned = shownPin ? !!shownPin.pinnedAt : !!thread.pinnedAt
-  const archived = !!thread.archivedAt
-  const later = !!thread.laterAt
-  const done = !!thread.doneAt
+  // Pin, Snooze, Done and Archive show at once (lib/optimistic-threads.ts): as clicked, while
+  // their requests go.
+  const state = { ...thread, ...useShownThreads().get(thread.id) }
+  const pinned = !!state.pinnedAt
+  const archived = !!state.archivedAt
+  const later = !!state.laterAt
+  const done = !!state.doneAt
 
   async function run(action: Action, until?: Date) {
     setOpen(false)
@@ -97,30 +101,58 @@ export function useThreadMenu({
     if (action === 'rename') return onRename()
     if (action === 'delete' && !confirm(await deleteQuestion(thread.id, title))) return
     const path = `/threads/${thread.id}`
+    const refused = (e: unknown) => alert(e instanceof Error ? e.message : String(e))
+    const now = new Date().toISOString()
     if (action === 'pin')
       return setPinned(
         thread.id,
         !pinned,
         (pin) => api(`${path}/pin`, { method: pin ? 'POST' : 'DELETE' }),
         onChanged,
-      ).catch((e) => alert(e instanceof Error ? e.message : String(e)))
+      ).catch(refused)
+    // Snoozed until a time, or woken: the wish is that time, or null.
+    if (action === 'later') {
+      const wake = later ? null : (until?.toISOString() ?? '')
+      return changeThread(
+        thread.id,
+        'later',
+        wake,
+        wake === null
+          ? { laterAt: null, snoozedUntil: null }
+          : { laterAt: now, snoozedUntil: wake || null },
+        (wish) =>
+          api(`${path}/later`, {
+            method: wish === null ? 'DELETE' : 'POST',
+            ...(wish === null ? {} : { body: { until: wish || undefined } }),
+          }),
+        onChanged,
+      ).catch(refused)
+    }
+    if (action === 'done')
+      return changeThread(
+        thread.id,
+        'done',
+        !done,
+        { doneAt: done ? null : now },
+        (on) => api(`${path}/done`, { method: on ? 'POST' : 'DELETE' }),
+        onChanged,
+      ).catch(refused)
+    if (action === 'archive')
+      return changeThread(
+        thread.id,
+        'archive',
+        !archived,
+        { archivedAt: archived ? null : now },
+        (on) => api(`${path}/archive`, { method: on ? 'POST' : 'DELETE' }),
+        onChanged,
+      ).catch(refused)
     setBusy(true)
     try {
-      if (action === 'later')
-        await api(`${path}/later`, {
-          method: later ? 'DELETE' : 'POST',
-          ...(later ? {} : { body: { until: until?.toISOString() } }),
-        })
-      else if (action === 'done') await api(`${path}/done`, { method: done ? 'DELETE' : 'POST' })
-      else if (action === 'archive')
-        await api(`${path}/archive`, { method: archived ? 'DELETE' : 'POST' })
-      else {
-        await api(path, { method: 'DELETE' })
-        onDeleted(thread.id)
-      }
+      await api(path, { method: 'DELETE' })
+      onDeleted(thread.id)
       onChanged()
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      refused(e)
     } finally {
       setBusy(false)
     }
@@ -242,13 +274,12 @@ export async function renameThread(id: string, current: string, next: string) {
  * In the thread's details panel, beside its "Thread" heading, quiet as the sidebar row's ⋮:
  * that row's menu, for the thread open. Deleted, the thread is gone: back to Home.
  */
-export function ThreadMenu({ thread, onChanged }: { thread: Thread; onChanged: () => void }) {
+export function ThreadMenu({ thread, onChanged }: { thread: Thread; onChanged: () => unknown }) {
   const { me } = useDashboard()
   const { reloadThreads } = useThreadPanel()
   const router = useRouter()
   function changed() {
-    onChanged()
-    return reloadThreads()
+    return Promise.all([onChanged(), reloadThreads()])
   }
   const menu = useThreadMenu({
     thread,
@@ -257,7 +288,7 @@ export function ThreadMenu({ thread, onChanged }: { thread: Thread; onChanged: (
     onRename: () => {
       const next = prompt('Rename the thread', thread.title)
       if (next !== null)
-        void renameThread(thread.id, thread.title, next).then((ok) => ok && changed())
+        void renameThread(thread.id, thread.title, next).then((ok) => void (ok && changed()))
     },
     onChanged: changed,
     onDeleted: () => router.push('/app'),

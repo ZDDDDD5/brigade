@@ -1,6 +1,7 @@
 'use client'
 import { ChevronRight } from 'lucide-react'
 import Link from 'next/link'
+import { useState } from 'react'
 import { isAdmin, timeAgo } from '@/components/dashboard'
 import {
   EditableEmailPreview,
@@ -31,6 +32,32 @@ const statusTone = (status: string): StatusTone =>
       : status === 'open'
         ? 'warning'
         : 'neutral'
+
+/** A ticket decided, in the words of the button that was clicked. */
+export function resolvedLabel(t: Ticket, approved: boolean) {
+  if (t.payload.skillAction) return approved ? 'Skill added' : 'Declined'
+  if (t.payload.triggerAction) return approved ? 'Trigger added' : 'Declined'
+  if (t.payload.playbookActivation) return approved ? 'Activated' : 'Declined'
+  if (t.payload.source === 'harness') return 'Declined'
+  if (
+    t.type === 'sign_in' ||
+    t.type === 'usage_limit' ||
+    t.type === 'disk_full' ||
+    t.payload.pullRequest
+  )
+    return 'Dismissed'
+  return approved ? 'Allowed' : 'Denied'
+}
+
+/** Its badge's tone once decided here: what was allowed, denied, or set aside. */
+function decidedTone(t: Ticket, approved: boolean): StatusTone {
+  const label = resolvedLabel(t, approved)
+  return label === 'Dismissed' || label === 'Declined'
+    ? 'neutral'
+    : approved
+      ? 'success'
+      : 'destructive'
+}
 
 /** A collapsed block of raw detail (the pending message or a tool call's input). */
 function Detail({ summary, children }: { summary: React.ReactNode; children: React.ReactNode }) {
@@ -70,7 +97,15 @@ export function TicketRow({
 }) {
   const admin = isAdmin(me)
   const starter = t.session?.startedByMemberId === me.memberId
-  const open = t.status === 'open'
+  // Decided here: shown at once, as the list will have it once reloaded; one that did not go
+  // gives the buttons back (its caller says why).
+  const [decided, setDecided] = useState<{ approved: boolean }>()
+  const decide = (approved: boolean, always?: boolean, edited?: EditedEmail) => {
+    if (decided) return
+    setDecided({ approved })
+    onResolve(t.id, approved, always, edited).catch(() => setDecided(undefined))
+  }
+  const open = t.status === 'open' && !decided
   const concerns = t.payload.memberId ? t.payload.memberId === me.memberId : starter
 
   const owner = t.payload.credentialOwnerId === me.memberId
@@ -79,10 +114,10 @@ export function TicketRow({
     // A playbook a member installed: once active it runs on its own, so an owner or admin decides.
     actions = admin ? (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           Activate
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Decline
         </Button>
       </>
@@ -96,10 +131,10 @@ export function TicketRow({
     actions =
       admin || promotion.ownerMemberId === me.memberId ? (
         <>
-          <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+          <Button size="sm" onClick={() => decide(true)}>
             Let it act on its own
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+          <Button size="sm" variant="ghost" onClick={() => decide(false)}>
             Keep asking first
           </Button>
           <Link
@@ -118,10 +153,10 @@ export function TicketRow({
     // A teammate's skill: it shapes what every teammate does, so an admin decides.
     actions = admin ? (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           {t.payload.skillAction === 'update' ? 'Apply the change' : 'Add the skill'}
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Decline
         </Button>
       </>
@@ -132,10 +167,10 @@ export function TicketRow({
     // A teammate's trigger: outside events start work on someone's accounts, an admin's call.
     actions = admin ? (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           Add the trigger
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Decline
         </Button>
       </>
@@ -151,7 +186,7 @@ export function TicketRow({
       t.payload.always && (t.payload.credentialAction === 'create' ? mayDecide : admin || owner)
     actions = mayDecide ? (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           {t.payload.credentialAction === 'create'
             ? 'Save'
             : t.payload.credentialAction === 'update'
@@ -163,12 +198,12 @@ export function TicketRow({
             size="sm"
             variant="outline"
             tooltip="Let this teammate use it from now on, in any thread, without asking"
-            onClick={() => void onResolve(t.id, true, true)}
+            onClick={() => decide(true, true)}
           >
             {t.payload.credentialAction === 'create' ? 'Save, use without asking' : 'Always allow'}
           </Button>
         )}
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Deny
         </Button>
       </>
@@ -182,10 +217,10 @@ export function TicketRow({
   } else if (open && t.type === 'approval' && (admin || starter)) {
     actions = (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           Allow
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Deny
         </Button>
       </>
@@ -193,10 +228,10 @@ export function TicketRow({
   } else if (open && t.type === 'cap') {
     actions = admin ? (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           Allow once
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Deny
         </Button>
       </>
@@ -216,7 +251,7 @@ export function TicketRow({
               <Link href={`/app/threads/${t.session.id}`}>Answer in the thread</Link>
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+          <Button size="sm" variant="ghost" onClick={() => decide(false)}>
             Decline
           </Button>
         </>
@@ -238,7 +273,7 @@ export function TicketRow({
             </Link>
           </Button>
         )}
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(true)}>
           Dismiss
         </Button>
       </>
@@ -271,7 +306,15 @@ export function TicketRow({
           </div>
         </div>
         {/* Answered: its status at the top, as on the cards in a thread. */}
-        {!actions && <StatusBadge status={t.status} tone={statusTone(t.status)} />}
+        {decided ? (
+          <StatusBadge
+            status={decided.approved ? 'approved' : 'denied'}
+            tone={decidedTone(t, decided.approved)}
+            label={resolvedLabel(t, decided.approved)}
+          />
+        ) : (
+          !actions && <StatusBadge status={t.status} tone={statusTone(t.status)} />
+        )}
       </div>
       {t.payload.reason && (
         <p className="mt-1.5 text-sm text-muted-foreground">{t.payload.reason}</p>
@@ -325,7 +368,7 @@ export function TicketRow({
           (admin || starter) ? (
             <EditableEmailPreview
               input={t.payload.input}
-              onAllow={(edited) => void onResolve(t.id, true, false, edited)}
+              onAllow={(edited) => decide(true, false, edited)}
             />
           ) : (
             <ToolInputPreview input={t.payload.input} />

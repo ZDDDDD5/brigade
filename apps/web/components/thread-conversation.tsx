@@ -985,7 +985,10 @@ export function ThreadConversation({
                   body: { approved, ...(edited ? { edited } : {}) },
                 })
               } catch (e) {
+                // Its row gives the buttons back.
                 setError((e as Error).message)
+                await thread.reload()
+                throw e
               }
               await thread.reload()
             }}
@@ -1706,12 +1709,15 @@ export function ThreadConversation({
                       start: (words) => void previewStart.start(words),
                     }}
                     onApproval={(approvalId, approved, always, edited) =>
-                      void call('/approvals', {
-                        approvalId,
-                        approved,
-                        ...(always ? { always: true } : {}),
-                        ...(edited ? { edited } : {}),
-                      }).catch(() => undefined)
+                      // Shown at once on its card, which says why if it did not go.
+                      api(`/threads/${id}/approvals`, {
+                        body: {
+                          approvalId,
+                          approved,
+                          ...(always ? { always: true } : {}),
+                          ...(edited ? { edited } : {}),
+                        },
+                      }).then(() => undefined)
                     }
                     onAnswer={(questionId, answer) =>
                       api(`/threads/${id}/answers`, { body: { questionId, answer } }).then(

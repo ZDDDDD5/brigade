@@ -91,7 +91,7 @@ import {
 } from '@/lib/api'
 import { fetchFar, keepFar, latestOnly } from '@/lib/far-threads'
 import { latestSave } from '@/lib/latest-save'
-import { useShownPins, withShownPin } from '@/lib/optimistic-pins'
+import { useShownThreads, withShown } from '@/lib/optimistic-threads'
 import { groupByList, isListRow, listRowId } from '@/lib/list-groups'
 import {
   groupOf,
@@ -1038,7 +1038,7 @@ export function SidebarWork({
   // Waiting on a person is more than the thread's own status: a ticket for this member, a task
   // in Needs you, or a pull request it opened that a person has to review or merge. Unless it is working: then
   // it shows as working, and waits once it stops. What each asks goes at the row's end.
-  const pins = useShownPins()
+  const changes = useShownThreads()
   const { all, asks, farOnes } = useMemo(() => {
     const latestIds = new Set((threads ?? []).map((t) => t.id))
     const olderOnes = older.filter((t) => !latestIds.has(t.id))
@@ -1046,12 +1046,13 @@ export function SidebarWork({
     // Only those still waiting: an answer from before may bring one that waits no more.
     const farRows = keepFar(far, farIds, loadedIds)
     const farOnes = new Set(farRows.map((t) => t.id))
-    // A pin just clicked shows at once, ahead of the server (lib/optimistic-pins.ts).
-    const list = (archived ?? [...(threads ?? []), ...olderOnes, ...farRows]).map((t) =>
-      withShownPin(t, pins),
-    )
+    // A pin, snooze, done or archive just clicked shows at once, ahead of the server
+    // (lib/optimistic-threads.ts): archived, it leaves the list; unarchived, the archived one.
+    const list = (archived ?? [...(threads ?? []), ...olderOnes, ...farRows])
+      .map((t) => withShown(t, changes))
+      .filter((t) => !!archived === !!t.archivedAt)
     return { ...withAsks(list, needsYou, threadId), farOnes }
-  }, [threads, older, far, farIds, needsYou, archived, threadId, pins])
+  }, [threads, older, far, farIds, needsYou, archived, threadId, changes])
   // The lists this member pinned: under Pinned, each with the threads on its items (those not
   // pinned themselves), which leave Threads.
   const pinnedLists = useApi<PinnedList[]>('/lists/pins', ['lists.updated'])
@@ -1297,7 +1298,7 @@ export function SidebarWork({
   }, [openId, inView, loaded, threads, needsYou])
   const opened = inView
     ? undefined
-    : (loaded ?? (fetched && holds(fetched, openId!) ? withShownPin(fetched, pins) : undefined))
+    : (loaded ?? (fetched && holds(fetched, openId!) ? withShown(fetched, changes) : undefined))
   // A thread moving in the list slides to its place; another filter is another list, shown at once.
   const listRef = useRef<HTMLUListElement>(null)
   useFlip(listRef, JSON.stringify([filter, !!archived, later]))

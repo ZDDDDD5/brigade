@@ -26,7 +26,7 @@ import {
   type TicketTakeover,
 } from '@/components/thread-view'
 import { useThreadPanel } from '@/components/thread-panel'
-import { TicketRow } from '@/components/ticket-row'
+import { resolvedLabel, TicketRow } from '@/components/ticket-row'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Hint } from '@/components/ui/tooltip'
@@ -106,14 +106,20 @@ function From({
   )
 }
 
+/**
+ * Answers the one shown: says what it did at once, as the next one waits, while the request
+ * goes. One that did not go comes back with why, and rejects.
+ */
+type Answer = (label: string, request: () => Promise<unknown>) => Promise<void>
+
 /** A ticket a teammate opened or a question it asked, answered as in its thread. */
 function HarnessTicket({
   ticket: t,
-  onDone,
+  onAnswer,
 }: {
   ticket: Ticket
-  /** Answered: what to say it did, before the next one. */
-  onDone: (sent: string) => Promise<void>
+  /** Answers it: what to say it did, shown at once, and the request (NeedsYou's answer). */
+  onAnswer: Answer
 }) {
   const { me, teammates } = useDashboard()
   const { showComputer } = useThreadPanel()
@@ -150,8 +156,8 @@ function HarnessTicket({
           }}
           canAnswer
           onAnswer={(answer: QuestionAnswer) =>
-            api(`/tickets/${t.id}/answer`, { body: { answer } }).then(() =>
-              onDone(`Sent to ${askerName}`),
+            onAnswer(`Sent to ${askerName}`, () =>
+              api(`/tickets/${t.id}/answer`, { body: { answer } }),
             )
           }
         />
@@ -179,10 +185,9 @@ function HarnessTicket({
         askerId={asker}
         askerName={askerName}
         onAnswer={(answer: TicketAnswer) =>
-          api(`/tickets/${t.id}/answer`, { body: { answer } }).then(() =>
-            onDone(
-              answer.action === 'declined' && !answer.note ? 'Declined' : `Sent to ${askerName}`,
-            ),
+          onAnswer(
+            answer.action === 'declined' && !answer.note ? 'Declined' : `Sent to ${askerName}`,
+            () => api(`/tickets/${t.id}/answer`, { body: { answer } }),
           )
         }
       />
@@ -244,21 +249,19 @@ function FailureCard({
   error,
   href,
   again,
-  onDone,
+  onAnswer,
 }: {
   error: string | null
   href: string
   /** Its button and what it calls; none for a thread that never ran (nothing to try again). */
   again: { label: string; path: string; done: string } | null
-  onDone: (sent: string) => Promise<void>
+  onAnswer: Answer
 }) {
-  const [busy, setBusy] = useState(false)
-  const [failed, setFailed] = useState<string>()
   return (
     <Card className="flex-row flex-wrap items-center gap-3 px-4 py-3">
       <p className="min-w-0 flex-1 text-sm">
         <span className="line-clamp-2 wrap-anywhere text-destructive-text">
-          {failed ?? error ?? 'It stopped on an error.'}
+          {error ?? 'It stopped on an error.'}
         </span>
       </p>
       <div className="flex flex-none items-center gap-2">
@@ -268,18 +271,10 @@ function FailureCard({
         {again && (
           <Button
             size="sm"
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true)
-              setFailed(undefined)
-              try {
-                await api(again.path, { body: {} })
-                await onDone(again.done)
-              } catch (e) {
-                setFailed(e instanceof Error ? e.message : String(e))
-                setBusy(false)
-              }
-            }}
+            onClick={() =>
+              // Needs you says why if it did not go.
+              void onAnswer(again.done, () => api(again.path, { body: {} })).catch(() => undefined)
+            }
           >
             {again.label}
           </Button>
@@ -293,27 +288,23 @@ function FailureCard({
  * Choices a teammate's reply ended on, picked here as in its thread (the pick is a message), or
  * dismissed without picking.
  */
-function ChoiceToMake({
-  choice,
-  onDone,
-}: {
-  choice: ChoiceWaiting
-  onDone: (sent: string) => Promise<void>
-}) {
+function ChoiceToMake({ choice, onAnswer }: { choice: ChoiceWaiting; onAnswer: Answer }) {
   return (
     <div className="flex flex-col gap-1.5">
       <From teammate={choice.teammate} thread={choice} note="pick one" />
       <ChoicesCard
         choices={choice.choices}
-        onChoose={async (text, pick) => {
-          // With the design it makes, when the option is one in an options folder.
-          await api(`/threads/${choice.id}/messages`, { body: { text, ...(pick ? { pick } : {}) } })
-          await onDone(`Sent to ${choice.teammate.name}`)
-        }}
-        onDismiss={async () => {
-          await api(`/threads/${choice.id}/choices/dismiss`, { body: { seq: choice.seq } })
-          await onDone('Dismissed')
-        }}
+        onChoose={(text, pick) =>
+          onAnswer(`Sent to ${choice.teammate.name}`, () =>
+            // With the design it makes, when the option is one in an options folder.
+            api(`/threads/${choice.id}/messages`, { body: { text, ...(pick ? { pick } : {}) } }),
+          )
+        }
+        onDismiss={() =>
+          onAnswer('Dismissed', () =>
+            api(`/threads/${choice.id}/choices/dismiss`, { body: { seq: choice.seq } }),
+          )
+        }
       />
     </div>
   )
@@ -323,7 +314,14 @@ function ChoiceToMake({
  * Shown in place of the one just answered, until the person moves on: what was done, to
  * what, and its thread, to follow the teammate picking up.
  */
-type Sent = { label: string; title: string; thread?: string; next: string | undefined }
+type Sent = {
+  /** The one it was done to. */
+  key: string
+  label: string
+  title: string
+  thread?: string
+  next: string | undefined
+}
 
 /** What was done, then the item's title, a link to its thread when it has one. */
 function SentLine({ sent }: { sent: Sent }) {
@@ -373,6 +371,8 @@ export function NeedsYou({
   const [error, setError] = useState<string>()
   const [currentKey, setCurrentKey] = useState<string>()
   const [sent, setSent] = useState<Sent>()
+  // Answered here, while the request goes and until the list is reloaded: out of the list.
+  const [answering, setAnswering] = useState<ReadonlySet<string>>(new Set())
   // Opened from a push about a playbook's approvals: those first.
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('approvals')
@@ -387,7 +387,7 @@ export function NeedsYou({
     queues.set(key, [...(queues.get(key) ?? []), t])
   }
 
-  const items: Waiting[] = [
+  const waiting: Waiting[] = [
     ...tickets.flatMap((t): Waiting[] => {
       const key = waitingItemKey(t)
       const queue = queues.get(key)
@@ -446,6 +446,7 @@ export function NeedsYou({
       routine: r,
     })),
   ]
+  const items = waiting.filter((i) => !answering.has(i.key))
   // One answered elsewhere drops out: the first one left takes its place.
   const index = Math.max(
     0,
@@ -454,8 +455,10 @@ export function NeedsYou({
   const current = items[index]
 
   /** The one shown was answered: say so, and remember which comes next. */
-  async function done(label: string) {
+  function showSent(label: string) {
+    if (!current) return
     setSent({
+      key: current.key,
       label,
       // A playbook's approvals by its name, not how many were left.
       title: current?.queue?.name ?? current?.title ?? '',
@@ -468,45 +471,50 @@ export function NeedsYou({
         undefined,
       next: (items[index + 1] ?? items[index - 1])?.key,
     })
+  }
+
+  /** Answered elsewhere (a playbook's last approval): say so, then ask for the list again. */
+  async function done(label: string) {
+    showSent(label)
     await onChange()
   }
 
-  async function resolve(id: string, approved: boolean, always?: boolean, edited?: EditedEmail) {
-    setError(undefined)
-    try {
-      await api(`/tickets/${id}/resolve`, {
-        body: { approved, ...(always ? { always } : {}), ...(edited ? { edited } : {}) },
+  const answer: Answer = async (label, request) => {
+    const key = current?.key
+    if (!key) return
+    const drop = () =>
+      setAnswering((a) => {
+        const next = new Set(a)
+        next.delete(key)
+        return next
       })
+    showSent(label)
+    setError(undefined)
+    setAnswering((a) => new Set(a).add(key))
+    try {
+      await request()
     } catch (e) {
-      setError((e as Error).message)
-      await onChange()
-      return
+      // Back to it, as it was, with why: whatever was shown since.
+      drop()
+      setSent((s) => (s?.key === key ? undefined : s))
+      setCurrentKey(key)
+      setError(e instanceof Error ? e.message : String(e))
+      throw e
     }
-    // In the words of the button that was clicked.
+    try {
+      await onChange()
+    } finally {
+      drop()
+    }
+  }
+
+  function resolve(id: string, approved: boolean, always?: boolean, edited?: EditedEmail) {
     const t = tickets.find((x) => x.id === id)
-    await done(
-      t?.payload.skillAction
-        ? approved
-          ? 'Skill added'
-          : 'Declined'
-        : t?.payload.triggerAction
-          ? approved
-            ? 'Trigger added'
-            : 'Declined'
-          : t?.payload.playbookActivation
-            ? approved
-              ? 'Activated'
-              : 'Declined'
-            : t?.payload.source === 'harness'
-              ? 'Declined'
-              : t?.type === 'sign_in' ||
-                  t?.type === 'usage_limit' ||
-                  t?.type === 'disk_full' ||
-                  t?.payload.pullRequest
-                ? 'Dismissed'
-                : approved
-                  ? 'Allowed'
-                  : 'Denied',
+    // In the words of the button that was clicked.
+    return answer(t ? resolvedLabel(t, approved) : approved ? 'Allowed' : 'Denied', () =>
+      api(`/tickets/${id}/resolve`, {
+        body: { approved, ...(always ? { always } : {}), ...(edited ? { edited } : {}) },
+      }),
     )
   }
 
@@ -622,7 +630,7 @@ export function NeedsYou({
           />
         </div>
       ) : current?.choice ? (
-        <ChoiceToMake key={current.key} choice={current.choice} onDone={done} />
+        <ChoiceToMake key={current.key} choice={current.choice} onAnswer={answer} />
       ) : current?.failed ? (
         <div className="flex flex-col gap-1.5">
           <From teammate={current.failed.teammate} thread={current.failed} note="failed" />
@@ -640,7 +648,7 @@ export function NeedsYou({
                   }
                 : null
             }
-            onDone={done}
+            onAnswer={answer}
           />
         </div>
       ) : current?.routine ? (
@@ -669,11 +677,11 @@ export function NeedsYou({
                     }
                   : null
             }
-            onDone={done}
+            onAnswer={answer}
           />
         </div>
       ) : current?.ticket && answersHere(current.ticket) ? (
-        <HarnessTicket key={current.key} ticket={current.ticket} onDone={done} />
+        <HarnessTicket key={current.key} ticket={current.ticket} onAnswer={answer} />
       ) : current?.ticket ? (
         // Approvals, caps and logins keep their row, which has their buttons.
         <Card key={current.key} className="gap-0 overflow-hidden py-0">

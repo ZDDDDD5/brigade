@@ -87,29 +87,23 @@ function SectionTitle({
   )
 }
 
-function LooseEndRow({ item, onChange }: { item: LooseEnd; onChange: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string>()
-
-  async function run(action: () => Promise<unknown>) {
-    setBusy(true)
-    setError(undefined)
-    try {
-      await action()
-      await onChange()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong')
-      setBusy(false)
-    }
-  }
-
+function LooseEndRow({
+  item,
+  error,
+  run,
+}: {
+  item: LooseEnd
+  /** Why what was done from it last did not go. */
+  error?: string
+  /** Does it: the row leaves at once, and comes back with why if it did not go. */
+  run: (action: () => Promise<unknown>) => void
+}) {
   const dismiss = (
     <Button
       variant="ghost"
       size="icon-sm"
       aria-label="Dismiss"
       tooltip="Dismiss"
-      disabled={busy}
       onClick={() => run(() => api('/home/dismiss', { body: { key: item.key } }))}
     >
       <X aria-hidden />
@@ -138,7 +132,6 @@ function LooseEndRow({ item, onChange }: { item: LooseEnd; onChange: () => Promi
               variant="outline"
               size="sm"
               className={pill}
-              disabled={busy}
               tooltip={item.reply}
               onClick={() =>
                 run(() =>
@@ -199,9 +192,32 @@ export function LooseEnds({
   onChange: () => Promise<void>
 }) {
   const [all, setAll] = useState(false)
-  if (!items.length) return null
+  // Dismissed or answered here: out of the list at once, until it is reloaded.
+  const [gone, setGone] = useState<ReadonlySet<string>>(new Set())
+  const [errors, setErrors] = useState<Readonly<Record<string, string>>>({})
+  async function run(key: string, action: () => Promise<unknown>) {
+    setGone((g) => new Set(g).add(key))
+    setErrors(({ [key]: _, ...rest }) => rest)
+    try {
+      await action()
+      await onChange()
+    } catch (e) {
+      setErrors((errs) => ({
+        ...errs,
+        [key]: e instanceof Error ? e.message : 'Something went wrong',
+      }))
+    } finally {
+      setGone((g) => {
+        const next = new Set(g)
+        next.delete(key)
+        return next
+      })
+    }
+  }
+  const left = items.filter((i) => !gone.has(i.key))
+  if (!left.length) return null
   // A few at a time, newest first: a long list would read as a reproach, not a nudge.
-  const shown = all ? items : items.slice(0, NUDGES_SHOWN)
+  const shown = all ? left : left.slice(0, NUDGES_SHOWN)
   return (
     <section aria-labelledby="needs-nudge" className="flex flex-col gap-3">
       <SectionTitle
@@ -217,16 +233,21 @@ export function LooseEnds({
       <Card className="gap-0 overflow-hidden py-0 shadow-none">
         <ul className="divide-y">
           {shown.map((item) => (
-            <LooseEndRow key={item.key} item={item} onChange={onChange} />
+            <LooseEndRow
+              key={item.key}
+              item={item}
+              error={errors[item.key]}
+              run={(action) => void run(item.key, action)}
+            />
           ))}
         </ul>
-        {items.length > shown.length && (
+        {left.length > shown.length && (
           <button
             type="button"
             onClick={() => setAll(true)}
             className="border-t py-2.5 text-sm text-muted-foreground hover:text-foreground"
           >
-            Show {items.length - shown.length} more
+            Show {left.length - shown.length} more
           </button>
         )}
       </Card>
