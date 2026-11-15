@@ -327,10 +327,9 @@ export const reportSource = (childId: string, deliveredAt: Date) =>
  * then: idle, no event since. Each write it makes is conditional on that, in the same statement.
  */
 export type TurnFence = { id: string; lastSeq: number }
+const AT_WORK = ['starting', 'running', 'waiting'] as const
 const fenced = (fence: TurnFence | undefined, id: string) =>
-  fence && fence.id === id
-    ? { lastSeq: fence.lastSeq, status: { notIn: ['starting', 'running', 'waiting'] as const } }
-    : {}
+  fence && fence.id === id ? { lastSeq: fence.lastSeq, status: { notIn: [...AT_WORK] } } : {}
 
 const sameReport = (report: unknown) =>
   report == null ? { equals: Prisma.DbNull } : { equals: report as Prisma.InputJsonValue }
