@@ -22,6 +22,8 @@ export type Comparison = {
   logos: Logo[]
   /** One line for the index and the page's description. */
   oneLiner: string
+  /** A shorter one-liner for search results, when the one-liner runs past 160 characters. */
+  description?: string
   /** What the other product is, in its own terms. */
   about: string
   /** The answer, first: how the two differ. */
@@ -134,6 +136,8 @@ export const COMPARISONS: Comparison[] = [
     logos: [{ src: '/compare/grok-bot.png' }],
     oneLiner:
       'xAI’s AI teammates, locked to Grok models and a Grok subscription, versus teammates that run Claude Code and Codex on the Claude or ChatGPT plan you already pay for.',
+    description:
+      'xAI’s AI teammates, locked to Grok models and a Grok subscription, versus teammates that run Claude Code and Codex on the plan you already pay for.',
     about:
       'Grok Bot is xAI’s product for AI teammates. Each Bot has a job and its own cloud computer, signs in to your tools, works in Slack, Microsoft Teams and video calls, runs routines and can be taught a task by watching it done once. It came out of beta as Grok Bot 1.0 on November 2, 2026, and is sold with Grok’s Premium, Super and Ultra plans.',
     answer:
@@ -195,6 +199,8 @@ export const COMPARISONS: Comparison[] = [
     checked: 'November 15, 2026',
     oneLiner:
       'Perplexity’s AI agents for ongoing work, sold only with Perplexity Max at $200 a month, versus an open-source team that runs Claude Code and Codex on the Claude or ChatGPT plan you already pay for.',
+    description:
+      'Perplexity’s AI agents, sold only with Perplexity Max at $200 a month, versus open-source teammates on the Claude or ChatGPT plan you already pay for.',
     about:
       'Perplexity Teammates are agents that take on ongoing work (growth campaigns, bug triage, metrics, market research, support) inside Perplexity Computer. Each one runs in its own cloud environment that keeps working when your computer is closed, keeps its project’s goals, history and files between runs, connects to tools such as Slack, GitHub and Gmail, hands work to other teammates, and sends progress updates and approval requests. They launched on the web on November 4, 2026, reached the Mac app on November 13, and are available only to Perplexity Max subscribers.',
     answer:
@@ -274,6 +280,8 @@ export const COMPARISONS: Comparison[] = [
     checked: 'November 13, 2026',
     oneLiner:
       'Open-source bots on their own agent loop, with Claude through an API key and hosted plans metered in computer hours, versus teammates that are the official Claude Code and Codex on the plans you already pay for.',
+    description:
+      'Open-source bots on their own agent loop, with metered hosted plans, versus the official Claude Code and Codex on the plans you already pay for.',
     about:
       'Rakazo is an open-source (Apache-2.0) platform for AI bots that each take on a job, such as sorting email or researching sales prospects, with a computer, Apps, memory, routines and approvals. You reach them from its web, desktop, iOS and Android apps or from chat apps. Its bots run on Rakazo’s own agent loop (Pi) with the model you connect. You can host it yourself, or use Rakazo Cloud (in beta), whose plans cost $15, $49 or $99 a month with 25, 100 or 200 computer hours.',
     answer:
@@ -364,6 +372,8 @@ export const COMPARISONS: Comparison[] = [
     checked: 'November 13, 2026',
     oneLiner:
       'An open-source personal agent you install and run, which a Claude plan covers only through extra usage, versus a team that runs the official Claude Code and Codex on the plans you already pay for.',
+    description:
+      'An open-source personal agent that a Claude plan covers only through extra usage, versus the official Claude Code and Codex on the plans you pay for.',
     about:
       'Hermes Agent is Nous Research’s open-source (MIT) agent, “the agent that grows with you”: it writes skills from experience, keeps a memory of you across sessions, runs scheduled jobs, and talks to you from Telegram, Discord, Slack, WhatsApp, Signal or email while it works on your machine, a server or a cloud sandbox. Profiles run several separate agents side by side, each with its own memory, skills and chat bot. It works with any model, from Nous Portal and OpenRouter to local ones, and Nous sells hosted plans from $20 a month.',
     answer:
@@ -447,6 +457,8 @@ export const COMPARISONS: Comparison[] = [
     checked: 'November 13, 2026',
     oneLiner:
       'Anthropic’s proactive agent for one person, in a US waitlist preview, versus a team of AI teammates for your company that runs on your Claude or ChatGPT plan today.',
+    description:
+      'Anthropic’s proactive agent for one person, in a US waitlist preview, versus AI teammates for your company on your Claude or ChatGPT plan today.',
     about:
       'Claude Duet is an Anthropic app, released as a research preview on October 21, 2026, where Claude works as a proactive agent: it brings you what needs your attention, does tasks on its own cloud computer, sends a morning brief, and asks before it sends messages, pays, signs or deletes anything. It runs on Claude Opus 5.5, is included in Claude’s Pro, Max and Ultra plans, and opened by waitlist to US subscribers, on iOS, Android and claude.ai.',
     answer:
@@ -618,6 +630,8 @@ export const COMPARISONS: Comparison[] = [
     checked: 'November 13, 2026',
     oneLiner:
       'One always-on agent per person inside ChatGPT, on Pro and business plans, versus a team of AI teammates on Claude and ChatGPT side by side, open source and free on your own computer.',
+    description:
+      'One always-on agent per person inside ChatGPT, versus a team of AI teammates on Claude and ChatGPT side by side, open source and free on your computer.',
     about:
       'dots are OpenAI’s always-on agents inside ChatGPT, announced on September 29, 2026. Each dot has its own cloud computer and browser, learns from feedback, runs scheduled checks, can build and test fixes and bring back pull requests, and works in ChatGPT, Slack and Teams. Each member gets one personal dot with ChatGPT Pro (rolling out outside the EEA, Switzerland and the UK) or Business Premium, and with Enterprise and Edu plans. It runs on OpenAI’s GPT-6 models.',
     answer:
@@ -703,6 +717,8 @@ export const COMPARISONS: Comparison[] = [
     checked: 'November 13, 2026',
     oneLiner:
       'An invite-only personal assistant you text or call, versus a team of AI teammates for your company that you can start today on the Claude or ChatGPT plan you already pay for.',
+    description:
+      'An invite-only personal assistant you text or call, versus AI teammates for your company that you can start today on the plan you already pay for.',
     about:
       'Instinct, from Spear Street Technology, describes itself as “a personal assistant that understands what you’re working on and what’s important to you”. You text or call it, and it uses a phone and a computer to run errands such as ordering groceries or booking a train. When we checked, access was reported as invite-only, its terms mentioned a waitlist, and it published no prices.',
     answer:
@@ -846,6 +862,8 @@ export const COMPARISONS: Comparison[] = [
     checked: 'November 13, 2026',
     oneLiner:
       'Claude working across one person’s files and tools, versus a team of AI teammates with jobs and one shared list of decisions, on Claude and ChatGPT side by side.',
+    description:
+      'Claude working across one person’s files and tools, versus a team of AI teammates with jobs and one shared list of decisions, on Claude and ChatGPT.',
     about:
       'Claude Cowork is Anthropic’s agent for work beyond code, launched in January 2026 as “Claude Code for the rest of your work”. Since September 2026 it is part of the Claude app itself (“Claude Cowork is now just Claude”): Claude works across your files and tools toward a goal, in cloud sessions that carry on after you close your laptop, runs scheduled tasks, and asks before acting by default. It comes with Claude’s paid plans (Pro, Max, Ultra, Team and Enterprise) and draws on their usage limits.',
     answer:
@@ -929,6 +947,8 @@ export const COMPARISONS: Comparison[] = [
     checked: 'November 13, 2026',
     oneLiner:
       'A general AI agent billed in Manus credits, versus a team of AI teammates that run on the Claude or ChatGPT plan you already pay for and keep you in the decisions.',
+    description:
+      'A general AI agent billed in Manus credits, versus AI teammates that run on the Claude or ChatGPT plan you already pay for and keep you in the decisions.',
     about:
       'Manus is an AI agent from Butterfly Effect, a Singapore company. You give it a goal and it works in its own cloud computer to deliver research, slides, websites and apps, with scheduled tasks, automations and a team plan with shared projects. It picks the model for each step and bills in Manus credits: free with 300 credits a day, Pro at $20 a month (4,000 credits), Max at $200 a month (40,000 credits), and Team at $20 a seat.',
     answer:
@@ -1000,6 +1020,8 @@ export const COMPARISONS: Comparison[] = [
     checked: 'November 13, 2026',
     oneLiner:
       'An enterprise platform for an “AI Workforce”, sold through sales and metered in actions and credits, versus open-source teammates you can start today on the Claude or ChatGPT plan you already pay for.',
+    description:
+      'An enterprise “AI Workforce” sold through sales and metered in credits, versus open-source teammates on the Claude or ChatGPT plan you already pay for.',
     about:
       'Relevance AI, based in San Francisco and Sydney, calls itself “the home of the AI Workforce”: a hosted platform where companies build agents for sales, support and operations, with tools, triggers (a schedule, a new email, a Slack message, a webhook), human approvals and over 2,000 integrations. Its pricing page lists one Enterprise plan, through sales; usage is metered in Actions and Vendor Credits, with models such as Claude, GPT and Gemini, or your own API key.',
     answer:

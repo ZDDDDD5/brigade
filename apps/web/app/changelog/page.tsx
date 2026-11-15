@@ -11,7 +11,7 @@ export const revalidate = false
 export const metadata = changelogMetadata(
   '/changelog',
   'Changelog · Brigade',
-  "What's new in Brigade, week by week.",
+  "What's new in Brigade, week by week: every release of the AI teammates app, what changed in it and the pull requests behind each change.",
 )
 
 export default function Changelog() {
