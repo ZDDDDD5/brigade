@@ -129,6 +129,26 @@ try {
   check('dashboard view below the band', () =>
     assert.equal(top, process.platform === 'win32' ? 32 : 0),
   )
+  // Only the band above the view moves the window: a drag area under the view takes its clicks
+  // on macOS (0.4.2: nothing in the dashboard could be clicked).
+  const host = app.windows().find((w) => w.url().endsWith('window.html'))
+  await waitFor(() =>
+    host.evaluate((top) => getComputedStyle(band).height === `${top}px`, top).catch(() => false),
+  )
+  const drag = await host.evaluate(() => {
+    const region = (el) =>
+      ['app-region', '-webkit-app-region'].some(
+        (p) => getComputedStyle(el).getPropertyValue(p) === 'drag',
+      )
+    return {
+      body: region(document.body),
+      band: region(band),
+      height: getComputedStyle(band).height,
+    }
+  })
+  check('window drags only above the view', () =>
+    assert.deepEqual(drag, { body: false, band: true, height: `${top}px` }),
+  )
   const refused = await main.evaluate(() =>
     window.brigadeDesktop.captures.list().then(
       () => 'listed',

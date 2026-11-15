@@ -202,6 +202,30 @@ function layout() {
   const [width = 0, height = 0] = window.getContentSize()
   const top = band()
   view.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) })
+  markBand(window)
+}
+
+/** The style that sizes the window's own page's band, and the height it gives. */
+let bandStyle: { key: string; top: number } | undefined
+let marking = Promise.resolve()
+
+/**
+ * The window's own page moves the window only in the band above the view, never under it:
+ * macOS gives a drag area's clicks to the window, even where the view covers it, and the
+ * dashboard would take no click at all.
+ */
+function markBand(window: BrowserWindow) {
+  const host = window.webContents
+  marking = marking
+    .then(async () => {
+      const top = band()
+      if (host.isDestroyed() || host.isLoading() || bandStyle?.top === top) return
+      const key = await host.insertCSS(`#band{height:${top}px}`)
+      const previous = bandStyle?.key
+      bandStyle = { key, top }
+      if (previous) await host.removeInsertedCSS(previous)
+    })
+    .catch(() => {})
 }
 
 /** The page's background and text colors: the band's, and Windows' buttons'. */
@@ -342,6 +366,11 @@ export function showDashboard(url = dashboard()) {
   // The window's own page: the band, nothing to follow.
   window.webContents.on('will-navigate', (event) => event.preventDefault())
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  bandStyle = undefined
+  window.webContents.on('did-finish-load', () => {
+    bandStyle = undefined
+    markBand(window)
+  })
   void window.loadFile(join(__dirname, '..', 'page', 'window.html'))
 
   const contents = page.webContents
