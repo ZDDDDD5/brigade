@@ -56,6 +56,28 @@ if (info?.window === 'main') {
   })
 }
 
+// Back and forward as in a browser, beyond the menu's ⌘[ / ⌘] (Alt+← / Alt+→ elsewhere,
+// windows.ts): the mouse's back and forward buttons, and on macOS ⌘← / ⌘→ outside a text field.
+if (info?.window === 'main') {
+  window.addEventListener('mouseup', (event) => {
+    if (event.button === 3) window.history.back()
+    else if (event.button === 4) window.history.forward()
+    else return
+    event.preventDefault()
+  })
+  window.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented || info.platform !== 'darwin') return
+    if (!event.metaKey || event.altKey || event.ctrlKey || event.shiftKey) return
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    const target = event.target as HTMLElement | null
+    if (target?.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]'))
+      return
+    event.preventDefault()
+    if (event.key === 'ArrowLeft') window.history.back()
+    else window.history.forward()
+  })
+}
+
 if (info)
   contextBridge.exposeInMainWorld('brigadeDesktop', {
     info,
