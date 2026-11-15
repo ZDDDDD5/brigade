@@ -8,6 +8,7 @@ import { MixpanelMcpHint } from '@/components/mixpanel-mcp-hint'
 import { RegionMenu } from '@/components/region-menu'
 import { CloseButton } from '@/components/close-button'
 import { EmailApp } from '@/components/email-app'
+import { GoogleAdsAccounts, GoogleAdsPicked } from '@/components/google-ads-accounts'
 import { mailboxPath } from '@/components/mailboxes'
 import { ConnectionTriggers } from '@/components/connection-triggers'
 import { useDashboard, timeAgo } from '@/components/dashboard'
@@ -578,7 +579,8 @@ function Account({
   const manages = admin || mine
   const custom = c.kind === 'webhook'
   const owner = mine ? 'you' : (data.members[c.createdByMemberId] ?? 'a former member')
-  const [open, setOpen] = useState<'teammates' | 'log' | 'triggers'>()
+  const [open, setOpen] = useState<'teammates' | 'log' | 'triggers' | 'ads'>()
+  const ads = c.kind === 'google_ads'
 
   async function update(body: { reach?: Connection['reach']; inbox?: boolean }) {
     try {
@@ -619,6 +621,7 @@ function Account({
     teammates: 'Teammates',
     log: 'Call log',
     triggers: custom ? 'Webhooks' : 'Triggers',
+    ads: 'Ads accounts',
   }
   // A chip only when the account is kept to its owner's threads; a dot says the rest.
   const chip = c.reach === 'mine' && !custom ? (mine ? 'Only you' : `${owner} only`) : null
@@ -674,6 +677,14 @@ function Account({
               <DropdownMenuItem onSelect={() => setOpen('teammates')}>
                 Teammates
                 <span className="ml-auto text-xs text-muted-foreground">{c.grants.length}</span>
+              </DropdownMenuItem>
+            )}
+            {ads && manages && c.status === 'active' && (
+              <DropdownMenuItem onSelect={() => setOpen('ads')}>
+                Ads accounts
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {c.settings?.customers?.length ?? 0}
+                </span>
               </DropdownMenuItem>
             )}
             {!custom && (
@@ -737,6 +748,11 @@ function Account({
         </DropdownMenu>
       </div>
 
+      {/* Google Ads: which customer accounts its teammates reach, picked after signing in. */}
+      {ads && open !== 'ads' && c.status === 'active' && (
+        <GoogleAdsPicked connection={c} onPick={manages ? () => setOpen('ads') : undefined} />
+      )}
+
       {open && (
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between text-sm">
@@ -782,6 +798,9 @@ function Account({
             </div>
           )}
           {open === 'log' && <CallLog connectionId={c.id} />}
+          {open === 'ads' && (
+            <GoogleAdsAccounts connection={c} reload={reload} onDone={() => setOpen(undefined)} />
+          )}
           {open === 'triggers' && (
             <ConnectionTriggers
               connection={c}
@@ -834,7 +853,8 @@ function Unavailable({ kind, hidden }: { kind: Kind; hidden: boolean }) {
     kind === 'google_docs' ||
     kind === 'google_sheets' ||
     kind === 'google_search_console' ||
-    kind === 'google_analytics'
+    kind === 'google_analytics' ||
+    kind === 'google_ads'
   )
     return (
       <p className="text-sm text-muted-foreground">

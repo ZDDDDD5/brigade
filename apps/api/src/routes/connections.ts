@@ -14,6 +14,7 @@ import {
   InspectMcp,
   ConnectWebhookApp,
   UpdateApp,
+  PickGoogleAdsCustomers,
   UpdateConnection,
 } from '@brigade/contracts'
 import { installAppSkills } from '../app-skills.js'
@@ -69,6 +70,8 @@ import {
   type CustomMcp,
 } from '../mcp-servers.js'
 import { checkMcpSignIn, forgetMcpTools } from '../mcp-tools.js'
+import { authorisedFetch } from '../connector-calls.js'
+import { listAdsCustomers, pickedCustomers, type AdsCustomer } from '../connectors/google-ads.js'
 import { appOpen, featuresOfUser } from '../features.js'
 import { prisma, scoped, type ScopedDb } from '../db.js'
 import { hashToken } from '../hub.js'
@@ -265,6 +268,30 @@ export async function createConnection(
   return row
 }
 
+/** A Google Ads account of this workspace, still connected. */
+async function googleAdsConnection(db: ScopedDb, id: string) {
+  const connection = await db.connection.findFirst({
+    where: { id, kind: 'google_ads', status: { not: 'removed' } },
+  })
+  if (!connection) throw new HTTPException(404, { message: 'Google Ads account not found' })
+  return connection
+}
+
+/** The customers a Google Ads account reaches, Google's refusal as a readable error. */
+async function adsCustomersOf(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  connection: Awaited<ReturnType<typeof googleAdsConnection>>,
+) {
+  try {
+    return await listAdsCustomers(await authorisedFetch(db, scope, connection))
+  } catch (error) {
+    throw new HTTPException(502, {
+      message: `Google Ads: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
+}
+
 /** Whether each App can be connected on this Brigade server: Google's and GitHub's need their apps set up. */
 export const availableApps = (): Record<ConnectorKind, boolean> => ({
   gmail: googleConfigured(),
@@ -274,6 +301,7 @@ export const availableApps = (): Record<ConnectorKind, boolean> => ({
   google_sheets: googleConfigured(),
   google_search_console: googleConfigured(),
   google_analytics: googleConfigured(),
+  google_ads: googleConfigured(),
   stripe: true,
   github: githubConfigured(),
   cloudflare: true,
@@ -860,6 +888,63 @@ export const connections = new Hono<AppEnv>()
       select: { status: true },
     })
     return c.json({ status: now?.status ?? 'removed' })
+  })
+
+  /**
+   * Google Ads: every customer account the signed-in Google account reaches (directly, or through
+   * a manager account it holds), and those picked for teammates. Read with the account's own token.
+   */
+  .get('/:id/google-ads/customers', async (c) => {
+    const { scope, db } = c.var
+    const connection = await googleAdsConnection(db, c.req.param('id'))
+    requireAccountManager(scope, connection)
+    const found = await adsCustomersOf(db, scope, connection)
+    return c.json({
+      ...found,
+      picked: pickedCustomers(connection.settings).map((p) => p.id),
+    })
+  })
+
+  /**
+   * Google Ads: pick the customer accounts teammates reach through this account. Each is checked
+   * against what the account reaches now, which also says the manager it goes through; the
+   * dashboard's word for it is not taken. Manager accounts hold no campaigns of their own.
+   */
+  .put('/:id/google-ads/customers', async (c) => {
+    const { scope, db } = c.var
+    const connection = await googleAdsConnection(db, c.req.param('id'))
+    requireAccountManager(scope, connection)
+    const { ids } = await parseBody(c.req.raw, PickGoogleAdsCustomers)
+    const { customers } = await adsCustomersOf(db, scope, connection)
+    const picked: AdsCustomer[] = []
+    for (const id of new Set(ids)) {
+      const customer = customers.find((x) => x.id === id)
+      if (!customer)
+        throw new HTTPException(400, { message: `This Google account does not reach ${id}` })
+      if (customer.manager)
+        throw new HTTPException(400, {
+          message: `${customer.name ?? id} is a manager account: pick the accounts it manages`,
+        })
+      picked.push({
+        id: customer.id,
+        loginCustomerId: customer.loginCustomerId,
+        name: customer.name,
+        ...(customer.currency ? { currency: customer.currency } : {}),
+        ...(customer.timeZone ? { timeZone: customer.timeZone } : {}),
+      })
+    }
+    await db.connection.updateMany({
+      where: { id: connection.id },
+      data: { settings: { customers: picked } },
+    })
+    await audit({
+      ...scope,
+      actor: { type: 'member', id: scope.memberId },
+      action: 'connection.google_ads_customers',
+      target: { type: 'connection', id: connection.id },
+      data: { customers: picked.map((p) => p.id) },
+    })
+    return c.json({ picked: picked.map((p) => p.id) })
   })
 
   /** Rename an account, or change where teammates may use it. */

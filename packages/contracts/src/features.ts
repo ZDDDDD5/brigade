@@ -45,6 +45,13 @@ export const FEATURES = {
       'accounts attached to it and sends messages to its thread. Being tried by the team first.',
     default: false,
   },
+  google_ads: {
+    description:
+      'Connect Google Ads accounts. Until Brigade’s Google Cloud project has Basic access and the ' +
+      'adwords scope passes Google’s verification, Google Ads accepts few calls a day and ' +
+      'Google warns at sign-in that the app is unverified.',
+    default: false,
+  },
 } as const satisfies Record<string, { description: string; default: boolean }>
 
 export type Feature = keyof typeof FEATURES
@@ -55,6 +62,7 @@ export const isFeature = (key: string): key is Feature => Object.hasOwn(FEATURES
 export const APP_FEATURES: Partial<Record<string, Feature>> = {
   gmail: 'gmail',
   google_drive: 'google_drive',
+  google_ads: 'google_ads',
   google_drive_mcp: 'google_workspace_mcp',
   google_docs_mcp: 'google_workspace_mcp',
   google_sheets_mcp: 'google_workspace_mcp',

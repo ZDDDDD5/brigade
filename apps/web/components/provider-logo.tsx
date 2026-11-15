@@ -8,7 +8,7 @@ export type ProviderKind = Connection['kind']
 
 /**
  * Each service's own mark: Google's Gmail, Calendar, Drive, Docs and Sheets icons, Search
- * Console's 2025 icon, Analytics' bars, Stripe's app icon, Cloudflare's cloud, Google Cloud's
+ * Console's 2025 icon, Analytics' bars, Google Ads' bars and dot, Stripe's app icon, Cloudflare's cloud, Google Cloud's
  * four-color cloud, Neon's square N, Supabase's bolt, Atlassian's two-part A, Notion's
  * black-on-white cube, Linear's violet mark, Mixpanel's violet x, Resend's R on black, Replicate's
  * bars on black, OpenRouter's arrows on white, PostHog's ramps and hog, DataForSEO's Q on blue
@@ -113,6 +113,15 @@ export function ProviderLogo({ kind, className }: { kind: ProviderKind; classNam
           d="M75 96v65c0 14.77 10.19 23 21 23 10 0 21-7 21-23V97c0-13.54-10-22-21-22s-21 9.33-21 21z"
         />
         <circle fill="#e37400" cx="41" cy="163" r="21" />
+      </svg>
+    )
+  // Google Ads: the yellow and blue bars meeting at the top, the green dot at the left one's foot.
+  if (kind === 'google_ads')
+    return (
+      <svg viewBox="0 0 192 192" {...common}>
+        <path stroke="#fbbc04" strokeWidth="44" strokeLinecap="round" d="M96 46 50 142" />
+        <path stroke="#4285f4" strokeWidth="44" strokeLinecap="round" d="m96 46 46 96" />
+        <circle fill="#34a853" cx="48" cy="146" r="24" />
       </svg>
     )
   if (kind === 'email')

@@ -22,6 +22,7 @@ const KINDS: ConnectorKind[] = [
   'google_sheets',
   'google_search_console',
   'google_analytics',
+  'google_ads',
   'stripe',
   'github',
   'cloudflare',

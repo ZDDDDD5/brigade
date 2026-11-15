@@ -1,47 +1,195 @@
 // agent-desktop (vercel-labs/agent-desktop): reads an app's interface through the OS's
 // accessibility API (AX on macOS, AT-SPI on Linux) and acts on its elements by ref, without
-// moving the pointer or taking focus. The runner ships it (a dependency, its binaries for each
-// platform) and calls the one for its platform directly: the package's own launcher picks it at
-// install time, and the runner's bundle is installed with no install scripts, built on Linux.
+// moving the pointer or taking focus.
+//
+// The runner's bundle doesn't carry it: its binaries for every platform (12 MB compressed) took
+// the bundle past the 25 MiB a Worker asset may be, and the API serves the bundle as one (#849's
+// deploy failed on it). A runner downloads the pinned version from npm the first time a teammate
+// uses it, checks it against the integrity pinned here (the lockfile's), and keeps only the
+// binaries for its own platform, beside the runner (<install dir>/agent-desktop/<version>), where a
+// runner update leaves them and a cloud computer's teammate users can run them. In the repository
+// (development, tests) the devDependency's copy is used.
 //
 // Where it runs is the caller's (DesktopExec): on a member's Mac, through Brigade Computer Use,
 // which holds Accessibility (harness/desktop-tools.ts); on a cloud computer, as the teammate's
 // Linux user on the desktop, reading its own apps only (desktop.ts).
+import { execFile } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { arch, platform } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
+
+const run = promisify(execFile)
+
+/** The version used, and its npm tarball's integrity: the same as the devDependency's in the lockfile. */
+export const AGENT_DESKTOP_VERSION = '1.3.1'
+export const AGENT_DESKTOP_INTEGRITY =
+  'sha512-5pBKkFkdB/VIAWRfqoA8lYp5/fenfxUHI15Pc4k8Nn2LmLxxo1PkAb0WLypknyOCczuIwuzFp/rZHGGawEV+hw=='
+const TARBALL = `https://registry.npmjs.org/agent-desktop/-/agent-desktop-${AGENT_DESKTOP_VERSION}.tgz`
+
+/** Where a runner keeps its download: beside the runner (<install dir>/runner), not inside it. */
+export const AGENT_DESKTOP_DIR = join(
+  dirname(fileURLToPath(new URL('..', import.meta.url))),
+  'agent-desktop',
+  AGENT_DESKTOP_VERSION,
+)
 
 /** The binary for this platform, and on macOS the helper it starts (beside it). */
 export type AgentDesktopBinary = { path: string; macosHelper?: string }
 
-let found: AgentDesktopBinary | null | undefined
-
-/** agent-desktop's binary for this computer, if the runner has it. */
+/** agent-desktop's binary for this computer, if the runner has it already (no download). */
 export function agentDesktopBinary(
   os: NodeJS.Platform = platform(),
   cpu: string = arch(),
+  dir = AGENT_DESKTOP_DIR,
+  /** The devDependency's copy first, where there is one (the repository). */
+  fromPackage = true,
 ): AgentDesktopBinary | undefined {
-  if (os === platform() && cpu === arch() && found !== undefined) return found ?? undefined
   let bin: string | undefined
   try {
-    bin = join(dirname(createRequire(import.meta.url).resolve('agent-desktop/package.json')), 'bin')
+    bin = fromPackage
+      ? join(dirname(createRequire(import.meta.url).resolve('agent-desktop/package.json')), 'bin')
+      : undefined
   } catch {
     bin = undefined
   }
-  const result = bin ? binaryIn(bin, os, cpu) : undefined
-  if (os === platform() && cpu === arch()) found = result ?? null
-  return result
+  return (bin ? binaryIn(bin, os, cpu) : undefined) ?? binaryIn(dir, os, cpu)
 }
 
 /** The binary for `os` and `cpu` in the package's bin folder. */
 export function binaryIn(bin: string, os: string, cpu: string): AgentDesktopBinary | undefined {
-  if ((os !== 'darwin' && os !== 'linux') || (cpu !== 'arm64' && cpu !== 'x64')) return
-  const path = join(bin, `agent-desktop-${os}-${cpu}`)
+  const names = binaryNames(os, cpu)
+  if (!names) return
+  const path = join(bin, names[0]!)
   if (!existsSync(path)) return
   if (os !== 'darwin') return { path }
-  const macosHelper = join(bin, `agent-desktop-macos-helper-${os}-${cpu}`)
+  const macosHelper = join(bin, names[1]!)
   return existsSync(macosHelper) ? { path, macosHelper } : undefined
+}
+
+/** The files a platform needs, the binary first; none for a platform agent-desktop doesn't run on. */
+function binaryNames(os: string, cpu: string) {
+  if ((os !== 'darwin' && os !== 'linux') || (cpu !== 'arm64' && cpu !== 'x64')) return
+  return os === 'darwin'
+    ? [`agent-desktop-${os}-${cpu}`, `agent-desktop-macos-helper-${os}-${cpu}`]
+    : [`agent-desktop-${os}-${cpu}`, `agent-desktop-linux-clipboard-owner-${os}-${cpu}`]
+}
+
+let downloading: Promise<AgentDesktopBinary> | undefined
+
+/** The longest a download may take, its body included: a stalled one fails, and the next call tries again. */
+export const DOWNLOAD_DEADLINE_MS = 120_000
+
+/**
+ * agent-desktop's binary for this computer, downloaded first if the runner hasn't it yet. One
+ * download at a time, which fails past its deadline; a failed one is tried again at the next
+ * call. A caller's `signal` stops its own wait only: the download goes on for the others.
+ */
+export function ensureAgentDesktop(
+  options: {
+    os?: NodeJS.Platform
+    cpu?: string
+    dir?: string
+    fetch?: typeof fetch
+    /** Tests: the integrity their own tarball has, and no devDependency's copy. */
+    integrity?: string
+    fromPackage?: boolean
+    deadlineMs?: number
+    signal?: AbortSignal
+  } = {},
+): Promise<AgentDesktopBinary> {
+  const os = options.os ?? platform()
+  const cpu = options.cpu ?? arch()
+  const dir = options.dir ?? AGENT_DESKTOP_DIR
+  const have = agentDesktopBinary(os, cpu, dir, options.fromPackage ?? true)
+  if (have) return Promise.resolve(have)
+  const integrity = options.integrity ?? AGENT_DESKTOP_INTEGRITY
+  const signal = options.signal
+  if (signal?.aborted) return Promise.reject(new Error('aborted'))
+  downloading ??= withDeadline(
+    (deadline) => download(os, cpu, dir, options.fetch ?? fetch, integrity, deadline),
+    options.deadlineMs ?? DOWNLOAD_DEADLINE_MS,
+  ).finally(() => {
+    downloading = undefined
+  })
+  const shared = downloading
+  if (!signal) return shared
+  return new Promise<AgentDesktopBinary>((resolve, reject) => {
+    const abort = () => reject(new Error('aborted'))
+    signal.addEventListener('abort', abort, { once: true })
+    shared.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
+  })
+}
+
+/**
+ * `work` given a signal that aborts at the deadline, and failing then whether or not it heeds it
+ * (a fetch does, body included; anything else is left behind).
+ */
+function withDeadline<T>(work: (signal: AbortSignal) => Promise<T>, ms: number) {
+  const controller = new AbortController()
+  let timer: NodeJS.Timeout | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(
+        `agent-desktop could not be downloaded: no answer from npm within ${Math.round(ms / 1000)} seconds`,
+      )
+      controller.abort(error)
+      reject(error)
+    }, ms)
+  })
+  return Promise.race([work(controller.signal), late]).finally(() => clearTimeout(timer))
+}
+
+async function download(
+  os: NodeJS.Platform,
+  cpu: string,
+  dir: string,
+  get: typeof fetch,
+  pinned: string,
+  deadline: AbortSignal,
+) {
+  const names = binaryNames(os, cpu)
+  if (!names) throw new Error(`agent-desktop does not run on ${os} ${cpu}`)
+  const response = await get(TARBALL, { signal: deadline }).catch((error: unknown) => {
+    throw new Error(`agent-desktop could not be downloaded: ${String(error)}`)
+  })
+  if (!response.ok)
+    throw new Error(`agent-desktop could not be downloaded: npm answered ${response.status}`)
+  const bytes = Buffer.from(await response.arrayBuffer())
+  // Past the deadline already: what comes after (writing, unpacking) isn't started.
+  if (deadline.aborted) throw deadline.reason
+  const integrity = `sha512-${createHash('sha512').update(bytes).digest('base64')}`
+  if (integrity !== pinned)
+    throw new Error('agent-desktop was not used: its download does not match the version pinned')
+  // Unpacked next to where it goes, then moved there whole: a runner stopped halfway leaves no
+  // half-written binary where the next look would find it.
+  await mkdir(dirname(dir), { recursive: true, mode: 0o755 })
+  const staging = await mkdtemp(`${dir}.`)
+  try {
+    const tarball = join(staging, 'package.tgz')
+    await writeFile(tarball, bytes)
+    await run('tar', [
+      '-xzf',
+      tarball,
+      '-C',
+      staging,
+      ...names.map((name) => `package/bin/${name}`),
+    ])
+    const unpacked = join(staging, 'package', 'bin')
+    for (const name of names) await chmod(join(unpacked, name), 0o755)
+    await chmod(unpacked, 0o755)
+    await rm(dir, { recursive: true, force: true })
+    await rename(unpacked, dir)
+  } finally {
+    await rm(staging, { recursive: true, force: true })
+  }
+  const binary = binaryIn(dir, os, cpu)
+  if (!binary) throw new Error('agent-desktop was downloaded, but its binary is missing')
+  return binary
 }
 
 /** Runs agent-desktop with these arguments where the caller says; resolves to its stdout. */

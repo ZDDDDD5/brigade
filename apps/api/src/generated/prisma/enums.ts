@@ -235,6 +235,7 @@ export const ConnectorKind = {
   mcp: 'mcp',
   google_search_console: 'google_search_console',
   google_analytics: 'google_analytics',
+  google_ads: 'google_ads',
   email: 'email'
 } as const
 

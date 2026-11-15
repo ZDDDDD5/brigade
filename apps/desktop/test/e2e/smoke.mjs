@@ -73,6 +73,27 @@ try {
   const expected = process.platform === 'win32' ? 'unsupported' : 'notConnected'
   check('runner status', () => assert.equal(status, expected))
 
+  // macOS: the app menu holds what the menu-bar menu does, as on a Mac (menu.ts).
+  if (process.platform === 'darwin') {
+    const menus = await app.evaluate(({ Menu }) =>
+      Object.fromEntries(
+        Menu.getApplicationMenu().items.map((m) => [
+          m.label,
+          m.submenu?.items.filter((i) => i.type !== 'separator').map((i) => i.label) ?? [],
+        ]),
+      ),
+    )
+    check('app menu', () => {
+      assert.deepEqual(Object.keys(menus), ['Brigade', 'File', 'Edit', 'View', 'Window'])
+      for (const item of ['Check for Updates…', 'Open at Login', 'Keep Screen Awake', 'Shortcuts'])
+        assert.ok(menus.Brigade.includes(item), `Brigade › ${item}`)
+      for (const item of ['Restart Runner', 'Show Logs', 'Close Window', 'Quit Brigade'])
+        assert.ok(menus.Brigade.includes(item), `Brigade › ${item}`)
+      for (const item of ['New Thread', 'Open Dashboard', 'Open in Browser'])
+        assert.ok(menus.File.includes(item), `File › ${item}`)
+    })
+  }
+
   // The new thread window: the dashboard's /app/capture, with the bridge and the draft.
   await app.evaluate(() => globalThis.brigadeTest.capture.show())
   const capture = await windowAt('/app/capture')
@@ -128,6 +149,27 @@ try {
   })
   check('dashboard view below the band', () =>
     assert.equal(top, process.platform === 'win32' ? 32 : 0),
+  )
+  // Only the band above the view moves the window: a drag area under the view takes its clicks
+  // on macOS (0.4.2: nothing in the dashboard could be clicked).
+  const host = app.windows().find((w) => w.url().endsWith('window.html'))
+  // Its height follows the view: a timeout here still reports what it found, below.
+  await waitFor(() =>
+    host.evaluate((top) => getComputedStyle(band).height === `${top}px`, top).catch(() => false),
+  ).catch(() => {})
+  const drag = await host.evaluate(() => {
+    const region = (el) =>
+      ['app-region', '-webkit-app-region'].some(
+        (p) => getComputedStyle(el).getPropertyValue(p) === 'drag',
+      )
+    return {
+      body: region(document.body),
+      band: region(band),
+      height: getComputedStyle(band).height,
+    }
+  })
+  check('window drags only above the view', () =>
+    assert.deepEqual(drag, { body: false, band: true, height: `${top}px` }),
   )
   const refused = await main.evaluate(() =>
     window.brigadeDesktop.captures.list().then(
@@ -223,6 +265,9 @@ try {
   await waitFor(async () => !(await mainOpen()))
   const askedAfter = await asked()
   check('closes without a question', () => assert.equal(askedAfter, 2))
+} catch (error) {
+  // A step that threw: the checks after it never ran.
+  fail('the run stopped', error)
 } finally {
   // Quit as the menu does: the app ends by itself.
   const closed = new Promise((resolve) => app.process().once('exit', (code) => resolve(code)))
@@ -251,9 +296,21 @@ function check(name, assertion) {
     assertion()
     console.log(`ok   ${name}`)
   } catch (error) {
-    console.log(`FAIL ${name}: ${error.message}`)
-    failures.push(name)
+    fail(name, error)
   }
+}
+
+/** A failure, also as an annotation on the job in GitHub Actions: its log needs admin rights. */
+function fail(name, error) {
+  console.log(`FAIL ${name}: ${error.message}`)
+  failures.push(name)
+  if (process.env.GITHUB_ACTIONS)
+    console.log(
+      `::error title=Smoke test (${process.platform})::${name}: ${error.message}`.replace(
+        /\r?\n/g,
+        '%0A',
+      ),
+    )
 }
 
 async function waitFor(get, ms = 20_000) {

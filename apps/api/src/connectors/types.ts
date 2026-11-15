@@ -99,6 +99,8 @@ export type ConnectorContext = {
   teammateId?: string
   /** The member who approved the call, when one did. */
   approvedByMemberId?: string
+  /** What the account's owner picked after signing in (Connection.settings): Google Ads' customers. */
+  settings?: unknown
 }
 
 export type ConnectorKind =
@@ -109,6 +111,7 @@ export type ConnectorKind =
   | 'google_sheets'
   | 'google_search_console'
   | 'google_analytics'
+  | 'google_ads'
   | 'stripe'
   | 'github'
   | 'webhook'

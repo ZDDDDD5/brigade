@@ -176,6 +176,7 @@ export async function handleConnectorCall(
     ({
       fetch: (url: string, init?: RequestInit) => fetch(url, init),
       callId: call.callId,
+      settings: connection.settings,
       ...own,
       ...extra,
     }) as ConnectorContext
@@ -501,6 +502,7 @@ export async function handleConnectorCall(
         ...(decision ? { approvedByMemberId: decision.memberId } : {}),
         fetch,
         callId: call.callId,
+        settings: connection.settings,
         keepFile: async (file) => {
           const ref = await keepConnectorFile(db, scope, session, connection.id, file, { fetch })
           kept.push(ref)
