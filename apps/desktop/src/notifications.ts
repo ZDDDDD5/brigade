@@ -6,8 +6,10 @@
 // thread (its tag), whose click opens the thread in the dashboard window; it closes those whose
 // thing no longer waits, and sets the app icon's badge. The rules (what, when, how often, quiet
 // while the person looks at a dashboard) stay the API's (apps/api/src/notifications.ts).
-import { app, Notification, safeStorage } from 'electron'
-import { allowedDashboard, dashboard, loadSettings, updateSettings } from './settings.js'
+import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { app, Notification } from 'electron'
+import { allowedDashboard, dashboard, home } from './settings.js'
 import { showDashboard } from './windows.js'
 
 const EVERY_MS = 20_000
@@ -25,41 +27,41 @@ export type PushMessage = {
   close?: string[]
 }
 
-/** Where the app fetches its notifications, as desktop.json keeps it. */
-type Stored = { api: string; deviceId: string; token: string; encrypted?: boolean }
-
 export type Device = { api: string; deviceId: string; token: string }
 
 /** The API's address: https, or a local one while developing Brigade. */
 export const allowedApi = allowedDashboard
 
-/** The device this app fetches for, if turned on; its token decrypted. */
+/**
+ * Where the device is kept: a file of its own, readable by the person alone, as the runner keeps
+ * its token. Not the system keychain: a locked one asks for a password in the middle of a fetch.
+ */
+const file = () => join(home(), 'notifications.json')
+
+/** The device this app fetches for, if turned on. */
 export function device(): Device | undefined {
-  const stored = loadSettings().notifications as Stored | undefined
-  if (!stored || typeof stored !== 'object') return undefined
-  const { api, deviceId, token, encrypted } = stored
-  if (typeof api !== 'string' || !allowedApi(api) || typeof deviceId !== 'string') return undefined
-  if (typeof token !== 'string') return undefined
   try {
-    const plain = encrypted ? safeStorage.decryptString(Buffer.from(token, 'base64')) : token
-    return { api: api.replace(/\/+$/, ''), deviceId, token: plain }
+    const { api, deviceId, token } = JSON.parse(readFileSync(file(), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    if (typeof api !== 'string' || !allowedApi(api)) return undefined
+    if (typeof deviceId !== 'string' || typeof token !== 'string') return undefined
+    return { api: api.replace(/\/+$/, ''), deviceId, token }
   } catch {
     return undefined
   }
 }
 
-/** Kept in desktop.json, its token encrypted with the system's keychain where there is one. */
 function store(next: Device | undefined) {
-  updateSettings((settings) => {
-    if (!next) return void delete settings.notifications
-    const encrypt = safeStorage.isEncryptionAvailable()
-    settings.notifications = {
-      api: next.api,
-      deviceId: next.deviceId,
-      token: encrypt ? safeStorage.encryptString(next.token).toString('base64') : next.token,
-      encrypted: encrypt,
-    } satisfies Stored
-  })
+  try {
+    if (!next) return rmSync(file(), { force: true })
+    mkdirSync(home(), { recursive: true })
+    const temp = `${file()}.${process.pid}.tmp`
+    writeFileSync(temp, JSON.stringify(next), { mode: 0o600 })
+    chmodSync(temp, 0o600)
+    renameSync(temp, file())
+  } catch {}
 }
 
 let timer: ReturnType<typeof setInterval> | undefined

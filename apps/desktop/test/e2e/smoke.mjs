@@ -4,7 +4,7 @@
 //   node test/e2e/smoke.mjs [path to the app's executable]
 // On Linux without a display, run it under xvfb-run.
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -74,9 +74,11 @@ const app = await electron.launch({
   timeout: 60_000,
 })
 const failures = []
+/** The last check that ran: where a hang happened. */
+let lastCheck = 'the launch'
 // A hang is a failure too.
 setTimeout(() => {
-  console.error('FAIL timed out')
+  fail('timed out', new Error(`after "${lastCheck}"`))
   app.process().kill('SIGKILL')
   process.exit(1)
 }, 180_000).unref()
@@ -229,6 +231,11 @@ try {
   await waitFor(async () => apiCalls.some((c) => c.method === 'GET' && c.auth === 'Bearer token_1'))
   const on = await main.evaluate(() => window.brigadeDesktop.notifications.status())
   check('notifications fetched with the device token', () => assert.equal(on.on, true))
+  const deviceFile = join(home, 'notifications.json')
+  check('the device kept for its person alone', () => {
+    assert.ok(existsSync(deviceFile))
+    if (process.platform !== 'win32') assert.equal(statSync(deviceFile).mode & 0o777, 0o600)
+  })
   const targets = await app.evaluate(() => [
     globalThis.brigadeTest.notifications.target('/app/threads/t1?workspace=w1'),
     globalThis.brigadeTest.notifications.target('https://elsewhere.example/app'),
@@ -249,6 +256,7 @@ try {
   check('notifications turned off', () => {
     assert.equal(removed, 'device_1')
     assert.ok(apiCalls.some((c) => c.method === 'DELETE' && c.auth === 'Bearer token_1'))
+    assert.ok(!existsSync(deviceFile))
   })
 
   // Another site loaded in a window by the app itself still gets no bridge.
@@ -345,6 +353,7 @@ console.log('\nAll checks passed.')
 process.exit(0)
 
 function check(name, assertion) {
+  lastCheck = name
   try {
     assertion()
     console.log(`ok   ${name}`)

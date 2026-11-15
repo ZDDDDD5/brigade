@@ -82,8 +82,9 @@ app shows notifications itself, from the menu bar, its windows open or not:
 
 - Settings, Notifications, This device, **Turn on** in the app registers a
   `DesktopDevice` (`POST /api/notifications/desktop-devices`), whose token,
-  given once, the app keeps (encrypted with the system keychain where there is
-  one, `apps/desktop/src/notifications.ts`).
+  given once, the app keeps in `~/.brigade/notifications.json`, readable by the
+  person alone, as the runner keeps its token (`apps/desktop/src/notifications.ts`).
+  Not the system keychain: a locked one asks for a password mid-fetch.
 - The sweep treats a running app (one that fetched in the last 2 minutes) as a
   device: what it would push is queued for it as a `DesktopMessage`, by the same
   rules and limits as web push. No VAPID keys needed.

@@ -22,9 +22,14 @@ type Api = {
 }
 
 function app(fetch: Fetch) {
-  const settings: Record<string, unknown> = {
-    notifications: { api: 'https://api.example', deviceId: 'old', token: 'old-token' },
-  }
+  // The device's file, in memory.
+  const files = new Map<string, string>([
+    [
+      '/home/notifications.json',
+      JSON.stringify({ api: 'https://api.example', deviceId: 'old', token: 'old-token' }),
+    ],
+  ])
+  const missing = () => Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
   const timers = new Set<object>()
   const shown: { title: string }[] = []
   class Notification {
@@ -44,9 +49,21 @@ function app(fetch: Fetch) {
     Buffer,
     Notification,
     app: { setBadgeCount() {} },
-    safeStorage: { isEncryptionAvailable: () => false },
-    loadSettings: () => settings,
-    updateSettings: (change: (s: Record<string, unknown>) => void) => change(settings),
+    home: () => '/home',
+    join: (...parts: string[]) => parts.join('/'),
+    readFileSync: (path: string) => {
+      if (!files.has(path)) throw missing()
+      return files.get(path)!
+    },
+    writeFileSync: (path: string, data: string) => void files.set(path, data),
+    renameSync: (from: string, to: string) => {
+      files.set(to, files.get(from)!)
+      files.delete(from)
+    },
+    rmSync: (path: string) => void files.delete(path),
+    mkdirSync() {},
+    chmodSync() {},
+    process: { pid: 1 },
     allowedDashboard: () => true,
     dashboard: () => 'https://dashboard.example/app',
     showDashboard() {},
