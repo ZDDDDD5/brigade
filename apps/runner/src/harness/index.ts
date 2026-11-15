@@ -88,6 +88,7 @@ import {
   toolChangesNote,
   toolDigests,
   toolSpecs,
+  toolsOfUnknownAge,
   type ToolSpec,
 } from './tool-changes.js'
 import { claudeSettingsEnv } from './claude-settings.js'
@@ -493,6 +494,8 @@ function createAgent(
     tools: Object.keys(tools),
     /** Their definitions, as the harness gives them (tool-changes.ts). */
     specs: toolSpecs(tools),
+    /** The Apps' among them: the API's, not the runner's. */
+    apps: new Set(Object.keys(apps).filter((name) => name in tools)),
   }
 }
 
@@ -508,7 +511,12 @@ type Live = {
    * Its tools' definitions (toolDigests), and those changed since the conversation was given
    * them, which the next message tells it (withToolChanges): emptied once told.
    */
-  tools: { digests: Record<string, string>; changed: ToolSpec[] }
+  tools: {
+    digests: Record<string, string>
+    changed: ToolSpec[]
+    /** Which changed is not known: the conversation was saved before its tools were kept. */
+    unsure?: boolean
+  }
 }
 
 /**
@@ -538,7 +546,7 @@ type TurnStream = Awaited<ReturnType<Live['agent']['stream']>>['fullStream']
  * them (tool-changes.ts), told once: the turn that ran with it keeps them as given (run).
  */
 function withToolChanges(live: Live, prompt: string) {
-  const note = toolChangesNote(live.tools.changed)
+  const note = toolChangesNote(live.tools.changed, { unsure: !!live.tools.unsure })
   if (!note) return prompt
   live.tools.changed = []
   return `${note}\n\n${prompt}`
@@ -2194,7 +2202,7 @@ export class HarnessThread {
       readFile: (file) => this.readFile(file, 1024 * 1024, 'A secret file'),
     })
     const computer = this.computerUse()
-    const { agent, tools, specs } = createAgent(
+    const { agent, tools, specs, apps } = createAgent(
       this.spec,
       (call) => this.callWithFiles(call),
       credentials,
@@ -2290,23 +2298,38 @@ export class HarnessThread {
       { agent, session, sandbox, account, credentials, made: agentKey(this.spec) },
       specs,
       resume,
+      apps,
     )
   }
 
   /** The session started, resuming `resume` if any, with tools as `specs` defines them. */
-  private begin(live: Omit<Live, 'tools'>, specs: ToolSpec[], resume: unknown): Live {
+  private begin(
+    live: Omit<Live, 'tools'>,
+    specs: ToolSpec[],
+    resume: unknown,
+    apps: ReadonlySet<string> = new Set(),
+  ): Live {
     this.frozen = frozenMidRun(resume)
     // A resumed conversation keeps the tool definitions it was given (tool-changes.ts): those
-    // changed since go in the next message. A new one is given them all as they are now, and so
-    // is one saved before Brigade kept what it was given.
+    // changed since go in the next message. One saved before Brigade kept them is given Brigade's
+    // own as they are now, once. A new one is given them all as they are now, and told nothing.
     const known = resume ? this.saved?.tools : undefined
+    const unsure = !!resume && !known
     const digests = toolDigests(specs)
-    this.live = { ...live, tools: { digests, changed: changedTools(known, specs) } }
+    this.live = {
+      ...live,
+      tools: {
+        digests,
+        changed: unsure ? toolsOfUnknownAge(specs, apps) : changedTools(known, specs),
+        ...(unsure ? { unsure } : {}),
+      },
+    }
     this.saved = {
       transcript: [],
       ...this.saved,
       accountId: live.account.id,
-      ...(known ? {} : { tools: digests }),
+      // Recorded once the turn that tells them ran (run), for a conversation that may not have them.
+      ...(resume ? {} : { tools: digests }),
     }
     return this.live
   }

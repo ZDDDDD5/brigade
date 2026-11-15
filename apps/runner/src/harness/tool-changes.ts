@@ -53,13 +53,35 @@ export function changedTools(
   )
 }
 
+/**
+ * A resumed conversation saved before the runner kept what it was given: which of its tools
+ * changed is not known, so it is given Brigade's own as they are now, once. Not the Apps' (`apps`),
+ * which come from the API rather than the runner an update brings. Smallest first: past the
+ * note's room, the biggest go by name.
+ */
+export function toolsOfUnknownAge(
+  specs: readonly ToolSpec[],
+  apps: ReadonlySet<string>,
+): ToolSpec[] {
+  const size = (spec: ToolSpec) =>
+    (spec.description?.length ?? 0) + JSON.stringify(spec.inputSchema ?? {}).length
+  return specs.filter((spec) => !apps.has(spec.name)).sort((a, b) => size(a) - size(b))
+}
+
 /** How much of a message the changed tools' definitions may take; the rest go by name. */
 export const TOOL_CHANGES_MAX_CHARS = 40_000
 
 /** The note that goes before the next message, or none when nothing changed. */
 export function toolChangesNote(
   changed: readonly ToolSpec[],
-  max = TOOL_CHANGES_MAX_CHARS,
+  {
+    max = TOOL_CHANGES_MAX_CHARS,
+    unsure = false,
+  }: {
+    max?: number
+    /** Which changed is not known (toolsOfUnknownAge): they are the current ones, whether or not changed. */
+    unsure?: boolean
+  } = {},
 ): string | undefined {
   if (changed.length === 0) return
   const shown: string[] = []
@@ -77,12 +99,15 @@ export function toolChangesNote(
   }
   return (
     '<brigade-tool-changes>\n' +
-    'Brigade updated some of your tools since they were first described to you in this conversation. ' +
-    'Your tool list may still show their old description and input: what follows replaces them. ' +
+    (unsure
+      ? 'Brigade may have updated some of your tools since they were first described to you in this conversation. ' +
+        'These are their current definitions. Where your tool list shows another description or input, what follows replaces it. '
+      : 'Brigade updated some of your tools since they were first described to you in this conversation. ' +
+        'Your tool list may still show their old description and input: what follows replaces them. ') +
     'Calls with the inputs below work, the new ones included.\n\n' +
     shown.join('\n\n') +
     (named.length
-      ? `${shown.length ? '\n\n' : ''}These changed too, but their definitions did not fit here: ${named.join(', ')}. ` +
+      ? `${shown.length ? '\n\n' : ''}${unsure ? 'These may have changed' : 'These changed'} too, but their definitions did not fit here: ${named.join(', ')}. ` +
         'A call to one of them that is refused says what it expects.'
       : '') +
     '\n</brigade-tool-changes>'

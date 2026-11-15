@@ -22,6 +22,7 @@ import {
   toolChangesNote,
   toolDigests,
   toolSpecs,
+  toolsOfUnknownAge,
 } from '../src/harness/tool-changes.js'
 import { fakeInstall as fakeClaudeInstall } from './fixtures/claude-bridge.js'
 import { fakeInstall as fakeCodexInstall } from './fixtures/codex-bridge.js'
@@ -293,18 +294,81 @@ test('Codex: a thread saved before this change (a "v2:" fingerprint, which cover
     state.resume.data.turnConfigurationFingerprint = `v2:${'0'.repeat(64)}`
     delete state.tools
     await writeFile(machine.stateFile, JSON.stringify(state))
-    await machine.runner(true).say('Now fill the form')
-    const methods = (await machine.recorded()).map((r) => r.method)
+    const after = machine.runner(true)
+    await after.say('Now fill the form')
+    await after.stop()
+    await machine.runner(true).say('Thanks')
+    const requests = await machine.recorded()
     assert.deepEqual(
-      methods.filter((m) => m === 'thread/start' || m === 'thread/resume'),
-      ['thread/start', 'thread/resume'],
+      requests
+        .filter((r) => r.method === 'thread/start' || r.method === 'thread/resume')
+        .map((r) => [r.method, r.params.threadId ?? null]),
+      [
+        ['thread/start', null],
+        ['thread/resume', 'new-thread'],
+        ['thread/resume', 'new-thread'],
+      ],
+    )
+    // Saved before the runner kept its tools: told Brigade's own as they are now, once.
+    const inputs = requests
+      .filter((r) => r.method === 'turn/start')
+      .map((r) => JSON.stringify(r.params.input))
+    assert.match(inputs[1]!, /may have updated/)
+    assert.ok(inputs[1]!.includes(NEW_ACT), inputs[1])
+    assert.match(inputs[1]!, /steps/)
+    assert.doesNotMatch(inputs[2]!, /brigade-tool-changes/)
+  } finally {
+    await machine.done()
+  }
+})
+
+test('Claude Code: a conversation saved before the runner kept its tools is told their current definitions once', async () => {
+  const machine = await computer('claude-code')
+  try {
+    const before = machine.runner(false)
+    await before.say('Click Save')
+    await before.stop()
+    // As main saved it: no tools.
+    const state = JSON.parse(await readFile(machine.stateFile, 'utf8'))
+    delete state.tools
+    await writeFile(machine.stateFile, JSON.stringify(state))
+    const after = machine.runner(true)
+    await after.say('Now fill the form')
+    await after.stop()
+    await machine.runner(true).say('Thanks')
+    const record = await machine.recorded()
+    const messages = record.filter((r) => r.what === 'message').map((r) => r.text as string)
+    assert.equal(messages.length, 3, JSON.stringify(record))
+    assert.match(messages[1]!, /may have updated/)
+    assert.ok(messages[1]!.includes(NEW_ACT), messages[1])
+    assert.match(messages[1]!, /"steps"/)
+    assert.ok(messages[1]!.endsWith('Now fill the form'))
+    assert.equal(messages[2], 'Thanks')
+    const queries = record.filter((r) => r.what === 'query')
+    assert.deepEqual(
+      queries.map((q) => q.resume),
+      [null, 'conversation-1', 'conversation-1'],
     )
   } finally {
     await machine.done()
   }
 })
 
-test('a new conversation, or one saved before Brigade kept its tools, is told nothing', () => {
+test("a conversation of unknown age is given Brigade's own tools, not the Apps', smallest first", () => {
+  const specs = toolSpecs(toolsOf(true))
+  assert.deepEqual(
+    toolsOfUnknownAge(specs, new Set()).map((t) => t.name),
+    ['open_ticket', 'computer_act'],
+  )
+  assert.deepEqual(
+    toolsOfUnknownAge(specs, new Set(['open_ticket'])).map((t) => t.name),
+    ['computer_act'],
+  )
+  const note = toolChangesNote(toolsOfUnknownAge(specs, new Set()), { unsure: true })!
+  assert.match(note, /may have updated/)
+})
+
+test('a new conversation is told nothing, nor are unchanged, added or removed tools', () => {
   const specs = toolSpecs(toolsOf(true))
   assert.deepEqual(changedTools(undefined, specs), [])
   // Unchanged, added and removed tools are no change of definition.
@@ -321,7 +385,7 @@ test("changed tools past the note's room are named, not lost", () => {
     changed.map((t) => t.name),
     ['computer_act', 'open_ticket'],
   )
-  const note = toolChangesNote(changed, 300)!
+  const note = toolChangesNote(changed, { max: 300 })!
   assert.ok(note.includes(NEW_ACT))
   assert.match(note, /did not fit here: open_ticket\./)
 })
