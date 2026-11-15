@@ -244,6 +244,9 @@ try {
   await waitFor(async () => !(await mainOpen()))
   const askedAfter = await asked()
   check('closes without a question', () => assert.equal(askedAfter, 2))
+} catch (error) {
+  // A step that threw: the checks after it never ran.
+  fail('the run stopped', error)
 } finally {
   // Quit as the menu does: the app ends by itself.
   const closed = new Promise((resolve) => app.process().once('exit', (code) => resolve(code)))
@@ -272,9 +275,21 @@ function check(name, assertion) {
     assertion()
     console.log(`ok   ${name}`)
   } catch (error) {
-    console.log(`FAIL ${name}: ${error.message}`)
-    failures.push(name)
+    fail(name, error)
   }
+}
+
+/** A failure, also as an annotation on the job in GitHub Actions: its log needs admin rights. */
+function fail(name, error) {
+  console.log(`FAIL ${name}: ${error.message}`)
+  failures.push(name)
+  if (process.env.GITHUB_ACTIONS)
+    console.log(
+      `::error title=Smoke test (${process.platform})::${name}: ${error.message}`.replace(
+        /\r?\n/g,
+        '%0A',
+      ),
+    )
 }
 
 async function waitFor(get, ms = 20_000) {
