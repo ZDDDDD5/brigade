@@ -233,24 +233,45 @@ export async function listAdsCustomers(fetch: ConnectorContext['fetch']) {
     AdsCustomer & { manager: boolean; status: string; managerName: string | null }
   >()
   const failed: { id: string; error: string }[] = []
+  type Found = AdsCustomer & { manager: boolean; status: string; managerName: string | null }
+  // Reached directly beats reached through a manager.
+  const add = (c: Found) => {
+    const prior = found.get(c.id)
+    if (!prior || prior.loginCustomerId !== prior.id) found.set(c.id, c)
+  }
   await Promise.all(
     roots.map(async (root) => {
+      const as = { id: root, loginCustomerId: root }
       try {
+        // The account itself, manager or not: customer_client exists only under managers.
+        const { results: [self] = [] } = await search(
+          fetch,
+          as,
+          'SELECT customer.id, customer.descriptive_name, customer.manager, customer.currency_code, customer.time_zone, customer.status FROM customer',
+        )
+        const me = self?.customer
+        if (!me) throw new ConnectorError('Google Ads did not describe this account')
+        add({
+          id: root,
+          loginCustomerId: root,
+          name: me.descriptiveName ?? null,
+          currency: me.currencyCode,
+          timeZone: me.timeZone,
+          manager: Boolean(me.manager),
+          status: me.status ?? 'UNKNOWN',
+          managerName: null,
+        })
+        if (!me.manager) return
+        // A manager: every account under it, at any depth, reached by logging in as it.
         const { results = [] } = await search(
           fetch,
-          { id: root, loginCustomerId: root },
-          'SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager, customer_client.level, customer_client.currency_code, customer_client.time_zone, customer_client.status FROM customer_client',
+          as,
+          'SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager, customer_client.level, customer_client.currency_code, customer_client.time_zone, customer_client.status FROM customer_client WHERE customer_client.level > 0',
         )
-        const rootName =
-          results.find((r) => String(r.customerClient?.id) === root)?.customerClient
-            ?.descriptiveName ?? null
         for (const { customerClient: c } of results) {
           const id = String(c?.id ?? '')
-          if (!/^\d{10}$/.test(id)) continue
-          // Reached directly beats reached through a manager.
-          const prior = found.get(id)
-          if (prior && prior.loginCustomerId === id) continue
-          found.set(id, {
+          if (!/^\d{10}$/.test(id) || id === root) continue
+          add({
             id,
             loginCustomerId: root,
             name: c.descriptiveName ?? null,
@@ -258,7 +279,7 @@ export async function listAdsCustomers(fetch: ConnectorContext['fetch']) {
             timeZone: c.timeZone,
             manager: Boolean(c.manager),
             status: c.status ?? 'UNKNOWN',
-            managerName: root === id ? null : rootName,
+            managerName: me.descriptiveName ?? dashed(root),
           })
         }
       } catch (error) {

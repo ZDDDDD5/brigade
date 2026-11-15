@@ -15,8 +15,9 @@ Code: `apps/api/src/connectors/google-ads.ts` (operations), `google-oauth.ts` (s
    and write) and `userinfo.email`, which names the row. The account is personal by default.
 2. **Pick accounts.** One Google login often reaches several Google Ads accounts, directly or
    through manager accounts (MCC). Under the row, **Pick accounts** (or **Ads accounts** in its
-   menu) lists them: `customers:listAccessibleCustomers`, then each accessible account's
-   `customer_client` hierarchy. The owner or an admin ticks the accounts teammates reach; the API
+   menu) lists them: `customers:listAccessibleCustomers`, then each accessible account as `customer` describes it,
+   and, for a manager, every account under it from `customer_client` (which exists only under
+   managers). The owner or an admin ticks the accounts teammates reach; the API
    checks each against a fresh listing, records the manager it is reached through, and keeps them
    in `Connection.settings` (`{ customers: [{ id, loginCustomerId, name, currency, timeZone }] }`).
    Manager accounts hold no campaigns and are not picked. Until one is picked, every tool refuses.

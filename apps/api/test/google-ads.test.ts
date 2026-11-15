@@ -411,7 +411,26 @@ test("Google Ads' readable errors come out of its details, not its generic messa
   )
 })
 
-test('listing customers walks each accessible account, through its manager, without managers twice', async () => {
+/** A search answer by the resource the query reads: customer, or customer_client. */
+const byResource = (customer: unknown, clients?: unknown[]) => (call: Call) => {
+  const { query } = call.body as { query: string }
+  if (/FROM customer_client\b/.test(query)) {
+    if (!clients) throw new Error('customer_client asked of an account that is no manager')
+    return ok({ results: clients.map((customerClient) => ({ customerClient })) })
+  }
+  return ok({ results: [{ customer }] })
+}
+
+const BRIGADE = {
+  id: '1234567890',
+  descriptiveName: 'Brigade',
+  manager: false,
+  currencyCode: 'EUR',
+  timeZone: 'Europe/Paris',
+  status: 'ENABLED',
+}
+
+test('listing customers walks each manager, lists direct accounts once, and prefers direct access', async () => {
   const { ctx, calls } = fake([
     [
       `${API}/customers:listAccessibleCustomers`,
@@ -419,62 +438,23 @@ test('listing customers walks each accessible account, through its manager, with
     ],
     [
       `${API}/customers/9998887776/googleAds:search`,
-      () =>
-        ok({
-          results: [
-            {
-              customerClient: {
-                id: '9998887776',
-                descriptiveName: 'Agency MCC',
-                manager: true,
-                level: '0',
-                status: 'ENABLED',
-              },
-            },
-            {
-              customerClient: {
-                id: '1234567890',
-                descriptiveName: 'Brigade',
-                manager: false,
-                level: '1',
-                currencyCode: 'EUR',
-                timeZone: 'Europe/Paris',
-                status: 'ENABLED',
-              },
-            },
-            {
-              customerClient: {
-                id: '5556667778',
-                descriptiveName: 'Askli',
-                manager: false,
-                level: '1',
-                currencyCode: 'USD',
-                timeZone: 'America/New_York',
-                status: 'ENABLED',
-              },
-            },
-          ],
-        }),
+      byResource(
+        { id: '9998887776', descriptiveName: 'Agency MCC', manager: true, status: 'ENABLED' },
+        [
+          { ...BRIGADE, level: '1' },
+          {
+            id: '5556667778',
+            descriptiveName: 'Askli',
+            manager: false,
+            level: '1',
+            currencyCode: 'USD',
+            timeZone: 'America/New_York',
+            status: 'ENABLED',
+          },
+        ],
+      ),
     ],
-    [
-      `${API}/customers/1234567890/googleAds:search`,
-      () =>
-        ok({
-          results: [
-            {
-              customerClient: {
-                id: '1234567890',
-                descriptiveName: 'Brigade',
-                manager: false,
-                level: '0',
-                currencyCode: 'EUR',
-                timeZone: 'Europe/Paris',
-                status: 'ENABLED',
-              },
-            },
-          ],
-        }),
-    ],
+    [`${API}/customers/1234567890/googleAds:search`, byResource(BRIGADE)],
   ])
   const { customers, failed } = await listAdsCustomers(ctx.fetch)
   assert.deepEqual(failed, [])
@@ -490,6 +470,80 @@ test('listing customers walks each accessible account, through its manager, with
   // listAccessibleCustomers takes no login-customer-id; each walk logs in as its own root.
   assert.equal(calls[0]!.headers['login-customer-id'], undefined)
   assert.equal(calls[0]!.headers['developer-token'], 'dev-token')
+  // The manager's tree only below itself; never customer_client on the advertiser.
+  const clientQueries = calls.filter((c) =>
+    /FROM customer_client/.test((c.body as { query?: string } | undefined)?.query ?? ''),
+  )
+  assert.equal(clientQueries.length, 1)
+  assert.match(clientQueries[0]!.url, /customers\/9998887776\//)
+  assert.match((clientQueries[0]!.body as { query: string }).query, /customer_client\.level > 0/)
+})
+
+test('a login with direct access to one advertiser account alone can pick it', async () => {
+  const { ctx } = fake([
+    [
+      `${API}/customers:listAccessibleCustomers`,
+      () => ok({ resourceNames: ['customers/1234567890'] }),
+    ],
+    // byResource throws on customer_client, as Google has none for an advertiser.
+    [`${API}/customers/1234567890/googleAds:search`, byResource(BRIGADE)],
+  ])
+  assert.deepEqual(await listAdsCustomers(ctx.fetch), {
+    customers: [
+      {
+        id: '1234567890',
+        loginCustomerId: '1234567890',
+        name: 'Brigade',
+        currency: 'EUR',
+        timeZone: 'Europe/Paris',
+        manager: false,
+        status: 'ENABLED',
+        managerName: null,
+      },
+    ],
+    failed: [],
+  })
+})
+
+test('an account Google refuses to describe is listed as failed, the others still come', async () => {
+  const { ctx } = fake([
+    [
+      `${API}/customers:listAccessibleCustomers`,
+      () => ok({ resourceNames: ['customers/1112223334', 'customers/1234567890'] }),
+    ],
+    [
+      `${API}/customers/1112223334/googleAds:search`,
+      () =>
+        Response.json(
+          {
+            error: {
+              message: 'The caller does not have permission',
+              details: [
+                {
+                  errors: [
+                    {
+                      errorCode: { authorizationError: 'CUSTOMER_NOT_ENABLED' },
+                      message:
+                        "The customer account can't be accessed because it is not yet enabled or has been deactivated.",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          { status: 403 },
+        ),
+    ],
+    [`${API}/customers/1234567890/googleAds:search`, byResource(BRIGADE)],
+  ])
+  const { customers, failed } = await listAdsCustomers(ctx.fetch)
+  assert.deepEqual(
+    customers.map((c) => c.id),
+    ['1234567890'],
+  )
+  assert.equal(failed.length, 1)
+  assert.equal(failed[0]!.id, '1112223334')
+  assert.match(failed[0]!.error, /CUSTOMER_NOT_ENABLED/)
 })
 
 test('metrics left out by Google count as zero', () => {
