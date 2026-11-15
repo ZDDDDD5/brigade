@@ -31,14 +31,12 @@ import {
   WEEK_DAYS,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
-import { mayWrite } from './account-sharing.js'
 import { audit } from './audit.js'
 import { board } from './board.js'
 import { reportOf } from './children.js'
 import { Prisma, prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { featuresOfMember } from './features.js'
 import { hubs, scheduleUpdated, threadUpdated } from './hub.js'
-import { noteAsker } from './thread-spec.js'
 import type { WorkspaceScope } from './scope.js'
 import { fireNow } from './wakeups.js'
 
@@ -260,6 +258,8 @@ export async function handleInitiativeCall(
             metricUnit: op.metric?.unit ?? null,
             metricTarget: op.metric?.target ?? null,
             createdByTeammateId: teammate.id,
+            // The member whose thread it is: a mission is one member's (updateMission).
+            createdByMemberId: session.startedByMemberId,
           } as never,
         })
         // Kept only while the thread still belongs to none: two calls at once make one mission of it.
@@ -300,21 +300,24 @@ export async function handleInitiativeCall(
   const actor = { type: 'teammate' as const, id: teammate.id }
 
   if (op.name === 'update_mission') {
-    const updated = await db.initiative.update({
-      where: { id: mission.id },
-      data: {
-        ...(op.title ? { title: op.title } : {}),
-        ...(op.objective ? { objective: op.objective } : {}),
-        ...(op.metric !== undefined ? metricData(op.metric) : {}),
-        ...(op.archive ? { archivedAt: new Date() } : {}),
-      },
+    // Archived with its work stopped in one transaction (retireMission): never hidden while its
+    // plan and routines go on.
+    const { updated, schedules } = await db.$transaction(async (tx) => {
+      const row = await tx.initiative.update({
+        where: { id: mission.id },
+        data: {
+          ...(op.title ? { title: op.title } : {}),
+          ...(op.objective ? { objective: op.objective } : {}),
+          ...(op.metric !== undefined ? metricData(op.metric) : {}),
+          ...(op.archive ? { archivedAt: new Date() } : {}),
+        },
+      })
+      return {
+        updated: row,
+        schedules: op.archive ? (await retireMission(tx, mission.id)).schedules : [],
+      }
     })
-    // Its work over: its plan cancelled, its routines paused (retireMission).
-    if (op.archive)
-      schedulesChanged(
-        scope,
-        (await db.$transaction((tx) => retireMission(tx, mission.id))).schedules,
-      )
+    schedulesChanged(scope, schedules)
     await audit({
       ...scope,
       actor,
@@ -1150,6 +1153,7 @@ export async function listMissions(
       title: m.title,
       objective: m.objective,
       teammate: m.teammate,
+      memberId: m.createdByMemberId,
       metric: m.metricLabel
         ? { label: m.metricLabel, unit: m.metricUnit, target: m.metricTarget }
         : null,
@@ -1203,15 +1207,32 @@ export async function missionWeek(db: ScopedDb, from: Date): Promise<MissionWeek
 
 // ---- Made and changed from the Missions page ----
 
-type LiveTx = Pick<ScopedDb, 'session' | 'schedule' | 'initiativeAction' | 'ticket'>
+type LiveTx = Pick<ScopedDb, 'session' | 'schedule' | 'initiativeAction' | 'ticket' | '$queryRaw'>
 
 /**
  * Threads moving to a mission (or out of any): their live work follows them. Routines reporting to
  * them take the new mission; actions not run yet move with them, or, out of any mission, are
  * cancelled with their approval tickets. What went out stays where it was recorded.
  */
-async function moveThreads(tx: LiveTx, threadIds: string[], to: string | null) {
-  if (!threadIds.length) return { schedules: [] as string[] }
+export async function moveThreads(
+  tx: LiveTx,
+  workspaceId: string,
+  given: string[],
+  to: string | null,
+  /** Taken out of this mission: only those still in it once locked. */
+  from?: string,
+) {
+  if (!given.length) return { schedules: [] as string[], threads: [] as string[] }
+  // Locked, as another change may move them meanwhile: a thread another member moved elsewhere
+  // after this one read it is not taken out of its new mission.
+  const locked = await tx.$queryRaw<{ id: string; initiativeId: string | null }[]>`
+    SELECT id, "initiativeId" FROM "Session"
+    WHERE id = ANY(${given}) AND "workspaceId" = ${workspaceId}
+    FOR UPDATE`
+  const threadIds = locked
+    .filter((t) => from === undefined || t.initiativeId === from)
+    .map((t) => t.id)
+  if (!threadIds.length) return { schedules: [] as string[], threads: [] as string[] }
   const schedules = await tx.schedule.findMany({
     where: { parentSessionId: { in: threadIds } },
     select: { id: true },
@@ -1225,7 +1246,7 @@ async function moveThreads(tx: LiveTx, threadIds: string[], to: string | null) {
   if (to) await tx.initiativeAction.updateMany({ where: live as never, data: { initiativeId: to } })
   else await cancelLive(tx, live)
   await tx.session.updateMany({ where: { id: { in: threadIds } }, data: { initiativeId: to } })
-  return { schedules: schedules.map((r) => r.id) }
+  return { schedules: schedules.map((r) => r.id), threads: threadIds }
 }
 
 /** Actions not run yet, cancelled, and their approval tickets closed. */
@@ -1286,17 +1307,9 @@ const schedulesChanged = (scope: Scope, ids: string[]) => {
 }
 
 /**
- * A member who changes a mission speaks in its threads: its words reach their teammates' next turns
- * (their spec's mission), so they count as asking there (thread-spec.ts askedBy), and a member's own
- * Apps no longer answer another's word.
- */
-async function noteMember(db: ScopedDb, scope: WorkspaceScope, threadIds: string[]) {
-  for (const id of new Set(threadIds)) await noteAsker(db, id, scope.memberId)
-}
-
-/**
  * The threads a member gives a mission: at the top (a sub-thread or a routine's run belongs to its
- * parent's or its routine's), and ones they may write in, or any for an admin, as for closing one.
+ * parent's or its routine's), and their own. A mission is one member's: its words reach its
+ * threads' teammates as instructions, which another member's word would steer on their accounts.
  */
 async function threadsToGive(db: ScopedDb, scope: WorkspaceScope, ids: string[]) {
   const wanted = [...new Set(ids)]
@@ -1311,7 +1324,6 @@ async function threadsToGive(db: ScopedDb, scope: WorkspaceScope, ids: string[])
       computer: { select: { kind: true } },
     },
   })
-  const admin = scope.role === 'owner' || scope.role === 'admin'
   for (const id of wanted) {
     const row = rows.find((r) => r.id === id)
     if (!row) throw new HTTPException(404, { message: 'One of these threads is gone' })
@@ -1319,9 +1331,9 @@ async function threadsToGive(db: ScopedDb, scope: WorkspaceScope, ids: string[])
       throw new HTTPException(400, {
         message: 'A sub-thread belongs to its parent’s mission: give the parent thread instead',
       })
-    if (!admin && !mayWrite(row, scope))
+    if (row.startedByMemberId !== scope.memberId)
       throw new HTTPException(403, {
-        message: 'You can give a mission only threads you may write in',
+        message: 'You can give a mission only threads you started',
       })
   }
   return wanted
@@ -1355,10 +1367,9 @@ export async function createMission(db: ScopedDb, scope: WorkspaceScope, input: 
         createdByMemberId: scope.memberId,
       } as never,
     })
-    const moved = await moveThreads(tx, threads, row.id)
+    const moved = await moveThreads(tx, scope.workspaceId, threads, row.id)
     return { ...row, schedules: moved.schedules }
   })
-  await noteMember(db, scope, threads)
   schedulesChanged(scope, mission.schedules)
   await audit({
     ...scope,
@@ -1378,8 +1389,19 @@ export async function updateMission(
   id: string,
   input: UpdateMission,
 ) {
-  const mission = await db.initiative.findFirst({ where: { id }, select: { id: true } })
+  const mission = await db.initiative.findFirst({
+    where: { id },
+    select: { id: true, createdByMemberId: true },
+  })
   if (!mission) throw new HTTPException(404, { message: 'No such mission' })
+  // A mission is its member's (threadsToGive): only they change it. An admin may archive one, as
+  // archiving only holds its work back.
+  const admin = scope.role === 'owner' || scope.role === 'admin'
+  const archiveOnly = input.archived === true && Object.keys(input).every((k) => k === 'archived')
+  if (mission.createdByMemberId !== scope.memberId && !(admin && archiveOnly))
+    throw new HTTPException(403, {
+      message: 'Only the member whose mission it is changes it; an admin may archive it',
+    })
   const teammateId = input.teammateId ? await ownerOf(db, input.teammateId) : undefined
   const current = input.threadIds
     ? await db.session.findMany({
@@ -1410,29 +1432,14 @@ export async function updateMission(
         ...(input.archived !== undefined ? { archivedAt: input.archived ? new Date() : null } : {}),
       },
     })
+    const gone = await moveThreads(tx, scope.workspaceId, removed, null, id)
     const touched = [
-      ...(await moveThreads(tx, added, id)).schedules,
-      ...(await moveThreads(tx, removed, null)).schedules,
+      ...(await moveThreads(tx, scope.workspaceId, added, id)).schedules,
+      ...gone.schedules,
     ]
     if (input.archived) touched.push(...(await retireMission(tx, id)).schedules)
     return touched
   })
-  // Its words, owner or number reach its threads' teammates: the member speaks in each of them.
-  const speaks =
-    !!input.title ||
-    !!input.objective ||
-    !!teammateId ||
-    input.metric !== undefined ||
-    input.archived !== undefined
-  const threadsNow = speaks
-    ? (
-        await db.session.findMany({
-          where: { initiativeId: id, parentId: null },
-          select: { id: true },
-        })
-      ).map((t) => t.id)
-    : []
-  await noteMember(db, scope, [...added, ...threadsNow])
   schedulesChanged(scope, [...new Set(schedules)])
   await audit({
     ...scope,

@@ -51,6 +51,7 @@ const {
   threadInitiative,
   createMission,
   updateMission,
+  moveThreads,
 } = await import('../src/initiatives.js')
 const { firedInARow } = await import('../src/wakeups.js')
 const { resolveTicket } = await import('../src/decide.js')
@@ -625,114 +626,171 @@ test(
   },
 )
 
+test('a member makes a mission from the page with threads they started', { skip }, async () => {
+  const mine = await thread({})
+  const other = await thread({})
+  const made = await createMission(scoped(scope), member(), {
+    title: 'X workflow',
+    objective: 'Two posts a day',
+    teammateId: maya.id,
+    metric: { label: 'Followers', unit: null, target: 500 },
+    threadIds: [mine.id],
+  })
+  assert.equal(await missionIdOfThread(scoped(scope), mine.id), made.id)
+  const [row] = (await listMissions(scoped(scope), member())).filter((m) => m.id === made.id)
+  assert.deepEqual(row?.metric, { label: 'Followers', unit: null, target: 500 })
+  assert.deepEqual(
+    row?.threads.map((t) => t.id),
+    [mine.id],
+  )
+
+  // Its whole set of threads: one added, one taken out.
+  await updateMission(scoped(scope), member(), made.id, { threadIds: [other.id] })
+  assert.equal(await missionIdOfThread(scoped(scope), other.id), made.id)
+  assert.equal(await missionIdOfThread(scoped(scope), mine.id), null)
+
+  // A sub-thread belongs to its parent's mission.
+  const child = await thread({ origin: 'child', parentId: other.id, parentTeammateId: maya.id })
+  await assert.rejects(
+    updateMission(scoped(scope), member(), made.id, { threadIds: [other.id, child.id] }),
+    /parent/,
+  )
+  // A member gives only threads they started: another's is refused.
+  const carol = { user: `user-missions-carol-${id}`, member: `mem-missions-carol-${id}` }
+  await prisma.user.create({
+    data: { id: carol.user, name: 'Carol', email: `${carol.user}@example.com` },
+  })
+  await prisma.member.create({
+    data: {
+      id: carol.member,
+      organizationId: ids.organization,
+      userId: carol.user,
+      role: 'member',
+    },
+  })
+  try {
+    const asCarol = {
+      ...scope,
+      userId: carol.user,
+      memberId: carol.member,
+      role: 'member' as const,
+    }
+    await assert.rejects(
+      createMission(scoped(scope), asCarol, {
+        title: 'Not hers',
+        objective: 'No',
+        teammateId: maya.id,
+        threadIds: [mine.id],
+      }),
+      /you started/,
+    )
+  } finally {
+    await prisma.member.deleteMany({ where: { id: carol.member } })
+    await prisma.user.deleteMany({ where: { id: carol.user } })
+  }
+
+  // Archived, it leaves the page.
+  await updateMission(scoped(scope), member(), made.id, { archived: true })
+  assert.ok(!(await listMissions(scoped(scope), member())).some((m) => m.id === made.id))
+})
+
 test(
-  'a member makes a mission from the page with threads they may write in',
+  'a mission is its member’s: another changes nothing, an admin may only archive it',
   { skip },
   async () => {
-    const mine = await thread({})
-    const other = await thread({})
-    const made = await createMission(scoped(scope), member(), {
-      title: 'X workflow',
-      objective: 'Two posts a day',
-      teammateId: maya.id,
-      metric: { label: 'Followers', unit: null, target: 500 },
-      threadIds: [mine.id],
-    })
-    assert.equal(await missionIdOfThread(scoped(scope), mine.id), made.id)
-    const [row] = (await listMissions(scoped(scope), member())).filter((m) => m.id === made.id)
-    assert.deepEqual(row?.metric, { label: 'Followers', unit: null, target: 500 })
-    assert.deepEqual(
-      row?.threads.map((t) => t.id),
-      [mine.id],
-    )
-
-    // Its whole set of threads: one added, one taken out.
-    await updateMission(scoped(scope), member(), made.id, { threadIds: [other.id] })
-    assert.equal(await missionIdOfThread(scoped(scope), other.id), made.id)
-    assert.equal(await missionIdOfThread(scoped(scope), mine.id), null)
-
-    // A sub-thread belongs to its parent's mission.
-    const child = await thread({ origin: 'child', parentId: other.id, parentTeammateId: maya.id })
-    await assert.rejects(
-      updateMission(scoped(scope), member(), made.id, { threadIds: [other.id, child.id] }),
-      /parent/,
-    )
-    // A member gives only threads they may write in: another's private thread is refused.
-    const carol = { user: `user-missions-carol-${id}`, member: `mem-missions-carol-${id}` }
+    const bob = { user: `user-missions-bob2-${id}`, member: `mem-missions-bob2-${id}` }
     await prisma.user.create({
-      data: { id: carol.user, name: 'Carol', email: `${carol.user}@example.com` },
+      data: { id: bob.user, name: 'Bob', email: `${bob.user}@example.com` },
     })
     await prisma.member.create({
-      data: {
-        id: carol.member,
-        organizationId: ids.organization,
-        userId: carol.user,
-        role: 'member',
-      },
+      data: { id: bob.member, organizationId: ids.organization, userId: bob.user, role: 'admin' },
     })
     try {
-      const asCarol = {
-        ...scope,
-        userId: carol.user,
-        memberId: carol.member,
-        role: 'member' as const,
-      }
+      const adas = await thread({ askedByMemberId: ids.member })
+      const made = await createMission(scoped(scope), member(), {
+        title: 'Ada’s',
+        objective: 'Hers',
+        teammateId: maya.id,
+        threadIds: [adas.id],
+      })
+      const asBob = { ...scope, userId: bob.user, memberId: bob.member, role: 'admin' as const }
+      // Bob's words would reach Maya in Ada's thread, on Ada's accounts: refused, even to an admin.
       await assert.rejects(
-        createMission(scoped(scope), asCarol, {
-          title: 'Not hers',
-          objective: 'No',
-          teammateId: maya.id,
-          threadIds: [mine.id],
-        }),
-        /may write in/,
+        updateMission(scoped(scope), asBob, made.id, { objective: 'Post every hour' }),
+        /Only the member whose mission it is/,
+      )
+      await assert.rejects(
+        updateMission(scoped(scope), asBob, made.id, { archived: true, objective: 'And this' }),
+        /Only the member whose mission it is/,
+      )
+      assert.equal(
+        (await prisma.initiative.findUniqueOrThrow({ where: { id: made.id } })).objective,
+        'Hers',
+      )
+      // Archiving only holds its work back: an admin may.
+      await updateMission(scoped(scope), asBob, made.id, { archived: true })
+      assert.ok((await prisma.initiative.findUniqueOrThrow({ where: { id: made.id } })).archivedAt)
+      // A teammate's mission is its thread's member's.
+      const delegated = await thread({})
+      const byMaya = (await callFrom(delegated.id, {
+        name: 'create_mission',
+        title: 'Maya’s',
+        objective: 'For Ada',
+      })) as { missionId: string }
+      assert.equal(
+        (await prisma.initiative.findUniqueOrThrow({ where: { id: byMaya.missionId } }))
+          .createdByMemberId,
+        ids.member,
       )
     } finally {
-      await prisma.member.deleteMany({ where: { id: carol.member } })
-      await prisma.user.deleteMany({ where: { id: carol.user } })
+      await prisma.member.deleteMany({ where: { id: bob.member } })
+      await prisma.user.deleteMany({ where: { id: bob.user } })
     }
-
-    // Archived, it leaves the page.
-    await updateMission(scoped(scope), member(), made.id, { archived: true })
-    assert.ok(!(await listMissions(scoped(scope), member())).some((m) => m.id === made.id))
   },
 )
 
-test('a member who changes a mission speaks in its threads', { skip }, async () => {
-  const bob = { user: `user-missions-bob2-${id}`, member: `mem-missions-bob2-${id}` }
-  await prisma.user.create({
-    data: { id: bob.user, name: 'Bob', email: `${bob.user}@example.com` },
-  })
-  await prisma.member.create({
-    data: { id: bob.member, organizationId: ids.organization, userId: bob.user, role: 'admin' },
-  })
-  try {
-    const adas = await thread({ askedByMemberId: ids.member })
-    const made = await createMission(scoped(scope), member(), {
-      title: 'Ada’s',
-      objective: 'Hers',
+test(
+  'taking a thread out of a mission leaves it alone once another change moved it',
+  { skip },
+  async () => {
+    const a = await createMission(scoped(scope), member(), {
+      title: 'A',
+      objective: 'A',
       teammateId: maya.id,
-      threadIds: [adas.id],
+      threadIds: [],
     })
+    const b = await createMission(scoped(scope), member(), {
+      title: 'B',
+      objective: 'B',
+      teammateId: maya.id,
+      threadIds: [],
+    })
+    const moved = await thread({ initiativeId: a.id })
+    const planned = (await call(moved.id, {
+      name: 'plan_action',
+      at: inMinutes(60),
+      title: 'Post: raced',
+      instructions: 'Publish',
+    })) as { actionId: string }
+    // Another change moved it to B and committed, after this one read it in A.
+    await prisma.session.update({ where: { id: moved.id }, data: { initiativeId: b.id } })
+    await prisma.initiativeAction.update({
+      where: { id: planned.actionId },
+      data: { initiativeId: b.id },
+    })
+    await scoped(scope).$transaction((tx) =>
+      moveThreads(tx, scope.workspaceId, [moved.id], null, a.id),
+    )
     assert.equal(
-      (await prisma.session.findUniqueOrThrow({ where: { id: adas.id } })).askedByMemberId,
-      ids.member,
-    )
-    // Bob rewrites its objective: Maya reads it in Ada's thread, so Bob asks there too.
-    await updateMission(
-      scoped(scope),
-      { ...scope, userId: bob.user, memberId: bob.member, role: 'admin' },
-      made.id,
-      { objective: 'Post every hour' },
+      (await prisma.session.findUniqueOrThrow({ where: { id: moved.id } })).initiativeId,
+      b.id,
     )
     assert.equal(
-      (await prisma.session.findUniqueOrThrow({ where: { id: adas.id } })).askedByMemberId,
-      '*',
+      (await prisma.initiativeAction.findUniqueOrThrow({ where: { id: planned.actionId } })).status,
+      'planned',
     )
-  } finally {
-    await prisma.member.deleteMany({ where: { id: bob.member } })
-    await prisma.user.deleteMany({ where: { id: bob.user } })
-  }
-})
+  },
+)
 
 test(
   'a thread moving between missions takes its routines and plan; out of any, its plan stops',

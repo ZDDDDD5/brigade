@@ -280,8 +280,12 @@ function MissionCard({
   onChanged: () => void
   onEdit: () => void
 }) {
+  const { me } = useDashboard()
   const [outputs, setOutputs] = useState(false)
   const [error, setError] = useState<string>()
+  // A mission is its member's: they change it, an admin may archive it.
+  const mine = mission.memberId === me.memberId
+  const mayArchive = mine || me.role === 'owner' || me.role === 'admin'
   const archive = async () => {
     setError(undefined)
     try {
@@ -325,32 +329,36 @@ function MissionCard({
           </span>
         </div>
         {mission.number && <NumberBlock n={mission.number} />}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="icon"
-              variant="ghost"
-              className="size-7 shrink-0"
-              aria-label={`${mission.title}: more`}
-            >
-              <MoreHorizontal aria-hidden />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={onEdit}>
-              <Pencil aria-hidden /> Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => void archive()}>
-              <Archive aria-hidden />
-              <span className="flex flex-col">
-                Archive
-                <span className="text-xs text-muted-foreground">
-                  Pauses its routines, cancels its plan
+        {mayArchive && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-7 shrink-0"
+                aria-label={`${mission.title}: more`}
+              >
+                <MoreHorizontal aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {mine && (
+                <DropdownMenuItem onSelect={onEdit}>
+                  <Pencil aria-hidden /> Edit
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem onSelect={() => void archive()}>
+                <Archive aria-hidden />
+                <span className="flex flex-col">
+                  Archive
+                  <span className="text-xs text-muted-foreground">
+                    Pauses its routines, cancels its plan
+                  </span>
                 </span>
-              </span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
       {error && <span className="text-xs text-destructive-text sm:ml-10">{error}</span>}
 
@@ -591,7 +599,7 @@ function MissionDialog({
   mission?: MissionRow
   onSaved: () => void
 }) {
-  const { teammates } = useDashboard()
+  const { teammates, me } = useDashboard()
   const recent = useApi<ThreadSummary[]>(open ? '/threads?limit=100&sort=activity' : null)
   const [title, setTitle] = useState('')
   const [objective, setObjective] = useState('')
@@ -621,11 +629,14 @@ function MissionDialog({
   // Its own threads first, then the latest active, as the search narrows them.
   const threads = useMemo(() => {
     const own = mission?.threads ?? []
-    const rest = (recent.data ?? []).filter((t) => !own.some((o) => o.id === t.id))
+    // Only threads they started: a mission is one member's.
+    const rest = (recent.data ?? []).filter(
+      (t) => t.startedBy.id === me.memberId && !own.some((o) => o.id === t.id),
+    )
     const all = [...own.map((t) => ({ id: t.id, title: t.title })), ...rest]
     const q = search.trim().toLowerCase()
     return q ? all.filter((t) => t.title.toLowerCase().includes(q)) : all
-  }, [recent.data, mission, search])
+  }, [recent.data, mission, search, me.memberId])
 
   async function submit(e: FormEvent) {
     e.preventDefault()
@@ -730,7 +741,10 @@ function MissionDialog({
               />
             </div>
           </Field>
-          <Field label="Threads" hint="Their sub-threads and routines come with them.">
+          <Field
+            label="Threads"
+            hint="Threads you started. Their sub-threads and routines come with them."
+          >
             <Input
               aria-label="Search threads"
               value={search}

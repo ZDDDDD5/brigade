@@ -39,19 +39,25 @@ People read "Mission". In code and in the database it is an **Initiative** (`Ini
   never for a one-off task or a deliverable. The thread becomes the mission's, with its routines and
   sub-threads; the teammate owns it. `update_mission` changes its words or number, or archives it.
 - **A member**, on the Missions page (`POST /api/missions`, `PATCH /api/missions/:id`): a title, an
-  objective, its owner, an optional number, and the threads it gathers (the whole set, on edit). A
-  thread given is one at the top (a sub-thread belongs to its parent's), and one the member may write
-  in, or any for an admin. A thread belongs to one mission at most: given to another, it moves.
-  Viewers make and change none.
-- A thread that moves to another mission takes its live work along: the routines reporting to it,
-  and its actions not run yet. Taken out of any mission, its actions not run yet are cancelled (their
-  approval tickets close) and its routines belong to none. What went out stays where it was recorded.
-- A member who changes a mission's words, owner or number, archives it or gives it a thread speaks in
-  its threads: they count as asking there (`noteAsker`, as for a decision on a ticket), since the
-  teammates read the mission in their next turns. A thread's existing sub-threads keep their asker.
-- Archived (from the page or `update_mission`), its work is over: its actions not run yet are
-  cancelled and its routines paused; it leaves the page and its threads stop carrying it.
-  Unarchiving brings neither back.
+  objective, its owner teammate, an optional number, and the threads it gathers (the whole set, on
+  edit). Viewers make none.
+
+A mission is **one member's** (`Initiative.createdByMemberId`: who made it, or the member whose
+thread a teammate made it in). Its words reach its threads' teammates as instructions, so another
+member's word would steer work on that member's accounts and Apps:
+
+- only they change it, and give it only threads they started, at the top (a sub-thread belongs to its
+  parent's mission); an admin may archive it, as archiving only holds its work back;
+- the page shows Edit to them only, and Archive to them and admins.
+
+A thread that moves to another mission takes its live work along: the routines reporting to it, and
+its actions not run yet. Taken out of any mission, its actions not run yet are cancelled (their
+approval tickets close) and its routines belong to none. Each thread is locked as it moves, and one
+another change moved elsewhere meanwhile is left alone. What went out stays where it was recorded.
+
+Archived (from the page or `update_mission`, in the same transaction), its work is over: its actions
+not run yet are cancelled and its routines paused; it leaves the page and its threads stop carrying
+it. Unarchiving brings neither back.
 
 The seed makes two (`apps/api/prisma/seed-missions.ts`).
 

@@ -288,6 +288,8 @@ export type MissionRow = {
   title: string
   objective: string
   teammate: { id: string; name: string }
+  /** The member whose mission it is: only they change it, an admin may archive it. */
+  memberId: string | null
   /** The number it follows, as set (number is what was read of it). */
   metric: { label: string; unit: string | null; target: number | null } | null
   projectId: string | null
