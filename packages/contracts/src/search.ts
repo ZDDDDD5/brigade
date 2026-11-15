@@ -13,6 +13,9 @@ export const SearchKind = z.enum([
   'account',
   'computer',
   'file',
+  /** A design or a tool: one result for its folder, never its files. `id` is the folder's path. */
+  'design',
+  'tool',
   'memory',
 ])
 export type SearchKind = z.infer<typeof SearchKind>

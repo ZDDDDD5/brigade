@@ -3,10 +3,25 @@
 // the same rules as its own list, so search never shows more than the pages do.
 // Names also match despite a typo (pg_trgm, see the search_trigrams migration),
 // and each result gets a score so the dashboard ranks every kind together.
-import { SCORE, titleScore, type SearchResult } from '@brigade/contracts'
+// A design or a tool is one result, found by its name, its manifest and its page,
+// never one per file of its folder (its script, styles, knobs).
+import {
+  DESIGN_ENTRY,
+  DESIGN_MANIFEST,
+  designFolderOf,
+  designName,
+  SCORE,
+  titleScore,
+  TOOL_ENTRY,
+  TOOL_MANIFEST,
+  toolFolderOf,
+  toolName,
+  type SearchResult,
+} from '@brigade/contracts'
 import { Hono } from 'hono'
 import { usableBy } from '../account-sharing.js'
 import { prisma, Prisma, type Scope } from '../db.js'
+import { featuresOfMember } from '../features.js'
 import { isMarkdown, search as searchDocuments } from '../library.js'
 import { requireUser, requireWorkspace, type AppEnv } from '../scope.js'
 
@@ -101,6 +116,48 @@ function inOrder<T extends { id: string }>(ids: string[], rows: T[]) {
   return ids.flatMap((id) => byId.get(id) ?? [])
 }
 
+/** A design or tool found, by any of its files. */
+type Bundle = {
+  kind: 'design' | 'tool'
+  folder: string
+  /** Its manifest or page matched the words, not only its folder's name. */
+  text: boolean
+  /** What matched in its page. */
+  snippet: string | null
+}
+
+/**
+ * The design or tool a library file belongs to, if it shows as one: a tool only for people who
+ * have tools (the others see its folder), and its Markdown files stay files, as the library
+ * opens them (components/library-browser.tsx).
+ */
+function bundleOf(path: string, tools: boolean): Omit<Bundle, 'text' | 'snippet'> | undefined {
+  const design = designFolderOf(path)
+  if (design) return { kind: 'design', folder: design }
+  const tool = tools && !/\.(md|markdown)$/i.test(path) ? toolFolderOf(path) : undefined
+  if (tool) return { kind: 'tool', folder: tool }
+  return undefined
+}
+
+const manifestOf = (b: Pick<Bundle, 'kind' | 'folder'>) =>
+  `${b.folder}/${b.kind === 'tool' ? TOOL_MANIFEST : DESIGN_MANIFEST}`
+const entryOf = (b: Pick<Bundle, 'kind' | 'folder'>) =>
+  `${b.folder}/${b.kind === 'tool' ? TOOL_ENTRY : DESIGN_ENTRY}`
+
+/** A manifest's title and description, if it reads; a bad one still leaves the folder's name. */
+function readManifest(text: string | undefined) {
+  try {
+    const json = JSON.parse(text ?? '') as { title?: unknown; description?: unknown }
+    const string = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+    return { title: string(json.title), description: string(json.description) }
+  } catch {
+    return {}
+  }
+}
+
+/** A description shown under a design or tool, cut to a few lines. */
+const DESCRIPTION_CHARS = 300
+
 const result = (
   r: Pick<SearchResult, 'kind' | 'id' | 'title' | 'score'> & Partial<SearchResult>,
 ): SearchResult => ({ detail: null, snippet: null, threadId: null, pull: null, ...r })
@@ -150,6 +207,7 @@ export const search = new Hono<AppEnv>()
       accounts,
       computers,
       documents,
+      features,
     ] = await Promise.all([
       nearly(scope, {
         table: 'Session',
@@ -223,7 +281,9 @@ export const search = new Hono<AppEnv>()
         take: EACH,
       }),
       searchDocuments(scope, { query, limit: EACH * 2, memberId: scope.memberId }),
+      featuresOfMember(scope.memberId, scope.workspaceId),
     ])
+    const tools = features.has('tools')
     const [threads, tickets, pulls] = await Promise.all([
       db.session
         .findMany({
@@ -264,7 +324,21 @@ export const search = new Hono<AppEnv>()
     )
     const files: SearchResult[] = []
     const memory: SearchResult[] = []
+    const bundles = new Map<string, Bundle>()
     for (const hit of documents) {
+      const bundle = hit.kind === 'library' ? bundleOf(hit.path, tools) : undefined
+      if (bundle) {
+        // Its manifest or its page, as people read them; never its code.
+        const entry = hit.path === entryOf(bundle)
+        if (!entry && hit.path !== manifestOf(bundle)) continue
+        const found = bundles.get(bundle.folder)
+        bundles.set(bundle.folder, {
+          ...bundle,
+          text: true,
+          snippet: (entry ? hit.snippet : null) ?? found?.snippet ?? null,
+        })
+        continue
+      }
       if (hit.kind === 'thread_summary' && hit.sessionId) {
         const found = threadResults.find((t) => t.id === hit.sessionId)
         if (found) found.snippet = hit.snippet
@@ -311,7 +385,7 @@ export const search = new Hono<AppEnv>()
       words,
       where: Prisma.sql`kind = 'library' AND "deletedAt" IS NULL`,
       order: '"updatedAt" DESC',
-      take: EACH + files.length,
+      take: EACH * 2 + files.length + bundles.size,
     })
     const byPath = inOrder(
       pathIds,
@@ -321,6 +395,13 @@ export const search = new Hono<AppEnv>()
       }),
     )
     for (const f of byPath) {
+      const bundle = bundleOf(f.path, tools)
+      if (bundle) {
+        // Kept below only if its own name matches, not one of its files'.
+        if (!bundles.has(bundle.folder))
+          bundles.set(bundle.folder, { ...bundle, text: false, snippet: null })
+        continue
+      }
       const found = files.find((x) => x.id === f.id)
       if (found) found.score = Math.max(found.score, score(f.path, 'file'))
       else
@@ -333,6 +414,38 @@ export const search = new Hono<AppEnv>()
     })
     const editable = new Set(opened.filter((d) => isMarkdown(d)).map((d) => d.id))
     for (const f of files) f.editor = editable.has(f.id)
+    // Each design and tool by its title, or its folder's name when its manifest has none.
+    const manifests = new Map(
+      (bundles.size
+        ? await db.document.findMany({
+            where: {
+              path: { in: [...bundles.values()].map(manifestOf) },
+              kind: 'library',
+              deletedAt: null,
+            },
+            select: { path: true, text: true },
+          })
+        : []
+      ).map((d) => [d.path, readManifest(d.text)]),
+    )
+    const designsAndTools: SearchResult[] = [...bundles.values()].flatMap((b) => {
+      const { title: given, description } = manifests.get(manifestOf(b)) ?? {}
+      const name = b.kind === 'tool' ? toolName(b.folder) : designName(b.folder)
+      const title = given ?? name
+      const named = Math.max(score(title), score(name))
+      if (named <= SCORE.near && !b.text) return []
+      const parent = b.folder.split('/').slice(0, -1).join('/')
+      return [
+        result({
+          kind: b.kind,
+          id: b.folder,
+          title,
+          detail: [b.kind === 'tool' ? 'Tool' : 'Design', parent].filter(Boolean).join(' · '),
+          snippet: b.snippet ?? description?.slice(0, DESCRIPTION_CHARS) ?? null,
+          score: named > SCORE.near ? named : SCORE.text,
+        }),
+      ]
+    })
     // Best named first; the order found within a score.
     const ranked = (list: SearchResult[]) => [...list].sort((a, b) => b.score - a.score)
 
@@ -381,6 +494,8 @@ export const search = new Hono<AppEnv>()
         }),
       ),
       ...ranked(files).slice(0, EACH),
+      ...ranked(designsAndTools.filter((r) => r.kind === 'design')).slice(0, EACH),
+      ...ranked(designsAndTools.filter((r) => r.kind === 'tool')).slice(0, EACH),
       ...memory.slice(0, EACH),
       ...connections.map((x) =>
         result({
