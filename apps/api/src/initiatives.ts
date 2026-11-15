@@ -38,6 +38,7 @@ import { Prisma, prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { featuresOfMember } from './features.js'
 import { hubs, scheduleUpdated, threadUpdated } from './hub.js'
 import type { WorkspaceScope } from './scope.js'
+import { askedBy, SEVERAL_ASKERS } from './thread-spec.js'
 import { fireNow } from './wakeups.js'
 
 type InitiativeOperation = Extract<
@@ -235,6 +236,22 @@ export async function handleInitiativeCall(
   const mission = missionId
     ? await db.initiative.findFirst({ where: { id: missionId, archivedAt: null } })
     : null
+  // A mission's words reach every one of its threads' teammates, on its member's accounts: they are
+  // made and changed only on that member's word, never in a thread another member asks in too.
+  if (op.name === 'create_mission' || op.name === 'update_mission') {
+    const owner =
+      op.name === 'create_mission' ? session.startedByMemberId : mission?.createdByMemberId
+    const asker = (await askedBy(db, session.id)) ?? session.startedByMemberId
+    if (owner && asker !== owner)
+      return {
+        error:
+          (asker === SEVERAL_ASKERS
+            ? 'Several people ask in this thread'
+            : 'Someone other than the member it is for asks in this thread') +
+          ': a mission is made and changed only on its member’s word. Ask them to do it on the ' +
+          'Missions page, or in a thread of their own.',
+      }
+  }
   if (op.name === 'create_mission') {
     if (mission)
       return {

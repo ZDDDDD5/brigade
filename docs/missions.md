@@ -48,6 +48,9 @@ member's word would steer work on that member's accounts and Apps:
 
 - only they change it, and give it only threads they started, at the top (a sub-thread belongs to its
   parent's mission); an admin may archive it, as archiving only holds its work back;
+- a teammate makes or changes one (`create_mission`, `update_mission`) only on that member's word:
+  refused in a thread another member asks in too (`askedBy`), whose word would otherwise reach the
+  mission's other threads;
 - the page shows Edit to them only, and Archive to them and admins.
 
 A thread that moves to another mission takes its live work along: the routines reporting to it, and

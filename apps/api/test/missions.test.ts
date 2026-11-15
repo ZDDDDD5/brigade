@@ -903,3 +903,31 @@ test('an archived mission stops: its plan cancelled, its routines paused', { ski
   assert.ok(paused.pausedAt)
   assert.equal(paused.nextRunAt, null)
 })
+
+test('a teammate makes or changes a mission only on its member’s word', { skip }, async () => {
+  // Another member took part in this thread: their word would reach the mission's other threads.
+  const shared = await thread({ askedByMemberId: '*' })
+  const refused = await callFrom(shared.id, {
+    name: 'create_mission',
+    title: 'Shared',
+    objective: 'No',
+  })
+  assert.match((refused as { error: string }).error, /Several people ask in this thread/)
+  assert.equal(await missionIdOfThread(scoped(scope), shared.id), null)
+
+  const mine = await thread({ askedByMemberId: ids.member })
+  const made = (await callFrom(mine.id, {
+    name: 'create_mission',
+    title: 'Mine',
+    objective: 'Hers',
+  })) as { missionId: string }
+  assert.ok(made.missionId)
+  // Then another member writes in it: the teammate no longer changes the mission from there.
+  await prisma.session.update({ where: { id: mine.id }, data: { askedByMemberId: '*' } })
+  const changed = await callFrom(mine.id, { name: 'update_mission', objective: 'Theirs' })
+  assert.match((changed as { error: string }).error, /Several people ask in this thread/)
+  assert.equal(
+    (await prisma.initiative.findUniqueOrThrow({ where: { id: made.missionId } })).objective,
+    'Hers',
+  )
+})
