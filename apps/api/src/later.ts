@@ -1,25 +1,33 @@
-// Later: a member puts a thread away for later, for themselves only, as they pin one. It
-// leaves their sidebar's list (the filter's Later shows it) and what waits on them: its
-// tickets and pull requests leave their Home, sidebar, app badge and notifications. Like
-// an archive, anything new there brings it back: a message in it (a member's, a wake-up's,
-// a child's report), or a ticket or pull request opened in it or one of its children.
+// Snooze (Later in the code and the database): a member puts a thread away until a time they
+// pick, for themselves only, as they pin one. It leaves their sidebar's list (the filter's
+// Snoozed shows it) and what waits on them: its tickets and pull requests leave their Home,
+// sidebar, app badge and notifications. At its time it comes back, unread for them
+// (wakeDueSnoozes, each minute). Like an archive, anything new there brings it back sooner: a
+// message in it (a member's, a wake-up's, a child's report), or a ticket or pull request opened
+// in it or one of its children.
+import { SNOOZE_MAX_DAYS } from '@brigade/contracts'
 import { onScopedWrite, prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { hubs, threadUpdated } from './hub.js'
 import { rootIdOf } from './thread-root.js'
 
-/** The threads this member put away for later: id, and since when. */
-export async function latersOf(db: ScopedDb, memberId: string) {
+const DAY = 24 * 60 * 60_000
+
+/**
+ * The threads this member snoozed: id, since when and until when. One past its time is back
+ * already, before the minute's job clears it.
+ */
+export async function latersOf(db: ScopedDb, memberId: string, now = new Date()) {
   const rows = await db.threadLater.findMany({
-    where: { memberId },
-    select: { sessionId: true, laterAt: true },
+    where: { memberId, until: { gt: now } },
+    select: { sessionId: true, laterAt: true, until: true },
   })
-  return new Map(rows.map((r) => [r.sessionId, r.laterAt] as const))
+  return new Map(rows.map((r) => [r.sessionId, { at: r.laterAt, until: r.until }] as const))
 }
 
-/** Who put which thread away in a workspace, as `memberId:sessionId`, for notifications. */
-export async function latersIn(workspaceId: string) {
+/** Who snoozed which thread in a workspace, as `memberId:sessionId`, for notifications. */
+export async function latersIn(workspaceId: string, now = new Date()) {
   const rows = await prisma.threadLater.findMany({
-    where: { workspaceId },
+    where: { workspaceId, until: { gt: now } },
     select: { memberId: true, sessionId: true },
   })
   return new Set(rows.map((r) => laterKey(r.memberId, r.sessionId)))
@@ -27,14 +35,30 @@ export async function latersIn(workspaceId: string) {
 
 export const laterKey = (memberId: string, sessionId: string) => `${memberId}:${sessionId}`
 
-/** Put away for this member, or back in their list. Not a child: it shows in its parent. */
+/**
+ * When a snooze ends: the time asked for, in the future and at most SNOOZE_MAX_DAYS away; a
+ * week when none was asked (a dashboard older than Snooze). Null: not a time it takes.
+ */
+export function snoozeUntil(asked: unknown, now = new Date()): Date | null {
+  if (asked === undefined || asked === null) return new Date(now.getTime() + 7 * DAY)
+  if (typeof asked !== 'string') return null
+  const until = new Date(asked)
+  const ms = until.getTime() - now.getTime()
+  if (Number.isNaN(ms) || ms <= 0 || ms > SNOOZE_MAX_DAYS * DAY) return null
+  return until
+}
+
+/**
+ * Snoozed for this member until `until`, or back in their list (null). Not a child: it shows
+ * in its parent.
+ */
 export async function setLater(
   db: ScopedDb,
   scope: Scope & { memberId: string },
   thread: { id: string; status: string },
-  on: boolean,
+  until: Date | null,
 ) {
-  if (on)
+  if (until)
     await db.threadLater.upsert({
       where: { memberId_sessionId: { memberId: scope.memberId, sessionId: thread.id } },
       create: {
@@ -42,8 +66,9 @@ export async function setLater(
         workspaceId: scope.workspaceId,
         memberId: scope.memberId,
         sessionId: thread.id,
+        until,
       },
-      update: { laterAt: new Date() },
+      update: { laterAt: new Date(), until },
     })
   else
     await db.threadLater.deleteMany({ where: { memberId: scope.memberId, sessionId: thread.id } })
@@ -64,11 +89,53 @@ export async function bringBackFromLater(scope: Scope, sessionId: string) {
   if (count) changed(scope, root)
 }
 
+/** Workspaces with a snooze at its end. */
+export async function dueSnoozes(now = new Date()) {
+  const rows = await prisma.threadLater.findMany({
+    where: { until: { lte: now } },
+    distinct: ['workspaceId'],
+    select: { workspaceId: true },
+  })
+  return rows.map((r) => r.workspaceId)
+}
+
+/**
+ * Snoozes at their end, of one workspace or all: each thread back in its member's list, unread
+ * for them so it shows it came back. Each row is claimed by its deletion, so a second run of
+ * the job leaves it alone; one snoozed again meanwhile has a later time and stays.
+ */
+export async function wakeDueSnoozes(workspaceId?: string, now = new Date()) {
+  const due = await prisma.threadLater.findMany({
+    where: { until: { lte: now }, ...(workspaceId ? { workspaceId } : {}) },
+    select: {
+      organizationId: true,
+      workspaceId: true,
+      memberId: true,
+      sessionId: true,
+      until: true,
+      session: { select: { status: true } },
+    },
+    orderBy: { until: 'asc' },
+    take: 200,
+  })
+  for (const row of due) {
+    const { count } = await prisma.threadLater.deleteMany({
+      where: { memberId: row.memberId, sessionId: row.sessionId, until: row.until },
+    })
+    if (!count) continue
+    await prisma.threadRead.deleteMany({
+      where: { memberId: row.memberId, sessionId: row.sessionId },
+    })
+    changed(row, { id: row.sessionId, status: row.session.status })
+  }
+  return due.length
+}
+
 /**
  * Its row moves in the sidebar, and what waits on the member changes: the dashboards
  * read the list, tickets and pull requests again.
  */
-function changed(scope: Scope, thread: { id: string; status: string }) {
+function changed(scope: Pick<Scope, 'workspaceId'>, thread: { id: string; status: string }) {
   void hubs.get(scope.workspaceId).broadcast(threadUpdated(thread.id, thread.status))
   void hubs.get(scope.workspaceId).notifyList('tickets.updated')
   void hubs.get(scope.workspaceId).notifyList('pulls.updated')

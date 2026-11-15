@@ -121,7 +121,7 @@ mission; threads stay where the work happens.
   threads waits on a person (a failed one too, once its runner's own retries are over:
   `src/failed.ts`; one whose choices nobody picked: `src/choices-waiting.ts`); in progress
   when one works or a pull request on it is open; else open. The list's counts and filters
-  read the same. For the member reading, a thread they put away for later (`src/later.ts`)
+  read the same. For the member reading, a thread they snoozed (`src/later.ts`)
   counts as an archived one, with the pull requests opened in it: it waits on them nowhere, so
   it makes no line need them. An open line with threads, none of them working or waiting, no
   open pull request and no open remaining line, is **stalled**: nothing will tick it, so it
@@ -164,7 +164,7 @@ mission; threads stay where the work happens.
   state (waiting on a person, then working), so a thread that needs someone is never hidden
   behind a quiet row. A thread with items of several lists goes under the first it was given.
   Lists group, sections do not: a list's page shows its sections. Pinned threads stay under
-  Pinned; the archived and Later views show threads as they come.
+  Pinned; the archived and Snoozed views show threads as they come.
 - **Pinning a list**: the list's row has a menu (⋮, or a right-click) whose Pin puts it under
   Pinned, each member's own (`ListPin`), among their pinned threads and dragged with them (one
   order, `PUT /api/threads/pins/order` with the list as `list:<documentId>`). Its threads go with

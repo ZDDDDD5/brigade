@@ -551,10 +551,11 @@ export type ThreadSummary = {
   doneAt?: string | null
   doneSummary?: string | null
   /**
-   * When this member put it away for later: out of their list (the filter's Later shows it)
-   * and of what waits on them, until something new happens in it.
+   * When this member snoozed it: out of their list (the filter's Snoozed shows it) and of what
+   * waits on them until `snoozedUntil`, or until something new happens in it.
    */
   laterAt?: string | null
+  snoozedUntil?: string | null
   /** Others than its starter may write in it, so rename and archive it. */
   othersMayPrompt?: boolean
   /** Since when its events have not reached Brigade: its computer keeps sending them. */
@@ -602,6 +603,7 @@ export type SidebarChild = {
   othersMayPrompt?: boolean
   pinnedAt?: string | null
   laterAt?: string | null
+  snoozedUntil?: string | null
   doneAt?: string | null
   /** The thread it was started from; none for a list's thread, which is a thread of its own. */
   parent?: { id: string } | null

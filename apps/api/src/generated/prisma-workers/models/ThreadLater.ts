@@ -14,9 +14,10 @@ import type * as Prisma from "../internal/prismaNamespace.js"
 
 /**
  * Model ThreadLater
- * A thread a member put away for later: out of their sidebar's list and of what waits on
- * them, under the filter's Later. Each member's own, like a pin. Anything new in the thread
- * after laterAt (a message, a turn, a ticket, a pull request) brings it back (src/later.ts).
+ * A thread a member snoozed (Later in the code): out of their sidebar's list and of what waits
+ * on them, under the filter's Snoozed, until `until`. Each member's own, like a pin. Anything
+ * new in the thread after laterAt (a message, a turn, a ticket, a pull request) brings it back
+ * sooner (src/later.ts).
  */
 export type ThreadLaterModel = runtime.Types.Result.DefaultSelection<Prisma.$ThreadLaterPayload>
 
@@ -32,6 +33,7 @@ export type ThreadLaterMinAggregateOutputType = {
   memberId: string | null
   sessionId: string | null
   laterAt: Date | null
+  until: Date | null
 }
 
 export type ThreadLaterMaxAggregateOutputType = {
@@ -40,6 +42,7 @@ export type ThreadLaterMaxAggregateOutputType = {
   memberId: string | null
   sessionId: string | null
   laterAt: Date | null
+  until: Date | null
 }
 
 export type ThreadLaterCountAggregateOutputType = {
@@ -48,6 +51,7 @@ export type ThreadLaterCountAggregateOutputType = {
   memberId: number
   sessionId: number
   laterAt: number
+  until: number
   _all: number
 }
 
@@ -58,6 +62,7 @@ export type ThreadLaterMinAggregateInputType = {
   memberId?: true
   sessionId?: true
   laterAt?: true
+  until?: true
 }
 
 export type ThreadLaterMaxAggregateInputType = {
@@ -66,6 +71,7 @@ export type ThreadLaterMaxAggregateInputType = {
   memberId?: true
   sessionId?: true
   laterAt?: true
+  until?: true
 }
 
 export type ThreadLaterCountAggregateInputType = {
@@ -74,6 +80,7 @@ export type ThreadLaterCountAggregateInputType = {
   memberId?: true
   sessionId?: true
   laterAt?: true
+  until?: true
   _all?: true
 }
 
@@ -155,6 +162,7 @@ export type ThreadLaterGroupByOutputType = {
   memberId: string
   sessionId: string
   laterAt: Date
+  until: Date
   _count: ThreadLaterCountAggregateOutputType | null
   _min: ThreadLaterMinAggregateOutputType | null
   _max: ThreadLaterMaxAggregateOutputType | null
@@ -184,6 +192,7 @@ export type ThreadLaterWhereInput = {
   memberId?: Prisma.StringFilter<"ThreadLater"> | string
   sessionId?: Prisma.StringFilter<"ThreadLater"> | string
   laterAt?: Prisma.DateTimeFilter<"ThreadLater"> | Date | string
+  until?: Prisma.DateTimeFilter<"ThreadLater"> | Date | string
   workspace?: Prisma.XOR<Prisma.WorkspaceScalarRelationFilter, Prisma.WorkspaceWhereInput>
   member?: Prisma.XOR<Prisma.MemberScalarRelationFilter, Prisma.MemberWhereInput>
   session?: Prisma.XOR<Prisma.SessionScalarRelationFilter, Prisma.SessionWhereInput>
@@ -195,6 +204,7 @@ export type ThreadLaterOrderByWithRelationInput = {
   memberId?: Prisma.SortOrder
   sessionId?: Prisma.SortOrder
   laterAt?: Prisma.SortOrder
+  until?: Prisma.SortOrder
   workspace?: Prisma.WorkspaceOrderByWithRelationInput
   member?: Prisma.MemberOrderByWithRelationInput
   session?: Prisma.SessionOrderByWithRelationInput
@@ -210,6 +220,7 @@ export type ThreadLaterWhereUniqueInput = Prisma.AtLeast<{
   memberId?: Prisma.StringFilter<"ThreadLater"> | string
   sessionId?: Prisma.StringFilter<"ThreadLater"> | string
   laterAt?: Prisma.DateTimeFilter<"ThreadLater"> | Date | string
+  until?: Prisma.DateTimeFilter<"ThreadLater"> | Date | string
   workspace?: Prisma.XOR<Prisma.WorkspaceScalarRelationFilter, Prisma.WorkspaceWhereInput>
   member?: Prisma.XOR<Prisma.MemberScalarRelationFilter, Prisma.MemberWhereInput>
   session?: Prisma.XOR<Prisma.SessionScalarRelationFilter, Prisma.SessionWhereInput>
@@ -221,6 +232,7 @@ export type ThreadLaterOrderByWithAggregationInput = {
   memberId?: Prisma.SortOrder
   sessionId?: Prisma.SortOrder
   laterAt?: Prisma.SortOrder
+  until?: Prisma.SortOrder
   _count?: Prisma.ThreadLaterCountOrderByAggregateInput
   _max?: Prisma.ThreadLaterMaxOrderByAggregateInput
   _min?: Prisma.ThreadLaterMinOrderByAggregateInput
@@ -235,11 +247,13 @@ export type ThreadLaterScalarWhereWithAggregatesInput = {
   memberId?: Prisma.StringWithAggregatesFilter<"ThreadLater"> | string
   sessionId?: Prisma.StringWithAggregatesFilter<"ThreadLater"> | string
   laterAt?: Prisma.DateTimeWithAggregatesFilter<"ThreadLater"> | Date | string
+  until?: Prisma.DateTimeWithAggregatesFilter<"ThreadLater"> | Date | string
 }
 
 export type ThreadLaterCreateInput = {
   organizationId: string
   laterAt?: Date | string
+  until?: Date | string
   workspace: Prisma.WorkspaceCreateNestedOneWithoutThreadLatersInput
   member: Prisma.MemberCreateNestedOneWithoutThreadLatersInput
   session: Prisma.SessionCreateNestedOneWithoutLatersInput
@@ -251,11 +265,13 @@ export type ThreadLaterUncheckedCreateInput = {
   memberId: string
   sessionId: string
   laterAt?: Date | string
+  until?: Date | string
 }
 
 export type ThreadLaterUpdateInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   workspace?: Prisma.WorkspaceUpdateOneRequiredWithoutThreadLatersNestedInput
   member?: Prisma.MemberUpdateOneRequiredWithoutThreadLatersNestedInput
   session?: Prisma.SessionUpdateOneRequiredWithoutLatersNestedInput
@@ -267,6 +283,7 @@ export type ThreadLaterUncheckedUpdateInput = {
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   sessionId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ThreadLaterCreateManyInput = {
@@ -275,11 +292,13 @@ export type ThreadLaterCreateManyInput = {
   memberId: string
   sessionId: string
   laterAt?: Date | string
+  until?: Date | string
 }
 
 export type ThreadLaterUpdateManyMutationInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ThreadLaterUncheckedUpdateManyInput = {
@@ -288,6 +307,7 @@ export type ThreadLaterUncheckedUpdateManyInput = {
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   sessionId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ThreadLaterListRelationFilter = {
@@ -311,6 +331,7 @@ export type ThreadLaterCountOrderByAggregateInput = {
   memberId?: Prisma.SortOrder
   sessionId?: Prisma.SortOrder
   laterAt?: Prisma.SortOrder
+  until?: Prisma.SortOrder
 }
 
 export type ThreadLaterMaxOrderByAggregateInput = {
@@ -319,6 +340,7 @@ export type ThreadLaterMaxOrderByAggregateInput = {
   memberId?: Prisma.SortOrder
   sessionId?: Prisma.SortOrder
   laterAt?: Prisma.SortOrder
+  until?: Prisma.SortOrder
 }
 
 export type ThreadLaterMinOrderByAggregateInput = {
@@ -327,6 +349,7 @@ export type ThreadLaterMinOrderByAggregateInput = {
   memberId?: Prisma.SortOrder
   sessionId?: Prisma.SortOrder
   laterAt?: Prisma.SortOrder
+  until?: Prisma.SortOrder
 }
 
 export type ThreadLaterCreateNestedManyWithoutMemberInput = {
@@ -458,6 +481,7 @@ export type ThreadLaterUncheckedUpdateManyWithoutSessionNestedInput = {
 export type ThreadLaterCreateWithoutMemberInput = {
   organizationId: string
   laterAt?: Date | string
+  until?: Date | string
   workspace: Prisma.WorkspaceCreateNestedOneWithoutThreadLatersInput
   session: Prisma.SessionCreateNestedOneWithoutLatersInput
 }
@@ -467,6 +491,7 @@ export type ThreadLaterUncheckedCreateWithoutMemberInput = {
   workspaceId: string
   sessionId: string
   laterAt?: Date | string
+  until?: Date | string
 }
 
 export type ThreadLaterCreateOrConnectWithoutMemberInput = {
@@ -504,11 +529,13 @@ export type ThreadLaterScalarWhereInput = {
   memberId?: Prisma.StringFilter<"ThreadLater"> | string
   sessionId?: Prisma.StringFilter<"ThreadLater"> | string
   laterAt?: Prisma.DateTimeFilter<"ThreadLater"> | Date | string
+  until?: Prisma.DateTimeFilter<"ThreadLater"> | Date | string
 }
 
 export type ThreadLaterCreateWithoutWorkspaceInput = {
   organizationId: string
   laterAt?: Date | string
+  until?: Date | string
   member: Prisma.MemberCreateNestedOneWithoutThreadLatersInput
   session: Prisma.SessionCreateNestedOneWithoutLatersInput
 }
@@ -518,6 +545,7 @@ export type ThreadLaterUncheckedCreateWithoutWorkspaceInput = {
   memberId: string
   sessionId: string
   laterAt?: Date | string
+  until?: Date | string
 }
 
 export type ThreadLaterCreateOrConnectWithoutWorkspaceInput = {
@@ -549,6 +577,7 @@ export type ThreadLaterUpdateManyWithWhereWithoutWorkspaceInput = {
 export type ThreadLaterCreateWithoutSessionInput = {
   organizationId: string
   laterAt?: Date | string
+  until?: Date | string
   workspace: Prisma.WorkspaceCreateNestedOneWithoutThreadLatersInput
   member: Prisma.MemberCreateNestedOneWithoutThreadLatersInput
 }
@@ -558,6 +587,7 @@ export type ThreadLaterUncheckedCreateWithoutSessionInput = {
   workspaceId: string
   memberId: string
   laterAt?: Date | string
+  until?: Date | string
 }
 
 export type ThreadLaterCreateOrConnectWithoutSessionInput = {
@@ -591,11 +621,13 @@ export type ThreadLaterCreateManyMemberInput = {
   workspaceId: string
   sessionId: string
   laterAt?: Date | string
+  until?: Date | string
 }
 
 export type ThreadLaterUpdateWithoutMemberInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   workspace?: Prisma.WorkspaceUpdateOneRequiredWithoutThreadLatersNestedInput
   session?: Prisma.SessionUpdateOneRequiredWithoutLatersNestedInput
 }
@@ -605,6 +637,7 @@ export type ThreadLaterUncheckedUpdateWithoutMemberInput = {
   workspaceId?: Prisma.StringFieldUpdateOperationsInput | string
   sessionId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ThreadLaterUncheckedUpdateManyWithoutMemberInput = {
@@ -612,6 +645,7 @@ export type ThreadLaterUncheckedUpdateManyWithoutMemberInput = {
   workspaceId?: Prisma.StringFieldUpdateOperationsInput | string
   sessionId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ThreadLaterCreateManyWorkspaceInput = {
@@ -619,11 +653,13 @@ export type ThreadLaterCreateManyWorkspaceInput = {
   memberId: string
   sessionId: string
   laterAt?: Date | string
+  until?: Date | string
 }
 
 export type ThreadLaterUpdateWithoutWorkspaceInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   member?: Prisma.MemberUpdateOneRequiredWithoutThreadLatersNestedInput
   session?: Prisma.SessionUpdateOneRequiredWithoutLatersNestedInput
 }
@@ -633,6 +669,7 @@ export type ThreadLaterUncheckedUpdateWithoutWorkspaceInput = {
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   sessionId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ThreadLaterUncheckedUpdateManyWithoutWorkspaceInput = {
@@ -640,6 +677,7 @@ export type ThreadLaterUncheckedUpdateManyWithoutWorkspaceInput = {
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   sessionId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ThreadLaterCreateManySessionInput = {
@@ -647,11 +685,13 @@ export type ThreadLaterCreateManySessionInput = {
   workspaceId: string
   memberId: string
   laterAt?: Date | string
+  until?: Date | string
 }
 
 export type ThreadLaterUpdateWithoutSessionInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   workspace?: Prisma.WorkspaceUpdateOneRequiredWithoutThreadLatersNestedInput
   member?: Prisma.MemberUpdateOneRequiredWithoutThreadLatersNestedInput
 }
@@ -661,6 +701,7 @@ export type ThreadLaterUncheckedUpdateWithoutSessionInput = {
   workspaceId?: Prisma.StringFieldUpdateOperationsInput | string
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 export type ThreadLaterUncheckedUpdateManyWithoutSessionInput = {
@@ -668,6 +709,7 @@ export type ThreadLaterUncheckedUpdateManyWithoutSessionInput = {
   workspaceId?: Prisma.StringFieldUpdateOperationsInput | string
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   laterAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  until?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
 
@@ -678,6 +720,7 @@ export type ThreadLaterSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   memberId?: boolean
   sessionId?: boolean
   laterAt?: boolean
+  until?: boolean
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   member?: boolean | Prisma.MemberDefaultArgs<ExtArgs>
   session?: boolean | Prisma.SessionDefaultArgs<ExtArgs>
@@ -689,6 +732,7 @@ export type ThreadLaterSelectCreateManyAndReturn<ExtArgs extends runtime.Types.E
   memberId?: boolean
   sessionId?: boolean
   laterAt?: boolean
+  until?: boolean
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   member?: boolean | Prisma.MemberDefaultArgs<ExtArgs>
   session?: boolean | Prisma.SessionDefaultArgs<ExtArgs>
@@ -700,6 +744,7 @@ export type ThreadLaterSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.E
   memberId?: boolean
   sessionId?: boolean
   laterAt?: boolean
+  until?: boolean
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   member?: boolean | Prisma.MemberDefaultArgs<ExtArgs>
   session?: boolean | Prisma.SessionDefaultArgs<ExtArgs>
@@ -711,9 +756,10 @@ export type ThreadLaterSelectScalar = {
   memberId?: boolean
   sessionId?: boolean
   laterAt?: boolean
+  until?: boolean
 }
 
-export type ThreadLaterOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"organizationId" | "workspaceId" | "memberId" | "sessionId" | "laterAt", ExtArgs["result"]["threadLater"]>
+export type ThreadLaterOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"organizationId" | "workspaceId" | "memberId" | "sessionId" | "laterAt" | "until", ExtArgs["result"]["threadLater"]>
 export type ThreadLaterInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   member?: boolean | Prisma.MemberDefaultArgs<ExtArgs>
@@ -743,6 +789,10 @@ export type $ThreadLaterPayload<ExtArgs extends runtime.Types.Extensions.Interna
     memberId: string
     sessionId: string
     laterAt: Date
+    /**
+     * When it comes back. Those put away before Snooze, and by an API older than it, a week on.
+     */
+    until: Date
   }, ExtArgs["result"]["threadLater"]>
   composites: {}
 }
@@ -1174,6 +1224,7 @@ export interface ThreadLaterFieldRefs {
   readonly memberId: Prisma.FieldRef<"ThreadLater", 'String'>
   readonly sessionId: Prisma.FieldRef<"ThreadLater", 'String'>
   readonly laterAt: Prisma.FieldRef<"ThreadLater", 'DateTime'>
+  readonly until: Prisma.FieldRef<"ThreadLater", 'DateTime'>
 }
     
 

@@ -143,9 +143,10 @@ export type ThreadPin = Prisma.ThreadPinModel
 export type SidebarOrder = Prisma.SidebarOrderModel
 /**
  * Model ThreadLater
- * A thread a member put away for later: out of their sidebar's list and of what waits on
- * them, under the filter's Later. Each member's own, like a pin. Anything new in the thread
- * after laterAt (a message, a turn, a ticket, a pull request) brings it back (src/later.ts).
+ * A thread a member snoozed (Later in the code): out of their sidebar's list and of what waits
+ * on them, under the filter's Snoozed, until `until`. Each member's own, like a pin. Anything
+ * new in the thread after laterAt (a message, a turn, a ticket, a pull request) brings it back
+ * sooner (src/later.ts).
  */
 export type ThreadLater = Prisma.ThreadLaterModel
 /**

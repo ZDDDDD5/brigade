@@ -40,6 +40,7 @@ import { sweepDeliveries } from './triggers.js'
 import { sweepFileUploads } from './uploads.js'
 import { reconcileVmRuns } from './vm-costs.js'
 import { dueWakeups, fireDueWakeups } from './wakeups.js'
+import { dueSnoozes, wakeDueSnoozes } from './later.js'
 import { dueGoals, measureDueGoals } from './goals.js'
 import { dueWorkspaceCleanups, sweepDeletedWorkspaces } from './workspace-delete.js'
 
@@ -64,6 +65,8 @@ export const JOBS = {
   // Each workspace's, each minute.
   schedules: { every: 60, due: dueSchedules, run: (key) => fireDueSchedules(ws(key)) },
   wakeups: { every: 60, due: dueWakeups, run: (key) => fireDueWakeups(ws(key)) },
+  // Snoozed threads at their time: back in their member's list, unread (src/later.ts).
+  snoozes: { every: 60, due: dueSnoozes, run: (key, now) => wakeDueSnoozes(ws(key), now) },
   // Goals under way (src/goals.ts): measured between turns, and ended once over, as due.
   goals: { every: 60, due: () => dueGoals(), run: (key) => measureDueGoals(ws(key)) },
   // Chief's daily pass for the members who have it on, in their morning (src/chief-pass.ts).

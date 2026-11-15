@@ -7,8 +7,8 @@
 // the teammates and projects stay in reach however many there are; older ones load on asking.
 // Threads this member pinned sit above them, under Pinned, in the order they drag them to,
 // with the lists they pinned (each with the threads on its items, which leave Threads);
-// archived ones are out of both, and so are those the member put away for later, and the
-// filter lists each (Later with how many). The teammates and projects stay in the order the
+// archived ones are out of both, and so are those the member snoozed, and the filter lists
+// each (Snoozed with how many, each with when it comes back). The teammates and projects stay in the order the
 // member drags them to, too (useSidebarOrder). Pinned, Threads, Teammates and Projects each
 // fold to their label alone (what waits on a person is counted once, beside Home), and this
 // browser remembers which are folded.
@@ -55,6 +55,7 @@ import { FadeText } from '@/components/fade-text'
 import { ListGroupRow } from '@/components/list-group-row'
 import { ThreadRow } from '@/components/thread-row'
 import { renameThread, useThreadMenu } from '@/components/thread-menu'
+import { wakeLabel } from '@/lib/snooze'
 import { WakeupIcon } from '@/components/wakeup-icon'
 import { StreamedTitle } from '@/components/streamed-title'
 import {
@@ -936,8 +937,8 @@ export function SidebarWork({
     setLater(false)
     return api<ThreadSummary[]>('/threads?archived=1').then(setArchived, () => setArchived([]))
   }
-  // Whether the list shows the threads this member put away for later instead (the filter's
-  // Later). They are in the panel's list, all of them, out of the usual one.
+  // Whether the list shows the threads this member snoozed instead (the filter's Snoozed).
+  // They are in the panel's list, all of them, out of the usual one.
   const [later, setLater] = useState(false)
   const putAway = useMemo(() => (threads ?? []).filter((t) => t.laterAt), [threads])
   // How many more than the cap the list shows: a step at a time.
@@ -1268,7 +1269,7 @@ export function SidebarWork({
   }, [mayHaveOlder, hidden, loadingOlder, query])
 
   // The thread open, when the list does not show it (older than its threads, behind a "+N",
-  // filtered out or put away for later): first under Threads while it stays open, so the
+  // filtered out or snoozed): first under Threads while it stays open, so the
   // member sees where they are. Pinned, it is under Pinned already; a child thread brings
   // its parent, unfolded.
   const openId = expanded && !instead ? threadId : null
@@ -1302,7 +1303,7 @@ export function SidebarWork({
   useFlip(listRef, JSON.stringify([filter, !!archived, later]))
 
   function changed() {
-    // Older pages may hold the thread as it was (put away for later, say): asked for again.
+    // Older pages may hold the thread as it was (snoozed, say): asked for again.
     setOlder([])
     setExhausted([])
     return Promise.all([reloadThreads(), archived && loadArchived()])
@@ -1387,8 +1388,12 @@ export function SidebarWork({
               : shortAgo(t.updatedAt)
           }
           trailing={
-            dated && (
-              <span className="text-muted-foreground font-normal">{shortAgo(t.updatedAt)}</span>
+            later && t.snoozedUntil ? (
+              <span className="text-muted-foreground font-normal">{wakeLabel(t.snoozedUntil)}</span>
+            ) : (
+              dated && (
+                <span className="text-muted-foreground font-normal">{shortAgo(t.updatedAt)}</span>
+              )
             )
           }
           memberId={memberId}
@@ -1461,7 +1466,7 @@ export function SidebarWork({
         {archived
           ? 'No archived threads.'
           : later
-            ? 'Nothing put away for later.'
+            ? 'Nothing snoozed.'
             : filtered
               ? 'No threads match.'
               : 'No threads yet.'}
@@ -1632,7 +1637,7 @@ export function SidebarWork({
             />
           )}
           {archived && <FilterChip label="Archived" onClear={() => setArchived(undefined)} />}
-          {later && <FilterChip label="Later" onClear={() => setLater(false)} />}
+          {later && <FilterChip label="Snoozed" onClear={() => setLater(false)} />}
           {filter.statuses.length > 0 && (
             <FilterChip
               label={
@@ -1732,7 +1737,7 @@ export function SidebarWork({
                 </>
               )}
               <DropdownMenuSeparator />
-              {/* How many: a plain count, so what was put away is not forgotten. */}
+              {/* How many: a plain count, so what was snoozed is not forgotten. */}
               <DropdownMenuCheckboxItem
                 checked={later}
                 onCheckedChange={(on) => {
@@ -1741,7 +1746,7 @@ export function SidebarWork({
                 }}
               >
                 <Clock />
-                Later
+                Snoozed
                 {putAway.length > 0 && (
                   <span className="text-muted-foreground ml-auto text-xs tabular-nums">
                     {putAway.length}

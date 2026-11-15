@@ -59,6 +59,7 @@ function listRow(threads: ThreadSummary[]): ThreadSummary {
     othersMayPrompt: t.othersMayPrompt,
     pinnedAt: t.pinnedAt,
     laterAt: t.laterAt,
+    snoozedUntil: t.snoozedUntil,
     doneAt: t.doneAt,
     parent: null,
   }))

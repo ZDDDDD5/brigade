@@ -22,13 +22,13 @@ in the dashboard.
   red), the app badge, pushes ("Riley's thread failed"), a list line's state
   and the Board. One rule, `apps/api/src/failed.ts`: a
   thread of the last 14 days, not a child (its parent's teammate hears of it),
-  archived, put away for later, a playbook's run nobody joined or a routine's
+  archived, snoozed, a playbook's run nobody joined or a routine's
   run. After an error its runner tries again on its own (the network, an
   overloaded API, memory; `PASSING_ERROR` in `@brigade/contracts`), it waits
   only once those tries are over, 16 minutes after that error, so a turn that
   comes back by itself never notifies. It counts once, by its thread: its pull
   requests wait with it, not on their own. Today no longer offers to dismiss it:
-  Do later or Archive puts it away.
+  Snooze or Archive puts it away.
 - **Choices nobody picked wait on whoever started the thread** the same way
   (`apps/api/src/choices-waiting.ts`): a teammate's reply that ends on a
   choices card ("Riley needs you to pick one", with the card's question). It

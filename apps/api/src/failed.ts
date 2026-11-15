@@ -122,7 +122,7 @@ export async function failedThreadsOf(db: ScopedDb, memberId: string, now = new 
     where: {
       ...FAILED_THREAD,
       startedByMemberId: memberId,
-      laters: { none: { memberId } },
+      laters: { none: { memberId, until: { gt: new Date() } } },
       updatedAt: { gte: new Date(now.getTime() - RECENT_FAILURES) },
     },
     orderBy: { updatedAt: 'desc' },
@@ -177,8 +177,12 @@ async function routineFailures(db: ScopedDb, where: { ownerMemberId?: string }) 
           parentId: true,
           archivedAt: true,
           updatedAt: true,
-          laters: { select: { memberId: true } },
-          parent: { select: { laters: { select: { memberId: true } } } },
+          laters: { where: { until: { gt: new Date() } }, select: { memberId: true } },
+          parent: {
+            select: {
+              laters: { where: { until: { gt: new Date() } }, select: { memberId: true } },
+            },
+          },
         },
       },
     },

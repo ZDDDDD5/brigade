@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { after, before, test } from 'node:test'
 import pg from 'pg'
 
-// Later (src/later.ts) against a real database: the local one of apps/api/.env, in an
+// Snooze (src/later.ts, Later in the code) against a real database: the local one of apps/api/.env, in an
 // organization of its own that it removes at the end. Without a database to reach, it is skipped.
 const fromEnvFile = () => {
   try {
@@ -38,7 +38,7 @@ async function reachable() {
 const skip = (await reachable()) ? false : 'no database to reach (apps/api/.env DATABASE_URL)'
 
 const { prisma, scoped } = await import('../src/db.js')
-const { bringBackFromLater, laterKey, latersIn, latersOf, setLater } =
+const { bringBackFromLater, laterKey, latersIn, latersOf, setLater, snoozeUntil, wakeDueSnoozes } =
   await import('../src/later.js')
 const { setThreadArchived } = await import('../src/thread-archive.js')
 const { homeFor } = await import('../src/home.js')
@@ -100,24 +100,22 @@ const thread = (parentId?: string) =>
       ...(parentId ? { parentId, parentTeammateId: teammateId } : {}),
     },
   })
+/** A week on: as long as a test needs it snoozed. */
+const week = () => new Date(Date.now() + 7 * 86_400_000)
 const as = (member: number) => ({ ...scope, memberId: ids.members[member]! })
 const later = (member: number) => latersOf(scoped(scope), ids.members[member]!)
 /** The scoped write hooks run after the write, not awaited: let them finish. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 200))
 
-test(
-  'putting a thread away for later is each member’s own, and Move back undoes it',
-  { skip },
-  async () => {
-    const t = await thread()
-    await setLater(scoped(scope), as(0), t, true)
-    assert.ok((await later(0)).has(t.id))
-    assert.equal((await later(1)).has(t.id), false)
-    assert.ok((await latersIn(scope.workspaceId)).has(laterKey(ids.members[0]!, t.id)))
-    await setLater(scoped(scope), as(0), t, false)
-    assert.equal((await later(0)).has(t.id), false)
-  },
-)
+test('snoozing a thread is each member’s own, and Wake now undoes it', { skip }, async () => {
+  const t = await thread()
+  await setLater(scoped(scope), as(0), t, week())
+  assert.ok((await later(0)).has(t.id))
+  assert.equal((await later(1)).has(t.id), false)
+  assert.ok((await latersIn(scope.workspaceId)).has(laterKey(ids.members[0]!, t.id)))
+  await setLater(scoped(scope), as(0), t, null)
+  assert.equal((await later(0)).has(t.id), false)
+})
 
 test(
   'a ticket opened in it, or in one of its children, brings it back for everyone',
@@ -125,8 +123,8 @@ test(
   async () => {
     const t = await thread()
     const child = await thread(t.id)
-    await setLater(scoped(scope), as(0), t, true)
-    await setLater(scoped(scope), as(1), t, true)
+    await setLater(scoped(scope), as(0), t, week())
+    await setLater(scoped(scope), as(1), t, week())
     await scoped(scope).ticket.create({
       data: { ...scope, sessionId: child.id, type: 'question', title: 'Which plan?' },
     } as never)
@@ -138,7 +136,7 @@ test(
 
 test('a pull request opened in it brings it back', { skip }, async () => {
   const t = await thread()
-  await setLater(scoped(scope), as(0), t, true)
+  await setLater(scoped(scope), as(0), t, week())
   await scoped(scope).pullRequest.create({
     data: {
       ...scope,
@@ -159,7 +157,7 @@ test(
   { skip },
   async () => {
     const t = await thread()
-    await setLater(scoped(scope), as(0), t, true)
+    await setLater(scoped(scope), as(0), t, week())
     await bringBackFromLater(scope, t.id)
     assert.equal((await later(0)).has(t.id), false)
   },
@@ -167,7 +165,7 @@ test(
 
 test('archiving it is no longer for later', { skip }, async () => {
   const t = await thread()
-  await setLater(scoped(scope), as(0), t, true)
+  await setLater(scoped(scope), as(0), t, week())
   await setThreadArchived(scope, t.id, true)
   assert.equal((await later(0)).has(t.id), false)
 })
@@ -187,7 +185,7 @@ test('Home’s threads leave out those put away for later', { skip }, async () =
     },
   } as never)
   assert.ok(await listed())
-  await setLater(scoped(scope), as(0), t, true)
+  await setLater(scoped(scope), as(0), t, week())
   assert.equal(await listed(), false)
 })
 
@@ -259,3 +257,56 @@ test(
     assert.deepEqual(await numbers(ids.members[1]!), [202])
   },
 )
+
+test(
+  'a snooze comes back at its time, unread, and a second run of the job changes nothing',
+  { skip },
+  async () => {
+    const t = await thread()
+    await prisma.sessionEvent.create({
+      data: {
+        ...scope,
+        sessionId: t.id,
+        seq: 1,
+        at: new Date(Date.now() - 60_000),
+        type: 'turn.completed',
+        data: { type: 'turn.completed' },
+      },
+    } as never)
+    await prisma.threadRead.create({
+      data: { ...scope, memberId: ids.members[0]!, sessionId: t.id },
+    })
+    const soon = new Date(Date.now() + 60_000)
+    await setLater(scoped(scope), as(0), t, soon)
+    await setLater(scoped(scope), as(1), t, week())
+    assert.ok((await later(0)).has(t.id))
+    assert.equal((await later(0)).get(t.id)?.until.getTime(), soon.getTime())
+    // Not yet due: nothing moves.
+    await wakeDueSnoozes(scope.workspaceId)
+    assert.ok((await later(0)).has(t.id))
+    // Past its time it is back already, before the job clears it.
+    const past = new Date(soon.getTime() + 1_000)
+    assert.equal((await latersOf(scoped(scope), ids.members[0]!, past)).has(t.id), false)
+    assert.ok(await wakeDueSnoozes(scope.workspaceId, past))
+    const rows = await prisma.threadLater.findMany({ where: { sessionId: t.id } })
+    assert.deepEqual(
+      rows.map((r) => r.memberId),
+      [ids.members[1]],
+      'the other member’s snooze stays',
+    )
+    const read = await prisma.threadRead.findMany({ where: { sessionId: t.id } })
+    assert.equal(read.length, 0, 'unread for the member it came back to')
+    assert.equal(await wakeDueSnoozes(scope.workspaceId, past), 0)
+  },
+)
+
+test('the times a snooze takes', () => {
+  const now = new Date('2026-11-15T12:00:00Z')
+  assert.equal(snoozeUntil(undefined, now)?.toISOString(), '2026-11-22T12:00:00.000Z')
+  assert.equal(snoozeUntil('2026-11-15T13:00:00Z', now)?.toISOString(), '2026-11-15T13:00:00.000Z')
+  assert.equal(snoozeUntil('2026-12-17T12:00:00Z', now)?.toISOString(), '2026-12-17T12:00:00.000Z')
+  assert.equal(snoozeUntil('2026-11-15T11:59:00Z', now), null, 'in the past')
+  assert.equal(snoozeUntil('2026-12-18T12:00:01Z', now), null, 'more than 32 days')
+  assert.equal(snoozeUntil('soon', now), null)
+  assert.equal(snoozeUntil(3600, now), null)
+})

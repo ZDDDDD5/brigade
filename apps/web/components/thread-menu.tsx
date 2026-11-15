@@ -1,8 +1,9 @@
 'use client'
-// A thread's menu: Pin, Do later, Rename, Mark done, Archive and Delete, each with its letter, as
-// in Claude: with the menu open, the letter does it. The same in its sidebar row and in its
-// details panel, so a thread out of the sidebar (filtered, past "+N more", archived, put away
-// for later) can be changed from inside.
+// A thread's menu: Pin, Snooze, Rename, Mark done, Archive and Delete, each with its letter, as
+// in Claude: with the menu open, the letter does it (Snooze's opens its times, picked by their
+// number). The same in its sidebar row and in its details panel, so a thread out of the sidebar
+// (filtered, past "+N more", archived, snoozed) can be changed from inside.
+import { snoozeOptions, type SnoozeOption } from '@brigade/contracts'
 import {
   Archive,
   ArchiveRestore,
@@ -26,6 +27,9 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Hint } from '@/components/ui/tooltip'
@@ -33,6 +37,7 @@ import { renamedHere } from '@/components/streamed-title'
 import { useThreadPanel } from '@/components/thread-panel'
 import { api, type Thread, type ThreadSummary } from '@/lib/api'
 import { setPinned, useShownPins } from '@/lib/optimistic-pins'
+import { wakeLabel } from '@/lib/snooze'
 
 type Action = 'preview' | 'pin' | 'later' | 'rename' | 'done' | 'archive' | 'delete'
 
@@ -69,6 +74,8 @@ export function useThreadMenu({
   const title = thread.title || 'New thread'
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Snooze's times, open beside the menu: by its letter, or the pointer on it.
+  const [snoozing, setSnoozing] = useState(false)
   const { openPreview } = useThreadPanel()
 
   const starter = thread.startedBy.id === memberId
@@ -83,8 +90,9 @@ export function useThreadMenu({
   const later = !!thread.laterAt
   const done = !!thread.doneAt
 
-  async function run(action: Action) {
+  async function run(action: Action, until?: Date) {
     setOpen(false)
+    setSnoozing(false)
     if (action === 'preview') return openPreview(thread.id)
     if (action === 'rename') return onRename()
     if (action === 'delete' && !confirm(await deleteQuestion(thread.id, title))) return
@@ -98,7 +106,11 @@ export function useThreadMenu({
       ).catch((e) => alert(e instanceof Error ? e.message : String(e)))
     setBusy(true)
     try {
-      if (action === 'later') await api(`${path}/later`, { method: later ? 'DELETE' : 'POST' })
+      if (action === 'later')
+        await api(`${path}/later`, {
+          method: later ? 'DELETE' : 'POST',
+          ...(later ? {} : { body: { until: until?.toISOString() } }),
+        })
       else if (action === 'done') await api(`${path}/done`, { method: done ? 'DELETE' : 'POST' })
       else if (action === 'archive')
         await api(`${path}/archive`, { method: archived ? 'DELETE' : 'POST' })
@@ -129,13 +141,13 @@ export function useThreadMenu({
       key: 'P',
       show: true,
     },
-    // Each member's own, like a pin: out of their list and of what waits on them, until
-    // something new happens in it. An archived thread is already put away.
+    // Each member's own, like a pin: out of their list and of what waits on them until the time
+    // picked, or until something new happens in it. An archived thread is already put away.
     {
       action: 'later',
-      label: later ? 'Move back' : 'Do later',
+      label: later ? 'Wake now' : 'Snooze',
       icon: later ? <Undo2 /> : <Clock />,
-      key: 'L',
+      key: 'S',
       show: later || (!archived && !thread.parent),
     },
     { action: 'rename', label: 'Rename', icon: <Pencil />, key: 'R', show: mayChange },
@@ -157,26 +169,55 @@ export function useThreadMenu({
     { action: 'delete', label: 'Delete', icon: <Trash2 />, key: 'D', show: mayDelete },
   ]
   const shown = items.filter((i) => i.show)
+  // From now, each time the menu shows: "Tomorrow" is the member's own tomorrow.
+  const times: SnoozeOption[] = open ? snoozeOptions() : []
 
   function onMenuKey(e: KeyboardEvent) {
     if (e.metaKey || e.ctrlKey || e.altKey) return
+    const time = snoozing ? times[Number(e.key) - 1] : undefined
+    if (time) {
+      e.preventDefault()
+      return void run('later', time.until)
+    }
     const item = shown.find((i) => i.key === e.key.toUpperCase())
     if (!item) return
     e.preventDefault()
+    if (item.action === 'later' && !later) return setSnoozing(true)
     void run(item.action)
   }
 
   const content = shown.map((item) => (
     <Fragment key={item.action}>
       {item.action === 'delete' && <DropdownMenuSeparator />}
-      <DropdownMenuItem
-        variant={item.action === 'delete' ? 'destructive' : 'default'}
-        onSelect={() => void run(item.action)}
-      >
-        {item.icon}
-        {item.label}
-        <DropdownMenuShortcut>{item.key}</DropdownMenuShortcut>
-      </DropdownMenuItem>
+      {item.action === 'later' && !later ? (
+        <DropdownMenuSub open={snoozing} onOpenChange={setSnoozing}>
+          <DropdownMenuSubTrigger className="[&>svg:last-child]:ml-1">
+            {item.icon}
+            {item.label}
+            <DropdownMenuShortcut>{item.key}</DropdownMenuShortcut>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="min-w-52">
+            {times.map((time, i) => (
+              <DropdownMenuItem key={time.key} onSelect={() => void run('later', time.until)}>
+                {time.label}
+                <span className="text-muted-foreground ml-auto pl-4 text-xs tabular-nums">
+                  {wakeLabel(time.until)}
+                </span>
+                <DropdownMenuShortcut className="ml-2">{i + 1}</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      ) : (
+        <DropdownMenuItem
+          variant={item.action === 'delete' ? 'destructive' : 'default'}
+          onSelect={() => void run(item.action)}
+        >
+          {item.icon}
+          {item.label}
+          <DropdownMenuShortcut>{item.key}</DropdownMenuShortcut>
+        </DropdownMenuItem>
+      )}
     </Fragment>
   ))
 

@@ -1002,8 +1002,13 @@ const routes: [string, RegExp, Handler][] = [
   [
     'POST',
     /^\/threads\/([^/]+)\/(pin|later)$/,
-    ([threadId, what]) => (
-      patchThread(threadId, { [`${what === 'pin' ? 'pinned' : 'later'}At`]: now() }),
+    ([threadId, what], input) => (
+      patchThread(
+        threadId,
+        what === 'pin'
+          ? { pinnedAt: now() }
+          : { laterAt: now(), snoozedUntil: (input as { until?: string } | null)?.until ?? null },
+      ),
       ok
     ),
   ],
@@ -1011,7 +1016,10 @@ const routes: [string, RegExp, Handler][] = [
     'DELETE',
     /^\/threads\/([^/]+)\/(pin|later)$/,
     ([threadId, what]) => (
-      patchThread(threadId, { [`${what === 'pin' ? 'pinned' : 'later'}At`]: null }),
+      patchThread(
+        threadId,
+        what === 'pin' ? { pinnedAt: null } : { laterAt: null, snoozedUntil: null },
+      ),
       ok
     ),
   ],
