@@ -116,6 +116,19 @@ try {
   const main = await windowAt('/app', true)
   const mainSeen = await main.evaluate(() => window.seen)
   check('main bridge', () => assert.equal(mainSeen.info?.window, 'main'))
+  // No title bar on macOS and Windows; the desktop's own on Linux. The new thread window has none.
+  const frames = { darwin: 'mac', win32: 'overlay', linux: 'native' }
+  check('main frame', () => assert.equal(mainSeen.info?.frame, frames[process.platform]))
+  check('capture has no frame info', () => assert.equal(seen.info?.frame, undefined))
+  // The dashboard sits in a view below the band for the window's buttons: 32px on Windows,
+  // none elsewhere (macOS's band shows only on a narrow page).
+  const top = await app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows().find((w) => w.contentView.children.length > 0)
+    return window?.contentView.children[0]?.getBounds().y
+  })
+  check('dashboard view below the band', () =>
+    assert.equal(top, process.platform === 'win32' ? 32 : 0),
+  )
   const refused = await main.evaluate(() =>
     window.brigadeDesktop.captures.list().then(
       () => 'listed',
@@ -144,9 +157,10 @@ try {
   check('provider sign-in comes back', () => assert.deepEqual(results, [{ connected: 'conn_1' }]))
 
   // Another site loaded in a window by the app itself still gets no bridge.
-  await app.evaluate(({ BrowserWindow }, url) => {
-    const w = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().endsWith('/app'))
-    return w.loadURL(url)
+  // The dashboard is a view in its window (windows.ts): found among all pages.
+  await app.evaluate(({ webContents }, url) => {
+    const page = webContents.getAllWebContents().find((c) => c.getURL().endsWith('/app'))
+    return page.loadURL(url)
   }, `${otherOrigin}/`)
   const otherSeen = await main.evaluate(() => window.seen)
   check('no bridge elsewhere', () => assert.equal(otherSeen.bridge, false))
@@ -166,6 +180,49 @@ try {
       ),
     )
   }
+
+  // Closing the dashboard window asks its page first (the window itself only holds the band):
+  // unsaved edits keep it open, unless the person discards them.
+  await app.evaluate(() => globalThis.brigadeTest.showDashboard())
+  await waitFor(() => main.evaluate(() => !!window.seen?.bridge))
+  await main.evaluate(() => addEventListener('beforeunload', (event) => event.preventDefault()))
+  // Chromium honours beforeunload only on a page the person used.
+  await main.mouse.click(200, 200)
+  const answer = (response) =>
+    app.evaluate(({ dialog }, response) => {
+      globalThis.asked ??= 0
+      dialog.showMessageBox = async () => {
+        globalThis.asked++
+        return { response, checkboxChecked: false }
+      }
+    }, response)
+  const closeMain = () => app.evaluate(() => globalThis.brigadeTest.dashboardWindow()?.close())
+  const mainOpen = () => app.evaluate(() => !!globalThis.brigadeTest.dashboardWindow())
+  const asked = () => app.evaluate(() => globalThis.asked ?? 0)
+  await answer(1)
+  await closeMain()
+  await waitFor(asked)
+  await main.waitForTimeout(500)
+  const kept = await mainOpen()
+  check('unsaved edits kept: the window stays', () => assert.equal(kept, true))
+  check('unsaved edits kept: the page stays', () => assert.equal(main.isClosed(), false))
+  await answer(0)
+  await closeMain()
+  await waitFor(async () => !(await mainOpen()))
+  const timesAsked = await asked()
+  check('unsaved edits discarded: the window closes', () => assert.equal(timesAsked, 2))
+  // Nothing unsaved: it closes without a question.
+  await app.evaluate(() => globalThis.brigadeTest.showDashboard())
+  await waitFor(() => mainOpen())
+  await waitFor(() =>
+    app.evaluate(({ webContents }) =>
+      webContents.getAllWebContents().some((c) => c.getURL().endsWith('/app') && !c.isLoading()),
+    ),
+  )
+  await closeMain()
+  await waitFor(async () => !(await mainOpen()))
+  const askedAfter = await asked()
+  check('closes without a question', () => assert.equal(askedAfter, 2))
 } finally {
   // Quit as the menu does: the app ends by itself.
   const closed = new Promise((resolve) => app.process().once('exit', (code) => resolve(code)))

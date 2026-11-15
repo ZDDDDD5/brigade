@@ -1584,3 +1584,36 @@ html[data-sidebar-resizing] [data-slot='sidebar-gap'],
 html[data-sidebar-resizing] [data-slot='sidebar-container'] {
   transition: none;
 }
+
+/* Brigade.app's dashboard window on macOS, without a title bar (lib/desktop-frame.ts). What
+ * moves the window is marked data-window-drag; every control on the page is carved out of it,
+ * wherever it sits (a thread's pills over the band at the top, a menu opened over it), so only
+ * empty space moves the window. Ignored by browsers. */
+html[data-desktop-frame] [data-window-drag] {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+html[data-desktop-frame]
+  :is(
+    a,
+    button,
+    input,
+    select,
+    textarea,
+    label,
+    summary,
+    [role],
+    [tabindex],
+    [contenteditable='true']
+  ) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+/* With the sidebar folded to its rail, the traffic lights reach past the rail, so the thread's
+ * sidebar toggle steps aside from them. */
+html[data-desktop-frame='mac']
+  .peer[data-state='collapsed']
+  ~ [data-slot='sidebar-inset']
+  .pill-toggle {
+  left: 2rem;
+}
