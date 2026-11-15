@@ -31,8 +31,61 @@ export type OutputKind = z.infer<typeof OutputKind>
 export const OutputMetrics = z.record(z.string().trim().min(1).max(40), z.number().finite())
 export type OutputMetrics = z.infer<typeof OutputMetrics>
 
+/** The number a mission follows: its name, its unit, where it aims. */
+export const MissionMetric = z.object({
+  label: Text(60),
+  unit: z.string().trim().max(20).nullish(),
+  target: z.number().finite().nullish(),
+})
+export type MissionMetric = z.infer<typeof MissionMetric>
+
+const MissionTitle = Text(120)
+const Objective = Text(500)
+
+/** Threads a mission is given at once, from the dashboard. */
+export const MISSION_THREADS_MAX = 20
+
+/** A mission made from the Missions page (POST /missions). */
+export const CreateMission = z.object({
+  title: MissionTitle,
+  objective: Objective,
+  /** Its owner, the teammate it is delegated to. */
+  teammateId: z.string().min(1),
+  projectId: z.string().nullish(),
+  metric: MissionMetric.nullish(),
+  /** Threads it gathers, at the top: their routines and sub-threads come with them. */
+  threadIds: z.array(z.string().min(1)).max(MISSION_THREADS_MAX).default([]),
+})
+export type CreateMission = z.infer<typeof CreateMission>
+
+/** Changes to a mission (PATCH /missions/:id); `threadIds` is its whole set of threads. */
+export const UpdateMission = z.object({
+  title: MissionTitle.optional(),
+  objective: Objective.optional(),
+  teammateId: z.string().min(1).optional(),
+  metric: MissionMetric.nullable().optional(),
+  threadIds: z.array(z.string().min(1)).max(MISSION_THREADS_MAX).optional(),
+  archived: z.boolean().optional(),
+})
+export type UpdateMission = z.infer<typeof UpdateMission>
+
 /** The mission operations of a teammate's schedule tools, from a thread of a mission. */
 export const InitiativeOperations = [
+  /** From a thread a person started, at the top: the work delegated there becomes a mission. */
+  z.object({
+    name: z.literal('create_mission'),
+    title: MissionTitle,
+    objective: Objective,
+    metric: MissionMetric.optional(),
+  }),
+  /** Its title, objective or number changed, or archived once the work is over. */
+  z.object({
+    name: z.literal('update_mission'),
+    title: MissionTitle.optional(),
+    objective: Objective.optional(),
+    metric: MissionMetric.nullable().optional(),
+    archive: z.boolean().optional(),
+  }),
   z.object({
     name: z.literal('plan_action'),
     /** When it runs: an ISO 8601 instant with its offset. */
@@ -235,6 +288,8 @@ export type MissionRow = {
   title: string
   objective: string
   teammate: { id: string; name: string }
+  /** The number it follows, as set (number is what was read of it). */
+  metric: { label: string; unit: string | null; target: number | null } | null
   projectId: string | null
   threads: { id: string; title: string; status: string }[]
   routines: { id: string; title: string; nextRunAt: string | null; pausedAt: string | null }[]

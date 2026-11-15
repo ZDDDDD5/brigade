@@ -31,8 +31,20 @@ People read "Mission". In code and in the database it is an **Initiative** (`Ini
 - **Its owner**: the teammate it is delegated to, with a title, a one-line objective and, optionally,
   a number to follow (`metricLabel`, `metricUnit`, `metricTarget`).
 
-How a mission is created, and how existing threads and routines join one, is not built yet: it waits
-on a decision about the creation flow. The seed makes two (`apps/api/prisma/seed-missions.ts`).
+## Making one
+
+- **A teammate**, from the thread a person delegated the work in (`create_mission`): a thread a
+  person started, at the top, that belongs to no mission yet, where its starter has the feature. Its
+  instructions (`## Missions`) say to make one only once the person delegated ongoing work or agreed,
+  never for a one-off task or a deliverable. The thread becomes the mission's, with its routines and
+  sub-threads; the teammate owns it. `update_mission` changes its words or number, or archives it.
+- **A member**, on the Missions page (`POST /api/missions`, `PATCH /api/missions/:id`): a title, an
+  objective, its owner, an optional number, and the threads it gathers (the whole set, on edit). A
+  thread given is one at the top (a sub-thread belongs to its parent's), and one the member may write
+  in, or any for an admin. A thread belongs to one mission at most: given to another, it moves.
+  Viewers make and change none. Archived, a mission leaves the page and its threads stop carrying it.
+
+The seed makes two (`apps/api/prisma/seed-missions.ts`).
 
 ## The plan is data Brigade runs
 
@@ -94,7 +106,6 @@ their instructions saying when to use them. `plan_action` and `cancel_action` ar
 
 ## Limits
 
-- No creation flow yet (see above).
 - Playbooks are left alone: a playbook's per-action autonomy is per App write
   (Projects/Brigade/decisions/playbooks-spec.md), which a browser action isn't.
 - An approved draft is the teammate's to use as it is; Brigade does not check what went out matches it.

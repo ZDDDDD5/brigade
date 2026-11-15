@@ -11,14 +11,50 @@ import type {
   MissionRow,
   MissionWeek,
 } from '@brigade/contracts'
-import { AlarmClock, CalendarClock, ChevronRight, ExternalLink, Send, Stamp } from 'lucide-react'
+import {
+  AlarmClock,
+  Archive,
+  CalendarClock,
+  ChevronRight,
+  ExternalLink,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Send,
+  Stamp,
+} from 'lucide-react'
 import Link from 'next/link'
-import { useMemo, useState } from 'react'
-import { TeammateAvatar, timeAgo } from '@/components/dashboard'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { TeammateAvatar, timeAgo, useDashboard } from '@/components/dashboard'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
 import { shortWakeTime } from '@/components/wakeup-icon'
-import { api, useApi } from '@/lib/api'
+import { api, useApi, type ThreadSummary } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 /** What changes a mission: its threads, tickets and routines. */
@@ -235,8 +271,26 @@ function Line({ label, children }: { label: string; children: React.ReactNode })
   )
 }
 
-function MissionCard({ mission, onChanged }: { mission: MissionRow; onChanged: () => void }) {
+function MissionCard({
+  mission,
+  onChanged,
+  onEdit,
+}: {
+  mission: MissionRow
+  onChanged: () => void
+  onEdit: () => void
+}) {
   const [outputs, setOutputs] = useState(false)
+  const [error, setError] = useState<string>()
+  const archive = async () => {
+    setError(undefined)
+    try {
+      await api(`/missions/${mission.id}`, { method: 'PATCH', body: { archived: true } })
+      onChanged()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
   const approvals = mission.needs.filter((n) => n.reason === 'approval' && n.ticketId)
   const needs = mission.needs.filter((n) => !(n.reason === 'approval' && n.ticketId))
   const next = mission.next
@@ -271,7 +325,28 @@ function MissionCard({ mission, onChanged }: { mission: MissionRow; onChanged: (
           </span>
         </div>
         {mission.number && <NumberBlock n={mission.number} />}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="size-7 shrink-0"
+              aria-label={`${mission.title}: more`}
+            >
+              <MoreHorizontal aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onEdit}>
+              <Pencil aria-hidden /> Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => void archive()}>
+              <Archive aria-hidden /> Archive
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
+      {error && <span className="text-xs text-destructive-text sm:ml-10">{error}</span>}
 
       <div className="flex flex-col gap-2 sm:ml-10">
         {(approvals.length > 0 || needs.length > 0) && (
@@ -474,6 +549,232 @@ function WeekView({ week, onChanged }: { week: MissionWeek; onChanged: () => voi
   )
 }
 
+function Field({
+  label,
+  htmlFor,
+  hint,
+  children,
+}: {
+  label: string
+  htmlFor?: string
+  hint?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <Label htmlFor={htmlFor}>{label}</Label>
+      {children}
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
+/**
+ * A new mission, or changes to one: its words, its owner, the number it follows and its threads
+ * (their sub-threads and routines come with them). A teammate also makes one from its thread.
+ */
+function MissionDialog({
+  open,
+  onOpenChange,
+  mission,
+  onSaved,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  /** Unset: a new mission. */
+  mission?: MissionRow
+  onSaved: () => void
+}) {
+  const { teammates } = useDashboard()
+  const recent = useApi<ThreadSummary[]>(open ? '/threads?limit=100&sort=activity' : null)
+  const [title, setTitle] = useState('')
+  const [objective, setObjective] = useState('')
+  const [teammateId, setTeammateId] = useState<string>()
+  const [label, setLabel] = useState('')
+  const [unit, setUnit] = useState('')
+  const [target, setTarget] = useState('')
+  const [threadIds, setThreadIds] = useState<string[]>([])
+  const [search, setSearch] = useState('')
+  const [error, setError] = useState<string>()
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    setTitle(mission?.title ?? '')
+    setObjective(mission?.objective ?? '')
+    setTeammateId(mission?.teammate.id)
+    setLabel(mission?.metric?.label ?? '')
+    setUnit(mission?.metric?.unit ?? '')
+    setTarget(mission?.metric?.target != null ? String(mission.metric.target) : '')
+    setThreadIds(mission?.threads.map((t) => t.id) ?? [])
+    setSearch('')
+    setError(undefined)
+  }, [open, mission])
+
+  const owner = teammateId ?? teammates[0]?.id
+  // Its own threads first, then the latest active, as the search narrows them.
+  const threads = useMemo(() => {
+    const own = mission?.threads ?? []
+    const rest = (recent.data ?? []).filter((t) => !own.some((o) => o.id === t.id))
+    const all = [...own.map((t) => ({ id: t.id, title: t.title })), ...rest]
+    const q = search.trim().toLowerCase()
+    return q ? all.filter((t) => t.title.toLowerCase().includes(q)) : all
+  }, [recent.data, mission, search])
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (busy || !owner) return
+    const goal = target.trim() ? Number(target) : null
+    if (goal !== null && !Number.isFinite(goal)) return setError('The target is a number')
+    setBusy(true)
+    setError(undefined)
+    const metric = label.trim()
+      ? { label: label.trim(), unit: unit.trim() || null, target: goal }
+      : null
+    try {
+      const body = { title, objective, teammateId: owner, metric, threadIds }
+      if (mission) await api(`/missions/${mission.id}`, { method: 'PATCH', body })
+      else await api('/missions', { body })
+      onOpenChange(false)
+      onSaved()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[90dvh] grid-cols-1 overflow-y-auto sm:max-w-xl">
+        <form onSubmit={(e) => void submit(e)} className="flex min-w-0 flex-col gap-4">
+          <DialogHeader>
+            <DialogTitle>{mission ? 'Edit mission' : 'New mission'}</DialogTitle>
+            <DialogDescription>
+              Ongoing work you delegate to a teammate. Its threads, their routines and what is
+              planned there show here together.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Title" htmlFor="mission-title">
+              <Input
+                id="mission-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Grow LinkedIn"
+                required
+                maxLength={120}
+                autoFocus
+              />
+            </Field>
+            <Field label="Teammate" htmlFor="mission-teammate">
+              <Select value={owner} onValueChange={setTeammateId}>
+                <SelectTrigger id="mission-teammate" className="w-full">
+                  <SelectValue placeholder="Choose a teammate" />
+                </SelectTrigger>
+                <SelectContent>
+                  {teammates.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      <TeammateAvatar teammate={t} className="size-5" />
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          </div>
+          <Field label="Objective" htmlFor="mission-objective">
+            <Textarea
+              id="mission-objective"
+              value={objective}
+              onChange={(e) => setObjective(e.target.value)}
+              placeholder="2,000 followers by January, with two posts a week"
+              required
+              maxLength={500}
+              rows={2}
+            />
+          </Field>
+          <Field
+            label="Number to follow"
+            hint="Optional. Your teammate records it where Brigade can't read it; a goal in one of its threads measures it instead."
+          >
+            <div className="grid grid-cols-[1fr_5rem_6rem] gap-2">
+              <Input
+                aria-label="Name"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="Followers"
+                maxLength={60}
+              />
+              <Input
+                aria-label="Unit"
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                placeholder="Unit"
+                maxLength={20}
+                disabled={!label.trim()}
+              />
+              <Input
+                aria-label="Target"
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                placeholder="Target"
+                inputMode="decimal"
+                disabled={!label.trim()}
+              />
+            </div>
+          </Field>
+          <Field label="Threads" hint="Their sub-threads and routines come with them.">
+            <Input
+              aria-label="Search threads"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search threads"
+            />
+            <ul className="max-h-56 overflow-y-auto rounded-lg border">
+              {!recent.data && !mission?.threads.length ? (
+                <li className="px-3 py-2">
+                  <Skeleton className="h-5 w-full" />
+                </li>
+              ) : threads.length === 0 ? (
+                <li className="px-3 py-2 text-sm text-muted-foreground">No threads</li>
+              ) : (
+                threads.map((t) => {
+                  const checked = threadIds.includes(t.id)
+                  return (
+                    <li key={t.id} className="border-t first:border-t-0">
+                      <label className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm">
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(on) =>
+                            setThreadIds((ids) =>
+                              on ? [...ids, t.id] : ids.filter((id) => id !== t.id),
+                            )
+                          }
+                        />
+                        <span className="truncate">{t.title}</span>
+                      </label>
+                    </li>
+                  )
+                })
+              )}
+            </ul>
+          </Field>
+          {error && <p className="text-sm text-destructive-text">{error}</p>}
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy || !owner}>
+              {mission ? 'Save' : 'Create mission'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /** The Missions page. */
 export function MissionsPage() {
   const [view, setView] = useState<View>('missions')
@@ -486,15 +787,22 @@ export function MissionsPage() {
   }
   const list = missions.data?.missions ?? []
   const error = missions.error ?? week.error
+  const [editing, setEditing] = useState<MissionRow | 'new' | null>(null)
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-3xl font-extrabold tracking-tight">Missions</h1>
-        <p className="max-w-prose text-muted-foreground">
-          Ongoing work you delegated: where each mission stands, what comes next and what waits on
-          you, without opening its threads.
-        </p>
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-3xl font-extrabold tracking-tight">Missions</h1>
+          <p className="max-w-prose text-muted-foreground">
+            Ongoing work you delegated: where each mission stands, what comes next and what waits on
+            you, without opening its threads.
+          </p>
+        </div>
+        <Button className="ml-auto" onClick={() => setEditing('new')}>
+          <Plus aria-hidden />
+          New mission
+        </Button>
       </header>
 
       {list.length > 0 && (
@@ -526,7 +834,8 @@ export function MissionsPage() {
       ) : list.length === 0 ? (
         <p className="rounded-xl border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
           No missions yet. A mission gathers the threads and routines of ongoing work a teammate
-          owns, such as growing an account, with its plan and what went out.
+          owns, such as growing an account, with its plan and what went out. Make one here, or ask
+          the teammate in its thread.
         </p>
       ) : view === 'week' ? (
         week.data ? (
@@ -537,11 +846,17 @@ export function MissionsPage() {
       ) : (
         <ul className="rounded-xl border bg-card">
           {list.map((m) => (
-            <MissionCard key={m.id} mission={m} onChanged={reload} />
+            <MissionCard key={m.id} mission={m} onChanged={reload} onEdit={() => setEditing(m)} />
           ))}
         </ul>
       )}
       {error && <p className="text-sm text-destructive-text">{error.message}</p>}
+      <MissionDialog
+        open={editing !== null}
+        onOpenChange={(open) => !open && setEditing(null)}
+        mission={editing && editing !== 'new' ? editing : undefined}
+        onSaved={reload}
+      />
     </div>
   )
 }

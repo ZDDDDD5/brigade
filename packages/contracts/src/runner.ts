@@ -268,6 +268,11 @@ export const ThreadSpec = z.object({
    * The mission the thread works for (docs/missions.md), when its starter has the missions feature:
    * its teammates plan actions and record what went out there. Older APIs leave it out: none.
    */
+  /**
+   * Its starter has Missions (the missions feature): in a thread a person started, at the top, its
+   * teammate may make one of the work delegated there (create_mission). Older APIs leave it out.
+   */
+  missions: z.boolean().default(false),
   mission: z
     .object({
       id: z.string(),

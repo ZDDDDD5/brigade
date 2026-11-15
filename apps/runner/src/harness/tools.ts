@@ -4408,11 +4408,98 @@ const GOALS_UNKNOWN =
  * dated actions Brigade runs at their time, and record what went out and the mission's number. The
  * API checks the thread belongs to the mission.
  */
+const METRIC_SCHEMA: JSONSchema7 = {
+  type: 'object',
+  description:
+    'The number it follows, when one says whether it works: "Followers", with its target',
+  properties: {
+    label: { type: 'string', description: 'Its name: "Followers"' },
+    unit: { type: 'string', description: 'Its unit, if any: "€", "%"' },
+    target: { type: 'number', description: 'Where it aims, if said: 2000' },
+  },
+  required: ['label'],
+}
+
+type MetricInput = { label: string; unit?: string; target?: number }
+
+/**
+ * A mission made of the work delegated in this thread (docs/missions.md), where its starter has
+ * the feature, in a thread a person started at the top that belongs to none yet.
+ */
+export function createMissionTools(call: ScheduleCaller): Record<string, Tool> {
+  return {
+    create_mission: tool({
+      description:
+        'Make this thread a mission: ongoing work the person delegated to you (grow an account, answer a community, ' +
+        'keep a channel going), with no end date. It shows on the Missions page with its plan, what waits on the ' +
+        'person and what went out; this thread, its sub-threads and routines, and what you start from here belong ' +
+        'to it. Only once the person delegated ongoing work or agreed to it: never for a one-off task or a deliverable.',
+      inputSchema: jsonSchema<{ title: string; objective: string; metric?: MetricInput }>({
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'A few words: "Grow LinkedIn for brigade.lol"' },
+          objective: {
+            type: 'string',
+            description:
+              'What it is for, in one line: "2,000 followers by January, two posts a week"',
+          },
+          metric: METRIC_SCHEMA,
+        },
+        required: ['title', 'objective'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'create_mission',
+            title: input.title,
+            objective: input.objective,
+            ...(input.metric ? { metric: input.metric } : {}),
+          },
+          toolCallId,
+          toolName: 'create_mission',
+          input,
+        }),
+    }),
+  }
+}
+
 export function missionTools(
   call: ScheduleCaller,
   mission: { number: { label: string; unit: string | null } | null },
 ): Record<string, Tool> {
   const tools: Record<string, Tool> = {
+    update_mission: tool({
+      description:
+        "Change this thread's mission when the person changes it: its title, objective or number (metric: null " +
+        'drops it); archive: true once the person ends the work.',
+      inputSchema: jsonSchema<{
+        title?: string
+        objective?: string
+        metric?: MetricInput | null
+        archive?: boolean
+      }>({
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          objective: { type: 'string' },
+          metric: { anyOf: [METRIC_SCHEMA, { type: 'null' }] },
+          archive: { type: 'boolean' },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'update_mission',
+            ...(input.title ? { title: input.title } : {}),
+            ...(input.objective ? { objective: input.objective } : {}),
+            ...(input.metric !== undefined ? { metric: input.metric } : {}),
+            ...(input.archive ? { archive: true } : {}),
+          },
+          toolCallId,
+          toolName: 'update_mission',
+          input,
+        }),
+    }),
     plan_action: tool({
       description:
         "Plan a dated action of this thread's mission (a post at 14:30 Monday, a reply once a thread opens): at its time " +

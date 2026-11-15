@@ -39,6 +39,8 @@ export const THREAD_TOOLS = [
   'propose_goal',
   'goal_report',
   // A mission's plan is the thread's: what it will do, and when (docs/missions.md).
+  'create_mission',
+  'update_mission',
   'plan_action',
   'cancel_action',
   // What it waits on and what wakes it: child threads, wake-ups and reviews, whose news comes

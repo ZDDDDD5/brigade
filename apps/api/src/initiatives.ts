@@ -16,6 +16,9 @@ import {
   actionTimes,
   type ActionNoteKind,
   type MissionAgendaItem,
+  type CreateMission,
+  type MissionMetric,
+  type UpdateMission,
   type MissionNeed,
   type MissionNumber,
   type MissionOutput,
@@ -28,6 +31,7 @@ import {
   WEEK_DAYS,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
+import { mayWrite } from './account-sharing.js'
 import { audit } from './audit.js'
 import { board } from './board.js'
 import { reportOf } from './children.js'
@@ -39,10 +43,21 @@ import { fireNow } from './wakeups.js'
 
 type InitiativeOperation = Extract<
   ScheduleOperation,
-  { name: 'plan_action' | 'list_actions' | 'cancel_action' | 'record_output' | 'record_number' }
+  {
+    name:
+      | 'create_mission'
+      | 'update_mission'
+      | 'plan_action'
+      | 'list_actions'
+      | 'cancel_action'
+      | 'record_output'
+      | 'record_number'
+  }
 >
 
 const OPERATIONS = new Set([
+  'create_mission',
+  'update_mission',
   'plan_action',
   'list_actions',
   'cancel_action',
@@ -113,6 +128,13 @@ async function homeThreadOf(db: ScopedDb, thread: ThreadLink, initiativeId: stri
   })
   return main?.id ?? thread.id
 }
+
+/** A mission's number, as columns: none clears it. */
+const metricData = (metric: MissionMetric | null) => ({
+  metricLabel: metric?.label ?? null,
+  metricUnit: metric?.unit ?? null,
+  metricTarget: metric?.target ?? null,
+})
 
 /** The mission a thread belongs to, by id, or null. */
 export async function missionIdOfThread(db: ScopedDb, sessionId: string) {
@@ -200,6 +222,9 @@ export async function handleInitiativeCall(
     startedByMemberId: string
     workspaceId: string
     playbookRunId?: string | null
+    origin?: string
+    parentId?: string | null
+    projectId?: string | null
   },
   teammate: { id: string; name: string },
   op: InitiativeOperation,
@@ -211,12 +236,93 @@ export async function handleInitiativeCall(
   const mission = missionId
     ? await db.initiative.findFirst({ where: { id: missionId, archivedAt: null } })
     : null
+  if (op.name === 'create_mission') {
+    if (mission)
+      return {
+        error: `This thread already works for the mission "${mission.title}": change it with update_mission.`,
+      }
+    if (session.origin !== 'member' || session.parentId || session.playbookRunId || !link)
+      return {
+        error:
+          'A mission is made from the thread a person delegated the work in, at the top: not from a ' +
+          'sub-thread, a routine’s run or a playbook’s thread.',
+      }
+    const created = await db
+      .$transaction(async (tx) => {
+        const row = await tx.initiative.create({
+          data: {
+            teammateId: teammate.id,
+            projectId: session.projectId ?? null,
+            title: op.title,
+            objective: op.objective,
+            metricLabel: op.metric?.label ?? null,
+            metricUnit: op.metric?.unit ?? null,
+            metricTarget: op.metric?.target ?? null,
+            createdByTeammateId: teammate.id,
+          } as never,
+        })
+        // Kept only while the thread still belongs to none: two calls at once make one mission of it.
+        const { count } = await tx.session.updateMany({
+          where: { id: session.id, initiativeId: null },
+          data: { initiativeId: row.id },
+        })
+        if (!count)
+          throw new HTTPException(409, { message: 'This thread joined a mission meanwhile' })
+        return row
+      })
+      .catch((error: unknown) => {
+        if (error instanceof HTTPException) return { error: error.message }
+        throw error
+      })
+    if ('error' in created) return created
+    await audit({
+      ...scope,
+      actor: { type: 'teammate', id: teammate.id },
+      action: 'mission.created',
+      target: { type: 'thread', id: session.id },
+      data: { missionId: created.id },
+    })
+    changed(scope, session.id)
+    return {
+      missionId: created.id,
+      title: created.title,
+      next:
+        'Made. This thread, its sub-threads and its routines belong to it now, and so does what you ' +
+        'start from here. Tell the person in one line that it is on the Missions page.',
+    }
+  }
   if (!link || !mission)
     return {
       error:
         'This thread belongs to no mission: there is nothing to plan or record here. Just do the work.',
     }
   const actor = { type: 'teammate' as const, id: teammate.id }
+
+  if (op.name === 'update_mission') {
+    const updated = await db.initiative.update({
+      where: { id: mission.id },
+      data: {
+        ...(op.title ? { title: op.title } : {}),
+        ...(op.objective ? { objective: op.objective } : {}),
+        ...(op.metric !== undefined ? metricData(op.metric) : {}),
+        ...(op.archive ? { archivedAt: new Date() } : {}),
+      },
+    })
+    await audit({
+      ...scope,
+      actor,
+      action: op.archive ? 'mission.archived' : 'mission.updated',
+      target: { type: 'thread', id: session.id },
+      data: { missionId: mission.id },
+    })
+    changed(scope, session.id)
+    return {
+      missionId: updated.id,
+      title: updated.title,
+      objective: updated.objective,
+      archived: !!updated.archivedAt,
+    }
+  }
 
   if (op.name === 'plan_action') {
     const times = actionTimes(op)
@@ -1037,6 +1143,9 @@ export async function listMissions(
       title: m.title,
       objective: m.objective,
       teammate: m.teammate,
+      metric: m.metricLabel
+        ? { label: m.metricLabel, unit: m.metricUnit, target: m.metricTarget }
+        : null,
       projectId: m.projectId,
       threads: m.sessions
         .filter((s) => !s.archivedAt)
@@ -1083,4 +1192,143 @@ export async function missionWeek(db: ScopedDb, from: Date): Promise<MissionWeek
     items: await agendaOf(db, missions, from, to),
     missions: missions.map((m) => ({ id: m.id, title: m.title })),
   }
+}
+
+// ---- Made and changed from the Missions page ----
+
+/**
+ * The threads a member gives a mission: at the top (a sub-thread or a routine's run belongs to its
+ * parent's or its routine's), and ones they may write in, or any for an admin, as for closing one.
+ */
+async function threadsToGive(db: ScopedDb, scope: WorkspaceScope, ids: string[]) {
+  const wanted = [...new Set(ids)]
+  if (!wanted.length) return []
+  const rows = await db.session.findMany({
+    where: { id: { in: wanted } },
+    select: {
+      id: true,
+      parentId: true,
+      startedByMemberId: true,
+      othersMayPrompt: true,
+      computer: { select: { kind: true } },
+    },
+  })
+  const admin = scope.role === 'owner' || scope.role === 'admin'
+  for (const id of wanted) {
+    const row = rows.find((r) => r.id === id)
+    if (!row) throw new HTTPException(404, { message: 'One of these threads is gone' })
+    if (row.parentId)
+      throw new HTTPException(400, {
+        message: 'A sub-thread belongs to its parent’s mission: give the parent thread instead',
+      })
+    if (!admin && !mayWrite(row, scope))
+      throw new HTTPException(403, {
+        message: 'You can give a mission only threads you may write in',
+      })
+  }
+  return wanted
+}
+
+async function ownerOf(db: ScopedDb, teammateId: string) {
+  const teammate = await db.teammate.findFirst({
+    where: { id: teammateId, archivedAt: null },
+    select: { id: true },
+  })
+  if (!teammate) throw new HTTPException(400, { message: 'No such teammate' })
+  return teammate.id
+}
+
+/** POST /missions: a mission, with the threads it gathers (each leaves any mission it was in). */
+export async function createMission(db: ScopedDb, scope: WorkspaceScope, input: CreateMission) {
+  const teammateId = await ownerOf(db, input.teammateId)
+  const threads = await threadsToGive(db, scope, input.threadIds)
+  const projectId = input.projectId
+    ? ((await db.project.findFirst({ where: { id: input.projectId }, select: { id: true } }))?.id ??
+      null)
+    : null
+  const mission = await db.$transaction(async (tx) => {
+    const row = await tx.initiative.create({
+      data: {
+        teammateId,
+        projectId,
+        title: input.title,
+        objective: input.objective,
+        ...metricData(input.metric ?? null),
+        createdByMemberId: scope.memberId,
+      } as never,
+    })
+    if (threads.length)
+      await tx.session.updateMany({
+        where: { id: { in: threads } },
+        data: { initiativeId: row.id },
+      })
+    return row
+  })
+  await audit({
+    ...scope,
+    actor: { type: 'member', id: scope.memberId },
+    action: 'mission.created',
+    target: { type: 'mission', id: mission.id },
+    data: { threads: threads.length },
+  })
+  for (const id of threads) changed(scope, id)
+  return { id: mission.id }
+}
+
+/** PATCH /missions/:id: its words, owner, number, threads (the whole set), or archived. */
+export async function updateMission(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  id: string,
+  input: UpdateMission,
+) {
+  const mission = await db.initiative.findFirst({ where: { id }, select: { id: true } })
+  if (!mission) throw new HTTPException(404, { message: 'No such mission' })
+  const teammateId = input.teammateId ? await ownerOf(db, input.teammateId) : undefined
+  const current = input.threadIds
+    ? await db.session.findMany({
+        where: { initiativeId: id, parentId: null },
+        select: { id: true },
+      })
+    : []
+  const kept = new Set(current.map((t) => t.id))
+  // Only the threads added are checked: one already there may stay, whoever reads it.
+  const added = input.threadIds
+    ? await threadsToGive(
+        db,
+        scope,
+        input.threadIds.filter((t) => !kept.has(t)),
+      )
+    : []
+  const removed = input.threadIds
+    ? current.map((t) => t.id).filter((t) => !input.threadIds!.includes(t))
+    : []
+  await db.$transaction(async (tx) => {
+    await tx.initiative.update({
+      where: { id },
+      data: {
+        ...(input.title ? { title: input.title } : {}),
+        ...(input.objective ? { objective: input.objective } : {}),
+        ...(teammateId ? { teammateId } : {}),
+        ...(input.metric !== undefined ? metricData(input.metric) : {}),
+        ...(input.archived !== undefined ? { archivedAt: input.archived ? new Date() : null } : {}),
+      },
+    })
+    if (added.length)
+      await tx.session.updateMany({ where: { id: { in: added } }, data: { initiativeId: id } })
+    if (removed.length)
+      await tx.session.updateMany({
+        where: { id: { in: removed }, initiativeId: id },
+        data: { initiativeId: null },
+      })
+  })
+  await audit({
+    ...scope,
+    actor: { type: 'member', id: scope.memberId },
+    action: input.archived ? 'mission.archived' : 'mission.updated',
+    target: { type: 'mission', id },
+    data: { added: added.length, removed: removed.length },
+  })
+  for (const t of [...added, ...removed]) changed(scope, t)
+  return { id }
 }

@@ -4,15 +4,16 @@ import { ScheduleOperation, ThreadSpec } from '@brigade/contracts'
 import { instructions } from '../src/instructions.js'
 import { threadMemory } from '../src/memory-layers.js'
 import { THREAD_TOOLS } from '../src/harness/thread-tools.js'
-import { missionTools, type ScheduleCaller } from '../src/harness/tools.js'
+import { createMissionTools, missionTools, type ScheduleCaller } from '../src/harness/tools.js'
 
 // Missions on the runner (docs/missions.md): a thread of a mission gets its tools and its section of
 // the instructions; each tool sends an operation the API reads; its plan is the thread's own.
 
 const options = { toolCallId: 'call-1', messages: [] } as never
 
-const spec = (mission?: unknown) =>
+const spec = (mission?: unknown, missions = !!mission) =>
   ThreadSpec.parse({
+    missions,
     sessionId: 's1',
     teammate: { id: 'maya', name: 'Maya', instructions: '', harness: 'claude_code', model: null },
     permissionMode: 'allow-all',
@@ -58,6 +59,7 @@ test('each tool sends an operation the API reads; the number’s only when it fo
     'plan_action',
     'record_number',
     'record_output',
+    'update_mission',
   ])
   assert.ok(!('record_number' in missionTools(async () => ({}), { number: null })))
   await tools.plan_action!.execute!(
@@ -80,4 +82,41 @@ test('each tool sends an operation the API reads; the number’s only when it fo
   assert.ok(THREAD_TOOLS.includes('plan_action'))
   assert.ok(THREAD_TOOLS.includes('cancel_action'))
   assert.ok(!THREAD_TOOLS.includes('record_output'))
+})
+
+test('where Missions are open, a thread of none is told when to make one, and can', async () => {
+  const text = (s: ThreadSpec) =>
+    instructions(
+      s,
+      threadMemory(s, { workspace: '', teammate: '', lines: {} }, '/t', new Date()),
+      '/library',
+      { ready: true },
+    )
+  assert.match(text(spec(undefined, true)), /## Missions\n\nWhen the person delegates ongoing work/)
+  assert.doesNotMatch(text(spec(undefined, false)), /create_mission/)
+  // With a mission, its own section says how to change it instead.
+  assert.match(text(spec(mission)), /`update_mission`/)
+  assert.doesNotMatch(text(spec(mission)), /## Missions\n/)
+
+  const sent: Parameters<ScheduleCaller>[0][] = []
+  const tools = createMissionTools(async (call) => {
+    sent.push(call)
+    return {}
+  })
+  await tools.create_mission!.execute!(
+    {
+      title: 'Grow LinkedIn',
+      objective: '2,000 followers',
+      metric: { label: 'Followers', target: 2000 },
+    },
+    options,
+  )
+  await missionTools(async (call) => {
+    sent.push(call)
+    return {}
+  }, mission).update_mission!.execute!({ metric: null, archive: true }, options)
+  for (const call of sent)
+    assert.ok(ScheduleOperation.safeParse(call.operation).success, call.toolName)
+  assert.ok(THREAD_TOOLS.includes('create_mission'))
+  assert.ok(THREAD_TOOLS.includes('update_mission'))
 })
