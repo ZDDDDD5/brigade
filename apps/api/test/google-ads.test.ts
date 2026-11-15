@@ -43,6 +43,7 @@ const skip = (await reachable()) ? false : 'no database to reach (apps/api/.env 
 const ads = await import('../src/google-ads.js')
 const { parseSignupSource, signupProperties } = await import('../src/signup-source.js')
 const { prisma } = await import('../src/db.js')
+const analytics = await import('../src/analytics.js')
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const serviceAccount = JSON.stringify({
@@ -148,42 +149,92 @@ async function makeUser(attribution: object | null) {
 
 type Call = { url: string; body: string; headers: Record<string, string> }
 
-/** Google, stubbed: the token endpoint, and the ingest's answers in turn (200 after them). */
-function stubGoogle(answers: number[]) {
+/**
+ * Google, stubbed: the token endpoint; the ingest's answers in turn (a status; 200 after them,
+ * each with a request id of its own, req-1, req-2…); and the status of each request id.
+ */
+function stubGoogle(answers: number[], statuses: Record<string, object | number> = {}) {
   const calls: Call[] = []
   const real = globalThis.fetch
+  let requests = 0
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
     const body = String(init?.body ?? '')
     calls.push({ url, body, headers: Object.fromEntries(new Headers(init?.headers)) })
     if (url.startsWith('https://oauth2.googleapis.com/token'))
       return Response.json({ access_token: 'token-1', expires_in: 3600 })
+    if (url.includes('requestStatus:retrieve')) {
+      const status = statuses[new URL(url).searchParams.get('requestId')!] ?? 404
+      return typeof status === 'number'
+        ? new Response('{"error":{}}', { status })
+        : Response.json(status)
+    }
     const status = answers.shift() ?? 200
-    return new Response(status === 200 ? '{}' : '{"error":{"message":"no"}}', { status })
+    if (status !== 200) return new Response('{"error":{"message":"no"}}', { status })
+    return Response.json({ requestId: `req-${++requests}` })
   }) as typeof fetch
   return { calls, restore: () => void (globalThis.fetch = real) }
 }
 
-const ingests = (calls: Call[]) => calls.filter((c) => c.url.includes('datamanager'))
+const ingests = (calls: Call[]) => calls.filter((c) => c.url.includes('events:ingest'))
+const checks = (calls: Call[]) =>
+  calls
+    .filter((c) => c.url.includes('requestStatus'))
+    .map((c) => new URL(c.url).searchParams.get('requestId'))
+const HOUR = 60 * 60_000
+const failed = (reason: string) => ({
+  requestStatusPerDestination: [
+    { requestStatus: 'FAILED', errorInfo: { errorCounts: [{ reason }] } },
+  ],
+})
+const state = (userId: string) => prisma.adConversion.findFirstOrThrow({ where: { userId } })
 
-test('a conversion is kept once per kind, and only for a Google ad', { skip }, async () => {
-  const fromAd = await makeUser({ channel: 'google_ads', adClick: { gclid: 'g-once' } })
-  const organic = await makeUser({ channel: 'google_organic' })
-  await ads.recordAdConversion(fromAd.id, 'sign_up')
-  await ads.recordAdConversion(fromAd.id, 'sign_up')
-  await ads.recordAdConversion(fromAd.id, 'subscription', { value: 99, currency: 'eur' })
-  await ads.recordAdConversion(organic.id, 'sign_up')
-  const rows = await prisma.adConversion.findMany({
-    where: { userId: { in: [fromAd.id, organic.id] } },
-    orderBy: { kind: 'asc' },
-  })
-  assert.deepEqual(
-    rows.map((r) => [r.userId, r.kind, r.value, r.currency]),
-    [
-      [fromAd.id, 'sign_up', null, null],
-      [fromAd.id, 'subscription', 99, 'EUR'],
-    ],
-  )
+test(
+  'a conversion is kept once per kind, only for a Google ad, sent hours later',
+  { skip },
+  async () => {
+    const fromAd = await makeUser({ channel: 'google_ads', adClick: { gclid: 'g-once' } })
+    const organic = await makeUser({ channel: 'google_organic' })
+    const at = new Date('2026-11-15T10:00:00Z')
+    await ads.recordAdConversion(prisma, fromAd.id, 'sign_up', { at })
+    await ads.recordAdConversion(prisma, fromAd.id, 'sign_up')
+    await ads.recordAdConversion(prisma, fromAd.id, 'subscription', { value: 99, currency: 'eur' })
+    await ads.recordAdConversion(prisma, organic.id, 'sign_up')
+    const rows = await prisma.adConversion.findMany({
+      where: { userId: { in: [fromAd.id, organic.id] } },
+      orderBy: { kind: 'asc' },
+    })
+    assert.deepEqual(
+      rows.map((r) => [r.userId, r.kind, r.value, r.currency]),
+      [
+        [fromAd.id, 'sign_up', null, null],
+        [fromAd.id, 'subscription', 99, 'EUR'],
+      ],
+    )
+    assert.equal(rows[0]!.sendAfter.getTime(), at.getTime() + ads.FIRST_DELAY_MS)
+  },
+)
+
+test('a sign-up and its conversion are kept together, or neither is', { skip }, async () => {
+  const user = await makeUser(null)
+  const context = {
+    path: '/sign-in/email-otp',
+    body: { signupSource: { gclid: 'g-atomic', lp: '/' } },
+  }
+  // The conversion cannot be written: the sign-up's attribution is not kept either.
+  await prisma.$executeRawUnsafe('ALTER TABLE "AdConversion" RENAME TO "AdConversionAway"')
+  try {
+    await assert.rejects(analytics.recordSignup(user, context))
+  } finally {
+    await prisma.$executeRawUnsafe('ALTER TABLE "AdConversionAway" RENAME TO "AdConversion"')
+  }
+  const before = await prisma.user.findUniqueOrThrow({ where: { id: user.id } })
+  assert.equal(before.attribution, null, 'nothing kept: the next try starts over')
+  // The next try keeps both.
+  await analytics.recordSignup(user, context)
+  const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } })
+  assert.equal((after.attribution as { channel: string }).channel, 'google_ads')
+  assert.equal((await state(user.id)).kind, 'sign_up')
 })
 
 test(
@@ -194,31 +245,32 @@ test(
     ads.forgetAdsToken()
     const config = ads.adsConfig(settings)!
     const now = new Date()
+    const ago = (ms: number) => new Date(now.getTime() - ms)
 
     // Nothing without the settings.
     const off = stubGoogle([])
     const first = await makeUser({ adClick: { gclid: 'g-first' } })
-    await ads.recordAdConversion(first.id, 'sign_up', { at: new Date(now.getTime() - 60_000) })
-    assert.deepEqual(await ads.sendAdConversions(now, null), { sent: 0, failed: 0 })
+    await ads.recordAdConversion(prisma, first.id, 'sign_up', { at: ago(10 * HOUR) })
+    assert.equal((await ads.sendAdConversions(now, null)).sent, 0)
     off.restore()
     assert.equal(off.calls.length, 0)
 
     const refused = await makeUser({ adClick: { gclid: 'g-refused' } })
-    await ads.recordAdConversion(refused.id, 'sign_up', { at: new Date(now.getTime() - 50_000) })
+    await ads.recordAdConversion(prisma, refused.id, 'sign_up', { at: ago(9 * HOUR) })
     const later = await makeUser({ adClick: { wbraid: 'w-later' } })
-    await ads.recordAdConversion(later.id, 'sign_up', { at: new Date(now.getTime() - 40_000) })
+    await ads.recordAdConversion(prisma, later.id, 'sign_up', { at: ago(8 * HOUR) })
     const waiting = await makeUser({ adClick: { gclid: 'g-waiting' } })
-    await ads.recordAdConversion(waiting.id, 'sign_up', { at: new Date(now.getTime() - 30_000) })
+    await ads.recordAdConversion(prisma, waiting.id, 'sign_up', { at: ago(7 * HOUR) })
+    const recent = await makeUser({ adClick: { gclid: 'g-recent' } })
+    await ads.recordAdConversion(prisma, recent.id, 'sign_up', { at: ago(HOUR) })
     const old = await makeUser({ adClick: { gclid: 'g-old' } })
-    await ads.recordAdConversion(old.id, 'subscription', {
-      at: new Date(now.getTime() - 91 * 24 * 60 * 60_000),
-    })
+    await ads.recordAdConversion(prisma, old.id, 'subscription', { at: ago(91 * 24 * HOUR) })
 
     // first: taken; refused: 400; later: 503, which stops the run before waiting.
     const google = stubGoogle([200, 400, 503])
     try {
       const result = await ads.sendAdConversions(now, config)
-      assert.deepEqual(result, { sent: 1, failed: 2 })
+      assert.deepEqual(result, { sent: 1, failed: 2, confirmed: 0, retried: 0 })
     } finally {
       google.restore()
     }
@@ -247,27 +299,113 @@ test(
     assert.deepEqual(JSON.parse(sent[2]!.body).events[0].adIdentifiers, { wbraid: 'w-later' })
     assert.ok(!google.calls.some((c) => c.body.includes('@example.com')), 'no email address')
 
-    const state = async (userId: string) =>
-      prisma.adConversion.findFirstOrThrow({ where: { userId } })
-    assert.ok((await state(first.id)).sentAt, 'taken')
+    const firstRow = await state(first.id)
+    assert.equal(firstRow.requestId, 'req-1', "taken: Google's request kept, to check")
+    assert.equal(firstRow.confirmedAt, null, 'not confirmed before Google says so')
     const refusedRow = await state(refused.id)
     assert.ok(refusedRow.failedAt && refusedRow.error?.includes('400'), 'refused: given up')
     const laterRow = await state(later.id)
     assert.equal(laterRow.failedAt, null, 'Google down: tried again')
     assert.equal(laterRow.attempts, 1)
     assert.equal((await state(waiting.id)).attempts, 0, 'not tried after the stop')
+    assert.equal((await state(recent.id)).attempts, 0, 'too recent to send')
     assert.equal((await state(old.id)).error, 'older than 90 days')
 
-    // The next run sends what waited, and nothing twice.
-    const again = stubGoogle([])
+    // An hour on: first's request is checked (still processing), then what waited is sent.
+    const again = stubGoogle([], {
+      'req-1': { requestStatusPerDestination: [{ requestStatus: 'PROCESSING' }] },
+    })
     try {
-      assert.deepEqual(await ads.sendAdConversions(new Date(), config), { sent: 2, failed: 0 })
+      const result = await ads.sendAdConversions(new Date(now.getTime() + HOUR), config)
+      assert.deepEqual(result, { sent: 2, failed: 0, confirmed: 0, retried: 0 })
     } finally {
       again.restore()
     }
+    assert.deepEqual(checks(again.calls), ['req-1'])
     assert.deepEqual(
       ingests(again.calls).map((c) => JSON.parse(c.body).events[0].adIdentifiers),
       [{ wbraid: 'w-later' }, { gclid: 'g-waiting' }],
     )
+    assert.equal((await state(first.id)).requestId, 'req-1', 'still processing: checked again')
+  },
+)
+
+test(
+  "Google's processing: confirmed, sent again when the click was too recent, or given up",
+  { skip },
+  async () => {
+    await prisma.adConversion.deleteMany({})
+    const config = ads.adsConfig(settings)!
+    const now = new Date()
+    const due = (ms: number) => new Date(now.getTime() - 7 * HOUR - ms)
+    const ok = await makeUser({ adClick: { gclid: 'g-ok' } })
+    await ads.recordAdConversion(prisma, ok.id, 'sign_up', { at: due(4) })
+    const tooRecent = await makeUser({ adClick: { gclid: 'g-too-recent' } })
+    await ads.recordAdConversion(prisma, tooRecent.id, 'sign_up', { at: due(3) })
+    const invalid = await makeUser({ adClick: { gclid: 'g-invalid' } })
+    await ads.recordAdConversion(prisma, invalid.id, 'sign_up', { at: due(2) })
+    const duplicate = await makeUser({ adClick: { gclid: 'g-duplicate' } })
+    await ads.recordAdConversion(prisma, duplicate.id, 'sign_up', { at: due(1) })
+
+    const send = stubGoogle([])
+    try {
+      assert.equal((await ads.sendAdConversions(now, config)).sent, 4)
+    } finally {
+      send.restore()
+    }
+    // Too soon to ask.
+    const soon = stubGoogle([])
+    try {
+      await ads.sendAdConversions(new Date(now.getTime() + 60_000), config)
+    } finally {
+      soon.restore()
+    }
+    assert.deepEqual(checks(soon.calls), [], 'not checked in its first half hour')
+
+    const later = new Date(now.getTime() + HOUR)
+    const check = stubGoogle([], {
+      'req-1': { requestStatusPerDestination: [{ requestStatus: 'SUCCESS' }] },
+      'req-2': failed('PROCESSING_ERROR_REASON_TOO_RECENT_CLICK'),
+      'req-3': failed('PROCESSING_ERROR_REASON_INVALID_GCLID'),
+      'req-4': failed('PROCESSING_ERROR_REASON_DUPLICATE_TRANSACTION_ID'),
+    })
+    try {
+      const result = await ads.sendAdConversions(later, config)
+      assert.deepEqual(result, { sent: 0, failed: 1, confirmed: 2, retried: 1 })
+    } finally {
+      check.restore()
+    }
+    assert.ok((await state(ok.id)).confirmedAt, 'processed: confirmed')
+    assert.ok((await state(duplicate.id)).confirmedAt, 'Google has it already: confirmed')
+    const invalidRow = await state(invalid.id)
+    assert.equal(invalidRow.error, 'PROCESSING_ERROR_REASON_INVALID_GCLID')
+    assert.ok(invalidRow.failedAt, 'invalid: given up')
+    const retry = await state(tooRecent.id)
+    assert.equal(retry.requestId, null)
+    assert.equal(retry.failedAt, null)
+    assert.equal(retry.sendAfter.getTime(), later.getTime() + 6 * HOUR, 'sent again in 6 hours')
+
+    // Six hours on, it goes again under the same transactionId; nothing else is sent.
+    const resend = stubGoogle([])
+    try {
+      await ads.sendAdConversions(new Date(later.getTime() + 6 * HOUR), config)
+    } finally {
+      resend.restore()
+    }
+    const resent = ingests(resend.calls).map((c) => JSON.parse(c.body).events[0])
+    assert.deepEqual(
+      resent.map((e) => [e.adIdentifiers.gclid, e.transactionId]),
+      [['g-too-recent', retry.id]],
+    )
+
+    // Google's status cannot be read: the run stops there, and nothing changes.
+    const down = stubGoogle([], { 'req-1': 503 })
+    try {
+      const result = await ads.sendAdConversions(new Date(later.getTime() + 7 * HOUR), config)
+      assert.deepEqual(result, { sent: 0, failed: 0, confirmed: 0, retried: 0 })
+    } finally {
+      down.restore()
+    }
+    assert.equal((await state(tooRecent.id)).requestId, 'req-1')
   },
 )

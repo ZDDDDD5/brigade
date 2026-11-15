@@ -55,8 +55,10 @@ export type AnalyticsFirst = Prisma.AnalyticsFirstModel
 /**
  * Model AdConversion
  * A conversion of a person who came from a Google ad (src/google-ads.ts): their sign-up, then
- * their first subscription. Kept when it happens, sent to Google Ads by the `ad-conversions`
- * job, once: `sentAt` once Google took it, `failedAt` and `error` once it never will.
+ * their first subscription. Kept with what it counts (in the same transaction), sent to Google
+ * Ads by the `ad-conversions` job from `sendAfter`; Google takes it (`requestId`, `sentAt`),
+ * then processes it later: `confirmedAt` once it says so, `failedAt` and `error` once it never
+ * will. A processing failure that may pass (a click too recent) sends it again later.
  */
 export type AdConversion = Prisma.AdConversionModel
 /**

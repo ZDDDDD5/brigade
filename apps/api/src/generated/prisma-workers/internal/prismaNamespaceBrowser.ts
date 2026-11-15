@@ -211,8 +211,11 @@ export const AdConversionScalarFieldEnum = {
   at: 'at',
   value: 'value',
   currency: 'currency',
+  sendAfter: 'sendAfter',
   attempts: 'attempts',
+  requestId: 'requestId',
   sentAt: 'sentAt',
+  confirmedAt: 'confirmedAt',
   failedAt: 'failedAt',
   error: 'error'
 } as const

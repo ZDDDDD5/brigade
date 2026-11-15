@@ -58,26 +58,33 @@ model AnalyticsFirst {
 }
 
 /// A conversion of a person who came from a Google ad (src/google-ads.ts): their sign-up, then
-/// their first subscription. Kept when it happens, sent to Google Ads by the `ad-conversions`
-/// job, once: `sentAt` once Google took it, `failedAt` and `error` once it never will.
+/// their first subscription. Kept with what it counts (in the same transaction), sent to Google
+/// Ads by the `ad-conversions` job from `sendAfter`; Google takes it (`requestId`, `sentAt`),
+/// then processes it later: `confirmedAt` once it says so, `failedAt` and `error` once it never
+/// will. A processing failure that may pass (a click too recent) sends it again later.
 model AdConversion {
-  id       String    @id @default(cuid())
-  userId   String
-  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// `sign_up` or `subscription`.
-  kind     String
+  kind        String
   /// When it happened, as reported to Google.
-  at       DateTime  @default(now())
+  at          DateTime  @default(now())
   /// The subscription's first price, in its currency's units (e.g. 99), when it has one.
-  value    Float?
-  currency String?
-  attempts Int       @default(0)
-  sentAt   DateTime?
-  failedAt DateTime?
-  error    String?
+  value       Float?
+  currency    String?
+  /// Not sent before then: Google refuses a click it has not processed yet.
+  sendAfter   DateTime  @default(now())
+  attempts    Int       @default(0)
+  /// Google's id of the request that carried it, while its processing is not known.
+  requestId   String?
+  sentAt      DateTime?
+  confirmedAt DateTime?
+  failedAt    DateTime?
+  error       String?
 
   @@unique([userId, kind])
-  @@index([sentAt, failedAt])
+  @@index([confirmedAt, failedAt])
 }
 
 /// A workspace's paid plan (src/billing.ts): Cloud, which gives it the cloud computer. It

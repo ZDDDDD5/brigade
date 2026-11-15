@@ -93,19 +93,27 @@ sign-up, and `parseSignupSource` keeps them on `User.attribution.adClick`, with 
 `google_ads` (also for `utm_source=google&utm_medium=cpc`). They never go to PostHog.
 
 `src/google-ads.ts` then reports two conversions to Google Ads, each once per person: `sign_up`
-(from `recordSignup`) and `subscription`, the first subscription started (`trackPlanChange`,
-`src/billing.ts`), with its price. Each is an `AdConversion` row when it happens; the
-`ad-conversions` job (every 10 minutes) sends the rows to Google's Data Manager API
-(`events:ingest`, the way Google takes offline conversions from new integrations since June
-2026), as the service account (`GOOGLE_ADS_SERVICE_ACCOUNT`, scope `datamanager`). Only the
-click id, the time, the row's id (Google's `transactionId`, so a row sent twice counts once) and
-the price: no email address or name.
+and `subscription` (the first one started, with its price). Each is an `AdConversion` row,
+written in the same transaction as what it counts (the attribution in `recordSignup`, the plan
+in `savePlan`, `src/billing.ts`), so neither is kept without the other. The `ad-conversions` job
+(every 10 minutes) sends the rows to Google's Data Manager API (`events:ingest`, the way Google
+takes offline conversions from new integrations since June 2026), as the service account
+(`GOOGLE_ADS_SERVICE_ACCOUNT`, scope `datamanager`). Only the click id, the time, the row's id
+(Google's `transactionId`, so a row sent twice counts once) and the price: no email address or
+name.
 
-- Without the settings above, rows wait and go once they are set. A row past Google's 90 days
-  is given up (`failedAt`, `error`).
-- A 400 is the event's own fault (a click id Google does not know): that row is given up.
-  Anything else (the key, access, quota, Google down) stops the run, counts an attempt on the
-  row and is reported (`noteFailure('google-ads')`); after 20 attempts the row is given up.
+- A row is first sent 6 hours after it happened (`sendAfter`): Google refuses a click it has
+  not processed yet.
+- Google takes a request at once and processes it later. The row keeps the request's id; from
+  half an hour on, each run reads its status (`requestStatus:retrieve`): `SUCCESS` (or a
+  duplicate) sets `confirmedAt`; a click too recent, Google's internal error or an account too
+  new sends it again 6 hours later; any other reason gives it up (`failedAt`, `error`). A
+  request with no final status after 3 days is sent again.
+- A 400 when sending is the event's own fault: that row is given up. Anything else (the key,
+  access, quota, Google down) stops the run, counts an attempt and is reported
+  (`noteFailure('google-ads')`); after 20 attempts, or past Google's 90 days, the row is given
+  up.
+- Without the settings above, rows wait and go once they are set.
 - No consent signal is sent: the site has no consent banner. Google may then not attribute
   conversions of people in the EEA, the UK and Switzerland.
 

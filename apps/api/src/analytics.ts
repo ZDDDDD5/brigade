@@ -394,13 +394,18 @@ export async function recordSignup(
   }
   const source = parseSignupSource(raw)
   const method = signupMethod(context?.path)
-  const { count } = await prisma.user.updateMany({
-    where: { id: user.id, attribution: { equals: Prisma.DbNull } },
-    data: { attribution: { ...source, method } },
+  // From a Google ad, the sign-up is Google Ads' conversion too (src/google-ads.ts): kept in the
+  // same transaction as the attribution, so neither is ever kept without the other.
+  const count = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.user.updateMany({
+      where: { id: user.id, attribution: { equals: Prisma.DbNull } },
+      data: { attribution: { ...source, method } },
+    })
+    if (count > 0 && source.adClick)
+      await recordAdConversion(tx, user.id, 'sign_up', { attribution: source })
+    return count
   })
   if (count === 0) return
-  // From a Google ad: the sign-up is Google Ads' conversion too (src/google-ads.ts).
-  if (source.adClick) await recordAdConversion(user.id, 'sign_up', { attribution: source })
   if (!analyticsOn()) return
   const internal = isInternalEmail(user.email)
   track('signed_up', {

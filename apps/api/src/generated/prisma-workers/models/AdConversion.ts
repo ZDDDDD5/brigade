@@ -15,8 +15,10 @@ import type * as Prisma from "../internal/prismaNamespace.js"
 /**
  * Model AdConversion
  * A conversion of a person who came from a Google ad (src/google-ads.ts): their sign-up, then
- * their first subscription. Kept when it happens, sent to Google Ads by the `ad-conversions`
- * job, once: `sentAt` once Google took it, `failedAt` and `error` once it never will.
+ * their first subscription. Kept with what it counts (in the same transaction), sent to Google
+ * Ads by the `ad-conversions` job from `sendAfter`; Google takes it (`requestId`, `sentAt`),
+ * then processes it later: `confirmedAt` once it says so, `failedAt` and `error` once it never
+ * will. A processing failure that may pass (a click too recent) sends it again later.
  */
 export type AdConversionModel = runtime.Types.Result.DefaultSelection<Prisma.$AdConversionPayload>
 
@@ -45,8 +47,11 @@ export type AdConversionMinAggregateOutputType = {
   at: Date | null
   value: number | null
   currency: string | null
+  sendAfter: Date | null
   attempts: number | null
+  requestId: string | null
   sentAt: Date | null
+  confirmedAt: Date | null
   failedAt: Date | null
   error: string | null
 }
@@ -58,8 +63,11 @@ export type AdConversionMaxAggregateOutputType = {
   at: Date | null
   value: number | null
   currency: string | null
+  sendAfter: Date | null
   attempts: number | null
+  requestId: string | null
   sentAt: Date | null
+  confirmedAt: Date | null
   failedAt: Date | null
   error: string | null
 }
@@ -71,8 +79,11 @@ export type AdConversionCountAggregateOutputType = {
   at: number
   value: number
   currency: number
+  sendAfter: number
   attempts: number
+  requestId: number
   sentAt: number
+  confirmedAt: number
   failedAt: number
   error: number
   _all: number
@@ -96,8 +107,11 @@ export type AdConversionMinAggregateInputType = {
   at?: true
   value?: true
   currency?: true
+  sendAfter?: true
   attempts?: true
+  requestId?: true
   sentAt?: true
+  confirmedAt?: true
   failedAt?: true
   error?: true
 }
@@ -109,8 +123,11 @@ export type AdConversionMaxAggregateInputType = {
   at?: true
   value?: true
   currency?: true
+  sendAfter?: true
   attempts?: true
+  requestId?: true
   sentAt?: true
+  confirmedAt?: true
   failedAt?: true
   error?: true
 }
@@ -122,8 +139,11 @@ export type AdConversionCountAggregateInputType = {
   at?: true
   value?: true
   currency?: true
+  sendAfter?: true
   attempts?: true
+  requestId?: true
   sentAt?: true
+  confirmedAt?: true
   failedAt?: true
   error?: true
   _all?: true
@@ -222,8 +242,11 @@ export type AdConversionGroupByOutputType = {
   at: Date
   value: number | null
   currency: string | null
+  sendAfter: Date
   attempts: number
+  requestId: string | null
   sentAt: Date | null
+  confirmedAt: Date | null
   failedAt: Date | null
   error: string | null
   _count: AdConversionCountAggregateOutputType | null
@@ -258,8 +281,11 @@ export type AdConversionWhereInput = {
   at?: Prisma.DateTimeFilter<"AdConversion"> | Date | string
   value?: Prisma.FloatNullableFilter<"AdConversion"> | number | null
   currency?: Prisma.StringNullableFilter<"AdConversion"> | string | null
+  sendAfter?: Prisma.DateTimeFilter<"AdConversion"> | Date | string
   attempts?: Prisma.IntFilter<"AdConversion"> | number
+  requestId?: Prisma.StringNullableFilter<"AdConversion"> | string | null
   sentAt?: Prisma.DateTimeNullableFilter<"AdConversion"> | Date | string | null
+  confirmedAt?: Prisma.DateTimeNullableFilter<"AdConversion"> | Date | string | null
   failedAt?: Prisma.DateTimeNullableFilter<"AdConversion"> | Date | string | null
   error?: Prisma.StringNullableFilter<"AdConversion"> | string | null
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
@@ -272,8 +298,11 @@ export type AdConversionOrderByWithRelationInput = {
   at?: Prisma.SortOrder
   value?: Prisma.SortOrderInput | Prisma.SortOrder
   currency?: Prisma.SortOrderInput | Prisma.SortOrder
+  sendAfter?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
+  requestId?: Prisma.SortOrderInput | Prisma.SortOrder
   sentAt?: Prisma.SortOrderInput | Prisma.SortOrder
+  confirmedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   failedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   error?: Prisma.SortOrderInput | Prisma.SortOrder
   user?: Prisma.UserOrderByWithRelationInput
@@ -290,8 +319,11 @@ export type AdConversionWhereUniqueInput = Prisma.AtLeast<{
   at?: Prisma.DateTimeFilter<"AdConversion"> | Date | string
   value?: Prisma.FloatNullableFilter<"AdConversion"> | number | null
   currency?: Prisma.StringNullableFilter<"AdConversion"> | string | null
+  sendAfter?: Prisma.DateTimeFilter<"AdConversion"> | Date | string
   attempts?: Prisma.IntFilter<"AdConversion"> | number
+  requestId?: Prisma.StringNullableFilter<"AdConversion"> | string | null
   sentAt?: Prisma.DateTimeNullableFilter<"AdConversion"> | Date | string | null
+  confirmedAt?: Prisma.DateTimeNullableFilter<"AdConversion"> | Date | string | null
   failedAt?: Prisma.DateTimeNullableFilter<"AdConversion"> | Date | string | null
   error?: Prisma.StringNullableFilter<"AdConversion"> | string | null
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
@@ -304,8 +336,11 @@ export type AdConversionOrderByWithAggregationInput = {
   at?: Prisma.SortOrder
   value?: Prisma.SortOrderInput | Prisma.SortOrder
   currency?: Prisma.SortOrderInput | Prisma.SortOrder
+  sendAfter?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
+  requestId?: Prisma.SortOrderInput | Prisma.SortOrder
   sentAt?: Prisma.SortOrderInput | Prisma.SortOrder
+  confirmedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   failedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   error?: Prisma.SortOrderInput | Prisma.SortOrder
   _count?: Prisma.AdConversionCountOrderByAggregateInput
@@ -325,8 +360,11 @@ export type AdConversionScalarWhereWithAggregatesInput = {
   at?: Prisma.DateTimeWithAggregatesFilter<"AdConversion"> | Date | string
   value?: Prisma.FloatNullableWithAggregatesFilter<"AdConversion"> | number | null
   currency?: Prisma.StringNullableWithAggregatesFilter<"AdConversion"> | string | null
+  sendAfter?: Prisma.DateTimeWithAggregatesFilter<"AdConversion"> | Date | string
   attempts?: Prisma.IntWithAggregatesFilter<"AdConversion"> | number
+  requestId?: Prisma.StringNullableWithAggregatesFilter<"AdConversion"> | string | null
   sentAt?: Prisma.DateTimeNullableWithAggregatesFilter<"AdConversion"> | Date | string | null
+  confirmedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"AdConversion"> | Date | string | null
   failedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"AdConversion"> | Date | string | null
   error?: Prisma.StringNullableWithAggregatesFilter<"AdConversion"> | string | null
 }
@@ -337,8 +375,11 @@ export type AdConversionCreateInput = {
   at?: Date | string
   value?: number | null
   currency?: string | null
+  sendAfter?: Date | string
   attempts?: number
+  requestId?: string | null
   sentAt?: Date | string | null
+  confirmedAt?: Date | string | null
   failedAt?: Date | string | null
   error?: string | null
   user: Prisma.UserCreateNestedOneWithoutAdConversionsInput
@@ -351,8 +392,11 @@ export type AdConversionUncheckedCreateInput = {
   at?: Date | string
   value?: number | null
   currency?: string | null
+  sendAfter?: Date | string
   attempts?: number
+  requestId?: string | null
   sentAt?: Date | string | null
+  confirmedAt?: Date | string | null
   failedAt?: Date | string | null
   error?: string | null
 }
@@ -363,8 +407,11 @@ export type AdConversionUpdateInput = {
   at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   value?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   currency?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sendAfter?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  confirmedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   failedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   error?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   user?: Prisma.UserUpdateOneRequiredWithoutAdConversionsNestedInput
@@ -377,8 +424,11 @@ export type AdConversionUncheckedUpdateInput = {
   at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   value?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   currency?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sendAfter?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  confirmedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   failedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   error?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
@@ -390,8 +440,11 @@ export type AdConversionCreateManyInput = {
   at?: Date | string
   value?: number | null
   currency?: string | null
+  sendAfter?: Date | string
   attempts?: number
+  requestId?: string | null
   sentAt?: Date | string | null
+  confirmedAt?: Date | string | null
   failedAt?: Date | string | null
   error?: string | null
 }
@@ -402,8 +455,11 @@ export type AdConversionUpdateManyMutationInput = {
   at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   value?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   currency?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sendAfter?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  confirmedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   failedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   error?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
@@ -415,8 +471,11 @@ export type AdConversionUncheckedUpdateManyInput = {
   at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   value?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   currency?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sendAfter?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  confirmedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   failedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   error?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
@@ -443,8 +502,11 @@ export type AdConversionCountOrderByAggregateInput = {
   at?: Prisma.SortOrder
   value?: Prisma.SortOrder
   currency?: Prisma.SortOrder
+  sendAfter?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
+  requestId?: Prisma.SortOrder
   sentAt?: Prisma.SortOrder
+  confirmedAt?: Prisma.SortOrder
   failedAt?: Prisma.SortOrder
   error?: Prisma.SortOrder
 }
@@ -461,8 +523,11 @@ export type AdConversionMaxOrderByAggregateInput = {
   at?: Prisma.SortOrder
   value?: Prisma.SortOrder
   currency?: Prisma.SortOrder
+  sendAfter?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
+  requestId?: Prisma.SortOrder
   sentAt?: Prisma.SortOrder
+  confirmedAt?: Prisma.SortOrder
   failedAt?: Prisma.SortOrder
   error?: Prisma.SortOrder
 }
@@ -474,8 +539,11 @@ export type AdConversionMinOrderByAggregateInput = {
   at?: Prisma.SortOrder
   value?: Prisma.SortOrder
   currency?: Prisma.SortOrder
+  sendAfter?: Prisma.SortOrder
   attempts?: Prisma.SortOrder
+  requestId?: Prisma.SortOrder
   sentAt?: Prisma.SortOrder
+  confirmedAt?: Prisma.SortOrder
   failedAt?: Prisma.SortOrder
   error?: Prisma.SortOrder
 }
@@ -553,8 +621,11 @@ export type AdConversionCreateWithoutUserInput = {
   at?: Date | string
   value?: number | null
   currency?: string | null
+  sendAfter?: Date | string
   attempts?: number
+  requestId?: string | null
   sentAt?: Date | string | null
+  confirmedAt?: Date | string | null
   failedAt?: Date | string | null
   error?: string | null
 }
@@ -565,8 +636,11 @@ export type AdConversionUncheckedCreateWithoutUserInput = {
   at?: Date | string
   value?: number | null
   currency?: string | null
+  sendAfter?: Date | string
   attempts?: number
+  requestId?: string | null
   sentAt?: Date | string | null
+  confirmedAt?: Date | string | null
   failedAt?: Date | string | null
   error?: string | null
 }
@@ -607,8 +681,11 @@ export type AdConversionScalarWhereInput = {
   at?: Prisma.DateTimeFilter<"AdConversion"> | Date | string
   value?: Prisma.FloatNullableFilter<"AdConversion"> | number | null
   currency?: Prisma.StringNullableFilter<"AdConversion"> | string | null
+  sendAfter?: Prisma.DateTimeFilter<"AdConversion"> | Date | string
   attempts?: Prisma.IntFilter<"AdConversion"> | number
+  requestId?: Prisma.StringNullableFilter<"AdConversion"> | string | null
   sentAt?: Prisma.DateTimeNullableFilter<"AdConversion"> | Date | string | null
+  confirmedAt?: Prisma.DateTimeNullableFilter<"AdConversion"> | Date | string | null
   failedAt?: Prisma.DateTimeNullableFilter<"AdConversion"> | Date | string | null
   error?: Prisma.StringNullableFilter<"AdConversion"> | string | null
 }
@@ -619,8 +696,11 @@ export type AdConversionCreateManyUserInput = {
   at?: Date | string
   value?: number | null
   currency?: string | null
+  sendAfter?: Date | string
   attempts?: number
+  requestId?: string | null
   sentAt?: Date | string | null
+  confirmedAt?: Date | string | null
   failedAt?: Date | string | null
   error?: string | null
 }
@@ -631,8 +711,11 @@ export type AdConversionUpdateWithoutUserInput = {
   at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   value?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   currency?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sendAfter?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  confirmedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   failedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   error?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
@@ -643,8 +726,11 @@ export type AdConversionUncheckedUpdateWithoutUserInput = {
   at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   value?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   currency?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sendAfter?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  confirmedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   failedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   error?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
@@ -655,8 +741,11 @@ export type AdConversionUncheckedUpdateManyWithoutUserInput = {
   at?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   value?: Prisma.NullableFloatFieldUpdateOperationsInput | number | null
   currency?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  sendAfter?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   attempts?: Prisma.IntFieldUpdateOperationsInput | number
+  requestId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sentAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  confirmedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   failedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   error?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
@@ -670,8 +759,11 @@ export type AdConversionSelect<ExtArgs extends runtime.Types.Extensions.Internal
   at?: boolean
   value?: boolean
   currency?: boolean
+  sendAfter?: boolean
   attempts?: boolean
+  requestId?: boolean
   sentAt?: boolean
+  confirmedAt?: boolean
   failedAt?: boolean
   error?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
@@ -684,8 +776,11 @@ export type AdConversionSelectCreateManyAndReturn<ExtArgs extends runtime.Types.
   at?: boolean
   value?: boolean
   currency?: boolean
+  sendAfter?: boolean
   attempts?: boolean
+  requestId?: boolean
   sentAt?: boolean
+  confirmedAt?: boolean
   failedAt?: boolean
   error?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
@@ -698,8 +793,11 @@ export type AdConversionSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.
   at?: boolean
   value?: boolean
   currency?: boolean
+  sendAfter?: boolean
   attempts?: boolean
+  requestId?: boolean
   sentAt?: boolean
+  confirmedAt?: boolean
   failedAt?: boolean
   error?: boolean
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
@@ -712,13 +810,16 @@ export type AdConversionSelectScalar = {
   at?: boolean
   value?: boolean
   currency?: boolean
+  sendAfter?: boolean
   attempts?: boolean
+  requestId?: boolean
   sentAt?: boolean
+  confirmedAt?: boolean
   failedAt?: boolean
   error?: boolean
 }
 
-export type AdConversionOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "userId" | "kind" | "at" | "value" | "currency" | "attempts" | "sentAt" | "failedAt" | "error", ExtArgs["result"]["adConversion"]>
+export type AdConversionOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "userId" | "kind" | "at" | "value" | "currency" | "sendAfter" | "attempts" | "requestId" | "sentAt" | "confirmedAt" | "failedAt" | "error", ExtArgs["result"]["adConversion"]>
 export type AdConversionInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
 }
@@ -750,8 +851,17 @@ export type $AdConversionPayload<ExtArgs extends runtime.Types.Extensions.Intern
      */
     value: number | null
     currency: string | null
+    /**
+     * Not sent before then: Google refuses a click it has not processed yet.
+     */
+    sendAfter: Date
     attempts: number
+    /**
+     * Google's id of the request that carried it, while its processing is not known.
+     */
+    requestId: string | null
     sentAt: Date | null
+    confirmedAt: Date | null
     failedAt: Date | null
     error: string | null
   }, ExtArgs["result"]["adConversion"]>
@@ -1184,8 +1294,11 @@ export interface AdConversionFieldRefs {
   readonly at: Prisma.FieldRef<"AdConversion", 'DateTime'>
   readonly value: Prisma.FieldRef<"AdConversion", 'Float'>
   readonly currency: Prisma.FieldRef<"AdConversion", 'String'>
+  readonly sendAfter: Prisma.FieldRef<"AdConversion", 'DateTime'>
   readonly attempts: Prisma.FieldRef<"AdConversion", 'Int'>
+  readonly requestId: Prisma.FieldRef<"AdConversion", 'String'>
   readonly sentAt: Prisma.FieldRef<"AdConversion", 'DateTime'>
+  readonly confirmedAt: Prisma.FieldRef<"AdConversion", 'DateTime'>
   readonly failedAt: Prisma.FieldRef<"AdConversion", 'DateTime'>
   readonly error: Prisma.FieldRef<"AdConversion", 'String'>
 }
