@@ -51,3 +51,54 @@ export function agendaTime(iso: string, now = new Date()) {
     return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(date)
   return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(date)
 }
+
+type InThread = Scheduled & { parentSession: { id: string; title: string } | null }
+
+export type ThreadGroup<T> = {
+  /** The thread its runs report to; null: the routines whose runs are threads of their own. */
+  thread: { id: string; title: string } | null
+  items: T[]
+}
+
+/** Coming up first, by next run; then paused ones and those that never run again, by title. */
+function byNextRun<T extends Scheduled>(a: T, b: T) {
+  const next = (s: T) => (!s.pausedAt && s.nextRunAt) || null
+  const [x, y] = [next(a), next(b)]
+  if (x && y) return x.localeCompare(y) || a.title.localeCompare(b.title)
+  if (x || y) return x ? -1 : 1
+  return a.title.localeCompare(b.title)
+}
+
+/**
+ * Routines by the thread they report to, so a thread's routines read together: the thread
+ * whose next run comes first leads, threads with none coming up follow, and the routines whose
+ * runs are threads of their own come last. In each, its routines by next run.
+ */
+export function byThread<T extends InThread>(schedules: T[]): ThreadGroup<T>[] {
+  const groups = new Map<string, ThreadGroup<T>>()
+  for (const s of schedules) {
+    const key = s.parentSession?.id ?? ''
+    const group = groups.get(key) ?? { thread: s.parentSession, items: [] }
+    group.items.push(s)
+    groups.set(key, group)
+  }
+  for (const group of groups.values()) group.items.sort(byNextRun)
+  return [...groups.values()].sort(
+    (a, b) =>
+      Number(!a.thread) - Number(!b.thread) ||
+      byNextRun(a.items[0]!, b.items[0]!) ||
+      (a.thread?.title ?? '').localeCompare(b.thread?.title ?? ''),
+  )
+}
+
+/**
+ * A next run outside the agenda's day groups: the hour today, the weekday within the week
+ * ("Mon"), the date after it ("16 Nov").
+ */
+export function nextRunShort(iso: string, now = new Date()) {
+  const date = new Date(iso)
+  const days = daysFrom(now, date)
+  if (days <= 0) return agendaTime(iso, now)
+  if (days < 7) return new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(date)
+  return agendaTime(iso, now)
+}
