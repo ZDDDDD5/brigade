@@ -579,6 +579,9 @@ model ThreadLater {
   laterAt        DateTime  @default(now())
   /// When it comes back. Those put away before Snooze, and by an API older than it, a week on.
   until          DateTime  @default(dbgenerated("(now() + '7 days'::interval)"))
+  /// When it came back at its time: kept a week after, so the member's list brings it up
+  /// however old its last activity (src/later.ts). Null while it sleeps.
+  returnedAt     DateTime?
 
   @@id([memberId, sessionId])
   @@index([sessionId])

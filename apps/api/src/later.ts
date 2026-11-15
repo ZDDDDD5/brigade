@@ -2,7 +2,10 @@
 // pick, for themselves only, as they pin one. It leaves their sidebar's list (the filter's
 // Snoozed shows it) and what waits on them: its tickets and pull requests leave their Home,
 // sidebar, app badge and notifications. At its time it comes back, unread for them
-// (wakeDueSnoozes, each minute). Like an archive, anything new there brings it back sooner: a
+// (wakeDueSnoozes, each minute), and its row stays a week (RETURNED_DAYS) with `returnedAt`:
+// their sidebar lists it by that time, however old its last activity, so it shows on top of
+// their threads rather than past the list's last 100. A row past its `until` counts as awake
+// everywhere else. Like an archive, anything new there brings it back sooner: a
 // message in it (a member's, a wake-up's, a child's report), or a ticket or pull request opened
 // in it or one of its children.
 import { SNOOZE_MAX_DAYS } from '@brigade/contracts'
@@ -11,6 +14,8 @@ import { hubs, threadUpdated } from './hub.js'
 import { rootIdOf } from './thread-root.js'
 
 const DAY = 24 * 60 * 60_000
+/** How long a snooze that came back keeps its place on top of its member's list. */
+export const RETURNED_DAYS = 7
 
 /**
  * The threads this member snoozed: id, since when and until when. One past its time is back
@@ -22,6 +27,15 @@ export async function latersOf(db: ScopedDb, memberId: string, now = new Date())
     select: { sessionId: true, laterAt: true, until: true },
   })
   return new Map(rows.map((r) => [r.sessionId, { at: r.laterAt, until: r.until }] as const))
+}
+
+/** The threads that came back to this member lately from a snooze: id, and when. */
+export async function returnsOf(db: ScopedDb, memberId: string, now = new Date()) {
+  const rows = await db.threadLater.findMany({
+    where: { memberId, returnedAt: { gte: new Date(now.getTime() - RETURNED_DAYS * DAY) } },
+    select: { sessionId: true, returnedAt: true },
+  })
+  return new Map(rows.map((r) => [r.sessionId, r.returnedAt!] as const))
 }
 
 /** Who snoozed which thread in a workspace, as `memberId:sessionId`, for notifications. */
@@ -68,7 +82,7 @@ export async function setLater(
         sessionId: thread.id,
         until,
       },
-      update: { laterAt: new Date(), until },
+      update: { laterAt: new Date(), until, returnedAt: null },
     })
   else
     await db.threadLater.deleteMany({ where: { memberId: scope.memberId, sessionId: thread.id } })
@@ -89,10 +103,18 @@ export async function bringBackFromLater(scope: Scope, sessionId: string) {
   if (count) changed(scope, root)
 }
 
-/** Workspaces with a snooze at its end. */
+/** Snoozes at their end not brought back yet, and those back past their week. */
+const due = (now: Date) => ({
+  OR: [
+    { until: { lte: now }, returnedAt: null },
+    { returnedAt: { lt: new Date(now.getTime() - RETURNED_DAYS * DAY) } },
+  ],
+})
+
+/** Workspaces with a snooze at its end, or one back past its week. */
 export async function dueSnoozes(now = new Date()) {
   const rows = await prisma.threadLater.findMany({
-    where: { until: { lte: now } },
+    where: due(now),
     distinct: ['workspaceId'],
     select: { workspaceId: true },
   })
@@ -100,13 +122,18 @@ export async function dueSnoozes(now = new Date()) {
 }
 
 /**
- * Snoozes at their end, of one workspace or all: each thread back in its member's list, unread
- * for them so it shows it came back. Each row is claimed by its deletion, so a second run of
- * the job leaves it alone; one snoozed again meanwhile has a later time and stays.
+ * Snoozes at their end, of one workspace or all: each thread back on top of its member's list,
+ * unread for them so it shows it came back. Each row is claimed by setting its `returnedAt`,
+ * so a second run of the job leaves it alone; one snoozed again meanwhile has a later time and
+ * stays asleep. Rows back for over RETURNED_DAYS go.
  */
 export async function wakeDueSnoozes(workspaceId?: string, now = new Date()) {
-  const due = await prisma.threadLater.findMany({
-    where: { until: { lte: now }, ...(workspaceId ? { workspaceId } : {}) },
+  const where = workspaceId ? { workspaceId } : {}
+  await prisma.threadLater.deleteMany({
+    where: { ...where, returnedAt: { lt: new Date(now.getTime() - RETURNED_DAYS * DAY) } },
+  })
+  const waking = await prisma.threadLater.findMany({
+    where: { ...where, until: { lte: now }, returnedAt: null },
     select: {
       organizationId: true,
       workspaceId: true,
@@ -118,9 +145,15 @@ export async function wakeDueSnoozes(workspaceId?: string, now = new Date()) {
     orderBy: { until: 'asc' },
     take: 200,
   })
-  for (const row of due) {
-    const { count } = await prisma.threadLater.deleteMany({
-      where: { memberId: row.memberId, sessionId: row.sessionId, until: row.until },
+  for (const row of waking) {
+    const { count } = await prisma.threadLater.updateMany({
+      where: {
+        memberId: row.memberId,
+        sessionId: row.sessionId,
+        until: row.until,
+        returnedAt: null,
+      },
+      data: { returnedAt: now },
     })
     if (!count) continue
     await prisma.threadRead.deleteMany({
@@ -128,7 +161,7 @@ export async function wakeDueSnoozes(workspaceId?: string, now = new Date()) {
     })
     changed(row, { id: row.sessionId, status: row.session.status })
   }
-  return due.length
+  return waking.length
 }
 
 /**

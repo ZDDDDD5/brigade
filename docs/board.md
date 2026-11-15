@@ -53,7 +53,8 @@ same question is `Projects/Brigade/investigations/agent-work-tracking-competitor
   Monday at 9:00 in their own time zone, or a month (`snoozeOptions` in `@brigade/contracts`; the
   API takes any time up to `SNOOZE_MAX_DAYS`). The sidebar filter's Snoozed lists them, with how
   many and when each comes back. At its time a minute job (`snoozes`) brings it back, unread for
-  that member; anything new in it sooner (a message, or a ticket or pull request in it or a child)
+  that member and on top of their list for a week however old it is (`returnedAt`, so it never
+  stays past the list's latest 100); anything new in it sooner (a message, or a ticket or pull request in it or a child)
   brings it back for everyone (`src/later.ts`). Those put away before Snooze came back a week
   after it shipped: the column's default, which also covers an older API still running.
 - **What a member snoozed is not theirs to see here.** A thread they snoozed

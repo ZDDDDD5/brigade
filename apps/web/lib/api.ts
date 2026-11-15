@@ -556,6 +556,8 @@ export type ThreadSummary = {
    */
   laterAt?: string | null
   snoozedUntil?: string | null
+  /** When it came back from this member's snooze, lately: the list puts it by that time. */
+  returnedAt?: string | null
   /** Others than its starter may write in it, so rename and archive it. */
   othersMayPrompt?: boolean
   /** Since when its events have not reached Brigade: its computer keeps sending them. */

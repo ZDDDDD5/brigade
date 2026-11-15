@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { after, before, test } from 'node:test'
+import { Hono } from 'hono'
 import pg from 'pg'
+import { sessionStub } from './session-stub.js'
 
 // Snooze (src/later.ts, Later in the code) against a real database: the local one of apps/api/.env, in an
 // organization of its own that it removes at the end. Without a database to reach, it is skipped.
@@ -38,8 +40,16 @@ async function reachable() {
 const skip = (await reachable()) ? false : 'no database to reach (apps/api/.env DATABASE_URL)'
 
 const { prisma, scoped } = await import('../src/db.js')
-const { bringBackFromLater, laterKey, latersIn, latersOf, setLater, snoozeUntil, wakeDueSnoozes } =
-  await import('../src/later.js')
+const {
+  bringBackFromLater,
+  laterKey,
+  latersIn,
+  latersOf,
+  returnsOf,
+  setLater,
+  snoozeUntil,
+  wakeDueSnoozes,
+} = await import('../src/later.js')
 const { setThreadArchived } = await import('../src/thread-archive.js')
 const { homeFor } = await import('../src/home.js')
 const { needsAttention } = await import('../src/pull-requests.js')
@@ -259,7 +269,7 @@ test(
 )
 
 test(
-  'a snooze comes back at its time, unread, and a second run of the job changes nothing',
+  'a snooze comes back at its time, unread, and a second run changes nothing',
   { skip },
   async () => {
     const t = await thread()
@@ -279,7 +289,6 @@ test(
     const soon = new Date(Date.now() + 60_000)
     await setLater(scoped(scope), as(0), t, soon)
     await setLater(scoped(scope), as(1), t, week())
-    assert.ok((await later(0)).has(t.id))
     assert.equal((await later(0)).get(t.id)?.until.getTime(), soon.getTime())
     // Not yet due: nothing moves.
     await wakeDueSnoozes(scope.workspaceId)
@@ -288,15 +297,76 @@ test(
     const past = new Date(soon.getTime() + 1_000)
     assert.equal((await latersOf(scoped(scope), ids.members[0]!, past)).has(t.id), false)
     assert.ok(await wakeDueSnoozes(scope.workspaceId, past))
-    const rows = await prisma.threadLater.findMany({ where: { sessionId: t.id } })
-    assert.deepEqual(
-      rows.map((r) => r.memberId),
-      [ids.members[1]],
+    const back = await returnsOf(scoped(scope), ids.members[0]!, past)
+    assert.equal(back.get(t.id)?.getTime(), past.getTime())
+    assert.equal((await returnsOf(scoped(scope), ids.members[1]!, past)).has(t.id), false)
+    assert.ok(
+      (await latersOf(scoped(scope), ids.members[1]!, past)).has(t.id),
       'the other member’s snooze stays',
     )
     const read = await prisma.threadRead.findMany({ where: { sessionId: t.id } })
     assert.equal(read.length, 0, 'unread for the member it came back to')
     assert.equal(await wakeDueSnoozes(scope.workspaceId, past), 0)
+    // Snoozed again: asleep, no longer back.
+    await setLater(scoped(scope), as(0), t, week())
+    assert.ok((await later(0)).has(t.id))
+    assert.equal((await returnsOf(scoped(scope), ids.members[0]!)).has(t.id), false)
+  },
+)
+
+test(
+  'back from a snooze, an old thread tops the list for a week, then its row goes',
+  { skip },
+  async () => {
+    const { auth } = await import('../src/auth.js')
+    const { threads } = await import('../src/routes/threads.js')
+    const getSession = auth.api.getSession
+    ;(auth.api as { getSession: unknown }).getSession = sessionStub(() => ({
+      user: { id: ids.users[0] },
+      session: {
+        id: `session-later-${id}`,
+        activeOrganizationId: ids.organization,
+        activeWorkspaceId: scope.workspaceId,
+      },
+    }))
+    try {
+      const app = new Hono().route('/api/threads', threads)
+      const old = await thread()
+      await prisma.session.update({
+        where: { id: old.id },
+        data: { updatedAt: new Date(Date.now() - 40 * 86_400_000) },
+      })
+      // More newer threads than the list's 100.
+      for (let i = 0; i < 101; i++) await thread()
+      const list = async () => {
+        const res = await app.request('/api/threads')
+        assert.equal(res.status, 200)
+        return (await res.json()) as {
+          id: string
+          returnedAt: string | null
+          laterAt: string | null
+        }[]
+      }
+      const soon = new Date(Date.now() + 60_000)
+      await setLater(scoped(scope), as(0), old, soon)
+      assert.ok((await list()).find((t) => t.id === old.id)?.laterAt, 'listed as snoozed')
+      // Its time passes.
+      await prisma.threadLater.updateMany({
+        where: { sessionId: old.id },
+        data: { until: new Date(Date.now() - 1_000) },
+      })
+      const back = new Date()
+      await wakeDueSnoozes(scope.workspaceId, back)
+      const rows = await list()
+      assert.equal(rows[0]?.id, old.id, 'on top, however old')
+      assert.equal(rows[0]?.laterAt, null)
+      assert.ok(rows[0]?.returnedAt)
+      // A week and more on, the job drops its row.
+      await wakeDueSnoozes(scope.workspaceId, new Date(back.getTime() + 8 * 86_400_000))
+      assert.equal(await prisma.threadLater.count({ where: { sessionId: old.id } }), 0)
+    } finally {
+      ;(auth.api as { getSession: unknown }).getSession = getSession
+    }
   },
 )
 

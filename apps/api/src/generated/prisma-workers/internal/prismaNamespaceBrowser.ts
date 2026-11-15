@@ -463,7 +463,8 @@ export const ThreadLaterScalarFieldEnum = {
   memberId: 'memberId',
   sessionId: 'sessionId',
   laterAt: 'laterAt',
-  until: 'until'
+  until: 'until',
+  returnedAt: 'returnedAt'
 } as const
 
 export type ThreadLaterScalarFieldEnum = (typeof ThreadLaterScalarFieldEnum)[keyof typeof ThreadLaterScalarFieldEnum]

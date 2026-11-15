@@ -118,7 +118,7 @@ import { recorder } from '../teaching.js'
 import { setThreadArchived } from '../thread-archive.js'
 import { markDone, markReopened, reopenThread } from '../thread-done.js'
 import { actorNames } from '../library-history.js'
-import { latersOf, setLater, snoozeUntil } from '../later.js'
+import { latersOf, returnsOf, setLater, snoozeUntil } from '../later.js'
 import { descendants, reportConversation, reportOf } from '../children.js'
 import { noteChiefDismissed, overruleDecision, threadDecisions } from '../chief-answers.js'
 import { deleteThread } from '../thread-delete.js'
@@ -387,8 +387,12 @@ export const threads = new Hono<AppEnv>()
       where: { memberId: c.var.scope.memberId },
       select: { sessionId: true, pinnedAt: true, position: true },
     })
-    // And those they snoozed, all of them too: the filter's Snoozed lists them.
-    const laters = await latersOf(c.var.db, c.var.scope.memberId)
+    // And those they snoozed, all of them too: the filter's Snoozed lists them. Those back from
+    // a snooze lately go by when they came back, however old: on top of the list, not past it.
+    const [laters, returns] = await Promise.all([
+      latersOf(c.var.db, c.var.scope.memberId),
+      returnsOf(c.var.db, c.var.scope.memberId),
+    ])
     if (
       !only &&
       !limit &&
@@ -400,7 +404,12 @@ export const threads = new Hono<AppEnv>()
       // And those on the lists they pinned, which show under each list, however old.
       const onPinnedLists = await pinnedListThreads(c.var.db, c.var.scope.memberId)
       const missing = [
-        ...new Set([...pins.map((p) => p.sessionId), ...laters.keys(), ...onPinnedLists]),
+        ...new Set([
+          ...pins.map((p) => p.sessionId),
+          ...laters.keys(),
+          ...returns.keys(),
+          ...onPinnedLists,
+        ]),
       ].filter((id) => !loaded.has(id))
       // A child thread shows only in its parent, unless this member pinned it.
       const pinnedIds = new Set(pins.map((p) => p.sessionId))
@@ -415,6 +424,11 @@ export const threads = new Hono<AppEnv>()
             include,
           })),
         )
+    }
+    if (!only && !limit && returns.size) {
+      const at = (row: { id: string; updatedAt: Date }) =>
+        Math.max(row.updatedAt.getTime(), returns.get(row.id)?.getTime() ?? 0)
+      rows.sort((a, b) => at(b) - at(a))
     }
     // How much each one was answered, for the list's replies line: people's messages
     // after the first, and the teammates' turns.
@@ -624,6 +638,7 @@ export const threads = new Hono<AppEnv>()
           pinPosition: pins.find((p) => p.sessionId === row.id)?.position ?? null,
           laterAt: laters.get(row.id)?.at.toISOString() ?? null,
           snoozedUntil: laters.get(row.id)?.until.toISOString() ?? null,
+          returnedAt: returns.get(row.id)?.toISOString() ?? null,
           eventsWaitingSince: waitingSince[row.id] ?? null,
           // Others than its starter write in it, so rename and archive it (account-sharing.ts).
           othersMayPrompt: openToOthers(row),
