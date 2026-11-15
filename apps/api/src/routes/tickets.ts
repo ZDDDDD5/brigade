@@ -25,14 +25,14 @@ export const tickets = new Hono<AppEnv>()
       }),
       latersOf(c.var.db, c.var.scope.memberId),
     ])
-    // Its thread put away for later by this member: it no longer waits on them (waitsOn),
+    // Its thread snoozed by this member: it no longer waits on them (waitsOn),
     // as when archived. A sub-thread's goes with the thread at the top, which it marks there.
     return c.json(
       rows.map((t) => {
         if (!t.session) return t
         const { parent: _parent, ...session } = t.session
         const rootId = rootOf(t.session)
-        const laterAt = laters.get(rootId)
+        const laterAt = laters.get(rootId)?.at
         return { ...t, session: { ...session, rootId, laterAt: laterAt?.toISOString() ?? null } }
       }),
     )

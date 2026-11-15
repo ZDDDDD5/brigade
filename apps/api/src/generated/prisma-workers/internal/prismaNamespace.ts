@@ -8988,7 +8988,9 @@ export const ThreadLaterScalarFieldEnum = {
   workspaceId: 'workspaceId',
   memberId: 'memberId',
   sessionId: 'sessionId',
-  laterAt: 'laterAt'
+  laterAt: 'laterAt',
+  until: 'until',
+  returnedAt: 'returnedAt'
 } as const
 
 export type ThreadLaterScalarFieldEnum = (typeof ThreadLaterScalarFieldEnum)[keyof typeof ThreadLaterScalarFieldEnum]

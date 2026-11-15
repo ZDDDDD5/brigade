@@ -136,7 +136,7 @@ export async function choicesWaitingOn(
     where: {
       ...CHOICE_THREAD,
       startedByMemberId: memberId,
-      laters: { none: { memberId } },
+      laters: { none: { memberId, until: { gt: new Date() } } },
       updatedAt: { gte: new Date(now.getTime() - CHOICE_DAYS * DAY) },
     },
     select: {

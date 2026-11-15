@@ -54,6 +54,7 @@ import {
   SendMessage,
   SetProject,
   StartThread,
+  SNOOZE_MAX_DAYS,
   STORED_FILE_NAME,
   handbackAnswer,
   UpdateThread,
@@ -117,7 +118,7 @@ import { recorder } from '../teaching.js'
 import { setThreadArchived } from '../thread-archive.js'
 import { markDone, markReopened, reopenThread } from '../thread-done.js'
 import { actorNames } from '../library-history.js'
-import { latersOf, setLater } from '../later.js'
+import { latersOf, returnsOf, setLater, snoozeUntil } from '../later.js'
 import { descendants, reportConversation, reportOf } from '../children.js'
 import { noteChiefDismissed, overruleDecision, threadDecisions } from '../chief-answers.js'
 import { deleteThread } from '../thread-delete.js'
@@ -386,8 +387,12 @@ export const threads = new Hono<AppEnv>()
       where: { memberId: c.var.scope.memberId },
       select: { sessionId: true, pinnedAt: true, position: true },
     })
-    // And those they put away for later, all of them too: the filter's Later lists them.
-    const laters = await latersOf(c.var.db, c.var.scope.memberId)
+    // And those they snoozed, all of them too: the filter's Snoozed lists them. Those back from
+    // a snooze lately go by when they came back, however old: on top of the list, not past it.
+    const [laters, returns] = await Promise.all([
+      latersOf(c.var.db, c.var.scope.memberId),
+      returnsOf(c.var.db, c.var.scope.memberId),
+    ])
     if (
       !only &&
       !limit &&
@@ -399,7 +404,12 @@ export const threads = new Hono<AppEnv>()
       // And those on the lists they pinned, which show under each list, however old.
       const onPinnedLists = await pinnedListThreads(c.var.db, c.var.scope.memberId)
       const missing = [
-        ...new Set([...pins.map((p) => p.sessionId), ...laters.keys(), ...onPinnedLists]),
+        ...new Set([
+          ...pins.map((p) => p.sessionId),
+          ...laters.keys(),
+          ...returns.keys(),
+          ...onPinnedLists,
+        ]),
       ].filter((id) => !loaded.has(id))
       // A child thread shows only in its parent, unless this member pinned it.
       const pinnedIds = new Set(pins.map((p) => p.sessionId))
@@ -414,6 +424,11 @@ export const threads = new Hono<AppEnv>()
             include,
           })),
         )
+    }
+    if (!only && !limit && returns.size) {
+      const at = (row: { id: string; updatedAt: Date }) =>
+        Math.max(row.updatedAt.getTime(), returns.get(row.id)?.getTime() ?? 0)
+      rows.sort((a, b) => at(b) - at(a))
     }
     // How much each one was answered, for the list's replies line: people's messages
     // after the first, and the teammates' turns.
@@ -582,7 +597,8 @@ export const threads = new Hono<AppEnv>()
       startedBy: { id: startedByMemberId },
       othersMayPrompt: openToOthers({ othersMayPrompt, computer }),
       pinnedAt: pins.find((p) => p.sessionId === child.id)?.pinnedAt.toISOString() ?? null,
-      laterAt: laters.get(child.id)?.toISOString() ?? null,
+      laterAt: laters.get(child.id)?.at.toISOString() ?? null,
+      snoozedUntil: laters.get(child.id)?.until.toISOString() ?? null,
       unread: unread(
         childTurns.find((t) => t.sessionId === child.id)?._max.at,
         childReads.find((r) => r.sessionId === child.id)?.seenAt,
@@ -620,7 +636,9 @@ export const threads = new Hono<AppEnv>()
           list: lists.get(row.id) ?? null,
           pinnedAt: pins.find((p) => p.sessionId === row.id)?.pinnedAt.toISOString() ?? null,
           pinPosition: pins.find((p) => p.sessionId === row.id)?.position ?? null,
-          laterAt: laters.get(row.id)?.toISOString() ?? null,
+          laterAt: laters.get(row.id)?.at.toISOString() ?? null,
+          snoozedUntil: laters.get(row.id)?.until.toISOString() ?? null,
+          returnedAt: returns.get(row.id)?.toISOString() ?? null,
           eventsWaitingSince: waitingSince[row.id] ?? null,
           // Others than its starter write in it, so rename and archive it (account-sharing.ts).
           othersMayPrompt: openToOthers(row),
@@ -745,7 +763,10 @@ export const threads = new Hono<AppEnv>()
     const [pin, later, presence, waitingSince, names, chiefDecisions, ticketsBelow, goal] =
       await Promise.all([
         c.var.db.threadPin.findUnique({ where: mine, select: { pinnedAt: true } }),
-        c.var.db.threadLater.findUnique({ where: mine, select: { laterAt: true } }),
+        c.var.db.threadLater.findFirst({
+          where: { ...mine.memberId_sessionId, until: { gt: new Date() } },
+          select: { laterAt: true, until: true },
+        }),
         hub.presence([thread.computer.id]),
         hub.eventsWaitingSince([thread.id]),
         // Who declared it done, by name.
@@ -788,6 +809,7 @@ export const threads = new Hono<AppEnv>()
       },
       pinnedAt: pin?.pinnedAt.toISOString() ?? null,
       laterAt: later?.laterAt.toISOString() ?? null,
+      snoozedUntil: later?.until.toISOString() ?? null,
       chiefDecisions,
       doneBy: (thread.doneAt && names?.(thread.doneByType, thread.doneById)?.name) || null,
       // Where it is going, not the message that goes with it.
@@ -2083,21 +2105,28 @@ export const threads = new Hono<AppEnv>()
   })
 
   /**
-   * Put it away for later: out of this member's list and of what waits on them, until
-   * something new happens in it (src/later.ts); DELETE puts it back. Each member's own.
+   * Snooze it (`{ until }`, an ISO time): out of this member's list and of what waits on them
+   * until then, or until something new happens in it (src/later.ts); DELETE wakes it now. Each
+   * member's own.
    */
   .post('/:id/later', async (c) => {
     const { scope, db } = c.var
+    const body: { until?: unknown } = await c.req.json().catch(() => ({}))
+    const until = snoozeUntil(body?.until)
+    if (!until)
+      throw new HTTPException(400, {
+        message: `Snooze until a time in the next ${SNOOZE_MAX_DAYS} days.`,
+      })
     const thread = await loadThread(db, c.req.param('id'))
     if (thread.parentId)
       throw new HTTPException(409, { message: 'A sub-thread shows in its parent.' })
     if (thread.archivedAt) throw new HTTPException(409, { message: 'Unarchive the thread first.' })
-    await setLater(db, scope, thread, true)
-    return c.json({ ok: true })
+    await setLater(db, scope, thread, until)
+    return c.json({ ok: true, until: until.toISOString() })
   })
   .delete('/:id/later', async (c) => {
     const { scope, db } = c.var
-    await setLater(db, scope, await loadThread(db, c.req.param('id')), false)
+    await setLater(db, scope, await loadThread(db, c.req.param('id')), null)
     return c.json({ ok: true })
   })
 

@@ -564,9 +564,10 @@ model SidebarOrder {
   @@index([workspaceId])
 }
 
-/// A thread a member put away for later: out of their sidebar's list and of what waits on
-/// them, under the filter's Later. Each member's own, like a pin. Anything new in the thread
-/// after laterAt (a message, a turn, a ticket, a pull request) brings it back (src/later.ts).
+/// A thread a member snoozed (Later in the code): out of their sidebar's list and of what waits
+/// on them, under the filter's Snoozed, until `until`. Each member's own, like a pin. Anything
+/// new in the thread after laterAt (a message, a turn, a ticket, a pull request) brings it back
+/// sooner (src/later.ts).
 model ThreadLater {
   organizationId String
   workspaceId    String
@@ -576,10 +577,16 @@ model ThreadLater {
   sessionId      String
   session        Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   laterAt        DateTime  @default(now())
+  /// When it comes back. Those put away before Snooze, and by an API older than it, a week on.
+  until          DateTime  @default(dbgenerated("(now() + '7 days'::interval)"))
+  /// When it came back at its time: kept a week after, so the member's list brings it up
+  /// however old its last activity (src/later.ts). Null while it sleeps.
+  returnedAt     DateTime?
 
   @@id([memberId, sessionId])
   @@index([sessionId])
   @@index([workspaceId])
+  @@index([until])
 }
 
 /// A loose end a member set aside on Home. Its key names the thing as it stood then (a thread's

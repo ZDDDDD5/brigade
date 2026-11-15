@@ -47,12 +47,18 @@ same question is `Projects/Brigade/investigations/agent-work-tracking-competitor
   so it holds while the teammate's computer is off. A card answered or offered after the one a
   person saw is not theirs to dismiss: refused, so a stale page never closes choices nobody
   read. Chosen over Mark done, which ends the thread: a person may come back to it.
-- **A thread to do later is put away.** Its ⋮ menu's Do later takes it out of the member's list
-  and of what waits on them (Today, sidebar, app badge, notifications), for them only, like a pin;
-  the sidebar filter's Later lists them, with how many. Anything new in it (a message, or a ticket
-  or pull request in it or a child) brings it back (`src/later.ts`).
-- **What a member put away for later is not theirs to see here.** A thread they put away
-  (Do later, `src/later.ts`) no longer waits on them anywhere, so on their Board it is like an
+- **A snoozed thread is put away until a time.** Its ⋮ menu's Snooze (Later in the code and
+  the database) takes it out of the member's list and of what waits on them (Today, sidebar, app
+  badge, notifications), for them only, like a pin, for 1 hour, 3 hours, until tomorrow or next
+  Monday at 9:00 in their own time zone, or a month (`snoozeOptions` in `@brigade/contracts`; the
+  API takes any time up to `SNOOZE_MAX_DAYS`). The sidebar filter's Snoozed lists them, with how
+  many and when each comes back. At its time a minute job (`snoozes`) brings it back, unread for
+  that member and on top of their list for a week however old it is (`returnedAt`, so it never
+  stays past the list's latest 100); anything new in it sooner (a message, or a ticket or pull request in it or a child)
+  brings it back for everyone (`src/later.ts`). Those put away before Snooze came back a week
+  after it shipped: the column's default, which also covers an older API still running.
+- **What a member snoozed is not theirs to see here.** A thread they snoozed
+  (`src/later.ts`) no longer waits on them anywhere, so on their Board it is like an
   archived one: no card in Needs you or In progress, not Stopped, and a list's line it alone
   carries leaves the Board too. What it did this week stays in Done. Other members still see it,
   and anything new in it brings it back for everyone.
