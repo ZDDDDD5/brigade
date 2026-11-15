@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ComputerUseError, type RequestOptions } from '../src/computer-use.js'
+import { ComputerUseError, Line, type RequestOptions } from '../src/computer-use.js'
+import type { AppInput } from '../src/harness/desktop-tools.js'
 import { computerUseTools, type ComputerUse } from '../src/harness/tools.js'
 
 type Call = { method: string; params: Record<string, unknown>; options?: RequestOptions }
@@ -84,4 +85,130 @@ test('an older helper without run: the teammate is told to update Brigade.app', 
     ) as Promise<unknown>,
     /update Brigade\.app/,
   )
+})
+
+test('commands wait their turn in the line rather than being refused, in the order asked', async () => {
+  const line = new Line()
+  const order: string[] = []
+  let releaseFirst!: () => void
+  const first = line.run(async () => {
+    order.push('first starts')
+    await new Promise<void>((resolve) => (releaseFirst = resolve))
+    order.push('first ends')
+    return 1
+  })
+  const second = line.run(async () => {
+    order.push('second')
+    return 2
+  })
+  const third = line.run(async () => {
+    order.push('third')
+    return 3
+  })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.deepEqual(order, ['first starts'])
+  releaseFirst()
+  assert.deepEqual(await Promise.all([first, second, third]), [1, 2, 3])
+  assert.deepEqual(order, ['first starts', 'first ends', 'second', 'third'])
+})
+
+test('a command whose turn was interrupted, or that waited too long, leaves the line without running', async () => {
+  const line = new Line(50)
+  let releaseFirst!: () => void
+  const first = line.run(() => new Promise<void>((resolve) => (releaseFirst = resolve)))
+  const controller = new AbortController()
+  let ran = 0
+  const interrupted = line.run(async () => void ran++, controller.signal)
+  controller.abort()
+  await assert.rejects(interrupted, /aborted/)
+  await assert.rejects(
+    line.run(async () => void ran++),
+    (error: unknown) => error instanceof ComputerUseError && error.code === 'busy',
+  )
+  // The one after still waits for the one running, then runs.
+  const later = line.run(async () => void ran++)
+  releaseFirst()
+  await first
+  await later
+  assert.equal(ran, 1)
+})
+
+test("a key or text for a named app goes to that app's process, never to whatever is in front", async () => {
+  // Cody's interleaving (review of #856): two named-app keys in parallel, the front moving between.
+  let front = 'Finder'
+  const deliveries: { what: string; app: string }[] = []
+  const { use, calls } = computer(async (call) => {
+    if (call.method === 'open_app') front = call.params.app as string
+    if (call.method === 'key' || call.method === 'type')
+      deliveries.push({ what: String(call.params.key ?? call.params.text), app: front })
+    return { ok: true }
+  })
+  const appInput: AppInput = {
+    press: async (app, key) => {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      deliveries.push({ what: key, app })
+      return { delivery: 'delivered_unverified' }
+    },
+    type: async (app, text) => {
+      deliveries.push({ what: text, app })
+      return { delivery: 'delivered_verified' }
+    },
+  }
+  const tools = computerUseTools(use, appInput)
+  const answers = await Promise.all([
+    tools.computer_key!.execute!({ app: 'TextEdit', key: 'cmd+a' }, options()),
+    tools.computer_key!.execute!({ app: 'Calculator', key: 'escape' }, options()),
+    tools.computer_type!.execute!({ app: 'TextEdit', text: 'hi' }, options()),
+  ])
+  assert.deepEqual(answers, [
+    { to: 'TextEdit', delivery: 'delivered_unverified' },
+    { to: 'Calculator', delivery: 'delivered_unverified' },
+    { to: 'TextEdit', delivery: 'delivered_verified' },
+  ])
+  assert.deepEqual(
+    [...deliveries].sort((a, b) => a.what.localeCompare(b.what)),
+    [
+      { what: 'cmd+a', app: 'TextEdit' },
+      { what: 'escape', app: 'Calculator' },
+      { what: 'hi', app: 'TextEdit' },
+    ],
+  )
+  // Nothing went through the helper's global keyboard, and no app was brought forward.
+  assert.deepEqual(calls, [])
+})
+
+test('a key without an app goes to the app in front, which the answer names', async () => {
+  const { use, calls } = computer(async (call) =>
+    call.method === 'apps'
+      ? {
+          apps: [
+            { name: 'Brigade', active: true },
+            { name: 'TextEdit', active: false },
+          ],
+        }
+      : { ok: true },
+  )
+  assert.deepEqual(
+    await computerUseTools(use).computer_key!.execute!({ key: 'return' }, options()),
+    { ok: true, front: 'Brigade' },
+  )
+  assert.deepEqual(
+    calls.map((c) => [c.method, c.params]),
+    [
+      ['apps', {}],
+      ['key', { key: 'return' }],
+    ],
+  )
+})
+
+test('a key for a named app without agent-desktop is refused, and nothing is sent', async () => {
+  const { use, calls } = computer(async () => ({ ok: true }))
+  await assert.rejects(
+    computerUseTools(use).computer_key!.execute!(
+      { key: 'cmd+s', app: 'TextEdit' },
+      options(),
+    ) as Promise<unknown>,
+    /need agent-desktop/,
+  )
+  assert.deepEqual(calls, [])
 })
