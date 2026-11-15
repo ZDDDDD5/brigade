@@ -46,6 +46,7 @@ const { prisma, scoped } = await import('../src/db.js')
 const {
   dueChildren,
   handleChildCall,
+  noteChildEvents,
   settleStrandedChildren,
   STRANDED_AFTER_MS,
   STRANDED_WITHIN_MS,
@@ -134,8 +135,9 @@ async function family({ awaited = false } = {}) {
 }
 
 let seq = 0
-const event = (session: Row, type: string, data: object, at = new Date()) =>
-  prisma.sessionEvent.create({
+/** An event its runner sent, stored as src/hub/runner-messages.ts does: the thread's lastSeq moves on. */
+async function event(session: Row, type: string, data: object, at = new Date()) {
+  const row = await prisma.sessionEvent.create({
     data: {
       ...scope,
       sessionId: session.id,
@@ -145,6 +147,9 @@ const event = (session: Row, type: string, data: object, at = new Date()) =>
       at,
     },
   })
+  await prisma.session.update({ where: { id: session.id }, data: { lastSeq: row.seq } })
+  return row
+}
 
 /**
  * Its turn as its runner stores it, minus what the end of a turn does (noteChildEvents): the
@@ -325,3 +330,101 @@ test('a conversation with a person, cut short, waits for them to go quiet', { sk
   })
   assert.ok(row.reportDueAt)
 })
+
+/**
+ * Runs `sweep`, and `between` once, as soon as a read of the child's events that `when` picks has
+ * answered: what comes in while the sweep plays its turn's end again.
+ */
+async function interleaved(
+  when: (types: string[]) => boolean,
+  between: () => Promise<void>,
+  run: () => Promise<void>,
+) {
+  const delegate = prisma.sessionEvent
+  const original = delegate.findFirst
+  let came = false
+  delegate.findFirst = (async (args: { where?: { type?: string | { in?: string[] } } }) => {
+    const found = await original.call(delegate, args as never)
+    const type = args?.where?.type
+    const types = typeof type === 'string' ? [type] : (type?.in ?? [])
+    if (!came && when(types)) {
+      came = true
+      await between()
+    }
+    return found
+  }) as never
+  try {
+    await run()
+  } finally {
+    delegate.findFirst = original
+  }
+  assert.ok(came, 'the next turn came in during the sweep')
+}
+
+/** Its next turn begins: the message its runner sent stored, the thread at work again. */
+async function nextTurn(child: Row, settle: boolean) {
+  const at = new Date()
+  await event(child, 'message.user', { text: 'Look again.' }, at)
+  await prisma.session.update({ where: { id: child.id }, data: { status: 'running' } })
+  if (settle)
+    await noteChildEvents(child, [{ event: { type: 'message.user', at: at.toISOString() } }])
+}
+
+test(
+  'a next turn that begins as its last message is read is not answered with it',
+  { skip },
+  async () => {
+    const { parent, child } = await family()
+    await strandedTurn(child, 'The old answer.')
+    // As the sweep reads its last message to stand in for a report.
+    await interleaved(
+      (types) => types.includes('message.done'),
+      () => nextTurn(child, true),
+      sweep,
+    )
+    assert.deepEqual(await notes(parent), [])
+    const row = await prisma.session.findUniqueOrThrow({
+      where: { id: child.id },
+      select: { report: true, reportDeliveredAt: true },
+    })
+    assert.equal(row.report, null)
+    assert.equal(row.reportDeliveredAt, null)
+  },
+)
+
+for (const awaited of [true, false])
+  test(
+    `a next turn that begins before its report is claimed keeps it (${awaited ? 'awaited' : 'not awaited'})`,
+    { skip },
+    async () => {
+      const { parent, child } = await family({ awaited })
+      await reportInTurn(child, 'The old report.')
+      await strandedTurn(child, 'Old.')
+      // As the sweep reads its turn's end: the message is stored, its own settling not run yet.
+      await interleaved(
+        (types) => types.includes('turn.completed'),
+        () => nextTurn(child, false),
+        sweep,
+      )
+      assert.deepEqual(await notes(parent), [])
+      assert.equal(await delivered(child), null)
+
+      // That message settles, and the next turn reports: its report alone reaches the parent.
+      const asked = await prisma.sessionEvent.findFirstOrThrow({
+        where: { sessionId: child.id, type: 'message.user' },
+        orderBy: { seq: 'desc' },
+      })
+      await noteChildEvents(child, [
+        { event: { type: 'message.user', at: asked.at.toISOString() } },
+      ])
+      await reportInTurn(child, 'The new report.')
+      await prisma.session.update({ where: { id: child.id }, data: { status: 'idle' } })
+      await noteChildEvents(child, [
+        { event: { type: 'turn.completed', at: new Date().toISOString() } },
+      ])
+      const [note, ...more] = await notes(parent)
+      assert.equal(more.length, 0)
+      assert.match(note!, /The new report\./)
+      assert.doesNotMatch(note!, /The old report\./)
+    },
+  )
