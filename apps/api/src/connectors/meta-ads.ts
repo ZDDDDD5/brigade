@@ -227,7 +227,19 @@ const rangeModifier = (i: DateInput) =>
     : `.date_preset(${i.datePreset})`
 const dateLabel = (i: DateInput) =>
   i.since && i.until ? `${i.since} to ${i.until}` : i.datePreset.replaceAll('_', ' ')
-const limit = z.number().int().min(1).max(500).default(100).describe('Rows at most')
+const limit = z.number().int().min(1).max(500).default(100).describe('Rows at most, per page')
+const after = z
+  .string()
+  .max(1000)
+  .optional()
+  .describe('To read on: the `next` cursor the previous page gave')
+/** The page's paging as a cursor for the next one: null once nothing more is left. */
+type Paging = { cursors?: { after?: string }; next?: string }
+const nextOf = (paging?: Paging) => (paging?.next && paging.cursors?.after) || null
+const pageParams = (i: { limit: number; after?: string | undefined }): Record<string, string> => ({
+  limit: String(i.limit),
+  ...(i.after ? { after: i.after } : {}),
+})
 
 const METRICS = 'spend,impressions,reach,frequency,clicks,ctr,cpc,cpm,actions,action_values'
 
@@ -289,18 +301,24 @@ export const metaAds: ConnectorDefinition = {
         ...dates,
         activeOnly: z.boolean().default(false).describe('Only campaigns delivering now'),
         limit,
+        after,
       }),
       target: (i) => `campaigns of ${i.accountId}, ${dateLabel(i)}`,
       check,
       run: async (ctx, i) => {
         const account = adAccountOf(ctx, i.accountId)
-        const { data = [] } = await get<{ data?: Row[] }>(ctx.fetch, `${account.id}/campaigns`, {
-          fields: `id,name,status,effective_status,objective,bid_strategy,daily_budget,lifetime_budget,start_time,stop_time,insights${rangeModifier(i)}{${METRICS}}`,
-          limit: String(i.limit),
-          ...statusFilter(i.activeOnly),
-        })
+        const { data = [], paging } = await get<{ data?: Row[]; paging?: Paging }>(
+          ctx.fetch,
+          `${account.id}/campaigns`,
+          {
+            fields: `id,name,status,effective_status,objective,bid_strategy,daily_budget,lifetime_budget,start_time,stop_time,insights${rangeModifier(i)}{${METRICS}}`,
+            ...pageParams(i),
+            ...statusFilter(i.activeOnly),
+          },
+        )
         return {
           currency: account.currency,
+          next: nextOf(paging),
           campaigns: data.map((c) => ({
             campaignId: c.id,
             name: c.name,
@@ -327,6 +345,7 @@ export const metaAds: ConnectorDefinition = {
         ...dates,
         activeOnly: z.boolean().default(false),
         limit,
+        after,
       }),
       target: (i) =>
         `ad sets${i.campaignId ? ` of campaign ${i.campaignId}` : ''} in ${i.accountId}, ${dateLabel(i)}`,
@@ -338,17 +357,18 @@ export const metaAds: ConnectorDefinition = {
           if (owner.id !== account.id)
             throw new ConnectorError(`Campaign ${i.campaignId} is not in ${account.id}`)
         }
-        const { data = [] } = await get<{ data?: Row[] }>(
+        const { data = [], paging } = await get<{ data?: Row[]; paging?: Paging }>(
           ctx.fetch,
           i.campaignId ? `${i.campaignId}/adsets` : `${account.id}/adsets`,
           {
             fields: `id,name,campaign_id,status,effective_status,optimization_goal,billing_event,bid_amount,daily_budget,lifetime_budget,targeting{age_min,age_max,genders,geo_locations},insights${rangeModifier(i)}{${METRICS}}`,
-            limit: String(i.limit),
+            ...pageParams(i),
             ...statusFilter(i.activeOnly),
           },
         )
         return {
           currency: account.currency,
+          next: nextOf(paging),
           adSets: data.map((s) => ({
             adSetId: s.id,
             name: s.name,
@@ -377,6 +397,7 @@ export const metaAds: ConnectorDefinition = {
         ...dates,
         activeOnly: z.boolean().default(false),
         limit,
+        after,
       }),
       target: (i) =>
         `ads${i.adSetId ? ` of ad set ${i.adSetId}` : i.campaignId ? ` of campaign ${i.campaignId}` : ''} in ${i.accountId}, ${dateLabel(i)}`,
@@ -388,17 +409,18 @@ export const metaAds: ConnectorDefinition = {
           const { account: owner } = await ownerOf(ctx, parent)
           if (owner.id !== account.id) throw new ConnectorError(`${parent} is not in ${account.id}`)
         }
-        const { data = [] } = await get<{ data?: Row[] }>(
+        const { data = [], paging } = await get<{ data?: Row[]; paging?: Paging }>(
           ctx.fetch,
           parent ? `${parent}/ads` : `${account.id}/ads`,
           {
             fields: `id,name,adset_id,campaign_id,status,effective_status,creative{id,title,body,object_story_spec,thumbnail_url,call_to_action_type},insights${rangeModifier(i)}{${METRICS}}`,
-            limit: String(i.limit),
+            ...pageParams(i),
             ...statusFilter(i.activeOnly),
           },
         )
         return {
           currency: account.currency,
+          next: nextOf(paging),
           ads: data.map((a) => {
             const link = a.creative?.object_story_spec?.link_data
             return {
@@ -453,6 +475,7 @@ export const metaAds: ConnectorDefinition = {
           .default('all_days')
           .describe('1: a row per day; 7: per week; all_days: one row for the range'),
         limit,
+        after,
       }),
       target: (i) => `${i.level} insights of ${i.accountId}, ${dateLabel(i)}`,
       check,
@@ -466,16 +489,21 @@ export const metaAds: ConnectorDefinition = {
               : i.level === 'adset'
                 ? 'campaign_id,campaign_name,adset_id,adset_name,'
                 : 'campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,'
-        const { data = [] } = await get<{ data?: Row[] }>(ctx.fetch, `${account.id}/insights`, {
-          level: i.level,
-          fields: `${names}${METRICS}`,
-          ...range(i),
-          ...(i.breakdowns.length ? { breakdowns: i.breakdowns.join(',') } : {}),
-          time_increment: i.timeIncrement,
-          limit: String(i.limit),
-        })
+        const { data = [], paging } = await get<{ data?: Row[]; paging?: Paging }>(
+          ctx.fetch,
+          `${account.id}/insights`,
+          {
+            level: i.level,
+            fields: `${names}${METRICS}`,
+            ...range(i),
+            ...(i.breakdowns.length ? { breakdowns: i.breakdowns.join(',') } : {}),
+            time_increment: i.timeIncrement,
+            ...pageParams(i),
+          },
+        )
         return {
           currency: account.currency,
+          next: nextOf(paging),
           rows: data.map((r) => ({
             ...(r.campaign_id ? { campaignId: r.campaign_id, campaign: r.campaign_name } : {}),
             ...(r.adset_id ? { adSetId: r.adset_id, adSet: r.adset_name } : {}),

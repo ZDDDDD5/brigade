@@ -327,6 +327,24 @@ async function metaAdAccountsOf(
   }
 }
 
+/**
+ * The member's Meta Ads account this sign-in renews: the one whose token was issued to the same
+ * Facebook user (its app-scoped ID, kept with the token). None: the sign-in adds an account.
+ */
+export async function metaConnectionOf(scope: WorkspaceScope, userId: string) {
+  const db = scoped(scope)
+  const rows = await db.connection.findMany({
+    where: { kind: 'meta_ads', createdByMemberId: scope.memberId, status: { not: 'removed' } },
+    select: { id: true, vaultSecretId: true },
+  })
+  for (const row of rows) {
+    if (!row.vaultSecretId) continue
+    const kept = await openSecret<MetaCredential>(db, scope, row.vaultSecretId).catch(() => null)
+    if (kept?.userId === userId) return row.id
+  }
+  return undefined
+}
+
 /** Whether each App can be connected on this Brigade server: Google's and GitHub's need their apps set up. */
 export const availableApps = (): Record<ConnectorKind, boolean> => ({
   gmail: googleConfigured(),
@@ -420,11 +438,27 @@ export const connections = new Hono<AppEnv>()
       console.error('meta connection failed:', error instanceof Error ? error.message : error)
       return back('error=meta')
     }
+    // Who signed in is told by Meta's user ID, never by the name, which two people may share and
+    // anyone may change: without it the account cannot be told apart from another.
+    if (!account.id) {
+      console.error('meta connection failed: /me gave no user id')
+      return back('error=meta')
+    }
+    const repair = await metaConnectionOf(scope, account.id)
     const connection = await createConnection(
       scope,
       { kind: 'meta_ads', label: connectors.meta_ads!.label, externalAccount: account.name },
-      { ...credential, ...(account.id ? { userId: account.id } : {}) },
+      { ...credential, userId: account.id },
+      undefined,
+      repair,
+      false,
     )
+    // A Facebook user renamed since: the row shows the name they have now.
+    if (repair && account.name)
+      await scoped(scope).connection.updateMany({
+        where: { id: connection.id },
+        data: { externalAccount: account.name },
+      })
     return back(`connected=${connection.id}`)
   })
 

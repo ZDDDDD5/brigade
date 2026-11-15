@@ -304,3 +304,53 @@ test('Meta tokens never leave the API in an error', () => {
     'bad token [redacted token]',
   )
 })
+
+test('reports read on page by page: the cursor goes back, and the last page says so', async () => {
+  const { ctx, calls } = fake([
+    [
+      'act_111/insights',
+      (call) =>
+        new URL(call.url).searchParams.get('after') === 'c2'
+          ? ok({ data: [{ spend: '2' }], paging: { cursors: { before: 'c1', after: 'c3' } } })
+          : ok({
+              data: [{ spend: '1' }],
+              paging: {
+                cursors: { before: 'c0', after: 'c2' },
+                next: `${GRAPH}/act_111/insights?after=c2`,
+              },
+            }),
+    ],
+  ])
+  const first = (await run('meta_ads_insights', ctx, {
+    accountId: 'act_111',
+    timeIncrement: '1',
+    limit: 1,
+  })) as { next: string | null; rows: unknown[] }
+  assert.equal(first.next, 'c2')
+  const second = (await run('meta_ads_insights', ctx, {
+    accountId: 'act_111',
+    timeIncrement: '1',
+    limit: 1,
+    after: first.next,
+  })) as { next: string | null; rows: unknown[] }
+  assert.equal(second.next, null)
+  assert.equal(new URL(calls[1]!.url).searchParams.get('after'), 'c2')
+  assert.equal(second.rows.length, 1)
+})
+
+test('listings carry the cursor too', async () => {
+  const { ctx } = fake([
+    [
+      'act_111/campaigns',
+      () =>
+        ok({
+          data: [CAMPAIGN],
+          paging: { cursors: { after: 'n1' }, next: `${GRAPH}/act_111/campaigns?after=n1` },
+        }),
+    ],
+  ])
+  const result = (await run('meta_ads_campaigns', ctx, { accountId: 'act_111', limit: 1 })) as {
+    next: string | null
+  }
+  assert.equal(result.next, 'n1')
+})
