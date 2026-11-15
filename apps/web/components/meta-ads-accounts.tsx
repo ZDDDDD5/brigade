@@ -103,7 +103,9 @@ export function MetaAdAccounts({
             <span className="shrink-0 text-xs text-muted-foreground">
               {a.id.replace(/^act_/, '')}
               {a.business ? ` · ${a.business}` : ''}
-              {a.status && a.status !== 'ACTIVE' ? ` · ${a.status.toLowerCase().replaceAll('_', ' ')}` : ''}
+              {a.status && a.status !== 'ACTIVE'
+                ? ` · ${a.status.toLowerCase().replaceAll('_', ' ')}`
+                : ''}
             </span>
           </label>
         ))}

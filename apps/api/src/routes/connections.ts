@@ -74,11 +74,7 @@ import {
 import { checkMcpSignIn, forgetMcpTools } from '../mcp-tools.js'
 import { authorisedFetch } from '../connector-calls.js'
 import { listAdsCustomers, pickedCustomers, type AdsCustomer } from '../connectors/google-ads.js'
-import {
-  listMetaAdAccounts,
-  pickedAdAccounts,
-  type MetaAdAccount,
-} from '../connectors/meta-ads.js'
+import { listMetaAdAccounts, pickedAdAccounts, type MetaAdAccount } from '../connectors/meta-ads.js'
 import {
   exchangeMetaCode,
   metaAccount,

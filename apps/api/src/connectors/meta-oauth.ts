@@ -72,7 +72,10 @@ export async function exchangeMetaCode(code: string): Promise<MetaCredential> {
     })
   } catch (error) {
     // The short token still works for an hour or two; keep it rather than fail the sign-in.
-    console.error('meta long-lived exchange failed:', error instanceof Error ? error.message : error)
+    console.error(
+      'meta long-lived exchange failed:',
+      error instanceof Error ? error.message : error,
+    )
     return short
   }
 }

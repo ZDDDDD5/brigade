@@ -127,15 +127,14 @@ export async function listMetaAdAccounts(fetch: ConnectorContext['fetch']) {
   let after: string | undefined
   // Pages of 100, at most 5: an agency user may reach hundreds.
   for (let page = 0; page < 5; page++) {
-    const result = await get<{ data?: Row[]; paging?: { cursors?: { after?: string }; next?: string } }>(
-      fetch,
-      'me/adaccounts',
-      {
-        fields: 'id,name,currency,timezone_name,account_status,business{name}',
-        limit: '100',
-        ...(after ? { after } : {}),
-      },
-    )
+    const result = await get<{
+      data?: Row[]
+      paging?: { cursors?: { after?: string }; next?: string }
+    }>(fetch, 'me/adaccounts', {
+      fields: 'id,name,currency,timezone_name,account_status,business{name}',
+      limit: '100',
+      ...(after ? { after } : {}),
+    })
     for (const a of result.data ?? []) {
       if (typeof a.id !== 'string' || !/^act_\d{1,20}$/.test(a.id)) continue
       accounts.push({
@@ -186,7 +185,9 @@ const check = async (ctx: ConnectorContext, i: { accountId: string }) => {
  * reach an object of another account by naming its ID.
  */
 async function ownerOf(ctx: ConnectorContext, id: string, fields = '') {
-  const object = await get(ctx.fetch, id, { fields: ['account_id', fields].filter(Boolean).join(',') })
+  const object = await get(ctx.fetch, id, {
+    fields: ['account_id', fields].filter(Boolean).join(','),
+  })
   if (!object.account_id) throw new ConnectorError(`${id} is not a campaign, ad set or ad`)
   return { object, account: adAccountOf(ctx, `act_${object.account_id}`) }
 }
@@ -385,8 +386,7 @@ export const metaAds: ConnectorDefinition = {
         const parent = i.adSetId ?? i.campaignId
         if (parent) {
           const { account: owner } = await ownerOf(ctx, parent)
-          if (owner.id !== account.id)
-            throw new ConnectorError(`${parent} is not in ${account.id}`)
+          if (owner.id !== account.id) throw new ConnectorError(`${parent} is not in ${account.id}`)
         }
         const { data = [] } = await get<{ data?: Row[] }>(
           ctx.fetch,
@@ -530,7 +530,12 @@ export const metaAds: ConnectorDefinition = {
       },
       run: async (ctx, i) => {
         const { object, account } = await ownerOf(ctx, i.id, 'name,daily_budget,lifetime_budget')
-        const has = object.daily_budget && object.daily_budget !== '0' ? 'daily' : object.lifetime_budget && object.lifetime_budget !== '0' ? 'lifetime' : null
+        const has =
+          object.daily_budget && object.daily_budget !== '0'
+            ? 'daily'
+            : object.lifetime_budget && object.lifetime_budget !== '0'
+              ? 'lifetime'
+              : null
         const kind = i.kind ?? has
         if (!kind)
           throw new ConnectorError(
