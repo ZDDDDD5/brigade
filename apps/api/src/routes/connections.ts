@@ -15,6 +15,8 @@ import {
   ConnectWebhookApp,
   UpdateApp,
   PickGoogleAdsCustomers,
+  PickMetaAdAccounts,
+  ConnectMeta,
   UpdateConnection,
 } from '@brigade/contracts'
 import { installAppSkills } from '../app-skills.js'
@@ -72,6 +74,14 @@ import {
 import { checkMcpSignIn, forgetMcpTools } from '../mcp-tools.js'
 import { authorisedFetch } from '../connector-calls.js'
 import { listAdsCustomers, pickedCustomers, type AdsCustomer } from '../connectors/google-ads.js'
+import { listMetaAdAccounts, pickedAdAccounts, type MetaAdAccount } from '../connectors/meta-ads.js'
+import {
+  exchangeMetaCode,
+  metaAccount,
+  metaAuthUrl,
+  metaConfigured,
+  type MetaCredential,
+} from '../connectors/meta-oauth.js'
 import { appOpen, featuresOfUser } from '../features.js'
 import { prisma, scoped, type ScopedDb } from '../db.js'
 import { hashToken } from '../hub.js'
@@ -119,6 +129,7 @@ type OAuthState = {
     | 'vercel'
     | 'revenuecat'
     | 'stripe'
+    | 'meta_ads'
     | 'mcp'
   /** mcp: the App of the server added by its URL. */
   appId?: string
@@ -292,6 +303,48 @@ async function adsCustomersOf(
   }
 }
 
+/** A Meta Ads account of this workspace, still connected. */
+async function metaAdsConnection(db: ScopedDb, id: string) {
+  const connection = await db.connection.findFirst({
+    where: { id, kind: 'meta_ads', status: { not: 'removed' } },
+  })
+  if (!connection) throw new HTTPException(404, { message: 'Meta Ads account not found' })
+  return connection
+}
+
+/** The ad accounts a Meta Ads account reaches, Meta's refusal as a readable error. */
+async function metaAdAccountsOf(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  connection: Awaited<ReturnType<typeof metaAdsConnection>>,
+) {
+  try {
+    return await listMetaAdAccounts(await authorisedFetch(db, scope, connection))
+  } catch (error) {
+    throw new HTTPException(502, {
+      message: `Meta Ads: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
+}
+
+/**
+ * The member's Meta Ads account this sign-in renews: the one whose token was issued to the same
+ * Facebook user (its app-scoped ID, kept with the token). None: the sign-in adds an account.
+ */
+export async function metaConnectionOf(scope: WorkspaceScope, userId: string) {
+  const db = scoped(scope)
+  const rows = await db.connection.findMany({
+    where: { kind: 'meta_ads', createdByMemberId: scope.memberId, status: { not: 'removed' } },
+    select: { id: true, vaultSecretId: true },
+  })
+  for (const row of rows) {
+    if (!row.vaultSecretId) continue
+    const kept = await openSecret<MetaCredential>(db, scope, row.vaultSecretId).catch(() => null)
+    if (kept?.userId === userId) return row.id
+  }
+  return undefined
+}
+
 /** Whether each App can be connected on this Brigade server: Google's and GitHub's need their apps set up. */
 export const availableApps = (): Record<ConnectorKind, boolean> => ({
   gmail: googleConfigured(),
@@ -302,6 +355,7 @@ export const availableApps = (): Record<ConnectorKind, boolean> => ({
   google_search_console: googleConfigured(),
   google_analytics: googleConfigured(),
   google_ads: googleConfigured(),
+  meta_ads: metaConfigured(),
   stripe: true,
   github: githubConfigured(),
   cloudflare: true,
@@ -359,6 +413,52 @@ export const connections = new Hono<AppEnv>()
       { kind: grant.kind, label: connectors[grant.kind]!.label, externalAccount: account },
       credential,
     )
+    return back(`connected=${connection.id}`)
+  })
+
+  /**
+   * Meta's redirect back after its sign-in (Facebook Login for Business, on Brigade's Meta app):
+   * the code for a long-lived user token, straight into the vault.
+   */
+  .get('/oauth/meta/callback', async (c) => {
+    let back = (query: string) => c.redirect(backTo(undefined, query))
+    const taken = await takeState(stateIdentifier(c.req.query('state') ?? ''), c.var.userId)
+    if (typeof taken === 'string') return back(`error=${taken}`)
+    const { grant, scope } = taken
+    back = (query: string) => c.redirect(backTo(grant.returnTo, query))
+    if (grant.kind !== 'meta_ads') return back('error=forbidden')
+    if (c.req.query('error') || !c.req.query('code')) return back('error=declined')
+
+    let credential: MetaCredential
+    let account: { id: string | null; name: string | null }
+    try {
+      credential = await exchangeMetaCode(c.req.query('code')!)
+      account = await metaAccount(credential.accessToken)
+    } catch (error) {
+      console.error('meta connection failed:', error instanceof Error ? error.message : error)
+      return back('error=meta')
+    }
+    // Who signed in is told by Meta's user ID, never by the name, which two people may share and
+    // anyone may change: without it the account cannot be told apart from another.
+    if (!account.id) {
+      console.error('meta connection failed: /me gave no user id')
+      return back('error=meta')
+    }
+    const repair = await metaConnectionOf(scope, account.id)
+    const connection = await createConnection(
+      scope,
+      { kind: 'meta_ads', label: connectors.meta_ads!.label, externalAccount: account.name },
+      { ...credential, userId: account.id },
+      undefined,
+      repair,
+      false,
+    )
+    // A Facebook user renamed since: the row shows the name they have now.
+    if (repair && account.name)
+      await scoped(scope).connection.updateMany({
+        where: { id: connection.id },
+        data: { externalAccount: account.name },
+      })
     return back(`connected=${connection.id}`)
   })
 
@@ -616,6 +716,18 @@ export const connections = new Hono<AppEnv>()
     const state = randomBytes(24).toString('base64url')
     await saveState(stateIdentifier(state), { ...c.var.scope, kind, returnTo })
     return c.json({ url: googleAuthUrl(kind, state) })
+  })
+
+  /** Start Meta's sign-in (Facebook Login for Business) for a new Meta Ads account. */
+  .post('/meta', async (c) => {
+    if (!metaConfigured())
+      throw new HTTPException(409, { message: 'Meta is not configured on this Brigade server' })
+    const { returnTo } = await parseBody(c.req.raw, ConnectMeta)
+    if (!appOpen('meta_ads', await featuresOfUser(c.var.userId, c.var.scope.workspaceId)))
+      throw new HTTPException(403, { message: 'Meta Ads is not open to your account yet' })
+    const state = randomBytes(24).toString('base64url')
+    await saveState(stateIdentifier(state), { ...c.var.scope, kind: 'meta_ads', returnTo })
+    return c.json({ url: metaAuthUrl(state) })
   })
 
   /**
@@ -943,6 +1055,58 @@ export const connections = new Hono<AppEnv>()
       action: 'connection.google_ads_customers',
       target: { type: 'connection', id: connection.id },
       data: { customers: picked.map((p) => p.id) },
+    })
+    return c.json({ picked: picked.map((p) => p.id) })
+  })
+
+  /**
+   * Meta Ads: every ad account the signed-in Facebook user reaches (their own, and those of the
+   * businesses they work in), and those picked for teammates.
+   */
+  .get('/:id/meta-ads/accounts', async (c) => {
+    const { scope, db } = c.var
+    const connection = await metaAdsConnection(db, c.req.param('id'))
+    requireAccountManager(scope, connection)
+    const found = await metaAdAccountsOf(db, scope, connection)
+    return c.json({
+      ...found,
+      picked: pickedAdAccounts(connection.settings).map((p) => p.id),
+    })
+  })
+
+  /**
+   * Meta Ads: pick the ad accounts teammates reach through this account. Each is checked against
+   * what the account reaches now; the dashboard's word for it is not taken.
+   */
+  .put('/:id/meta-ads/accounts', async (c) => {
+    const { scope, db } = c.var
+    const connection = await metaAdsConnection(db, c.req.param('id'))
+    requireAccountManager(scope, connection)
+    const { ids } = await parseBody(c.req.raw, PickMetaAdAccounts)
+    const { accounts } = await metaAdAccountsOf(db, scope, connection)
+    const picked: MetaAdAccount[] = []
+    for (const id of new Set(ids)) {
+      const account = accounts.find((a) => a.id === id)
+      if (!account)
+        throw new HTTPException(400, { message: `This Facebook account does not reach ${id}` })
+      picked.push({
+        id: account.id,
+        name: account.name,
+        business: account.business ?? null,
+        ...(account.currency ? { currency: account.currency } : {}),
+        ...(account.timeZone ? { timeZone: account.timeZone } : {}),
+      })
+    }
+    await db.connection.updateMany({
+      where: { id: connection.id },
+      data: { settings: { accounts: picked } },
+    })
+    await audit({
+      ...scope,
+      actor: { type: 'member', id: scope.memberId },
+      action: 'connection.meta_ads_accounts',
+      target: { type: 'connection', id: connection.id },
+      data: { accounts: picked.map((p) => p.id) },
     })
     return c.json({ picked: picked.map((p) => p.id) })
   })

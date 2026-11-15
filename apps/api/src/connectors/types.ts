@@ -99,7 +99,10 @@ export type ConnectorContext = {
   teammateId?: string
   /** The member who approved the call, when one did. */
   approvedByMemberId?: string
-  /** What the account's owner picked after signing in (Connection.settings): Google Ads' customers. */
+  /**
+   * What the account's owner picked after signing in (Connection.settings): Google Ads' customers,
+   * Meta Ads' ad accounts.
+   */
   settings?: unknown
 }
 
@@ -112,6 +115,7 @@ export type ConnectorKind =
   | 'google_search_console'
   | 'google_analytics'
   | 'google_ads'
+  | 'meta_ads'
   | 'stripe'
   | 'github'
   | 'webhook'
@@ -232,8 +236,9 @@ export type ConnectorDefinition = {
    * github_app: an installation of Brigade's GitHub App; tokens are minted per call.
    * mcp: an MCP server's own OAuth (discovery, client registration, PKCE), refreshed by the API.
    * brigade: Brigade's own service (the Email App): no credential, the API's own keys.
+   * meta: a Meta user token from Brigade's Meta app (meta-oauth.ts), long-lived, not refreshed.
    */
-  auth: 'google' | 'api_key' | 'github_app' | 'mcp' | 'brigade'
+  auth: 'google' | 'api_key' | 'github_app' | 'mcp' | 'brigade' | 'meta'
   /** Written in Brigade. An MCP connector has none: its tools come from the server. */
   operations: Record<string, Operation>
   /** A remote MCP server (Streamable HTTP) the API calls with the account's token. */
@@ -341,6 +346,8 @@ export function redact(text: string) {
       // Neon API keys, Supabase access tokens and OAuth client secrets.
       .replace(/\b(napi|sbp|sba)_[A-Za-z0-9]+/g, '[redacted key]')
       .replace(/\bya29\.[\w-]+/g, '[redacted token]')
+      // Meta user and page tokens.
+      .replace(/\bEA[A-Za-z0-9]{30,}/g, '[redacted token]')
       .replace(/\b(gh[pousr]_[A-Za-z0-9]+|github_pat_\w+)/g, '[redacted token]')
       .replace(/\bBearer\s+[\w.*-]+/gi, 'Bearer [redacted]')
   )

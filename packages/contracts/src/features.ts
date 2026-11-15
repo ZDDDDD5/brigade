@@ -52,6 +52,13 @@ export const FEATURES = {
       'Google warns at sign-in that the app is unverified.',
     default: false,
   },
+  meta_ads: {
+    description:
+      'Connect Meta Ads accounts (Facebook and Instagram ads). Until Brigade’s Meta app passes ' +
+      'Meta’s business verification and App Review for ads_read and ads_management, only people ' +
+      'with a role on the Meta app can sign in.',
+    default: false,
+  },
   missions: {
     description:
       'Missions (docs/missions.md): ongoing work a member delegates to a teammate, with its threads, ' +
@@ -70,6 +77,7 @@ export const APP_FEATURES: Partial<Record<string, Feature>> = {
   gmail: 'gmail',
   google_drive: 'google_drive',
   google_ads: 'google_ads',
+  meta_ads: 'meta_ads',
   google_drive_mcp: 'google_workspace_mcp',
   google_docs_mcp: 'google_workspace_mcp',
   google_sheets_mcp: 'google_workspace_mcp',

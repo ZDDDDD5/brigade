@@ -6,6 +6,7 @@ import { gmail } from './gmail.js'
 import { github } from './github.js'
 import { googleCalendar } from './google-calendar.js'
 import { googleAds } from './google-ads.js'
+import { metaAds } from './meta-ads.js'
 import { googleAnalytics } from './google-analytics.js'
 import { googleCloud } from './google-cloud.js'
 import { googleDocs, googleDrive, googleSheets } from './google-drive.js'
@@ -37,6 +38,7 @@ export const connectors: Partial<Record<ConnectorDefinition['kind'], ConnectorDe
   google_search_console: googleSearchConsole,
   google_analytics: googleAnalytics,
   google_ads: googleAds,
+  meta_ads: metaAds,
   stripe,
   github,
   cloudflare,
@@ -96,6 +98,7 @@ export const triggerCatalog = () =>
         'google_search_console',
         'google_analytics',
         'google_ads',
+        'meta_ads',
         'stripe',
         'github',
         'cloudflare',
@@ -208,6 +211,16 @@ export const appCatalog: Record<
     description:
       'Campaign, ad group, keyword, search term and ad reports, and changes to budgets, statuses, keywords, negative keywords and ads.',
     developer: 'Google',
+    category: 'Marketing',
+    personal: true,
+  },
+  // Behind the meta_ads feature until Brigade's Meta app passes business verification and App
+  // Review for ads_read and ads_management.
+  meta_ads: {
+    name: 'Meta Ads',
+    description:
+      'Facebook and Instagram ad reports by campaign, ad set and ad, Insights breakdowns, and changes to statuses and budgets.',
+    developer: 'Meta',
     category: 'Marketing',
     personal: true,
   },

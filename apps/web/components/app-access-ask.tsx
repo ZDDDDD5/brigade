@@ -39,6 +39,7 @@ export const APP_NAMES: Record<string, string> = {
   google_search_console: 'Google Search Console',
   google_analytics: 'Google Analytics',
   google_ads: 'Google Ads',
+  meta_ads: 'Meta Ads',
   stripe: 'Stripe',
   github: 'GitHub',
   cloudflare: 'Cloudflare',
@@ -64,7 +65,7 @@ export const APP_NAMES: Record<string, string> = {
 }
 
 /** Where each App signs in. */
-const SIGN_IN: Partial<Record<Connection['kind'], 'google' | 'github' | 'mcp' | 'key'>> = {
+const SIGN_IN: Partial<Record<Connection['kind'], 'google' | 'github' | 'meta' | 'mcp' | 'key'>> = {
   gmail: 'google',
   google_calendar: 'google',
   google_drive: 'google',
@@ -73,6 +74,7 @@ const SIGN_IN: Partial<Record<Connection['kind'], 'google' | 'github' | 'mcp' | 
   google_search_console: 'google',
   google_analytics: 'google',
   google_ads: 'google',
+  meta_ads: 'meta',
   github: 'github',
   stripe: 'mcp',
   cloudflare: 'mcp',
@@ -299,7 +301,7 @@ export function AppAccessAsk({
         }
         const { url } = await api<{ url: string }>(`/connections/${route}`, {
           body: {
-            ...(route === 'github' ? {} : { kind }),
+            ...(route === 'github' || route === 'meta' ? {} : { kind }),
             ...(region ? { region } : {}),
             ...(returnTo ? { returnTo } : {}),
             ...(route === 'mcp' && again ? { reconnect: again.id } : {}),

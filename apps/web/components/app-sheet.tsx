@@ -9,6 +9,7 @@ import { RegionMenu } from '@/components/region-menu'
 import { CloseButton } from '@/components/close-button'
 import { EmailApp } from '@/components/email-app'
 import { GoogleAdsAccounts, GoogleAdsPicked } from '@/components/google-ads-accounts'
+import { MetaAdAccounts, MetaAdsPicked } from '@/components/meta-ads-accounts'
 import { mailboxPath } from '@/components/mailboxes'
 import { ConnectionTriggers } from '@/components/connection-triggers'
 import { useDashboard, timeAgo } from '@/components/dashboard'
@@ -144,7 +145,9 @@ export function AppSheet({
         ? 'mcp'
         : kind === 'github'
           ? 'github'
-          : 'google'
+          : kind === 'meta_ads'
+            ? 'meta'
+            : 'google'
   // A server per data region (Mixpanel): connecting starts by picking one.
   const regions = entry.regions
   /** Sign in at the provider: a new account, or the one being reconnected. */
@@ -155,7 +158,7 @@ export function AppSheet({
       const inWindow = await openSignIn(async (returnTo) => {
         const { url } = await api<{ url: string }>(`/connections/${route}`, {
           body: {
-            ...(route === 'github' ? {} : { kind }),
+            ...(route === 'github' || route === 'meta' ? {} : { kind }),
             ...(region ? { region } : {}),
             ...(returnTo ? { returnTo } : {}),
             ...(route === 'mcp' && reconnecting ? { reconnect: reconnecting } : {}),
@@ -580,7 +583,7 @@ function Account({
   const custom = c.kind === 'webhook'
   const owner = mine ? 'you' : (data.members[c.createdByMemberId] ?? 'a former member')
   const [open, setOpen] = useState<'teammates' | 'log' | 'triggers' | 'ads'>()
-  const ads = c.kind === 'google_ads'
+  const ads = c.kind === 'google_ads' || c.kind === 'meta_ads'
 
   async function update(body: { reach?: Connection['reach']; inbox?: boolean }) {
     try {
@@ -749,9 +752,14 @@ function Account({
       </div>
 
       {/* Google Ads: which customer accounts its teammates reach, picked after signing in. */}
-      {ads && open !== 'ads' && c.status === 'active' && (
-        <GoogleAdsPicked connection={c} onPick={manages ? () => setOpen('ads') : undefined} />
-      )}
+      {ads &&
+        open !== 'ads' &&
+        c.status === 'active' &&
+        (c.kind === 'meta_ads' ? (
+          <MetaAdsPicked connection={c} onPick={manages ? () => setOpen('ads') : undefined} />
+        ) : (
+          <GoogleAdsPicked connection={c} onPick={manages ? () => setOpen('ads') : undefined} />
+        ))}
 
       {open && (
         <div className="flex flex-col gap-2">
@@ -798,9 +806,12 @@ function Account({
             </div>
           )}
           {open === 'log' && <CallLog connectionId={c.id} />}
-          {open === 'ads' && (
-            <GoogleAdsAccounts connection={c} reload={reload} onDone={() => setOpen(undefined)} />
-          )}
+          {open === 'ads' &&
+            (c.kind === 'meta_ads' ? (
+              <MetaAdAccounts connection={c} reload={reload} onDone={() => setOpen(undefined)} />
+            ) : (
+              <GoogleAdsAccounts connection={c} reload={reload} onDone={() => setOpen(undefined)} />
+            ))}
           {open === 'triggers' && (
             <ConnectionTriggers
               connection={c}
@@ -861,6 +872,14 @@ function Unavailable({ kind, hidden }: { kind: Kind; hidden: boolean }) {
         Needs Google OAuth configured on this Brigade server (
         <span className="font-mono text-xs">GOOGLE_CLIENT_ID</span> and{' '}
         <span className="font-mono text-xs">GOOGLE_CLIENT_SECRET</span>).
+      </p>
+    )
+  if (kind === 'meta_ads')
+    return (
+      <p className="text-sm text-muted-foreground">
+        Needs Brigade&apos;s Meta app configured on this Brigade server (
+        <span className="font-mono text-xs">META_APP_ID</span> and{' '}
+        <span className="font-mono text-xs">META_APP_SECRET</span>).
       </p>
     )
   if (

@@ -34,6 +34,7 @@ export const BUILT_IN: Kind[] = [
   'google_search_console',
   'google_analytics',
   'google_ads',
+  'meta_ads',
   'github',
   'cloudflare',
   'google_cloud',
