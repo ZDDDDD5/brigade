@@ -37,8 +37,8 @@ on its own Meta app. If Meta ever approves Brigade, the App could move to that s
    callback exchanges the code for a token, then for a long-lived one (60 days), and names the row
    after the Facebook user (`GET /me?fields=id,name`). Meta gives no refresh token: once the token
    expires or Meta refuses it (OAuthException 190), the account shows as needing a reconnect.
-2. **Pick ad accounts.** One Facebook user often reaches ad accounts of several businesses (the
-   team's reaches Videopal's, Funfun's and Lovarank's). Under the row, **Pick accounts** lists
+2. **Pick ad accounts.** One Facebook user often reaches ad accounts of several businesses, not all
+   of which its teammates should touch. Under the row, **Pick accounts** lists
    `GET /me/adaccounts`; the owner or an admin ticks those teammates reach, checked again against
    a fresh listing, kept in `Connection.settings` (`{ accounts: [{ id, name, currency, timeZone,
 business }] }`). Until one is picked, every tool refuses.
