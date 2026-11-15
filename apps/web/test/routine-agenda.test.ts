@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { agendaOf, agendaTime } from '../lib/routine-agenda'
+import { agendaOf, agendaTime, byThread, nextRunShort } from '../lib/routine-agenda'
 
 // Thursday 5 November 2026, 10:44 in the browser's own timezone.
 const now = new Date('2026-11-05T10:44:00')
@@ -63,4 +63,37 @@ test('rows show the hour within the week, the date after it', () => {
   assert.equal(agendaTime(at('2026-11-05', '12:00'), now), '12:00')
   assert.equal(agendaTime(at('2026-11-11', '08:00'), now), '08:00')
   assert.equal(agendaTime(at('2026-11-16', '07:00'), now), '16 Nov')
+})
+
+test("by thread: a thread's routines together, the soonest thread first, threads of their own last", () => {
+  const linkedin = { id: 't1', title: 'Grow LinkedIn' }
+  const x = { id: 't2', title: 'X workflow' }
+  const inThread = (
+    title: string,
+    parentSession: { id: string; title: string } | null,
+    nextRunAt: string | null,
+    pausedAt: string | null = null,
+  ) => ({ ...schedule(title, nextRunAt, pausedAt), parentSession })
+  const groups = byThread([
+    inThread('Weekly report', linkedin, at('2026-11-08', '18:00')),
+    inThread('Own thread', null, at('2026-11-05', '11:00')),
+    inThread('Paused scan', linkedin, at('2026-11-05', '12:00'), at('2026-11-01', '09:00')),
+    inThread('Monday report', x, at('2026-11-09', '10:00')),
+    inThread('Morning engagement', linkedin, at('2026-11-06', '08:30')),
+    inThread('Midnight replies', x, at('2026-11-06', '00:00')),
+  ])
+  assert.deepEqual(
+    groups.map((g) => [g.thread?.title ?? null, g.items.map((s) => s.title)]),
+    [
+      ['X workflow', ['Midnight replies', 'Monday report']],
+      ['Grow LinkedIn', ['Morning engagement', 'Weekly report', 'Paused scan']],
+      [null, ['Own thread']],
+    ],
+  )
+})
+
+test('a next run outside the day groups says its day', () => {
+  assert.equal(nextRunShort(at('2026-11-05', '15:00'), now), '15:00')
+  assert.equal(nextRunShort(at('2026-11-06', '07:00'), now), 'Fri')
+  assert.equal(nextRunShort(at('2026-12-01', '09:00'), now), '1 Dec')
 })

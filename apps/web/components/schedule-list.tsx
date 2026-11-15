@@ -12,7 +12,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import Link from 'next/link'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { isAdmin, timeAgo, useDashboard } from '@/components/dashboard'
 import { ProjectFilter } from '@/components/projects'
 import { describeCron, localTimezone, ScheduleDialog, zoneName } from '@/components/schedules'
@@ -27,7 +27,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import type { RunOutcome } from '@brigade/contracts'
 import { api, projectQuery, useApi, type Schedule } from '@/lib/api'
-import { agendaOf, agendaTime } from '@/lib/routine-agenda'
+import { agendaOf, agendaTime, byThread, nextRunShort } from '@/lib/routine-agenda'
 import { cn } from '@/lib/utils'
 import { useLive } from '@/lib/use-live'
 
@@ -73,11 +73,14 @@ function ScheduleRow({
   onEdit,
   onChanged,
   showProject,
+  view,
 }: {
   schedule: Schedule
   onEdit: () => void
   onChanged: () => void
   showProject: boolean
+  /** By thread, its section names the thread and its time column says the day too. */
+  view: RoutinesView
 }) {
   const { me } = useDashboard()
   const [error, setError] = useState<string>()
@@ -118,6 +121,16 @@ function ScheduleRow({
   else if (!active) meta.push(<span key="paused">Paused</span>)
   else if (!schedule.nextRunAt) meta.push(<span key="over">No more runs</span>)
   meta.push(<span key="cron">{describeCron(schedule.cron) + zone}</span>)
+  if (view === 'time' && schedule.parentSession)
+    meta.push(
+      <Link
+        key="thread"
+        href={`/app/threads/${schedule.parentSession.id}`}
+        className="hover:text-foreground hover:underline"
+      >
+        in {schedule.parentSession.title}
+      </Link>,
+    )
   meta.push(<span key="teammate">{schedule.teammate.name}</span>)
   if (showProject && schedule.project) meta.push(<span key="project">{schedule.project.name}</span>)
   if (!owner) meta.push(<span key="owner">on {schedule.owner.user.name}&apos;s accounts</span>)
@@ -125,7 +138,9 @@ function ScheduleRow({
   return (
     <li className="group flex items-center gap-3 border-t px-4 py-3 first:border-t-0">
       <span className="w-12 shrink-0 font-mono text-xs text-muted-foreground">
-        {active && schedule.nextRunAt ? agendaTime(schedule.nextRunAt) : '—'}
+        {active && schedule.nextRunAt
+          ? (view === 'thread' ? nextRunShort : agendaTime)(schedule.nextRunAt)
+          : '—'}
       </span>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className={cn('truncate font-semibold', !active && 'text-muted-foreground')}>
@@ -240,10 +255,34 @@ function ScheduleRow({
   )
 }
 
-function AgendaSection({ label, children }: { label: string; children: React.ReactNode }) {
+type RoutinesView = 'time' | 'thread'
+
+const VIEWS: { value: RoutinesView; label: string }[] = [
+  { value: 'time', label: 'By time' },
+  { value: 'thread', label: 'By thread' },
+]
+
+/** How this browser last showed the page. */
+const VIEW_KEY = 'brigade:routines-view'
+
+function useRoutinesView() {
+  const [view, setView] = useState<RoutinesView>('time')
+  useEffect(() => {
+    if (localStorage.getItem(VIEW_KEY) === 'thread') setView('thread')
+  }, [])
+  return [
+    view,
+    (next: RoutinesView) => {
+      setView(next)
+      localStorage.setItem(VIEW_KEY, next)
+    },
+  ] as const
+}
+
+function AgendaSection({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+      <h2 className="truncate text-xs font-semibold tracking-wide text-muted-foreground uppercase">
         {label}
       </h2>
       <ul className="rounded-xl border bg-card">{children}</ul>
@@ -284,6 +323,7 @@ export function ScheduleList({
   const list = schedules.data ?? []
   const { groups, rest } = agendaOf(list)
   const [showRest, setShowRest] = useState(false)
+  const [view, setView] = useRoutinesView()
   const row = (s: Schedule) => (
     <ScheduleRow
       key={s.id}
@@ -291,6 +331,7 @@ export function ScheduleList({
       onEdit={() => setEditing(s)}
       onChanged={() => void reload()}
       showProject={!projectId}
+      view={view}
     />
   )
 
@@ -315,6 +356,30 @@ export function ScheduleList({
         </div>
       </header>
 
+      {list.length > 0 && (
+        <div
+          role="radiogroup"
+          aria-label="Group routines"
+          className="-mb-2 flex w-fit gap-0.5 rounded-full bg-secondary p-[3px]"
+        >
+          {VIEWS.map((v) => (
+            <button
+              key={v.value}
+              type="button"
+              role="radio"
+              aria-checked={view === v.value}
+              onClick={() => setView(v.value)}
+              className={cn(
+                'flex h-7 items-center rounded-full px-3 text-[13px] font-medium text-muted-foreground',
+                view === v.value && 'bg-card font-semibold text-foreground shadow-xs',
+              )}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {!schedules.data ? (
         <Skeleton className="h-24 w-full" />
       ) : list.length === 0 ? (
@@ -322,6 +387,28 @@ export function ScheduleList({
           No schedules yet. Try &ldquo;Every weekday at 9:00, summarize yesterday&rsquo;s new
           issues&rdquo;.
         </p>
+      ) : view === 'thread' ? (
+        byThread(list).map((group) => (
+          <AgendaSection
+            key={group.thread?.id ?? 'own'}
+            label={
+              group.thread ? (
+                <Link
+                  href={`/app/threads/${group.thread.id}`}
+                  className="text-[13px] tracking-normal text-foreground normal-case hover:underline"
+                >
+                  {group.thread.title}
+                </Link>
+              ) : (
+                <span className="text-[13px] tracking-normal normal-case">
+                  In threads of their own
+                </span>
+              )
+            }
+          >
+            {group.items.map(row)}
+          </AgendaSection>
+        ))
       ) : (
         <>
           {groups.map((group) => (
