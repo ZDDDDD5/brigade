@@ -56,9 +56,6 @@ export type GoogleCredential = {
 
 export const googleConfigured = () => Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET)
 /** The second Google client, for Google's MCP servers (the Google Cloud App). */
-/** Google Ads also needs Brigade's developer token, sent with every call. */
-export const googleAdsConfigured = () =>
-  googleConfigured() && Boolean(env.GOOGLE_ADS_DEVELOPER_TOKEN)
 export const googleMcpConfigured = () =>
   Boolean(env.GOOGLE_MCP_CLIENT_ID && env.GOOGLE_MCP_CLIENT_SECRET)
 export const googleRedirectUri = () => `${env.API_URL}/api/connections/oauth/google/callback`

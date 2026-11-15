@@ -853,22 +853,14 @@ function Unavailable({ kind, hidden }: { kind: Kind; hidden: boolean }) {
     kind === 'google_docs' ||
     kind === 'google_sheets' ||
     kind === 'google_search_console' ||
-    kind === 'google_analytics'
+    kind === 'google_analytics' ||
+    kind === 'google_ads'
   )
     return (
       <p className="text-sm text-muted-foreground">
         Needs Google OAuth configured on this Brigade server (
         <span className="font-mono text-xs">GOOGLE_CLIENT_ID</span> and{' '}
         <span className="font-mono text-xs">GOOGLE_CLIENT_SECRET</span>).
-      </p>
-    )
-  if (kind === 'google_ads')
-    return (
-      <p className="text-sm text-muted-foreground">
-        Needs Google OAuth and a Google Ads developer token configured on this Brigade server (
-        <span className="font-mono text-xs">GOOGLE_CLIENT_ID</span>,{' '}
-        <span className="font-mono text-xs">GOOGLE_CLIENT_SECRET</span> and{' '}
-        <span className="font-mono text-xs">GOOGLE_ADS_DEVELOPER_TOKEN</span>).
       </p>
     )
   if (

@@ -47,7 +47,7 @@ export const FEATURES = {
   },
   google_ads: {
     description:
-      'Connect Google Ads accounts. Until Brigade’s developer token has Basic access and the ' +
+      'Connect Google Ads accounts. Until Brigade’s Google Cloud project has Basic access and the ' +
       'adwords scope passes Google’s verification, Google Ads accepts few calls a day and ' +
       'Google warns at sign-in that the app is unverified.',
     default: false,
