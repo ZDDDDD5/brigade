@@ -489,7 +489,7 @@ export function ChildrenWorking({
           ? '1 sub-thread working'
           : `${busy.length} sub-threads working`
   return (
-    <div className={cn('flex min-w-0 flex-col text-sm', className)}>
+    <div data-look="sub-threads" className={cn('flex min-w-0 flex-col text-sm', className)}>
       <div className="flex h-8 min-w-0 items-center gap-2">
         <TeammateAvatar teammate={teammate} className="size-5 flex-none" />
         <span className="shrink-0 text-foreground">{teammate.name}</span>

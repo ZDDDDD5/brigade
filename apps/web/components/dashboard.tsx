@@ -482,6 +482,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                       <DropdownMenuTrigger asChild>
                         <SidebarMenuButton
                           size="lg"
+                          data-look="workspace-switcher"
                           className="min-w-0 flex-1 data-[state=open]:bg-sidebar-accent"
                         >
                           <WorkspaceMark
@@ -786,6 +787,7 @@ function ConnectAppsButton() {
       <button
         type="button"
         aria-label="Connect apps"
+        data-look="connect-apps"
         onClick={() => {
           if (isMobile) setOpenMobile(false)
           openConnectApps()
@@ -856,6 +858,7 @@ function RoundButton({
         data-nav-stop={nav && 'link'}
         data-nav-top={nav && true}
         data-active={nav?.active}
+        data-look="round-button"
         className={roundButtonClass}
       >
         {children}
