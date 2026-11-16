@@ -15,6 +15,11 @@ Tools are behind the `tools` feature (docs/feature-flags.md) while the team trie
 - **The tool's panel**: its page fills the panel (Expand for the whole window). The title's menu
   says who made it and where its messages go, opens it in the library or in a new tab (outside
   Brigade, where its calls fail), and reloads it.
+- **Kept while away**: a tool beside a thread stays loaded, hidden, while another thread shows,
+  as a thread's preview does (`apps/web/components/kept-previews.tsx`): back on the thread, its
+  page is as it was left (what was typed, where it was scrolled), not loaded again. The latest
+  three hidden ones are kept; one closed, or replaced by another file beside its thread, goes. A
+  tool minimized in the document panel is kept hidden the same way until it is back.
 - **Ask <teammate>**, outside a thread: talks about the tool as about any library file, in the
   thread that saved it last when the member may write there, else in a new thread with the
   teammate that saved it; the reply box holds the tool's mention. On a wide screen the tool moves

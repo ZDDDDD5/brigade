@@ -64,6 +64,7 @@ export function ToolPanel({
   onClose,
   libraryLink = true,
   inDocuments = false,
+  hidden = false,
 }: {
   folder: string
   /** Shown beside this thread: its messages go to it. */
@@ -73,6 +74,11 @@ export function ToolPanel({
   libraryLink?: boolean
   /** Shown by the document panel, which stays open from page to page. */
   inDocuments?: boolean
+  /**
+   * Kept but not shown (beside a thread while another one shows, components/kept-previews.tsx;
+   * a minimized document): its page stays as it was, not loaded again when it shows.
+   */
+  hidden?: boolean
 }) {
   const { me } = useDashboard()
   const [view, setView] = useState<ToolView>()
@@ -234,6 +240,7 @@ export function ToolPanel({
   return (
     <SidePanel
       aria-label={`Tool ${title}`}
+      hidden={hidden}
       onClose={onClose}
       raiseKey={folder}
       className={cn(
