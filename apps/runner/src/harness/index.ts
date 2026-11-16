@@ -25,6 +25,7 @@ import {
   type ThreadSpec,
   type TicketAnswer,
   type UsageRunKind,
+  harnessName,
   loginOf,
   runModel,
   WIDGET_GUIDE_TOOL,
@@ -576,6 +577,8 @@ type Live = {
   sandbox: ReturnType<typeof createLocalSandboxSession>
   account: AccountRef
   credentials: ThreadCredentials
+  /** The harness it runs on (TeammateHarness): a teammate moved to another starts anew. */
+  harness?: string
   /** The connector tools, effort and suggestions the agent was made with (agentKey). */
   made: string
   /**
@@ -588,6 +591,40 @@ type Live = {
     /** Which changed is not known: the conversation was saved before its tools were kept. */
     unsure?: boolean
   }
+}
+
+/** A saved harness state's harness, as TeammateHarness names it; undefined when it says none. */
+export function resumeHarness(resume: unknown): string | undefined {
+  const state = resume as
+    { harnessId?: unknown; continueFrom?: { harnessId?: unknown } } | undefined
+  const id = state?.continueFrom?.harnessId ?? state?.harnessId
+  return id === 'claude-code' ? 'claude_code' : typeof id === 'string' ? id : undefined
+}
+
+/**
+ * The teammate was moved to another harness (Pi to Claude Code, say) since its conversation was
+ * saved: that conversation is the other harness's, which this one cannot resume.
+ */
+export const harnessChanged = (saved: SavedState | undefined, spec: ThreadSpec) => {
+  // Read from the saved conversation itself: none, nothing to resume.
+  const was = resumeHarness(saved?.resume)
+  return was !== undefined && was !== spec.teammate.harness.replace('-', '_')
+}
+
+/**
+ * The saved conversation a new session resumes: the one kept on its account, and of its own
+ * harness only, since another's it cannot resume (newHarness).
+ */
+export const savedResume = (
+  saved: SavedState | undefined,
+  spec: ThreadSpec,
+  account: Pick<AccountRef, 'id'>,
+) => (saved?.accountId === account.id && !harnessChanged(saved, spec) ? saved.resume : undefined)
+
+/** Codex's and Pi's harness in an agent's key; Claude Code's left out, as before Pi. */
+const harnessKey = (spec: ThreadSpec): string[] => {
+  const harness: string | undefined = spec.teammate?.harness
+  return harness === 'codex' || harness === 'pi' ? [harness] : []
 }
 
 /**
@@ -608,6 +645,8 @@ export const agentKey = (spec: ThreadSpec) =>
     spec.suggestions,
     // The machine's tools come and go with the starter's choice; left out when off, as before it.
     ...(spec.machine ? ['machine'] : []),
+    // Its harness: a teammate moved to another one gets a new agent. Left out for Claude Code.
+    ...harnessKey(spec),
   ])
 
 type TurnStream = Awaited<ReturnType<Live['agent']['stream']>>['fullStream']
@@ -808,6 +847,16 @@ export class HarnessThread {
       if (!resumed) return { status: 'idle' }
       ;({ input, handoff } = resumed)
     }
+    // Moved to another harness: a new session there, told the conversation so far.
+    else if (
+      input.kind === 'prompt' &&
+      (this.live?.harness !== undefined
+        ? this.live.harness !== spec.teammate.harness
+        : harnessChanged(this.saved, spec))
+    ) {
+      // The new session is told the message too: its conversation so far has it not yet.
+      handoff = [await this.newHarness(spec), input.text].filter(Boolean).join('\n\n')
+    }
     // A new prompt runs on the account the API chose; an approval stays on the live session.
     else if (input.kind === 'prompt' && this.saved && this.saved.accountId !== spec.account.id) {
       handoff = await this.switchTo(spec.account, 'unavailable', null)
@@ -972,6 +1021,10 @@ export class HarnessThread {
       value: `The computer restarted during this turn. ${spec.teammate.name} carries on.`,
     })
     const told = [RESTARTED, unseen].filter(Boolean).join('\n\n')
+    if (harnessChanged(saved, spec)) {
+      const handoff = await this.newHarness(spec)
+      return { input: { kind: 'resume', text: '' }, handoff: `${handoff}\n\n${told}` }
+    }
     if (saved.accountId !== spec.account.id) {
       const handoff = await this.switchTo(spec.account, 'unavailable', null)
       return { input: { kind: 'resume', text: '' }, handoff: `${handoff}\n\n${told}` }
@@ -2175,6 +2228,25 @@ export class HarnessThread {
   }
 
   /**
+   * The teammate moved to another harness: its conversation is the old one's, which this one
+   * cannot resume. A new session, on the spec's account, is told the conversation so far.
+   */
+  private async newHarness(spec: ThreadSpec) {
+    await this.drop()
+    this.saved = {
+      ...(this.saved?.recoveries ? { recoveries: this.saved.recoveries } : {}),
+      ...(this.saved?.later?.length ? { later: this.saved.later } : {}),
+      ...(this.saved?.steered ? { steered: this.saved.steered } : {}),
+      accountId: spec.account.id,
+      transcript: this.saved?.transcript ?? [],
+    }
+    await this.persist()
+    return this.handoff(
+      `This conversation continues in a new session because you now run on ${harnessName(spec.teammate.harness)}.`,
+    )
+  }
+
+  /**
    * The thread moved to this computer: what this computer kept of it from
    * before is out of date. Its session starts again from the thread's
    * conversation so far, on the account chosen here.
@@ -2386,7 +2458,7 @@ export class HarnessThread {
       // The harness the runner before handed over, which this session attaches to: stopped with it.
       ...(adopt.length ? { adopt } : {}),
     })
-    const saved = this.saved?.accountId === account.id ? this.saved.resume : undefined
+    const saved = savedResume(this.saved, this.spec, account)
     const resume = saved ? withTools(saved, tools) : undefined
     const session = await agent.createSession({
       sessionId: this.key,
@@ -2395,7 +2467,15 @@ export class HarnessThread {
     })
     sandbox.dropAdopted()
     return this.begin(
-      { agent, session, sandbox, account, credentials, made: agentKey(this.spec) },
+      {
+        agent,
+        session,
+        sandbox,
+        account,
+        credentials,
+        harness: this.spec.teammate.harness,
+        made: agentKey(this.spec),
+      },
       specs,
       resume,
       apps,
