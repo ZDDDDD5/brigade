@@ -1,22 +1,25 @@
+/* The setup window, in Brigade's teammates' look: flat brand colours, ink eyes, dark night. */
 :root {
-  color-scheme: light dark;
-  --violet: #7c3aed;
-  --text: #18181b;
-  --muted: #71717a;
-  --line: #e4e4e7;
-  --bg: #ffffff;
-  --button: #f4f4f5;
-  font: 13px/1.45 -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --violet: #a78bfa;
-    --text: #f4f4f5;
-    --muted: #a1a1aa;
-    --line: #27272a;
-    --bg: #18181b;
-    --button: #27272a;
-  }
+  color-scheme: dark;
+  --ink: #1b1230;
+  --pink: #edaaa8;
+  --orange: #fd8637;
+  --yellow: #f8d05c;
+  --green: #4ed589;
+  --blue: #60aaf3;
+  --purple: #8a63fe;
+  --night: #1c1b20;
+  --night-2: #26242d;
+  --line: #34313d;
+  --text: #f4f2fa;
+  --muted: #8f89a6;
+  --soft: #b9b3cc;
+  font:
+    13px/1.45 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    system-ui,
+    sans-serif;
 }
 * {
   box-sizing: border-box;
@@ -29,95 +32,191 @@ body {
   margin: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  background: var(--night);
   color: var(--text);
   -webkit-user-select: none;
   user-select: none;
   cursor: default;
+  overflow: hidden;
 }
-header {
-  padding: 28px 28px 12px;
+[hidden] {
+  display: none !important;
+}
+
+/* The brand strip; on a Mac it holds the traffic lights and moves the window. */
+.bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 48px;
+  padding: 0 28px;
+  font-weight: 800;
+  font-size: 14px;
+  letter-spacing: -0.03em;
+  color: #fff;
+}
+.mac .bar {
+  padding-left: 92px;
+  -webkit-app-region: drag;
+}
+.bar img {
+  width: 20px;
+  height: 20px;
+}
+
+main {
+  flex: 1;
+  min-height: 0;
+  padding: 6px 32px 0;
 }
 h1 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 26px;
+  line-height: 1.2;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: #fff;
 }
-header p {
-  margin: 4px 0 0;
+.sub {
+  margin: 8px auto 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--soft);
+}
+
+/* The road: one teammate per step. */
+.road {
+  position: relative;
+  height: 200px;
+  margin: 6px -32px 0;
+}
+#path {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+#path .base {
+  stroke: var(--line);
+  stroke-width: 12;
+  stroke-linecap: round;
+  fill: none;
+}
+#path .done {
+  stroke: url(#done);
+  stroke-width: 12;
+  stroke-linecap: round;
+  fill: none;
+}
+#path .dots {
+  stroke: #ffffff22;
+  stroke-width: 2;
+  stroke-dasharray: 2 10;
+  stroke-linecap: round;
+  fill: none;
+}
+#steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* Each teammate stands on its point of the road, its name below it, or above where the road
+   dips under it. */
+#steps li {
+  position: absolute;
+  width: 0;
+  height: 0;
+  cursor: pointer;
+  outline: none;
+}
+#steps li .pb {
+  position: absolute;
+  left: calc(var(--s) / -2);
+  top: calc(var(--s) / -2);
+}
+#steps .label {
+  position: absolute;
+  left: -60px;
+  width: 120px;
+  top: calc(var(--s) / 2 + 6px);
+  text-align: center;
+}
+#steps li.above .label {
+  top: auto;
+  bottom: calc(var(--s) / 2 + 6px);
+}
+#steps li:focus-visible .pb,
+#steps li.selected .pb {
+  filter: drop-shadow(0 0 10px #ffffff40);
+}
+#steps .short {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+}
+#steps .state {
+  display: block;
+  font:
+    11px ui-monospace,
+    'SF Mono',
+    Menlo,
+    Consolas,
+    monospace;
   color: var(--muted);
 }
-ol {
-  flex: 1;
-  margin: 0;
-  padding: 4px 28px;
-  list-style: none;
-  overflow-y: auto;
+#steps li.todo .short {
+  color: var(--muted);
 }
-li {
+#steps li.selected .short {
+  text-decoration: underline 2px var(--purple);
+  text-underline-offset: 4px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* What the current step needs, with its button. */
+.card {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  padding: 14px 0;
-  border-bottom: 1px solid var(--line);
+  align-items: center;
+  gap: 14px;
+  margin-top: 0;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--night-2);
 }
-li:last-child {
-  border-bottom: 0;
-}
-.mark {
-  flex: none;
-  width: 20px;
-  height: 20px;
-  margin-top: 1px;
-  border-radius: 50%;
-  border: 1.5px solid var(--line);
-  display: grid;
-  place-items: center;
-}
-li.done .mark {
-  background: var(--violet);
-  border-color: var(--violet);
-}
-li.done .mark::after {
-  content: '';
-  width: 5px;
-  height: 9px;
-  margin-top: -2px;
-  border: solid #fff;
-  border-width: 0 2px 2px 0;
-  transform: rotate(45deg);
-}
-li.waiting .mark::after {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--violet);
-  animation: pulse 1.4s ease-in-out infinite;
-}
-@keyframes pulse {
-  50% {
-    opacity: 0.3;
-  }
-}
-.text {
+.card .text {
   flex: 1;
   min-width: 0;
 }
-.title {
-  font-weight: 600;
+.card .title {
+  font-size: 13.5px;
+  font-weight: 700;
 }
-.detail {
-  color: var(--muted);
+.card .detail {
   margin-top: 2px;
+  color: var(--soft);
 }
+.error {
+  margin-top: 4px;
+  color: #ff8a80;
+}
+
 button {
   font: inherit;
-  font-weight: 500;
+  font-weight: 600;
   border: 0;
   border-radius: 999px;
-  padding: 5px 12px;
-  background: var(--button);
+  padding: 8px 16px;
+  background: var(--night-2);
   color: var(--text);
   white-space: nowrap;
   cursor: pointer;
@@ -126,22 +225,202 @@ button:disabled {
   opacity: 0.5;
   cursor: default;
 }
-button.primary,
-li:not(.done) button.next {
-  background: var(--violet);
+button.primary {
+  background: var(--purple);
   color: #fff;
 }
 button.quiet {
   background: transparent;
+  color: #c9c5d6;
+}
+button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 32px 22px;
+  font-size: 12.5px;
   color: var(--muted);
 }
-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 16px 28px 24px;
+footer svg {
+  flex: none;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-.error {
-  color: #dc2626;
-  margin-top: 4px;
+footer p {
+  flex: 1;
+  margin: 0;
+}
+.ready footer {
+  justify-content: center;
+}
+.ready footer p {
+  flex: none;
+}
+
+/* Done: the whole team, awake. */
+#ready {
+  text-align: center;
+}
+#ready .sub {
+  max-width: 420px;
+}
+.party {
+  position: relative;
+  height: 220px;
+  margin: -6px -32px 0;
+}
+.party .lights {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 600px;
+  height: 60px;
+}
+.party .lights path {
+  stroke: #4a4558;
+  stroke-width: 1.5;
+  fill: none;
+}
+.bulb {
+  position: absolute;
+  left: calc(var(--x) - 5px);
+  top: calc(var(--y) - 5px);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--c) 22%, transparent);
+}
+.party .pb {
+  position: absolute;
+}
+.bit {
+  position: absolute;
+  width: 8px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--c);
+  transform: rotate(var(--a));
+}
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 20px;
+}
+.actions button {
+  padding: 11px 20px;
+  font-size: 14px;
+}
+
+/* A teammate: flat colour, ink pill eyes that blink. */
+.pb {
+  width: var(--s, 56px);
+  height: var(--s, 56px);
+  background: var(--c);
+  border-radius: var(--r, 58% 42% 55% 45% / 52% 58% 42% 48%);
+  animation: morph var(--m, 7s) ease-in-out infinite;
+}
+.pb i {
+  position: absolute;
+  top: 38%;
+  width: 9%;
+  height: 18%;
+  border-radius: 99px;
+  background: var(--ink);
+  animation: blink var(--b, 5s) ease-in-out infinite;
+}
+.pb .l {
+  left: 35%;
+}
+.pb .r {
+  left: 56%;
+}
+/* Done: happy arcs. */
+.pb.happy i {
+  background: none;
+  width: 15%;
+  height: 9%;
+  top: 42%;
+  border: max(2px, calc(var(--s, 56px) * 0.05)) solid var(--ink);
+  border-bottom: 0;
+  border-radius: 99px 99px 0 0;
+  animation: none;
+}
+.pb.happy .l {
+  left: 29%;
+}
+.pb.happy .r {
+  left: 54%;
+}
+/* Not yet: asleep, a little faded. */
+.pb.sleep {
+  filter: saturate(0.6) brightness(0.85);
+}
+.pb.sleep i {
+  background: none;
+  width: 14%;
+  height: 7%;
+  top: 46%;
+  border: max(2px, calc(var(--s, 56px) * 0.045)) solid var(--ink);
+  border-top: 0;
+  border-radius: 0 0 99px 99px;
+  opacity: 0.75;
+  animation: none;
+}
+.pb.sleep .l {
+  left: 30%;
+}
+.pb.sleep .r {
+  left: 54%;
+}
+/* On its way: hopping. */
+.bob {
+  animation:
+    morph var(--m, 7s) ease-in-out infinite,
+    bob 1.4s ease-in-out infinite;
+}
+@keyframes morph {
+  0%,
+  100% {
+    border-radius: var(--r, 58% 42% 55% 45% / 52% 58% 42% 48%);
+  }
+  50% {
+    border-radius: 46% 54% 44% 56% / 58% 46% 54% 42%;
+  }
+}
+@keyframes blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  95% {
+    transform: scaleY(0.1);
+  }
+}
+@keyframes bob {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 -8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pb,
+  .pb i,
+  .bob {
+    animation: none;
+  }
 }

@@ -6,8 +6,9 @@
 // Claude account is a long-lived token from `claude setup-token`, which the
 // runner keeps beside the config directory and hands to each turn.
 import { spawn, type ChildProcess } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AccountRef } from '@brigade/contracts'
 import xterm from '@xterm/headless'
@@ -15,6 +16,7 @@ import { ACCOUNTS_DIR, CLOUD } from './config.js'
 import { shareAccount } from './teammates.js'
 import { harnessEnv } from './harness/env.js'
 import { vendorCli, type Vendor } from './vendor-cli.js'
+import { WINDOWS } from './windows.js'
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
 const LOGIN_TIMEOUT_MS = 15 * 60_000
@@ -298,21 +300,44 @@ async function identity(account: AccountRef): Promise<{ email?: string; plan?: s
   }
 }
 
-/** Whether this machine's own logins exist, for the accounts already on a member's machine. */
-export async function machineLogins(): Promise<
+/**
+ * Where the person's own login lives when their CLI is not on this computer for Brigade to ask
+ * (Windows: vendor-cli.ts), so only whether it exists is known. Never read.
+ */
+const loginFile = (vendor: Vendor, home = homedir()) =>
+  vendor === 'codex'
+    ? join(process.env.CODEX_HOME ?? join(home, '.codex'), 'auth.json')
+    : join(process.env.CLAUDE_CONFIG_DIR ?? join(home, '.claude'), '.credentials.json')
+
+/**
+ * Whether this machine's own logins exist, for the accounts already on a member's machine: a
+ * Claude Code or Codex the person signed in to is used as it is, without asking them to sign in
+ * again. Its CLI says so; on Windows without that CLI (a connection never downloads it), its
+ * login file does, and the turn's own copy of the CLI signs in with it.
+ */
+export async function machineLogins(
+  home = homedir(),
+): Promise<
   { provider: 'claude_code' | 'codex'; loggedIn: boolean; email?: string; plan?: string }[]
 > {
-  // On Windows, only CLIs installed already: a connection never downloads them (vendor-cli.ts).
-  const claude = await run('claude', ['auth', 'status', '--json'], {}).then(
-    (out) =>
-      JSON.parse(out ?? '{}') as { loggedIn?: boolean; email?: string; subscriptionType?: string },
-    () =>
-      ({ loggedIn: false }) as { loggedIn?: boolean; email?: string; subscriptionType?: string },
-  )
-  const codex = await run('codex', ['login', 'status'], {}).then(
-    (out) => out !== undefined && /logged in/i.test(out) && !/not logged in/i.test(out),
-    () => false,
-  )
+  const fileOnly = async (vendor: Vendor) =>
+    WINDOWS && !(await vendorCli(vendor)) ? existsSync(loginFile(vendor, home)) : undefined
+  type ClaudeStatus = { loggedIn?: boolean; email?: string; subscriptionType?: string }
+  const claudeFile = await fileOnly('claude')
+  const claude: ClaudeStatus =
+    claudeFile !== undefined
+      ? { loggedIn: claudeFile }
+      : await run('claude', ['auth', 'status', '--json'], {}).then(
+          (out) => JSON.parse(out ?? '{}') as ClaudeStatus,
+          () => ({ loggedIn: false }),
+        )
+  const codexFile = await fileOnly('codex')
+  const codex =
+    codexFile ??
+    (await run('codex', ['login', 'status'], {}).then(
+      (out) => out !== undefined && /logged in/i.test(out) && !/not logged in/i.test(out),
+      () => false,
+    ))
   return [
     {
       provider: 'claude_code',
