@@ -39,8 +39,19 @@ module.exports = {
     // Notarized when the release has Apple's keys (APPLE_API_KEY, _ID, _ISSUER).
     notarize: !!process.env.APPLE_API_KEY_ID,
   },
-  // The name the dashboard links to (apps/web/lib/desktop-app.ts).
-  dmg: { artifactName: 'Brigade.dmg' },
+  // The name the dashboard links to (apps/web/lib/desktop-app.ts). Its window: "Drag me in!",
+  // with the team waiting by Applications (build/background.png and @2x, from the design
+  // Projects/Brigade/designs/installer.design). Finder draws the two icons at these points.
+  dmg: {
+    artifactName: 'Brigade.dmg',
+    background: 'build/background.png',
+    iconSize: 112,
+    window: { width: 660, height: 400 },
+    contents: [
+      { x: 174, y: 256, type: 'file' },
+      { x: 508, y: 256, type: 'link', path: '/Applications' },
+    ],
+  },
   win: {
     icon: 'assets/icon.ico',
     target: [{ target: 'nsis', arch: ['x64'] }],

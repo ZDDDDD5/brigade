@@ -303,14 +303,17 @@ try {
   if (process.platform !== 'win32') {
     await app.evaluate(() => globalThis.brigadeTest.setup.show())
     const setup = await windowAt('setup.html')
-    await setup.waitForSelector('#steps li')
+    // Each teammate is a point on the road (its pebble and name hang off it): present, not sized.
+    await setup.waitForSelector('#steps li', { state: 'attached' })
     const steps = await setup.$$eval('#steps li .title', (els) => els.map((e) => e.textContent))
     check('setup steps', () => assert.ok(steps.includes('Connected to a workspace'), steps.join()))
-    const heading = await setup.textContent('h1')
-    check('setup heading', () =>
-      assert.equal(
-        heading,
-        `Get this ${process.platform === 'darwin' ? 'Mac' : 'computer'} ready for your teammates`,
+    const heading = await setup.textContent('#moving h1')
+    check('setup heading', () => assert.equal(heading, 'Your team is moving in'))
+    const summary = await setup.textContent('#summary')
+    check('setup summary', () =>
+      assert.match(
+        summary,
+        new RegExp(`^Getting this ${process.platform === 'darwin' ? 'Mac' : 'computer'} ready`),
       ),
     )
   }

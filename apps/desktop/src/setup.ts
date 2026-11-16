@@ -1,15 +1,20 @@
-// The setup checklist: a small window listing what this computer needs for Brigade, each step
-// checked live (page/setup.js asks every 1.5 seconds) with the one action that fixes it. It
-// opens on every launch while a step is missing, so a new customer never has to find it in the
-// menu, and from the menu. Windows has nothing to set up: teammates don't run there yet.
+// The setup window: what this computer needs for Brigade, drawn as a road of teammates who wake
+// up as each step is done (page/setup.js asks every 1.5 seconds), with the one action that fixes
+// a step. It opens on every launch while a step is missing, so a new customer never has to find
+// it in the menu, and from the menu. Once all is done it says the team has moved in, and offers
+// to connect Claude or ChatGPT only when no sign-in is on this computer: one found is used as it
+// is, without asking (the runner reports it, apps/runner/src/accounts.ts machineLogins).
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { hasAiSignIn } from './ai-sign-in.js'
 import * as autostart from './autostart.js'
 import { ctx } from './context.js'
 import { cancelQuit, stopForQuit } from './lifecycle.js'
 import { showLogs } from './logs.js'
 import { runnerSupported, workspace } from './runner.js'
 import { dashboard } from './settings.js'
+import * as workspaces from './workspaces.js'
+import { showDashboard } from './windows.js'
 
 const SCREEN_SETTINGS =
   'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture'
@@ -19,10 +24,21 @@ const ACCESSIBILITY_SETTINGS =
 /** One row: done is null while it is on its way (installing, restarting). */
 type Step = {
   id: string
+  /** Its name under its teammate on the road: a word or two. */
+  short: string
   title: string
   detail: string
   done: boolean | null
   action: { id: string; label: string } | null
+}
+
+const SHORT: Record<string, string> = {
+  applications: 'Applications',
+  workspace: 'Workspace',
+  runner: 'Runner',
+  screen: 'Screen',
+  accessibility: 'Accessibility',
+  login: 'At login',
 }
 
 const step = (
@@ -33,6 +49,7 @@ const step = (
   action?: [string, string] | false,
 ): Step => ({
   id,
+  short: SHORT[id] ?? title,
   title,
   detail,
   done,
@@ -178,6 +195,14 @@ const missing = (steps: Step[]) => steps.filter((s) => s.done !== true).map((s) 
 
 let window: BrowserWindow | undefined
 
+/** hasAiSignIn, asked again every few seconds at most (a Mac asks its keychain). */
+let ai: { at: number; found: Promise<boolean> } | undefined
+const aiSignIn = () => {
+  if (!ai || Date.now() - ai.at > 5_000)
+    ai = { at: Date.now(), found: hasAiSignIn(workspaces.homeOf(workspaces.active())) }
+  return ai.found
+}
+
 async function act(id: string) {
   switch (id) {
     case 'move': {
@@ -216,6 +241,11 @@ async function act(id: string) {
     case 'login':
       autostart.enable()
       return ctx.refreshMenu()
+    case 'accounts':
+      return void (await shell.openExternal(`${dashboard()}/accounts`))
+    case 'open':
+      window?.close()
+      return showDashboard()
     case 'close':
       return window?.close()
     default:
@@ -229,7 +259,8 @@ export function registerSetup() {
   ipcMain.handle('setup:state', async (event) => {
     if (!fromSetup(event)) return null
     const list = await steps()
-    return { steps: list, done: missing(list).length === 0, computer: computer() }
+    const done = missing(list).length === 0
+    return { steps: list, done, ai: done ? await aiSignIn() : null, computer: computer() }
   })
   // Its error as a value: the page shows it under the step.
   ipcMain.handle('setup:action', async (event, id: unknown) => {
@@ -251,8 +282,9 @@ export function show() {
     return
   }
   const created = new BrowserWindow({
-    width: 480,
-    height: 640,
+    width: 600,
+    height: 500,
+    useContentSize: true,
     resizable: false,
     minimizable: false,
     maximizable: false,
@@ -260,6 +292,11 @@ export function show() {
     show: false,
     title: 'Set up Brigade',
     autoHideMenuBar: true,
+    // The page is dark whatever the system's look; on a Mac it runs under the traffic lights.
+    backgroundColor: '#1c1b20',
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 16 } }
+      : {}),
     webPreferences: {
       preload: join(__dirname, 'setup-preload.js'),
       contextIsolation: true,
