@@ -238,9 +238,6 @@ importers:
       '@brigade/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@earendil-works/pi-mcp':
-        specifier: ^1.5.2
-        version: 1.5.2
       '@playwright/mcp':
         specifier: 0.0.83
         version: 0.0.83
@@ -10585,7 +10582,7 @@ snapshots:
 
   '@smithy/hash-node@4.5.2':
     dependencies:
-      '@smithy/core': 3.36.0
+      '@smithy/core': 3.40.0
       tslib: 2.8.1
 
   '@smithy/hash-stream-node@4.5.2':
