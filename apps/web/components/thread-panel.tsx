@@ -762,6 +762,7 @@ function DetailsPill({
       <button
         ref={pill}
         type="button"
+        data-look="thread-pill"
         className="group pointer-events-auto flex h-11 max-w-full min-w-0 items-center gap-2.5 rounded-full bg-card/90 pr-4 pl-2.5 text-[0.9375rem] font-semibold shadow-sm backdrop-blur transition-colors outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-pressed:bg-accent"
         aria-pressed={shown}
         onClick={() => {

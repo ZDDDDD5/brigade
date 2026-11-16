@@ -468,14 +468,37 @@ export const THEME_TOOLS = ['theme_read', 'theme_set', 'theme_add_file', 'theme_
  */
 export const THEME_HOOKS = [
   { selector: '[data-look="app"]', what: 'the whole dashboard, behind everything' },
-  { selector: '[data-slot="sidebar"]', what: 'the sidebar' },
-  { selector: '[data-slot="sidebar-menu-button"]', what: 'a row of the sidebar' },
+  { selector: '[data-slot="sidebar"]', what: 'the sidebar', always: true },
+  { selector: '[data-slot="sidebar-header"]', what: "the sidebar's top: workspace, search, +" },
+  {
+    selector: '[data-look="workspace-switcher"]',
+    what: "the workspace's name and mark, top of the sidebar",
+    always: true,
+  },
+  {
+    selector: '[data-look="round-button"]',
+    what: 'the round Search and New thread (+) buttons, top of the sidebar',
+    always: true,
+  },
+  { selector: '[data-slot="sidebar-menu-button"]', what: 'a row of the sidebar', always: true },
   { selector: '[data-look="sidebar-thread"]', what: "a thread's row in the sidebar" },
-  { selector: '[data-slot="sidebar-inset"]', what: 'the page beside the sidebar' },
+  { selector: '[data-slot="sidebar-footer"]', what: "the sidebar's bottom: avatar, Connect apps" },
+  {
+    selector: '[data-look="connect-apps"]',
+    what: 'the Connect apps button, bottom of the sidebar',
+    always: true,
+  },
+  { selector: '[data-slot="sidebar-trigger"]', what: 'the button that folds the sidebar' },
+  { selector: '[data-slot="sidebar-inset"]', what: 'the page beside the sidebar', always: true },
   { selector: '[data-look="thread"]', what: "a thread's page, behind its messages" },
   { selector: '[data-look="thread-header"]', what: 'the bar at the top of a thread' },
-  { selector: '[data-look="person-message"]', what: "a person's message bubble" },
-  { selector: '[data-look="teammate-message"]', what: "a teammate's reply" },
+  {
+    selector: '[data-look="thread-pill"]',
+    what: "the pill at the top of a thread: avatars stacked, then the thread's title",
+    always: true,
+  },
+  { selector: '[data-look="person-message"]', what: "a person's message bubble", always: true },
+  { selector: '[data-look="teammate-message"]', what: "a teammate's reply", always: true },
   {
     selector: '[data-look="message-actions"]',
     what: "a reply's Copy and Reply buttons, inside the reply",
@@ -485,7 +508,15 @@ export const THEME_HOOKS = [
     selector: '[data-look="chat-card"]',
     what: 'a card in a thread: tickets, questions, sub-threads',
   },
-  { selector: '[data-look="composer"]', what: 'the message box' },
+  {
+    selector: '[data-look="sub-threads"]',
+    what: 'the sub-threads working, listed at the end of a thread',
+  },
+  {
+    selector: '[data-look="composer"]',
+    what: 'the message box; its + (attach), mic and send are the buttons inside it',
+    always: true,
+  },
   { selector: '[data-look="code-block"]', what: 'a code block' },
   { selector: '[data-look="today"]', what: 'the Today page' },
   { selector: '[data-look="library"]', what: 'the library' },
@@ -494,11 +525,14 @@ export const THEME_HOOKS = [
   { selector: '[data-slot="dialog-content"]', what: 'a dialog' },
   { selector: '[data-slot="dropdown-menu-content"]', what: 'a menu' },
   { selector: '[data-slot="tooltip-content"]', what: 'a tooltip' },
-  { selector: '[data-slot="button"]', what: 'a button' },
+  {
+    selector: '[data-slot="button"]',
+    what: "a button of the dashboard's kit (not the round, pill and Connect apps buttons above)",
+  },
   { selector: '[data-slot="input"], [data-slot="textarea"]', what: 'text fields' },
   { selector: '[data-slot="switch"]', what: 'an on/off switch' },
   { selector: '[data-slot="badge"]', what: 'a badge' },
-] as const
+] as const satisfies readonly { selector: string; what: string; always?: boolean }[]
 
 /** Brings a person back to the dashboard's own look, whatever a theme hides. */
 export const THEME_RESET_SHORTCUT = 'Cmd+Option+Shift+R on a Mac, Ctrl+Alt+Shift+R elsewhere'
@@ -520,7 +554,11 @@ export function themeGuide(): string {
     `Theme files: theme_add_file copies an image (png, jpg, webp, gif, avif; animated is fine) or a font (woff2, woff, ttf, otf) from your folder into a saved theme, up to ${THEME_LIMITS.fileBytes / 1024 / 1024} MB each and ${THEME_LIMITS.filesPerTheme} per theme. No SVG: inline one as a data: address instead. You can make an image with generate_image, then add it.`,
     '',
     'Stable selectors (every other class name changes between releases: never rely on them):',
-    ...THEME_HOOKS.map((h) => `- ${h.selector}: ${h.what}`),
+    ...THEME_HOOKS.map(
+      (h) => `- ${h.selector}: ${h.what}${'always' in h && h.always ? ' [always on screen]' : ''}`,
+    ),
+    '',
+    'Cover the whole screen. The selectors marked [always on screen] show on every page: when the css restyles surfaces or buttons beyond colours (a gradient, a border, a shadow, a shape, a texture), give each of them that treatment too, or the ones left out keep the default look and stand out. The round Search and + buttons, the workspace switcher, Connect apps and the thread pill are not [data-slot="button"]: a rule for buttons misses them. Colours set through canvas, accent and colors reach every surface by themselves, so lean on them first and keep the css for what colours cannot do. Before each theme_set, go through the [always on screen] list and check the css says something for each, or that colours alone dress it.',
     '',
     'A theme changes the look, not the layout or behaviour: it cannot move the sidebar to the right, add a panel or change what a screen does. Say so rather than promise it. Never hide or disguise what asks the person to decide (tickets, approvals, the Allow and Deny buttons).',
     '',

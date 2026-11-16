@@ -31,6 +31,13 @@ Brigade's own surfaces, and shadcn's `data-slot` names): every other class name 
 utility that changes between releases. `apps/web/test/theme-hooks.test.ts` fails when one leaves
 the code: removing one breaks people's themes, so change the list with it, on purpose.
 
+Hooks marked `always` are on screen on every page (the sidebar's round Search and + buttons, the
+workspace switcher, Connect apps, the thread's pill, the composer…). The guide flags them
+"[always on screen]" and asks the teammate to give each one the same treatment as the rest of its
+css before each `theme_set`: those custom buttons are not `[data-slot="button"]`, and a theme that
+missed them left them in the default look. Give any new control that stays on screen a
+`data-look` and mark it `always`.
+
 ## Nothing loads from elsewhere
 
 A theme's stylesheet could otherwise send what the page shows to another site (a selector per
