@@ -30,6 +30,7 @@ import {
   WIDGET_GUIDE_TOOL,
 } from '@brigade/contracts'
 import { CLOUD } from './config.js'
+import { WINDOWS } from './windows.js'
 import {
   memorySection,
   MEMORY_DIR,
@@ -135,6 +136,7 @@ export function instructions(
       'its summary), never by its id alone.' +
       saving(spec),
     CLOUD && YOUR_FILES,
+    WINDOWS && !CLOUD && windowsComputer(spec),
     spec.project && project(spec.project, libraryDir),
     projects(spec),
     spec.teammate.kind === 'chief' && chief(spec),
@@ -181,6 +183,24 @@ export function instructions(
     .join('\n\n')
     .concat('\n')
 }
+
+/**
+ * A member's Windows PC (windows.ts): which shell the teammate's commands run in, which paths
+ * each side takes, and what a Linux or Mac habit gets wrong there.
+ */
+const windowsComputer = (spec: ThreadSpec) =>
+  '## This computer runs Windows\n\n' +
+  (spec.teammate.harness === 'codex'
+    ? "Your commands run in PowerShell. Git for Windows' Unix tools (grep, sed, find, head…) are on the PATH " +
+      "too, before Windows' own find and sort, and its bash runs a POSIX script: `bash -c '…'`. "
+    : 'Your shell is Git Bash (bash from Git for Windows), with its Unix tools (grep, sed, find, curl…). It writes ' +
+      'paths as `/c/Users/…`, which Windows programs it starts take as `C:\\Users\\…`. Run a Windows command ' +
+      'with `cmd //c dir`, PowerShell with `powershell -NoProfile -Command "…"`. ') +
+  "Give paths to Brigade's tools and write them in files as Windows paths (`C:\\Users\\…` or `C:/Users/…`). " +
+  "Keep a file's line endings as they are (CRLF or LF), and check `git config core.autocrlf` before a commit " +
+  'that would change every line. What a Linux computer has may be missing here: no sudo, apt-get, systemctl ' +
+  'or lsof, and Docker only if the person installed Docker Desktop. Find the Windows way, or say what is ' +
+  "missing. You act with the person's own Windows account and files: stay in this thread's folder unless asked."
 
 /** The workspace's, the project's and the teammate's memory, as far as there is any. */
 function memoryParts(spec: ThreadSpec, memory: ThreadMemory) {

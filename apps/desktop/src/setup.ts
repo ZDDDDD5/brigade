@@ -89,7 +89,7 @@ export async function steps(): Promise<Step[]> {
     ],
     notConnected: ['It starts once this computer is connected.', false, false],
     stopped: ['It is stopped.', false, ['restart', 'Start']],
-    unsupported: ['Teammates run on macOS and Linux.', false, false],
+    unsupported: ['Teammates run on macOS, Windows and Linux.', false, false],
   }
   const [detail, done, action] = runner[status.kind]
   steps.push(step('runner', 'The runner is running', detail, done, action))

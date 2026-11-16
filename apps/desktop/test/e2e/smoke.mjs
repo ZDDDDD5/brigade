@@ -87,8 +87,7 @@ try {
   // The runner: nothing linked here.
   await waitFor(() => app.evaluate(() => globalThis.brigadeTest?.ctx.supervisor.status.kind))
   const status = await app.evaluate(() => globalThis.brigadeTest.ctx.supervisor.status.kind)
-  const expected = process.platform === 'win32' ? 'unsupported' : 'notConnected'
-  check('runner status', () => assert.equal(status, expected))
+  check('runner status', () => assert.equal(status, 'notConnected'))
 
   // macOS: a Dock icon from the start, before any window opens, as for any Mac app (0.4.4 had one
   // only while the dashboard was open).

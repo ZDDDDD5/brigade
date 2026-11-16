@@ -1,4 +1,5 @@
-// The one-command runner install: `curl -fsSL <api>/runner/install.sh | sh`.
+// The one-command runner install: `curl -fsSL <api>/runner/install.sh | sh`; on Windows,
+// install.ps1 (runner-install-windows.ts).
 // Installs Node.js if needed (checksum-verified) and the runner into ~/.brigade. No root.
 // A Node.js older than NODE_VERSION is replaced: Node's security releases fix the runtime itself.
 // A runner updates itself by running this same script (see apps/runner/src/updater.ts).
@@ -7,6 +8,7 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { env } from '../config.js'
 import { runnerBundleFile, runnerBundleSha256 } from '../platform/node.js'
+import { windowsInstallScript } from './runner-install-windows.js'
 
 /** Exit code of a runner that replaced itself: the wrapper starts the new one. */
 export const UPDATED_EXIT_CODE = 75
@@ -119,6 +121,12 @@ export const runnerInstall = new Hono()
   .get('/install.sh', (c) =>
     c.body(installScript(env.API_URL), 200, {
       'content-type': 'text/x-shellscript; charset=utf-8',
+    }),
+  )
+  // Windows' (runner-install-windows.ts), which Brigade.app and an updating runner run there.
+  .get('/install.ps1', (c) =>
+    c.body(windowsInstallScript(env.API_URL), 200, {
+      'content-type': 'text/plain; charset=utf-8',
     }),
   )
   .get('/bundle.tgz', async (c) => {

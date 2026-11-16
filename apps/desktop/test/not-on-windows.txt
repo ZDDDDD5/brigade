@@ -1,0 +1,2 @@
+# Desktop tests left out on Windows (scripts/ci/test.mjs), one file per line, why after the #.
+runner.test.ts # fake runners as sh scripts and process groups: runner-windows.test.ts is Windows'

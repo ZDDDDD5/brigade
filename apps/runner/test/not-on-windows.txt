@@ -1,0 +1,20 @@
+# Runner tests left out on Windows (scripts/ci/test.mjs): each runs what the runner does only on
+# Linux or macOS. One file per line, why after the #. Every other test runs on Windows too.
+backups.test.ts # cloud computer backups (CLOUD only), with GNU tar on Linux paths
+computer-run.test.ts # computer use through Brigade Computer Use.app (macOS only)
+desktop-tools.test.ts # computer use: the Mac's helper and the cloud computer's desktop
+disk.test.ts # a cloud computer's disk cleanup (CLOUD, teammates' Linux homes)
+docker-proxy.test.ts # a cloud computer's Docker proxy (CLOUD, Unix sockets)
+machine-runs.test.ts # a thread's own machine, reached over ssh from the cloud computer (CLOUD)
+port-holders.test.ts # who holds a port, from lsof (macOS and Linux); Windows reports none (docs/windows.md)
+preview-machine.test.ts # a preview on a thread's own machine (CLOUD)
+preview-pause.test.ts # pausing an unused preview with SIGSTOP, which Windows lacks (docs/windows.md)
+preview-remote.test.ts # a preview on a thread's own machine (CLOUD)
+preview-sync.test.ts # a preview's files synced to a thread's own machine (CLOUD)
+preview-sync-times.test.ts # a preview's files synced to a thread's own machine (CLOUD)
+shared-bridges.test.ts # bridges shared between teammate users on a cloud computer (CLOUD, /proc)
+thread-net.test.ts # a thread's own network namespace on a cloud computer (CLOUD)
+codex-usage.test.ts # a fake codex on the PATH; Windows runs the harness's own copy (vendor-cli.ts)
+member-folders.test.ts # a fake docker as a sh script on the PATH, which Windows runs no program from
+lazy-mcp.test.ts # the cloud computer's browser MCP server (runAs), checked with pgrep
+preview-handover.test.ts # previews handed over across an update, which Windows starts again instead (docs/windows.md)

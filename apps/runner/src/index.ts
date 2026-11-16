@@ -32,6 +32,7 @@ import {
   VERSION,
 } from './config.js'
 import { watchAbuse } from './abuse.js'
+import { useWindowsTools } from './windows.js'
 import { Accounts, machineLogins } from './accounts.js'
 import { Attachments } from './attachments.js'
 import { SpecParts } from './spec-parts.js'
@@ -80,6 +81,8 @@ const CALLS_GRACE_MS = 8_000
 // Brigade sets no API key anywhere; harnesses use this computer's subscription logins.
 stripApiKeys()
 if (!CLOUD) usePersonPath()
+// Windows: Git for Windows' git and bash, which the installer put beside the runner.
+useWindowsTools()
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -914,4 +917,16 @@ async function start() {
   }
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
+  // Windows has no SIGTERM: Brigade.app, which starts the runner there with an IPC channel, asks
+  // over it, and an app gone (its channel closed) stops the runner as SIGTERM would.
+  if (process.send) {
+    let stopping = false
+    const stop = () => {
+      if (stopping) return
+      stopping = true
+      void shutdown()
+    }
+    process.on('message', (message) => message === 'brigade:stop' && stop())
+    process.once('disconnect', stop)
+  }
 }

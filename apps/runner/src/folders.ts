@@ -46,6 +46,7 @@ import { tidyBridges } from './shared-bridges.js'
 import { owners, repairCaches, run } from './repos.js'
 import { ensureUser, pruneSystemDocker, teammateHome } from './teammates.js'
 import { threadFolder } from './threads.js'
+import { slashes } from './windows.js'
 
 /** Remove dependency and build folders of quiet threads once the disk is this full (space or inodes)… */
 const TRIM_AT = 0.6
@@ -1426,7 +1427,7 @@ export async function pack(
           '--warning=no-file-removed -T - -czf -; s=$?; [ "$s" -eq 1 ] && s=0; exit "$s"; } | head -c "$2"'
         : 'tar -C "$1" --no-recursion --null -T - -czf - | head -c "$2"',
       'pack',
-      workDir,
+      slashes(workDir),
       String(ARCHIVE_MAX + 1),
     ],
     { runAs, input: Buffer.from([...files].join('\0')), stdout: out },
@@ -1448,5 +1449,6 @@ export async function pack(
 /** Put a folder back from its archive, as its teammate. */
 export async function unpack(file: string, workDir: string, runAs?: string) {
   await run('mkdir', ['-p', workDir], { runAs })
-  await run('tar', ['-xzf', '-', '-C', workDir], { runAs, stdin: createReadStream(file) })
+  // GNU tar on Windows takes C:/… (windows.ts).
+  await run('tar', ['-xzf', '-', '-C', slashes(workDir)], { runAs, stdin: createReadStream(file) })
 }

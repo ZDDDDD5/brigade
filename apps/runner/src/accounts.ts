@@ -14,6 +14,7 @@ import xterm from '@xterm/headless'
 import { ACCOUNTS_DIR, CLOUD } from './config.js'
 import { shareAccount } from './teammates.js'
 import { harnessEnv } from './harness/env.js'
+import { vendorCli, type Vendor } from './vendor-cli.js'
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
 const LOGIN_TIMEOUT_MS = 15 * 60_000
@@ -125,21 +126,24 @@ class Login {
     private readonly dir: string,
     private readonly onPrompt: (prompt: Prompt) => void,
     private readonly onDone: (done: Done) => void,
+    /** The vendor CLI: its program and first arguments (vendor-cli.ts). */
+    cli: [string, string[]],
   ) {
     if (account.provider !== 'codex' && CLOUD) this.screen = new Screen()
     const [command, args]: [string, string[]] =
       account.provider === 'codex'
-        ? ['codex', ['login', '--device-auth']]
+        ? [cli[0], [...cli[1], 'login', '--device-auth']]
         : this.screen
           ? // A terminal UI, so in a pseudo-terminal.
             [
               'script',
               ['-qefc', `stty cols ${COLS} rows ${ROWS}; exec claude setup-token`, '/dev/null'],
             ]
-          : ['claude', ['auth', 'login', '--claudeai']]
+          : [cli[0], [...cli[1], 'auth', 'login', '--claudeai']]
     this.child = spawn(command, args, {
       env: harnessEnv({ ...configEnv(account), BROWSER: 'false' }),
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     })
     this.child.stdout!.on('data', (d) => this.read(d))
     this.child.stderr!.on('data', (d) => this.read(d))
@@ -278,6 +282,7 @@ class Login {
 async function identity(account: AccountRef): Promise<{ email?: string; plan?: string }> {
   if (account.provider === 'codex') return {}
   const out = await run('claude', ['auth', 'status', '--json'], configEnv(account))
+  if (out === undefined) return {}
   try {
     const status = JSON.parse(out) as {
       loggedIn?: boolean
@@ -297,13 +302,15 @@ async function identity(account: AccountRef): Promise<{ email?: string; plan?: s
 export async function machineLogins(): Promise<
   { provider: 'claude_code' | 'codex'; loggedIn: boolean; email?: string; plan?: string }[]
 > {
+  // On Windows, only CLIs installed already: a connection never downloads them (vendor-cli.ts).
   const claude = await run('claude', ['auth', 'status', '--json'], {}).then(
-    (out) => JSON.parse(out) as { loggedIn?: boolean; email?: string; subscriptionType?: string },
+    (out) =>
+      JSON.parse(out ?? '{}') as { loggedIn?: boolean; email?: string; subscriptionType?: string },
     () =>
       ({ loggedIn: false }) as { loggedIn?: boolean; email?: string; subscriptionType?: string },
   )
   const codex = await run('codex', ['login', 'status'], {}).then(
-    (out) => /logged in/i.test(out) && !/not logged in/i.test(out),
+    (out) => out !== undefined && /logged in/i.test(out) && !/not logged in/i.test(out),
     () => false,
   )
   return [
@@ -317,9 +324,20 @@ export async function machineLogins(): Promise<
   ]
 }
 
-function run(command: string, args: string[], env: Record<string, string>): Promise<string> {
+/** A vendor CLI's output; undefined on Windows when it is not installed (vendor-cli.ts). */
+async function run(
+  vendor: Vendor,
+  args: string[],
+  env: Record<string, string>,
+): Promise<string | undefined> {
+  const cli = await vendorCli(vendor)
+  if (!cli) return undefined
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { env: harnessEnv(env), stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(cli[0], [...cli[1], ...args], {
+      env: harnessEnv(env),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
     let out = ''
     child.stdout.on('data', (d) => (out += d))
     child.stderr.on('data', (d) => (out += d))
@@ -330,21 +348,46 @@ function run(command: string, args: string[], env: Record<string, string>): Prom
 
 export class Accounts {
   private logins = new Map<string, Login>()
+  /**
+   * Sign-ins waiting for their CLI to install (Windows' first one): cancelled meanwhile, or given
+   * way to a newer one for the same account, they never start.
+   */
+  private installing = new Map<string, { account: AccountRef; cancelled: boolean }>()
 
   constructor(
     private readonly send: {
       prompt: (loginId: string, prompt: Prompt) => void
       done: (loginId: string, done: Done) => void
     },
+    /** The vendor CLI for a sign-in, installed if need be (vendor-cli.ts); tests give their own. */
+    private readonly cliFor: typeof vendorCli = vendorCli,
   ) {}
 
   async start(loginId: string, account: AccountRef) {
     const dir = accountDir(account)
     if (!dir) throw new Error("The machine's own login is managed on the machine")
     // A sign-in the API lost (it restarted) would otherwise time out later and delete this one's login.
-    for (const login of this.logins.values())
-      if (login.account.id === account.id) login.cancel('Replaced by a new sign-in', true)
-    await mkdir(dir, { recursive: true, mode: 0o700 })
+    const replace = () => {
+      for (const login of this.logins.values())
+        if (login.account.id === account.id) login.cancel('Replaced by a new sign-in', true)
+      for (const waiting of this.installing.values())
+        if (waiting.account.id === account.id) waiting.cancelled = true
+    }
+    replace()
+    const waiting = { account, cancelled: false }
+    this.installing.set(loginId, waiting)
+    let cli: [string, string[]] | undefined
+    try {
+      await mkdir(dir, { recursive: true, mode: 0o700 })
+      // On Windows, the CLI may have to be installed first: a minute or two, once.
+      cli = await this.cliFor(account.provider === 'codex' ? 'codex' : 'claude', { install: true })
+    } finally {
+      this.installing.delete(loginId)
+    }
+    // Cancelled while it waited: it never starts, and leaves the account's folder to the sign-in
+    // that replaced it, if any.
+    if (waiting.cancelled) return this.send.done(loginId, { ok: false, error: 'Cancelled' })
+    if (!cli) throw new Error('Could not install the sign-in command')
     const login = new Login(
       account,
       dir,
@@ -353,13 +396,14 @@ export class Accounts {
         this.logins.delete(loginId)
         this.send.done(loginId, done)
       },
+      cli,
     )
     this.logins.set(loginId, login)
   }
 
   /** A sign-in is in progress. */
   get busy() {
-    return this.logins.size > 0
+    return this.logins.size > 0 || this.installing.size > 0
   }
 
   submit(loginId: string, code: string) {
@@ -370,6 +414,8 @@ export class Accounts {
 
   cancel(loginId: string) {
     this.logins.get(loginId)?.cancel()
+    const waiting = this.installing.get(loginId)
+    if (waiting) waiting.cancelled = true
   }
 
   /** Sign out with the vendor's command, then delete the account's directory (and its token). */

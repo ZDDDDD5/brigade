@@ -45,55 +45,60 @@ function get(port: number) {
   })
 }
 
-test('a request to a frozen app waits for it to wake, then gets its answer', async (t) => {
-  const { child, port } = app()
-  t.after(() => child.kill('SIGKILL'))
-  let frozen = false
-  let woken = 0
-  let resumedAt = 0
-  const proxy = new PreviewProxy({
-    port: await port,
-    ports: [],
-    crossSiteCookies: false,
-    state: () => 'running',
-    onUse: () => undefined,
-    // Thawing a cgroup: the app runs again at once, all its timers late, and closes its idle
-    // connections while the runner is still busy (here, for 50 ms): the proxy has not seen
-    // them close when it sends the request.
-    wake: () => {
-      if (!frozen) return undefined
-      frozen = false
-      woken++
-      return sleep(100).then(() => {
-        resumedAt = Date.now()
-        child.kill('SIGCONT')
-        while (Date.now() < resumedAt + 50);
-      })
-    },
-  })
-  t.after(() => proxy.close())
-  const at = await proxy.listen(20_000 + Math.floor(Math.random() * 20_000), [])
+// Windows freezes no app (no SIGSTOP): its previews are never paused (docs/windows.md).
+test(
+  'a request to a frozen app waits for it to wake, then gets its answer',
+  { skip: process.platform === 'win32' },
+  async (t) => {
+    const { child, port } = app()
+    t.after(() => child.kill('SIGKILL'))
+    let frozen = false
+    let woken = 0
+    let resumedAt = 0
+    const proxy = new PreviewProxy({
+      port: await port,
+      ports: [],
+      crossSiteCookies: false,
+      state: () => 'running',
+      onUse: () => undefined,
+      // Thawing a cgroup: the app runs again at once, all its timers late, and closes its idle
+      // connections while the runner is still busy (here, for 50 ms): the proxy has not seen
+      // them close when it sends the request.
+      wake: () => {
+        if (!frozen) return undefined
+        frozen = false
+        woken++
+        return sleep(100).then(() => {
+          resumedAt = Date.now()
+          child.kill('SIGCONT')
+          while (Date.now() < resumedAt + 50);
+        })
+      },
+    })
+    t.after(() => proxy.close())
+    const at = await proxy.listen(20_000 + Math.floor(Math.random() * 20_000), [])
 
-  // Warm: the proxy keeps a connection to the app for the next request.
-  for (let i = 0; i < 3; i++) assert.equal((await get(at)).status, 200)
+    // Warm: the proxy keeps a connection to the app for the next request.
+    for (let i = 0; i < 3; i++) assert.equal((await get(at)).status, 200)
 
-  for (let round = 0; round < 5; round++) {
-    // Frozen past its keep-alive: thawed, it closes those connections at once.
-    child.kill('SIGSTOP')
-    frozen = true
-    await sleep(500)
-    const answer = await get(at)
-    assert.equal(answer.status, 200, `round ${round}: ${answer.body}`)
-    assert.match(answer.body, /^ok \d+$/)
-    // Answered by the app once it ran again, not before.
-    assert.ok(Number(answer.body.slice(3)) >= resumedAt)
-  }
-  assert.equal(woken, 5)
+    for (let round = 0; round < 5; round++) {
+      // Frozen past its keep-alive: thawed, it closes those connections at once.
+      child.kill('SIGSTOP')
+      frozen = true
+      await sleep(500)
+      const answer = await get(at)
+      assert.equal(answer.status, 200, `round ${round}: ${answer.body}`)
+      assert.match(answer.body, /^ok \d+$/)
+      // Answered by the app once it ran again, not before.
+      assert.ok(Number(answer.body.slice(3)) >= resumedAt)
+    }
+    assert.equal(woken, 5)
 
-  // Running: nothing to wake.
-  assert.equal((await get(at)).status, 200)
-  assert.equal(woken, 5)
-})
+    // Running: nothing to wake.
+    assert.equal((await get(at)).status, 200)
+    assert.equal(woken, 5)
+  },
+)
 
 test('a page the browser left before the app answered does not stop the proxy', async (t) => {
   // An app slow to render its page, as a dev server compiling after an edit.

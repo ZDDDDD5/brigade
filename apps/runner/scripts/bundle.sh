@@ -17,6 +17,13 @@ quiet $PNPM --filter @brigade/runner build
 quiet $PNPM --filter @brigade/runner --prod deploy "$OUT/runner"
 # .modules.yaml is pnpm's record of the install, with its time and this machine's store path.
 rm -rf "$OUT/runner/src" "$OUT/runner/tsconfig.json" "$OUT/runner/scripts" "$OUT/runner/node_modules/.modules.yaml"
+# Windows creates no symbolic links without Developer Mode or an administrator, so its installer
+# (install.ps1) extracts the bundle without pnpm's links and makes a junction for each, from
+# this list: one "path<TAB>target" line per link, both relative to runner/ (all link folders).
+(cd "$OUT/runner" && find . -type l | LC_ALL=C sort | while IFS= read -r link; do
+  [ -d "$link" ] || { echo "$link: a link to a file, which install.ps1 cannot make" >&2; exit 1; }
+  printf '%s\t%s\n' "${link#./}" "$(readlink "$link")"
+done) >"$OUT/runner/.symlinks"
 mkdir -p bundle
 if tar --version 2>/dev/null | grep -q 'GNU tar'; then
   # The same files give the same bundle, so runners update only when the runner changed

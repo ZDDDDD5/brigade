@@ -60,6 +60,7 @@ import {
   handedEmail,
   signedOut,
   triggerEmail,
+  snoozeOptions,
   triggerEvent,
   type TriggerEmail,
   type TriggerEventMessage,
@@ -75,6 +76,7 @@ import {
   CircleDot,
   CircleHelp,
   ClipboardList,
+  Clock,
   EllipsisVertical,
   Copy,
   FileText,
@@ -144,6 +146,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
@@ -196,6 +199,7 @@ import { closeOpenMarkdown, useSmoothText } from '@/lib/stream-text'
 import { pauseLabel, pauses } from '@/lib/thread-times'
 import { useMemberNames } from '@/lib/member-names'
 import { cn } from '@/lib/utils'
+import { wakeLabel } from '@/lib/snooze'
 import { choiceLabel } from '@/lib/choice-label'
 
 export type Item =
@@ -4685,6 +4689,7 @@ export function ChoicesCard({
   dismissed = false,
   onChoose,
   onDismiss,
+  onSnooze,
 }: {
   choices: Choices
   /** The next message in the thread, if there is one. */
@@ -4694,6 +4699,11 @@ export function ChoicesCard({
   onChoose?: (text: string, pick?: string) => Promise<void>
   /** Closes it without picking: the thread stops, no turn starts. */
   onDismiss?: () => Promise<void>
+  /**
+   * Puts its thread away for this member until a time (Today's Needs you): Snooze and Dismiss
+   * become icons, shown as the pointer is on the card.
+   */
+  onSnooze?: (until: Date) => Promise<void>
 }) {
   const links = useFileLinks()
   const router = useRouter()
@@ -4709,6 +4719,9 @@ export function ChoicesCard({
   const [error, setError] = useState<string>()
   // Dismissed here, at once, until the thread says so too.
   const [dismissing, setDismissing] = useState(false)
+  // Snooze's times, from when its menu opens: "Tomorrow" is the member's own tomorrow.
+  const [snoozeOpen, setSnoozeOpen] = useState(false)
+  const times = snoozeOpen ? snoozeOptions() : []
   const closed = dismissed || dismissing
   const picked =
     reply !== undefined
@@ -4728,6 +4741,16 @@ export function ChoicesCard({
     } catch (e) {
       setError((e as Error).message)
       setDismissing(false)
+    }
+  }
+
+  async function snooze(until: Date) {
+    if (!onSnooze) return
+    setError(undefined)
+    try {
+      await onSnooze(until)
+    } catch (e) {
+      setError((e as Error).message)
     }
   }
 
@@ -4769,7 +4792,7 @@ export function ChoicesCard({
     </span>
   )
   return (
-    <Card className="gap-3 border-primary/40 px-3 py-3.5">
+    <Card className="group/choices gap-3 border-primary/40 px-3 py-3.5">
       <div className="flex items-start gap-2 px-2">
         <LayoutTemplate aria-hidden className="mt-1 size-4 flex-none text-primary" />
         <div className="min-w-0 flex-1 font-semibold">
@@ -4783,6 +4806,64 @@ export function ChoicesCard({
           />
         ) : closed ? (
           <StatusBadge status="dismissed" tone="neutral" label="Dismissed" />
+        ) : open && onSnooze ? (
+          // Quiet until the pointer is on the card (always on touch screens), as the sidebar's.
+          <div
+            className={cn(
+              '-my-0.5 flex flex-none items-center gap-0.5 transition-opacity',
+              'opacity-0 group-hover/choices:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100',
+              snoozeOpen && 'opacity-100',
+            )}
+          >
+            <DropdownMenu open={snoozeOpen} onOpenChange={setSnoozeOpen}>
+              <Hint label="Snooze">
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="Snooze"
+                    className="size-7 text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+                  >
+                    <Clock aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+              </Hint>
+              <DropdownMenuContent
+                align="end"
+                className="min-w-52"
+                onKeyDown={(e) => {
+                  const time = times[Number(e.key) - 1]
+                  if (!time || e.metaKey || e.ctrlKey || e.altKey) return
+                  e.preventDefault()
+                  setSnoozeOpen(false)
+                  void snooze(time.until)
+                }}
+              >
+                {times.map((time, i) => (
+                  <DropdownMenuItem key={time.key} onSelect={() => void snooze(time.until)}>
+                    {time.label}
+                    <span className="ml-auto pl-4 text-xs text-muted-foreground tabular-nums">
+                      {wakeLabel(time.until)}
+                    </span>
+                    <DropdownMenuShortcut className="ml-2">{i + 1}</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {onDismiss && (
+              <Hint label="Dismiss: the thread stops, and the teammate is told">
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Dismiss"
+                  className="size-7 text-muted-foreground"
+                  onClick={() => void dismiss()}
+                >
+                  <X aria-hidden />
+                </Button>
+              </Hint>
+            )}
+          </div>
         ) : (
           open &&
           onDismiss && (

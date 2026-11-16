@@ -1,8 +1,8 @@
 /**
- * Where this page is open: Brigade.app runs on a Mac, the runner on a Mac or Linux. Windows is
- * told so: Brigade.app runs there, but no teammate does (apps/desktop/src/runner.ts). A
- * Chromebook says X11 like Linux, but its own terminal (crosh) runs no command: the runner goes
- * in its Linux development environment, which it shows how to turn on.
+ * Where this page is open: Brigade.app runs teammates on a Mac or a Windows PC (from the release
+ * that does there: windows-app.ts), the runner alone on Linux. A Chromebook says X11 like Linux,
+ * but its own terminal (crosh) runs no command: the runner goes in its Linux development
+ * environment, which it shows how to turn on.
  */
 export type Device = 'mac' | 'linux' | 'chromeos' | 'windows' | 'other'
 

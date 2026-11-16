@@ -47,7 +47,7 @@ export const BRIGADE = {
   bill: 'Your own Claude or ChatGPT plan. Brigade never bills you for AI usage.',
   control:
     'For each teammate, you choose whether its writes to Apps (an email through Gmail, a change in Stripe, a merge on GitHub) go on their own or wait for your yes, and each mailbox can be set to approve every email. Every request lands in one Needs you list, also on your phone. Commands and files on its own computer don’t ask.',
-  runs: 'Free on your own computer (Mac or Linux). Brigade Cloud gives teammates a computer of their own that keeps working when yours is off.',
+  runs: 'Free on your own computer (Mac, Windows or Linux). Brigade Cloud gives teammates a computer of their own that keeps working when yours is off.',
   open: 'Yes, MIT. You can read every line and host it yourself.',
   price:
     'Free on your own computer. Cloud: $99 a month per workspace. AI usage is on your own plan.',

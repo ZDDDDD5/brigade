@@ -26,6 +26,7 @@ import { useLive } from '@/lib/use-live'
 import { detectDevice } from '@/lib/device'
 import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
 import { MAC_APP_URL } from '@/lib/mac-app'
+import { useWindowsAppReady, WINDOWS_APP_URL } from '@/lib/windows-app'
 
 type LinkCode = { code: string; expiresAt: string; command: string; appLink?: string }
 
@@ -75,10 +76,31 @@ export default function Computers() {
   const [busy, setBusy] = useState(false)
   const [replacing, setReplacing] = useState(false)
 
-  // On a Mac or Linux, the app links this computer; elsewhere, the command in a terminal.
-  const [device, setDevice] = useState<'mac' | 'linux' | 'other'>('other')
-  const mac = device === 'mac'
-  const app = device !== 'other'
+  // On a Mac or a Linux desktop, the app links this computer; on Windows too, from the release
+  // that runs teammates there; elsewhere, the command in a terminal.
+  const [mac, setMac] = useState(false)
+  const [windows, setWindows] = useState(false)
+  const [linux, setLinux] = useState(false)
+  const windowsReady = useWindowsAppReady()
+  const app: {
+    name: string
+    os: string
+    url: string
+    label?: string
+    other?: { url: string; label: string }
+  } | null = mac
+    ? { name: 'Mac', os: 'Mac', url: MAC_APP_URL }
+    : windows && windowsReady
+      ? { name: 'PC', os: 'Windows', url: WINDOWS_APP_URL }
+      : linux
+        ? {
+            name: 'computer',
+            os: 'Linux',
+            url: LINUX_DEB_URL,
+            label: 'Download for Ubuntu or Debian (.deb)',
+            other: { url: LINUX_APPIMAGE_URL, label: 'AppImage' },
+          }
+        : null
 
   useLive((message) => {
     if (message.type === 'computer.updated') void computers.reload()
@@ -101,8 +123,9 @@ export default function Computers() {
     act(async () => setLink(await api<LinkCode>('/computers/link-code', { method: 'POST' })))
 
   useEffect(() => {
-    const detected = detectDevice(navigator.userAgent)
-    setDevice(detected === 'mac' || detected === 'linux' ? detected : 'other')
+    setMac(/Mac/.test(navigator.userAgent) && !/iPhone|iPad/.test(navigator.userAgent))
+    setWindows(/Windows/.test(navigator.userAgent))
+    setLinux(detectDevice(navigator.userAgent) === 'linux')
     // "Connect this computer…" in Brigade.app's menu opens ?desktop=1: the code is what it came for.
     if (new URLSearchParams(window.location.search).has('desktop')) void getLink()
     // Once, on load.
@@ -295,13 +318,13 @@ export default function Computers() {
             </Tile>
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
               <span className="font-semibold">
-                {mac ? 'Link this Mac' : app ? 'Link this computer' : 'Link your machine'}
+                {app ? `Link this ${app.name}` : 'Link your machine'}
               </span>
               <span className="text-sm text-muted-foreground">
                 {link
                   ? `${
                       app && link.appLink
-                        ? `Install Brigade for ${mac ? 'Mac' : 'Linux'}, then open this link in it.`
+                        ? `Install Brigade for ${app.os}, then open this link in it.`
                         : 'Run this in a terminal on your Mac or Linux machine.'
                     } The code works once and expires at ${new Date(link.expiresAt).toLocaleTimeString()}.`
                   : 'A teammate there acts as you and asks before each write or command'}
@@ -312,30 +335,26 @@ export default function Computers() {
             (app && link.appLink ? (
               <>
                 <div className="flex flex-wrap gap-2">
-                  {mac ? (
+                  <Button asChild variant="outline">
+                    <a href={app.url}>{app.label ?? `Download Brigade for ${app.os}`}</a>
+                  </Button>
+                  {app.other && (
                     <Button asChild variant="outline">
-                      <a href={MAC_APP_URL}>Download Brigade for Mac</a>
+                      <a href={app.other.url}>{app.other.label}</a>
                     </Button>
-                  ) : (
-                    <>
-                      <Button asChild variant="outline">
-                        <a href={LINUX_DEB_URL}>Download for Ubuntu or Debian (.deb)</a>
-                      </Button>
-                      <Button asChild variant="outline">
-                        <a href={LINUX_APPIMAGE_URL}>AppImage</a>
-                      </Button>
-                    </>
                   )}
                   <Button asChild>
                     <a href={link.appLink}>Open in Brigade</a>
                   </Button>
                 </div>
-                <details className="text-sm text-muted-foreground">
-                  <summary className="cursor-pointer">Or run it in a terminal</summary>
-                  <pre className="mt-2 rounded-md border bg-muted p-4 font-mono text-sm break-all whitespace-pre-wrap text-foreground">
-                    {link.command}
-                  </pre>
-                </details>
+                {mac && (
+                  <details className="text-sm text-muted-foreground">
+                    <summary className="cursor-pointer">Or run it in a terminal</summary>
+                    <pre className="mt-2 rounded-md border bg-muted p-4 font-mono text-sm break-all whitespace-pre-wrap text-foreground">
+                      {link.command}
+                    </pre>
+                  </details>
+                )}
               </>
             ) : (
               <pre className="rounded-md border bg-muted p-4 font-mono text-sm break-all whitespace-pre-wrap">

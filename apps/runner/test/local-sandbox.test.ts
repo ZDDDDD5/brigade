@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, delimiter } from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { createLocalSandboxSession } from '../src/harness/local-sandbox.js'
 
@@ -19,7 +19,7 @@ before(async () => {
     '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do case "$1" in --) shift; break;; -u) shift 2;; -*) shift;; *) break;; esac; done\nexec "$@"\n',
   )
   await chmod(join(bin, 'sudo'), 0o755)
-  process.env.PATH = `${bin}:${path}`
+  process.env.PATH = `${bin}${delimiter}${path}`
 })
 
 after(async () => {
@@ -30,7 +30,8 @@ after(async () => {
 
 const text = async (stream: ReadableStream<Uint8Array>) => new Response(stream).text()
 
-for (const runAs of [undefined, 'teammate']) {
+// A teammate of its own (sudo) is a cloud computer's: Linux only.
+for (const runAs of process.platform === 'win32' ? [undefined] : [undefined, 'teammate']) {
   describe(runAs ? 'as a teammate' : 'as the runner', () => {
     const sandbox = () =>
       createLocalSandboxSession({

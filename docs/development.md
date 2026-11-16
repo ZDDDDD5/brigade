@@ -37,7 +37,8 @@ Only one runner runs per home: `start` claims `runner.pid` and exits with code 3
 ## Brigade.app and computer use (macOS)
 
 Brigade.app is an Electron app (`apps/desktop`, see its README) for macOS, Linux and Windows: the runner below
-on macOS and Linux, the dashboard in a window of its own and the new thread window everywhere.
+everywhere (on Windows from the API's `install.ps1`, see docs/windows.md), the dashboard in a window of its own and
+the new thread window.
 
 Members link a Mac with **Brigade.app** (`apps/desktop`) instead of the terminal: **Computers → Link this Mac →
 Open in Brigade** opens a `brigade://link?code=…&api=…` link, the app asks before connecting, runs the API's

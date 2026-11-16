@@ -8,6 +8,7 @@ import type { ApiToRunner, RunnerToApi } from '@brigade/contracts'
 import { workDir } from './files.js'
 import { harnessEnv } from './harness/env.js'
 import { teammateHome } from './teammates.js'
+import { ownGroup, stopTree, WINDOWS } from './windows.js'
 
 type Request = Extract<ApiToRunner, { type: 'goal.measure' }>
 type Result = Extract<RunnerToApi, { type: 'goal.measured' }>
@@ -64,7 +65,7 @@ export function measureGoal(
       : spawn('sh', ['-c', SCRIPT, 'sh', where.dir, message.command], {
           cwd: '/',
           env,
-          detached: true,
+          ...ownGroup(),
           stdio: ['ignore', 'pipe', 'pipe'],
         })
     let output = ''
@@ -75,7 +76,9 @@ export function measureGoal(
     const timer = setTimeout(() => {
       timedOut = true
       try {
-        if (child.pid) process.kill(-child.pid, 'SIGKILL')
+        if (WINDOWS) {
+          if (child.pid) void stopTree(child.pid, 'SIGKILL')
+        } else if (child.pid) process.kill(-child.pid, 'SIGKILL')
       } catch {
         child.kill('SIGKILL')
       }
