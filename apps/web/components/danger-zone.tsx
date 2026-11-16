@@ -27,7 +27,7 @@ import { clickSettings } from '@/lib/settings-dialog'
 /** The section around a deletion: below everything else on its page. */
 function DangerZone({ detail, children }: { detail: string; children: ReactNode }) {
   return (
-    <section className="flex max-w-xl flex-col gap-3">
+    <section data-setting="danger-zone" className="flex max-w-xl flex-col gap-3">
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-semibold">Danger zone</h2>
         <p className="text-sm text-muted-foreground">{detail}</p>

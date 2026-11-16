@@ -5,72 +5,154 @@
 // the section (useSettingsParams), as it would have to a page.
 import { useSyncExternalStore, type MouseEvent } from 'react'
 
-/** Settings' sections, in their groups: the member's own, the workspace's, what teammates work with. */
+/**
+ * Settings' sections, in their groups: the member's own, the workspace's, what teammates work with.
+ * `settings` names what a section holds, by the title it shows (its group or row, whose anchor
+ * settingAnchor makes from it), so a search finds it inside the section and goes to it.
+ */
 export const SETTINGS_SECTIONS = [
   {
     section: 'preferences',
     label: 'Preferences',
     group: 'You',
-    keywords:
-      'suggest next message auto-merge pull request heavy work machine chief rules daily pass delete account',
+    keywords: 'pass',
+    settings: [
+      { label: 'Teammates', keywords: '' },
+      { label: 'Suggest my next message', keywords: 'suggestions autocomplete tab' },
+      { label: 'Auto-merge when ready', keywords: 'pull request merge' },
+      {
+        label: 'Keep heavy work off the shared computer',
+        keywords: 'machine preview builds renders vcpu',
+      },
+      { label: 'Chief', keywords: '' },
+      { label: 'Your rules', keywords: 'chief' },
+      { label: 'Daily pass', keywords: 'chief morning' },
+      {
+        label: 'Appearance',
+        keywords: 'theme themes look colours colors dark light font style restyle',
+        feature: 'themes',
+      },
+      { label: 'Import a theme', keywords: 'appearance', feature: 'themes' },
+      { label: 'Danger zone', keywords: '' },
+      { label: 'Delete my account', keywords: 'remove' },
+    ],
   },
-  { section: 'notifications', label: 'Notifications', group: 'You', keywords: 'push alerts phone' },
+  {
+    section: 'notifications',
+    label: 'Notifications',
+    group: 'You',
+    keywords: 'push alerts phone',
+    settings: [
+      { label: 'This device', keywords: 'browser push' },
+      { label: 'Notify me about', keywords: 'preset' },
+    ],
+  },
   {
     section: 'accounts',
     label: 'AI Accounts',
     group: 'You',
     keywords: 'claude codex chatgpt subscription sign in',
+    settings: [],
   },
   {
     section: 'workspace',
     label: 'General',
     group: 'Workspace',
-    keywords: 'workspace name logo delete workspace',
+    keywords: 'workspace name logo',
     // In the app's search, where "General" alone would say nothing.
     search: 'Workspace',
+    settings: [{ label: 'Danger zone', keywords: 'delete workspace' }],
   },
-  { section: 'members', label: 'Members', group: 'Workspace', keywords: 'invite role people' },
+  {
+    section: 'members',
+    label: 'Members',
+    group: 'Workspace',
+    keywords: 'invite role people email',
+    settings: [{ label: 'Invited', keywords: 'invitations pending' }],
+  },
   {
     section: 'computers',
     label: 'Computers',
     group: 'Workspace',
     keywords: 'cloud computer machine link desktop mac windows linux',
+    settings: [],
   },
-  { section: 'usage', label: 'Usage', group: 'Workspace', keywords: 'limits spent models threads' },
+  {
+    section: 'usage',
+    label: 'Usage',
+    group: 'Workspace',
+    keywords: 'limits spent models threads routines subscriptions',
+    settings: [],
+  },
   {
     section: 'billing',
     label: 'Billing',
     group: 'Workspace',
     keywords: 'plan brigade cloud subscribe invoices card',
+    settings: [],
   },
   {
     section: 'connections',
     label: 'Apps',
     group: 'Teammates',
     keywords: 'connections connect integrations mcp triggers github gmail',
+    settings: [],
   },
-  { section: 'skills', label: 'Skills', group: 'Teammates', keywords: 'procedures instructions' },
+  {
+    section: 'skills',
+    label: 'Skills',
+    group: 'Teammates',
+    keywords: 'procedures instructions',
+    settings: [],
+  },
   {
     section: 'vault',
     label: 'Secrets',
     group: 'Teammates',
     keywords: 'vault credentials passwords logins keys',
+    settings: [],
   },
   {
     section: 'security',
     label: 'Security',
     group: 'Teammates',
     keywords: 'access permissions activity',
+    settings: [],
   },
-] as const
+] as const satisfies readonly {
+  section: string
+  label: string
+  group: string
+  keywords: string
+  search?: string
+  settings: readonly SettingEntry[]
+}[]
+
+/** A setting inside a section: shown only to members with its `feature`, when it has one. */
+type SettingEntry = { label: string; keywords: string; feature?: string }
+
+/** The anchor of a setting a section shows under `title` (SettingsGroup, SettingRow): `data-setting`. */
+export const settingAnchor = (title: string) =>
+  title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]['section']
 
-/** A section's address. */
-export const settingsHref = (section: SettingsSection) => `/app/${section}`
+/** A section's address, at one of its settings (its anchor) when given. */
+export const settingsHref = (section: SettingsSection, setting?: string) =>
+  `/app/${section}${setting ? `#${setting}` : ''}`
 
-/** Settings open on a section, with what its address had after `?`. */
-export type SettingsShown = { section: SettingsSection; params: URLSearchParams }
+/**
+ * Settings open on a section, with what its address had after `?`, scrolled to the setting its
+ * `#` names.
+ */
+export type SettingsShown = {
+  section: SettingsSection
+  params: URLSearchParams
+  setting: string | null
+}
 
 const SECTIONS = new Set<string>(SETTINGS_SECTIONS.map((s) => s.section))
 
@@ -89,17 +171,35 @@ export function settingsAddress(href: string): SettingsShown | null {
   const name = /^\/app\/([^/]+)\/?$/.exec(url.pathname)?.[1]
   const section = name === 'settings' ? SETTINGS_SECTIONS[0].section : name
   if (!section || !SECTIONS.has(section)) return null
-  return { section: section as SettingsSection, params: url.searchParams }
+  return {
+    section: section as SettingsSection,
+    params: url.searchParams,
+    setting: decodeURIComponent(url.hash.slice(1)) || null,
+  }
 }
 
 const currentOrigin = () => (typeof location === 'undefined' ? undefined : location.origin)
 
-/** The sections a search finds: each word in its name, group or what it holds. */
-export function searchSettings(query: string) {
+/** A setting a search found inside its section. */
+export type FoundSetting = { label: string; anchor: string }
+
+/**
+ * The sections a search finds, each word in its name, group or what it holds, with the settings
+ * inside it the search found (none for an empty search). `features` are the member's: a setting
+ * behind one they lack is not searched.
+ */
+export function searchSettings(query: string, features: readonly string[] = []) {
   const words = query.toLowerCase().split(/\s+/).filter(Boolean)
-  return SETTINGS_SECTIONS.filter((s) => {
-    const text = `${s.label} ${s.group} ${s.section} ${s.keywords}`.toLowerCase()
-    return words.every((w) => text.includes(w))
+  const matches = (text: string) => words.every((w) => text.toLowerCase().includes(w))
+  return SETTINGS_SECTIONS.flatMap((s) => {
+    const settings: FoundSetting[] = !words.length
+      ? []
+      : (s.settings as readonly SettingEntry[])
+          .filter((e) => !e.feature || features.includes(e.feature))
+          .filter((e) => matches(`${e.label} ${e.keywords}`))
+          .map((e) => ({ label: e.label, anchor: settingAnchor(e.label) }))
+    const own = matches(`${s.label} ${s.group} ${s.section} ${s.keywords}`)
+    return own || settings.length ? [{ ...s, settings }] : []
   })
 }
 

@@ -21,8 +21,9 @@ import {
 } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useRef, useState, type ComponentType } from 'react'
+import { useEffect, useRef, useState, type ComponentType, type RefObject } from 'react'
 import { CloseButton } from '@/components/close-button'
+import { useDashboard } from '@/components/dashboard'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { inCaptureWindow } from '@/lib/brigade-app'
 import {
@@ -38,6 +39,7 @@ import {
   showSettings,
   useSettings,
   type SettingsSection,
+  type SettingsShown,
 } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
 
@@ -82,8 +84,10 @@ export function SettingsDialog() {
   const section = (shown ?? last)?.section ?? SETTINGS_SECTIONS[0].section
   const Section = SECTIONS[section]
   const [query, setQuery] = useState('')
+  const content = useRef<HTMLDivElement>(null)
   useCloseOnNavigation(!!shown)
   useEffect(hostSettings, [])
+  useScrollToSetting(shown, content)
 
   return (
     <Dialog open={!!shown} onOpenChange={(open) => !open && closeSettings()}>
@@ -109,7 +113,7 @@ export function SettingsDialog() {
         <DialogTitle className="sr-only">Settings</DialogTitle>
         <SettingsNav section={section} query={query} onQuery={setQuery} />
         {/* Its own scroll, back at the top for each section. */}
-        <div key={section} className="relative min-w-0 flex-1 overflow-y-auto">
+        <div key={section} ref={content} className="relative min-w-0 flex-1 overflow-y-auto">
           {/* Room on the right for ✕, above a section's own buttons. */}
           <div className="px-5 pt-5 pb-12 md:pt-8 md:pr-16 md:pl-10">
             <Section />
@@ -136,8 +140,9 @@ function SettingsNav({
   query: string
   onQuery: (query: string) => void
 }) {
+  const { me } = useDashboard()
   const search = useRef<HTMLInputElement>(null)
-  const found = searchSettings(query)
+  const found = searchSettings(query, me.features ?? [])
 
   // `/` goes to the search, unless the member is typing somewhere.
   useEffect(() => {
@@ -174,10 +179,10 @@ function SettingsNav({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              // Enter opens the first found.
+              // Enter opens the first found, at the first setting it found inside it.
               if (e.key === 'Enter' && found[0]) {
                 e.preventDefault()
-                openSettings(settingsHref(found[0].section))
+                openSettings(settingsHref(found[0].section, found[0].settings[0]?.anchor))
               }
             }}
             placeholder="Search settings"
@@ -219,6 +224,25 @@ function SettingsNav({
                         <Icon aria-hidden />
                         {s.label}
                       </a>
+                      {/* What the search found inside it, each going to its place there. */}
+                      {s.settings.length > 0 && (
+                        <ul className="mt-0.5 mb-1 hidden flex-col gap-0.5 md:flex">
+                          {s.settings.map((found) => {
+                            const at = settingsHref(s.section, found.anchor)
+                            return (
+                              <li key={found.anchor}>
+                                <a
+                                  href={at}
+                                  onClick={(e) => clickSettings(e, at)}
+                                  className="block truncate rounded-md py-1 pr-2.5 pl-8.5 text-xs text-muted-foreground transition-colors outline-none hover:bg-sidebar-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                                >
+                                  {found.label}
+                                </a>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )}
                     </li>
                   )
                 })}
@@ -232,6 +256,49 @@ function SettingsNav({
       </div>
     </nav>
   )
+}
+
+/**
+ * Settings opened at one of a section's settings (a search's find, an address with `#`): scrolled
+ * to it once the section shows it, which may wait for the section's code and data, then marked a
+ * moment. Given up after a few seconds, for a setting this member's section does not show.
+ */
+function useScrollToSetting(
+  shown: SettingsShown | null,
+  content: RefObject<HTMLDivElement | null>,
+) {
+  useEffect(() => {
+    const setting = shown?.setting
+    if (!setting) return
+    let observer: MutationObserver | undefined
+    let marked: HTMLElement | undefined
+    let unmark: ReturnType<typeof setTimeout> | undefined
+    const find = () => {
+      const box = content.current
+      const at = box?.querySelector<HTMLElement>(`[data-setting="${CSS.escape(setting)}"]`)
+      if (!at) return false
+      observer?.disconnect()
+      at.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      at.setAttribute('data-setting-found', '')
+      marked = at
+      unmark = setTimeout(() => at.removeAttribute('data-setting-found'), 1600)
+      return true
+    }
+    // The section's box changes with it (keyed): wait a frame for the new one.
+    const frame = requestAnimationFrame(() => {
+      if (find() || !content.current) return
+      observer = new MutationObserver(() => void find())
+      observer.observe(content.current, { childList: true, subtree: true })
+    })
+    const giveUp = setTimeout(() => observer?.disconnect(), 5000)
+    return () => {
+      cancelAnimationFrame(frame)
+      clearTimeout(giveUp)
+      clearTimeout(unmark)
+      observer?.disconnect()
+      marked?.removeAttribute('data-setting-found')
+    }
+  }, [shown, content])
 }
 
 /**
@@ -260,7 +327,7 @@ export function SettingsAddress() {
   const opened = useRef(false)
   useEffect(() => {
     landing.current = addressLanding(inCaptureWindow())
-    showSettings(location.pathname + location.search)
+    showSettings(location.pathname + location.search + location.hash)
     if (landing.current.behind) router.replace(landing.current.behind)
   }, [router])
   // In Brigade.app's quick-capture window, closed: back to its page.

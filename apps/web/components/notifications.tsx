@@ -221,7 +221,11 @@ export function NotificationsPanel() {
         </p>
       ) : (
         <div className="flex flex-col gap-5">
-          <section className="flex flex-col gap-2" data-id="notifications-device">
+          <section
+            className="flex flex-col gap-2"
+            data-id="notifications-device"
+            data-setting="this-device"
+          >
             <h3 className="text-sm font-medium">This device</h3>
             {device === 'install' && (
               <p className="text-muted-foreground text-sm">
@@ -270,7 +274,11 @@ export function NotificationsPanel() {
             {note && <p className="text-muted-foreground text-xs">{note}</p>}
           </section>
 
-          <fieldset className="flex flex-col gap-2" data-id="notifications-preset">
+          <fieldset
+            className="flex flex-col gap-2"
+            data-id="notifications-preset"
+            data-setting="notify-me-about"
+          >
             <legend className="mb-2 text-sm font-medium">Notify me about</legend>
             <RadioGroup
               value={preset ?? ''}
