@@ -174,3 +174,16 @@ test('the message it answers is kept when the turn goes on on another account', 
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test('a failed tool says why in words, also when the harness reports a tool result (Pi)', () => {
+  const failed = (error: unknown) =>
+    mapped([
+      call('read', { file_path: 'x.md' }),
+      { type: 'tool-error', toolCallId: 'c1', toolName: 'read', error },
+    ]).at(-1)
+  const pi = { content: [{ type: 'text', text: 'ENOENT: no such file or directory, open x.md' }] }
+  assert.equal(failed(pi)?.output, 'ENOENT: no such file or directory, open x.md')
+  assert.equal(failed(new Error('boom'))?.output, 'boom')
+  assert.equal(failed('plain')?.output, 'plain')
+  assert.equal(failed({ code: 1 })?.output, '{"code":1}')
+})

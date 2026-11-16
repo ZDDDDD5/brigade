@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { HarnessAgent } from '@ai-sdk/harness/agent'
@@ -186,8 +186,14 @@ async function piTurn(options: {
   scheduled: Parameters<ScheduleCaller>[0][]
   permissionMode?: 'allow-reads' | 'allow-all'
   mcpServers?: Record<string, unknown>
+  /** Files the turn finds in its working directory, by path under it. */
+  files?: Record<string, string>
 }) {
   const workDir = await mkdtemp(join(tmpdir(), 'pi-turn-'))
+  for (const [file, content] of Object.entries(options.files ?? {})) {
+    await mkdir(dirname(join(workDir, file)), { recursive: true })
+    await writeFile(join(workDir, file), content)
+  }
   const tools = {
     ...connectorTools([grant], async (call) => {
       options.calls.push(call)
@@ -226,7 +232,8 @@ async function piTurn(options: {
     id: `pi-${Date.now()}`,
     workingDirectory: workDir,
     port: await freePort(),
-    env: { PATH: process.env.PATH ?? '' },
+    env: { PATH: process.env.PATH ?? '', HOME: workDir },
+    shell: 'bash',
   })
   const events: AgentEvent[] = []
   const session = await agent.createSession({
@@ -309,6 +316,28 @@ test('a teammate on Pi calls an App and completes the thread with Brigade’s ow
     assert.match(String(request.headers['anthropic-beta']), /oauth-2025-04-20/)
   }
   assert.equal(sent[0]!.body.model, 'claude-opus-5-5')
+  await rm(configDir, { recursive: true, force: true })
+})
+
+test('Pi reads a file of the thread’s working directory, such as a memory topic', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'pi-claude-'))
+  await claudeLogin(configDir, 'sk-ant-oat01-read-access-token-eeeeeeeeeeee', 'sk-ant-ort01-r')
+  sent.length = 0
+  steps.push(
+    { tool: 'read', input: { file_path: '.brigade-memory/project/marketing.md' } },
+    { text: 'Read it.' },
+  )
+  const { events } = await piTurn({
+    prompt: 'Read the marketing memory',
+    configDir,
+    calls: [],
+    scheduled: [],
+    files: { '.brigade-memory/project/marketing.md': '- Pricing is $99 a month.\n' },
+  })
+  const read = finished(events).find((e) => e.toolName === 'read')
+  assert.ok(read, 'read was called')
+  assert.equal(read.isError, false, JSON.stringify(read.output))
+  assert.match(JSON.stringify(read.output), /Pricing is \$99/)
   await rm(configDir, { recursive: true, force: true })
 })
 

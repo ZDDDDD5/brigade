@@ -2493,6 +2493,8 @@ export class HarnessThread {
               ...(this.spec.suggestions ? { BRIGADE_PROMPT_SUGGESTIONS: '1' } : {}),
             },
       ...(this.runAs ? { runAs: this.runAs, thread: this.spec.sessionId } : {}),
+      // Pi's adapter runs bash in it (its file tools): dash, Ubuntu's sh, refuses that.
+      ...(this.spec.teammate.harness === 'pi' ? { shell: 'bash' as const } : {}),
       // The harness the runner before handed over, which this session attaches to: stopped with it.
       ...(adopt.length ? { adopt } : {}),
     })

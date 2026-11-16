@@ -75,6 +75,12 @@ export function createLocalSandboxSession(options: {
   thread?: string
   /** Process groups the runner before this one started and handed over, stopped with this sandbox. */
   adopt?: number[]
+  /**
+   * The shell commands run in: sh by default. Pi's adapter writes bash (`set -o pipefail`,
+   * `$'\n'`), which dash, Ubuntu's sh, refuses, so its file tools fail there ("Unable to resolve
+   * path").
+   */
+  shell?: 'sh' | 'bash'
 }): HarnessV1NetworkSandboxSession & {
   groups: () => number[]
   dropAdopted: () => boolean
@@ -83,6 +89,7 @@ export function createLocalSandboxSession(options: {
   let adopted = options.adopt ?? []
   const at = (path: string) => (isAbsolute(path) ? path : resolve(options.workingDirectory, path))
   const runAs = options.runAs
+  const shell = options.shell ?? 'sh'
   const net = runAs && options.thread ? threadNet(options.thread) : Promise.resolve(null)
   // On a cloud computer, a cgroup of its own (preview-cgroup.ts): the harness and all it starts,
   // measured, and stopped as one when the whole computer runs out of memory (memory-guard.ts).
@@ -109,7 +116,7 @@ export function createLocalSandboxSession(options: {
   ) => {
     const input = stdin ? 'pipe' : 'ignore'
     if (!runAs)
-      return spawnChild('sh', ['-c', command], {
+      return spawnChild(shell, ['-c', command], {
         cwd,
         env,
         stdio: [input, 'pipe', 'pipe'],
@@ -124,7 +131,7 @@ export function createLocalSandboxSession(options: {
       ...args,
       'sh',
       '-c',
-      '{ echo 0 >/proc/self/oom_score_adj; } 2>/dev/null; cd -- "$0" && exec sh -c "$1"',
+      `{ echo 0 >/proc/self/oom_score_adj; } 2>/dev/null; cd -- "$0" && exec ${shell} -c "$1"`,
       cwd,
       command,
     ]
