@@ -24,7 +24,9 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { CloseButton } from '@/components/close-button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
+import { inCaptureWindow } from '@/lib/brigade-app'
 import {
+  addressLanding,
   clickSettings,
   closeSettings,
   hostSettings,
@@ -251,9 +253,18 @@ function useCloseOnNavigation(open: boolean) {
  */
 export function SettingsAddress() {
   const router = useRouter()
+  const shown = useSettings()
+  const landing = useRef<ReturnType<typeof addressLanding>>(undefined)
+  const opened = useRef(false)
   useEffect(() => {
+    landing.current = addressLanding(inCaptureWindow())
     showSettings(location.pathname + location.search)
-    router.replace('/app')
+    if (landing.current.behind) router.replace(landing.current.behind)
   }, [router])
+  // In Brigade.app's quick-capture window, closed: back to its page.
+  useEffect(() => {
+    if (shown) opened.current = true
+    else if (opened.current && landing.current?.closed) router.replace(landing.current.closed)
+  }, [shown, router])
   return null
 }

@@ -175,3 +175,16 @@ export function clickSettings(e: MouseEvent<HTMLAnchorElement>, href: string) {
     return
   if (openSettings(href)) e.preventDefault()
 }
+
+/**
+ * Where a section's address loaded on its own leaves the window: Settings over Today (`behind`),
+ * the address becoming /app. Brigade.app's quick-capture window shows only /app/capture, and
+ * turns /app back into it, which would take Settings away: there the address stays, Settings
+ * over it, and closing them goes back to the capture page (`closed`).
+ */
+export function addressLanding(captureWindow: boolean): {
+  behind: string | null
+  closed: string | null
+} {
+  return captureWindow ? { behind: null, closed: '/app/capture' } : { behind: '/app', closed: null }
+}

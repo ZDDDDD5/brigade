@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { MouseEvent } from 'react'
 import {
+  addressLanding,
   clickSettings,
   closeSettings,
   hostSettings,
@@ -105,4 +106,11 @@ test('the search finds a section by its name, its group or what it holds', () =>
   assert.ok(found('workspace').includes('workspace'))
   assert.deepEqual(found('Billing'), ['billing'])
   assert.deepEqual(found('nothing like it'), [])
+})
+
+test("a section's address opens Settings over Today, but stays in Brigade.app's capture window", () => {
+  assert.deepEqual(addressLanding(false), { behind: '/app', closed: null })
+  // The capture window turns /app back into /app/capture, which has no Settings: the address
+  // stays, and closing goes back to the capture page.
+  assert.deepEqual(addressLanding(true), { behind: null, closed: '/app/capture' })
 })
