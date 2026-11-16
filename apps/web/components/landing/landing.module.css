@@ -387,6 +387,128 @@ svg.i {
   justify-content: center;
 }
 
+/* The hero's download (download-button.tsx): a split button in the page's ink, white on dark and
+   black on light, so the violet stays on Get your 24/7 AI team. */
+.hero .cta-row {
+  gap: 14px;
+}
+.dl {
+  position: relative;
+  display: inline-flex;
+}
+.split {
+  display: inline-flex;
+  height: 52px;
+  border-radius: 9999px;
+  background: var(--foreground);
+  color: var(--background);
+}
+.split-main,
+.split-more {
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.split-main {
+  gap: 10px;
+  padding: 0 20px 0 24px;
+  border-radius: 9999px 0 0 9999px;
+}
+.split-more {
+  padding: 0 18px 0 14px;
+  border-left: 1px solid color-mix(in oklch, var(--background) 22%, transparent);
+  border-radius: 0 9999px 9999px 0;
+}
+.split-main:hover,
+.split-more:hover,
+.split-more[aria-expanded='true'] {
+  background: color-mix(in oklch, var(--background) 10%, transparent);
+}
+.split-more svg {
+  transition: transform 0.15s;
+}
+.split-more[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+svg.os {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+  flex: none;
+}
+.dl-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  width: 300px;
+  padding: 6px;
+  text-align: left;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-xl);
+}
+.dl-lbl {
+  padding: 6px 10px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+.dl-menu a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  font-size: 14px;
+  outline: none;
+}
+.dl-menu a:hover,
+.dl-menu a:focus-visible {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.dl-t {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  line-height: 1.3;
+}
+.dl-t b {
+  font-weight: 600;
+}
+.dl-t span {
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+.dl-ck {
+  display: inline-flex;
+  color: var(--primary);
+  visibility: hidden;
+}
+.dl-menu a[aria-current='true'] .dl-ck {
+  visibility: visible;
+}
+.dl-menu hr {
+  margin: 6px 4px;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.dl-all {
+  color: var(--muted-foreground);
+}
+/* Phones have nothing to install: this says the app exists, in place of the button. */
+.fine-m {
+  display: none;
+}
+
 /* Thread window (product look) */
 .thread {
   position: relative;
@@ -4700,6 +4822,15 @@ svg.i {
   }
   .cta-row .btn.lg {
     width: 100%;
+  }
+  .hero .dl {
+    display: none;
+  }
+  .fine-m {
+    display: block;
+    margin-top: 18px;
+    font-size: 14px;
+    color: var(--muted-foreground);
   }
 
   .me,
