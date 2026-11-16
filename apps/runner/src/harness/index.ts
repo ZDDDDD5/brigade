@@ -907,6 +907,7 @@ export class HarnessThread {
           const said = outcome.said ?? (input.kind === 'resume' ? input.text : undefined)
           handoff = await this.startAnew(
             input.kind === 'prompt' && said === input.text ? undefined : said,
+            outcome.why,
           )
           input = { kind: 'prompt', text: handoff }
           approved = outcome.approved
@@ -1566,7 +1567,14 @@ export class HarnessThread {
      * The harness no longer has the conversation it resumed (EventMapper.sessionLost). `said`:
      * what to tell a new session of this turn's input; `approved`: the call it approved.
      */
-    | { kind: 'lost'; error: string; said: string | undefined; approved: Call | undefined }
+    | {
+        kind: 'lost'
+        error: string
+        said: string | undefined
+        approved: Call | undefined
+        /** Why the new session starts, when not that the harness lost the conversation. */
+        why?: string
+      }
   > {
     let attached: Live | undefined
     // A turn before this one waits on nothing now; a turn handed over goes on waiting (attach).
@@ -1579,9 +1587,10 @@ export class HarnessThread {
     // The call an answer or an approval is for: the transcript has only what was written.
     let asked: Call | undefined
     // Lost, its conversation: what a new session is told of this turn's input.
-    const lost = (error: string) => ({
+    const lost = (error: string, why?: string) => ({
       kind: 'lost' as const,
       error,
+      ...(why ? { why } : {}),
       said:
         input.kind === 'answer'
           ? answerInNewSession(asked, this.answerResult(input.questionId, input.answer, asked))
@@ -1732,6 +1741,25 @@ export class HarnessThread {
       const aside = input.kind === 'prompt' && input.text !== '' && this.asksOnly()
       // Which, read before closing the turn they wait in.
       const calls = aside ? this.waitingAsks() : []
+      // An answer to a call of the harness the teammate ran on before (Pi, say): the new one
+      // cannot continue that turn. A new session is told the thread so far, then the call and
+      // its answer (answerInNewSession), as when a harness lost its conversation.
+      if (
+        answer &&
+        (this.live?.harness !== undefined
+          ? this.live.harness !== this.spec.teammate.harness
+          : harnessChanged(this.saved, this.spec))
+      ) {
+        await this.park().catch(() => undefined)
+        asked =
+          input.kind === 'answer' || input.kind === 'ticket'
+            ? this.toolCalls.get(answerId(input))
+            : this.approvals.get(input.approvalId)
+        return lost(
+          'The teammate moved to another harness',
+          `This conversation continues in a new session because you now run on ${harnessName(this.spec.teammate.harness)}.`,
+        )
+      }
       let closed = !this.live && (answer || aside) && this.closeTurn()
       const live = (attached = await this.attach())
       // Handed over while it waited on work in the background, it is watched on from where it was.
@@ -2171,7 +2199,7 @@ export class HarnessThread {
    * the thread goes on in a new session on this computer, whose first message is what was said
    * so far, then `said`, what the turn had to tell the lost one besides.
    */
-  private async startAnew(said: string | undefined) {
+  private async startAnew(said: string | undefined, why?: string) {
     const saved = (this.saved ??= { accountId: this.current.id, transcript: [] })
     // Gone with that conversation: the turn it was in, and any harness it was handed over in.
     delete saved.resume
@@ -2180,13 +2208,15 @@ export class HarnessThread {
     saved.inTurn = true
     await this.persist()
     const name = this.spec.teammate.name
-    this.emit({
-      type: 'raw',
-      source: 'runner',
-      value: `${name}'s previous session was no longer on this computer, so ${name} carries on in a new one, from the thread's conversation.`,
-    })
+    if (!why)
+      this.emit({
+        type: 'raw',
+        source: 'runner',
+        value: `${name}'s previous session was no longer on this computer, so ${name} carries on in a new one, from the thread's conversation.`,
+      })
     const handoff = this.handoff(
-      'This conversation continues in a new session because the previous one was no longer on this computer (Claude Code deletes old conversations).',
+      why ??
+        'This conversation continues in a new session because the previous one was no longer on this computer (Claude Code deletes old conversations).',
     )
     return said ? `${handoff}\n\n${said}` : handoff
   }

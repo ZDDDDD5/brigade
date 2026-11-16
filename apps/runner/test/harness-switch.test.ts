@@ -130,12 +130,15 @@ async function setup(saved: unknown) {
   })
   const run = (harness: 'pi' | 'claude_code', text: string) =>
     thread.run({ kind: 'prompt', text }, spec(harness), new AbortController().signal)
+  /** An answer, an approval or a ticket's answer, as the thread gives it to the teammate. */
+  const give = (harness: 'pi' | 'claude_code', input: Parameters<HarnessThread['run']>[0]) =>
+    thread.run(input, spec(harness), new AbortController().signal)
   const kept = async () => JSON.parse(await readFile(join(dir, 'switch.json'), 'utf8'))
   const done = async () => {
     for (const sandbox of sandboxes) await Promise.resolve(sandbox.destroy()).catch(() => undefined)
     await rm(dir, { recursive: true, force: true })
   }
-  return { run, heard, started, kept, done }
+  return { run, give, heard, started, kept, done }
 }
 
 const PI_THREAD = {
@@ -193,6 +196,69 @@ test('switched while its Pi session is live: the next turn runs on Claude Code, 
     assert.deepEqual(await t.run('pi', 'Back on Pi'), { status: 'idle' })
     assert.equal(t.heard[2]!.harness, 'pi')
     assert.match(t.heard[2]!.prompt, /because you now run on Pi/)
+  } finally {
+    await t.done()
+  }
+})
+
+test('a ticket answered after the switch: Claude Code is told the thread, the ticket and its answer', async () => {
+  const ticket = {
+    title: 'Approve the reply',
+    asks: [{ id: 'send', type: 'approval', title: 'Send the reply', draft: 'To: pat@example.com' }],
+  }
+  const call = { toolCallId: 'ticket-1', toolName: 'open_ticket', input: ticket }
+  const t = await setup({
+    ...PI_THREAD,
+    // Pi's turn waits on the ticket (continueFrom), as the runner kept it.
+    resume: {
+      ...state('pi'),
+      continueFrom: { ...state('pi'), type: 'continue-turn', pendingToolResults: [call] },
+    },
+    waiting: [call],
+  })
+  try {
+    const outcome = await t.give('claude_code', {
+      kind: 'ticket',
+      requestId: 'ticket-1',
+      answer: { action: 'answered', replies: { send: { type: 'approval', approved: true } } },
+    } as never)
+    assert.equal((outcome as { status: string }).status, 'idle')
+    assert.deepEqual(t.started, [{ harness: 'claude_code', resumed: undefined }])
+    const prompt = t.heard[0]!.prompt
+    assert.equal(t.heard[0]!.harness, 'claude-code')
+    assert.match(prompt, /because you now run on Claude Code/)
+    assert.match(prompt, /Benchmark the signup flow/)
+    // The call it answers, with what it asked to approve, and the answer.
+    assert.match(prompt, /open_ticket call/)
+    assert.match(prompt, /pat@example\.com/)
+    assert.match(prompt, /"approved":true/)
+  } finally {
+    await t.done()
+  }
+})
+
+test('an approval given after the switch: Claude Code is told the call it approved', async () => {
+  const call = { approvalId: 'approval-1', toolName: 'bash', input: { command: 'npm publish' } }
+  const t = await setup({
+    ...PI_THREAD,
+    resume: {
+      ...state('pi'),
+      continueFrom: {
+        ...state('pi'),
+        type: 'continue-turn',
+        pendingToolApprovals: [{ approvalId: 'approval-1', toolCallId: 'call-1' }],
+      },
+    },
+    approvals: [call],
+  })
+  try {
+    await t.give('claude_code', { kind: 'approval', approvalId: 'approval-1', approved: true })
+    const prompt = t.heard[0]!.prompt
+    assert.equal(t.heard[0]!.harness, 'claude-code')
+    assert.match(prompt, /because you now run on Claude Code/)
+    assert.match(prompt, /Benchmark the signup flow/)
+    assert.match(prompt, /npm publish/)
+    assert.match(prompt, /They approved it/)
   } finally {
     await t.done()
   }
