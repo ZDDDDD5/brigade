@@ -8,6 +8,7 @@ import {
   hostSettings,
   openSettings,
   searchSettings,
+  settingAnchor,
   settingsAddress,
   settingsHref,
   SETTINGS_SECTIONS,
@@ -106,6 +107,38 @@ test('the search finds a section by its name, its group or what it holds', () =>
   assert.ok(found('workspace').includes('workspace'))
   assert.deepEqual(found('Billing'), ['billing'])
   assert.deepEqual(found('nothing like it'), [])
+})
+
+test('the search finds settings inside a section, behind the features the member has', () => {
+  const inside = (q: string, features: string[] = []) =>
+    searchSettings(q, features).map((s) => [s.section, s.settings.map((f) => f.anchor)])
+  assert.deepEqual(inside('appearance', ['themes']), [
+    ['preferences', ['appearance', 'import-a-theme']],
+  ])
+  assert.deepEqual(inside('appearance'), [])
+  assert.deepEqual(inside('dark theme', ['themes']), [['preferences', ['appearance']]])
+  assert.deepEqual(inside('daily pass'), [['preferences', ['daily-pass']]])
+  // A section found by its own name lists nothing found inside it, unless the words are there too.
+  assert.deepEqual(inside('billing'), [['billing', []]])
+  assert.deepEqual(
+    inside('danger').map(([section]) => section),
+    ['preferences', 'workspace'],
+  )
+  // An empty search lists the sections alone.
+  assert.ok(searchSettings('', ['themes']).every((s) => s.settings.length === 0))
+})
+
+test("a section's address with # opens it at that setting", () => {
+  assert.equal(settingsHref('preferences', 'appearance'), '/app/preferences#appearance')
+  const at = settingsAddress('/app/preferences#appearance')
+  assert.equal(at?.section, 'preferences')
+  assert.equal(at?.setting, 'appearance')
+  assert.equal(settingsAddress('/app/preferences')?.setting, null)
+  assert.equal(settingAnchor('Brigade’s own look'), 'brigade-s-own-look')
+  assert.equal(
+    settingAnchor('Keep heavy work off the shared computer'),
+    'keep-heavy-work-off-the-shared-computer',
+  )
 })
 
 test("a section's address opens Settings over Today, but stays in Brigade.app's capture window", () => {

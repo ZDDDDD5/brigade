@@ -6,6 +6,7 @@ import { ChevronRight } from 'lucide-react'
 import { useId, useState, type ReactNode } from 'react'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
+import { settingAnchor } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
 
 export function SettingsGroup({
@@ -19,7 +20,8 @@ export function SettingsGroup({
   children: ReactNode
 }) {
   return (
-    <section className="flex max-w-xl flex-col gap-2">
+    // Its anchor, which Settings' search goes to (settingAnchor).
+    <section data-setting={settingAnchor(title)} className="flex max-w-xl flex-col gap-2">
       <h2 className="px-1 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
         {title}
       </h2>
@@ -51,7 +53,7 @@ export function SettingRow({
   const describedBy = `${id}-detail`
   const [open, setOpen] = useState(false)
   return (
-    <div className="flex flex-col gap-3 px-5 py-4">
+    <div data-setting={settingAnchor(title)} className="flex flex-col gap-3 px-5 py-4">
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1">
           <Label htmlFor={id} className="leading-snug">

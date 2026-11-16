@@ -304,7 +304,7 @@ export default function MembersPage() {
       )}
 
       {invitations.length > 0 && (
-        <section className="flex flex-col gap-3">
+        <section data-setting="invited" className="flex flex-col gap-3">
           <h2 className="text-lg font-bold tracking-tight">Invited</h2>
           <Card className="gap-0 divide-y py-0">
             {invitations.map((i) => (

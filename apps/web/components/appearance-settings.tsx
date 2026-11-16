@@ -24,6 +24,7 @@ import {
 import { ActivityIndicator } from '@/components/ui/activity-indicator'
 import { api, blobOfDataUrl, uploadFile, useApi } from '@/lib/api'
 import { invalidateThemeLoads, wearInWindow } from '@/lib/theme-runtime'
+import { settingAnchor } from '@/lib/settings-dialog'
 
 /** A look change in a few words. */
 export function lookChangeText(change: Pick<LookChange, 'kind' | 'name' | 'count'>): string {
@@ -283,7 +284,10 @@ function Row({
   action: React.ReactNode
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 px-5 py-3">
+    <div
+      data-setting={settingAnchor(title)}
+      className="flex items-center justify-between gap-4 px-5 py-3"
+    >
       <div className="flex min-w-0 flex-col gap-0.5">
         <p className="truncate text-sm leading-snug">{title}</p>
         <p className="truncate text-xs text-muted-foreground">{detail}</p>
