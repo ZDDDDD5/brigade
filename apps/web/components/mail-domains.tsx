@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/select'
 import { api, isAdmin, useApi, type EmailState } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { clickSettings } from '@/lib/settings-dialog'
 
 /** The mail settings' header: back to the Inbox, the title, Mailboxes and Domains. */
 export function MailSettingsHeader({
@@ -439,6 +440,7 @@ function CloudflareRecords({
           Connect your Cloudflare account and Brigade adds these records for you.{' '}
           <Link
             href="/app/connections?app=cloudflare"
+            onClick={(e) => clickSettings(e, '/app/connections?app=cloudflare')}
             className="font-medium text-primary hover:underline"
           >
             Connect Cloudflare
@@ -496,6 +498,7 @@ function CloudflareRecords({
           Cloudflare refused some of them: the account may not be allowed to edit DNS.{' '}
           <Link
             href="/app/connections?app=cloudflare"
+            onClick={(e) => clickSettings(e, '/app/connections?app=cloudflare')}
             className="font-medium text-primary hover:underline"
           >
             Reconnect it

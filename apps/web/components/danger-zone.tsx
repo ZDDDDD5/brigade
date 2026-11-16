@@ -22,6 +22,7 @@ import { Label } from '@/components/ui/label'
 import { api, ApiError } from '@/lib/api'
 import { DEMO } from '@/lib/demo/flag'
 import { markSignedOut } from '@/lib/signed-in'
+import { clickSettings } from '@/lib/settings-dialog'
 
 /** The section around a deletion: below everything else on its page. */
 function DangerZone({ detail, children }: { detail: string; children: ReactNode }) {
@@ -195,7 +196,11 @@ function DeleteDialog({
               {failure.billing && (
                 <>
                   {' '}
-                  <Link href="/app/billing" className="underline underline-offset-2">
+                  <Link
+                    href="/app/billing"
+                    onClick={(e) => clickSettings(e, '/app/billing')}
+                    className="underline underline-offset-2"
+                  >
                     Open Billing
                   </Link>
                 </>

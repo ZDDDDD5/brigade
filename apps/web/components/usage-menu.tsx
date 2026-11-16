@@ -1,6 +1,5 @@
 'use client'
 import { ChevronDown, Gauge } from 'lucide-react'
-import Link from 'next/link'
 import { useState } from 'react'
 import { machineName, resetLabel, UsageMeters } from '@/components/account-card'
 import { HarnessLogo } from '@/components/harness-logo'
@@ -13,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { harnessLabel, type Account } from '@/lib/api'
+import { openSettings } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
 
 const PROVIDERS = ['claude_code', 'codex'] as const
@@ -127,11 +127,11 @@ function UsageDetails({ reported }: { reported: Account[] }) {
         </div>
       ))}
       <DropdownMenuSeparator />
-      <DropdownMenuItem asChild>
-        <Link href="/app/usage">See what used it</Link>
+      <DropdownMenuItem onSelect={() => openSettings('/app/usage')}>
+        See what used it
       </DropdownMenuItem>
-      <DropdownMenuItem asChild>
-        <Link href="/app/accounts">Manage accounts</Link>
+      <DropdownMenuItem onSelect={() => openSettings('/app/accounts')}>
+        Manage accounts
       </DropdownMenuItem>
     </>
   )

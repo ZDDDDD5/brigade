@@ -32,6 +32,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import type { AccessOverview, CredentialGrantLevel } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 
 type Teammate = AccessOverview['teammates'][number]
 
@@ -392,6 +393,7 @@ export function AccessMatrix({
               'Apps',
               <Link
                 href="/app/connections"
+                onClick={(e) => clickSettings(e, '/app/connections')}
                 className="tracking-normal normal-case text-primary hover:underline"
               >
                 Manage
@@ -406,6 +408,7 @@ export function AccessMatrix({
                   No connections yet.{' '}
                   <Link
                     href="/app/connections"
+                    onClick={(e) => clickSettings(e, '/app/connections')}
                     className="font-medium text-primary hover:underline"
                   >
                     Connect a service
@@ -446,6 +449,7 @@ export function AccessMatrix({
               'Secrets',
               <Link
                 href="/app/vault"
+                onClick={(e) => clickSettings(e, '/app/vault')}
                 className="tracking-normal normal-case text-primary hover:underline"
               >
                 Manage
@@ -458,7 +462,11 @@ export function AccessMatrix({
                   className="px-5 py-3 text-sm text-muted-foreground"
                 >
                   No secrets yet.{' '}
-                  <Link href="/app/vault" className="font-medium text-primary hover:underline">
+                  <Link
+                    href="/app/vault"
+                    onClick={(e) => clickSettings(e, '/app/vault')}
+                    className="font-medium text-primary hover:underline"
+                  >
                     Add a secret
                   </Link>
                   .

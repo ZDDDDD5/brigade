@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api, isAdmin, useApi, type EmailState, type MailJournalEntry } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 
 export const mailboxPath = (id: string) => `/app/inbox/mailboxes/${encodeURIComponent(id)}`
 
@@ -400,7 +401,11 @@ function AddMailbox({
           </div>
           <p className="text-sm text-muted-foreground">
             A Gmail account is connected in{' '}
-            <Link href="/app/connections" className="font-medium text-primary hover:underline">
+            <Link
+              href="/app/connections"
+              onClick={(e) => clickSettings(e, '/app/connections')}
+              className="font-medium text-primary hover:underline"
+            >
               Settings › Apps
             </Link>
             ; it shows here once connected.
@@ -1050,7 +1055,11 @@ function GmailArrival({
         </label>
       )}
       <ErrorLine error={save.error} />
-      <Link href="/app/connections" className="w-fit font-medium text-primary hover:underline">
+      <Link
+        href="/app/connections"
+        onClick={(e) => clickSettings(e, '/app/connections')}
+        className="w-fit font-medium text-primary hover:underline"
+      >
         Manage the account in Settings › Apps
       </Link>
     </>

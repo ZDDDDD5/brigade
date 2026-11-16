@@ -1,6 +1,2 @@
-import { redirect } from 'next/navigation'
-
-/** Settings opens on its first section. */
-export default function SettingsPage() {
-  redirect('/app/preferences')
-}
+// Settings is a dialog: its address opens it over Today, on its first section (components/settings-dialog.tsx).
+export { SettingsAddress as default } from '@/components/settings-dialog'

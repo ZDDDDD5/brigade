@@ -1,8 +1,2 @@
-'use client'
-import { isAdmin, useDashboard } from '@/components/dashboard'
-import { Skills } from '@/components/skills'
-
-export default function SkillsPage() {
-  const { me } = useDashboard()
-  return <Skills admin={isAdmin(me)} />
-}
+// Settings is a dialog: this section's address opens it over Today (components/settings-dialog.tsx).
+export { SettingsAddress as default } from '@/components/settings-dialog'

@@ -35,6 +35,7 @@ import { ItemChips, ListItemsProvider, pickLines } from '@/components/list-items
 import { MentionChip, MentionIcon } from '@/components/mention'
 import { Hint } from '@/components/ui/tooltip'
 import { documentFileUrl, uploadDocumentAsset } from '@/lib/api'
+import { openSettings } from '@/lib/settings-dialog'
 import {
   foundFor,
   MENTION_GROUPS,
@@ -56,7 +57,7 @@ function DocumentMention({ mention }: { mention: Mention }) {
       documents.open(libraryDocument({ id: mention.id, path: mention.label }))
     else if (mention.kind === 'teammate') router.push(`/app/teammates/${mention.id}`)
     else if (mention.kind === 'thread') router.push(`/app/threads/${mention.id}`)
-    else if (mention.kind === 'connection') router.push('/app/connections')
+    else if (mention.kind === 'connection') openSettings('/app/connections')
     else if (mention.kind === 'project' && !isLegacyProjectMention(mention))
       router.push(`/app/projects/${mention.id}`)
     else if (mention.kind === 'repository' || mention.kind === 'project')

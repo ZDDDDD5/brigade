@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { api, useApi, type RepositoryOption } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 
 /**
  * The project's repositories, and how each one's app starts for people to try: a section of its
@@ -120,7 +121,11 @@ export function ProjectRepositories() {
         {reachable.data?.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No GitHub connection yet.{' '}
-            <Link href="/app/connections" className="font-medium text-primary hover:underline">
+            <Link
+              href="/app/connections"
+              onClick={(e) => clickSettings(e, '/app/connections')}
+              className="font-medium text-primary hover:underline"
+            >
               Connect GitHub
             </Link>{' '}
             to add repositories.
