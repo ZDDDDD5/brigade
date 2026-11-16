@@ -237,7 +237,8 @@ const Env = z.object({
   /** PostHog's ingestion address: its EU cloud unless set. */
   POSTHOG_HOST: z.url().default('https://eu.i.posthog.com'),
   /**
-   * Email domains whose people are Brigade's own (the team, demo accounts), comma-separated:
+   * Email domains whose people are Brigade's own (the team, demo accounts), comma-separated,
+   * and whole addresses for the team's accounts on a shared domain (`someone@gmail.com`):
    * their events carry `internal: true`, to leave them out of analyses. The address itself is
    * never sent.
    */
