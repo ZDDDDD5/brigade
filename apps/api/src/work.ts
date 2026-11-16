@@ -31,7 +31,6 @@ import {
   currentTeammate,
   loadThread,
   noAccount,
-  noPiAccount,
   noteAsker,
   specFor,
   teammateIn,
@@ -443,7 +442,7 @@ const childOf = (
  * of their own machines that is online; the first where they have an account with usage left for
  * the teammate's login (loginOf).
  */
-export async function computerFor(db: ScopedDb, memberId: string, login: HarnessId, pi = false) {
+export async function computerFor(db: ScopedDb, memberId: string, login: HarnessId) {
   const machines = await db.computer.findMany({
     where: { kind: 'member_machine', memberId },
     orderBy: { updatedAt: 'desc' },
@@ -465,7 +464,6 @@ export async function computerFor(db: ScopedDb, memberId: string, login: Harness
       memberId,
       computerId: computer.id,
       provider: login,
-      pi,
     })
     if (accounts.some((a) => !a.exhaustedUntil || a.exhaustedUntil <= new Date())) return computer
     if (accounts.length) fallback ??= computer
@@ -589,12 +587,8 @@ export async function startThread(
     computerId: input.computer.id,
     provider: loginOf(input.teammate.harness, input.teammate.model),
     preferredId: input.accountId ?? null,
-    pi: input.teammate.harness === 'pi',
   })
-  if (!account)
-    throw (input.teammate.harness === 'pi' ? noPiAccount : noAccount)(
-      loginOf(input.teammate.harness, input.teammate.model),
-    )
+  if (!account) throw noAccount(loginOf(input.teammate.harness, input.teammate.model))
   const made =
     input.id && !input.fresh ? await db.session.findFirst({ where: { id: input.id } }) : null
   const created =

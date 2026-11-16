@@ -3,11 +3,11 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { after, before, describe, test } from 'node:test'
 import { parseEnv } from 'node:util'
-import { isPiAccount, loginOf } from '@brigade/contracts'
+import { loginOf } from '@brigade/contracts'
 
 // Teammates on Pi (docs/harnesses.md), behind the pi_harness feature: a thread's spec says Pi, and
-// runs on the login of its model's vendor, only on accounts set aside for Pi (named "Pi …"), never
-// falling back to the member's others; without the feature it does not run. Against the API's
+// runs on the login of its model's vendor, on the member's accounts as any teammate does (any
+// name, with fallbacks); without the feature it does not run. Against the API's
 // development database (apps/api/.env), in an organization of its own removed at the end; skipped
 // when no database answers.
 const envFile = new URL('../.env', import.meta.url)
@@ -23,16 +23,12 @@ const database = await Promise.race([
   new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
 ]).catch(() => false)
 
-test('a Pi teammate runs on its model’s login, on accounts named for Pi', () => {
+test('a Pi teammate runs on its model’s login', () => {
   assert.equal(loginOf('pi', 'claude-sonnet-5-5'), 'claude_code')
   assert.equal(loginOf('pi', 'gpt-6.1-sol'), 'codex')
   // Default: Opus, on Claude.
   assert.equal(loginOf('pi', null), 'claude_code')
   assert.equal(loginOf('codex', null), 'codex')
-  assert.ok(isPiAccount('Pi'))
-  assert.ok(isPiAccount('pi benchmark'))
-  assert.ok(!isPiAccount('Pipeline'))
-  assert.ok(!isPiAccount('Claude'))
 })
 
 describe('a thread with a teammate on Pi', { skip: !database && 'no database answers' }, () => {
@@ -43,7 +39,7 @@ describe('a thread with a teammate on Pi', { skip: !database && 'no database ans
   let workspaceId = ''
   let db: ReturnType<typeof scoped>
   let cloud = ''
-  const accounts = {} as Record<'main' | 'pi' | 'codexPi', string>
+  const accounts = {} as Record<'main' | 'second' | 'codex', string>
   let flagBefore: Awaited<ReturnType<typeof prisma.featureFlag.findUnique>> = null
 
   const open = (on: boolean) =>
@@ -74,8 +70,8 @@ describe('a thread with a teammate on Pi', { skip: !database && 'no database ans
         } as never)
       ).id
     accounts.main = await account('claude_code', 'Claude', true)
-    accounts.pi = await account('claude_code', 'Pi benchmark', false)
-    accounts.codexPi = await account('codex', 'Pi', false)
+    accounts.second = await account('claude_code', 'Second Claude', false)
+    accounts.codex = await account('codex', 'ChatGPT', false)
   })
 
   after(async () => {
@@ -109,38 +105,37 @@ describe('a thread with a teammate on Pi', { skip: !database && 'no database ans
     return session.id
   }
 
-  test('runs on the account set aside for Pi, with no other to fall back on', async () => {
+  test('runs on the thread’s account, any name, with the others to fall back on', async () => {
     const { specFor, loadThread } = await import('../src/thread-spec.js')
     await open(true)
-    // Started on the member's main Claude account: Pi still takes only the one named for it.
     const id = await thread('claude-sonnet-5-5', accounts.main)
     const spec = await specFor(db, await loadThread(db, id))
     assert.equal(spec.teammate.harness, 'pi')
     assert.equal(spec.teammate.model, 'claude-sonnet-5-5')
-    assert.deepEqual(spec.account, { id: accounts.pi, provider: 'claude_code', source: 'machine' })
-    assert.deepEqual(spec.fallbacks, [])
+    assert.deepEqual(spec.account, {
+      id: accounts.main,
+      provider: 'claude_code',
+      source: 'machine',
+    })
+    assert.deepEqual(
+      spec.fallbacks.map((a) => a.id),
+      [accounts.second],
+    )
   })
 
-  test('a GPT model runs on the ChatGPT account named for Pi', async () => {
+  test('a GPT model runs on a ChatGPT account', async () => {
     const { specFor, loadThread } = await import('../src/thread-spec.js')
     await open(true)
     const id = await thread('gpt-6.1-sol', accounts.main)
     const spec = await specFor(db, await loadThread(db, id))
-    assert.equal(spec.account.id, accounts.codexPi)
+    assert.equal(spec.account.id, accounts.codex)
     assert.equal(spec.account.provider, 'codex')
   })
 
-  test('without the feature, or without an account named for Pi, it does not run', async () => {
+  test('without the feature, it does not run', async () => {
     const { specFor, loadThread } = await import('../src/thread-spec.js')
     await open(false)
-    const id = await thread('claude-sonnet-5-5', accounts.pi)
+    const id = await thread('claude-sonnet-5-5', accounts.main)
     await assert.rejects(specFor(db, await loadThread(db, id)), /not open to this workspace/)
-    await open(true)
-    await db.account.updateMany({ where: { id: accounts.pi }, data: { label: 'Second Claude' } })
-    try {
-      await assert.rejects(specFor(db, await loadThread(db, id)), /name starts with "Pi"/)
-    } finally {
-      await db.account.updateMany({ where: { id: accounts.pi }, data: { label: 'Pi benchmark' } })
-    }
   })
 })

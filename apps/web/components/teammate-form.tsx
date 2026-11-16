@@ -185,9 +185,9 @@ export function TeammateForm({
         {harness === 'pi' && (
           <p className="flex items-start gap-1.5 text-xs text-warning">
             <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-            Pi runs only on accounts named “Pi” under Accounts: use a secondary Claude or ChatGPT
-            login. The providers don’t allow other apps to use these logins and may suspend the
-            account. Pi has no sub-agents and can’t answer a message on the side while it works.
+            Pi runs on the same Claude and ChatGPT accounts as your other teammates. The providers
+            don’t allow other apps to use these logins and may suspend the account. Pi has no
+            sub-agents and can’t answer a message on the side while it works.
           </p>
         )}
       </div>

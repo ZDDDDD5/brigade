@@ -1,6 +1,5 @@
 import {
   Effort,
-  isPiAccount,
   loginOf,
   PI_PROTOCOL,
   folderExceptions,
@@ -111,12 +110,6 @@ export async function actingTeammate(
   if (seat) return seat.teammate
   return teammateId ? null : db.teammate.findFirst({ where: { id: session.teammateId } })
 }
-
-/** A teammate on Pi, and no account set aside for it (isPiAccount). */
-export const noPiAccount = (login: string) =>
-  new HTTPException(409, {
-    message: `Pi runs only on a ${login === 'codex' ? 'Codex' : 'Claude'} account whose name starts with "Pi" under Accounts, and none is ready on this computer. Add one (a secondary login) and name it "Pi".`,
-  })
 
 export const noAccount = (harness: string) =>
   new HTTPException(409, {
@@ -256,7 +249,6 @@ export async function specFor(
       computerId: thread.computerId,
       provider: login,
       preferredId: thread.accountId,
-      pi: teammate.harness === 'pi',
     }),
     // The connections this teammate is granted, as tool specs. Never a credential.
     teammateGrants(db, teammate.id),
@@ -280,11 +272,9 @@ export async function specFor(
   const current =
     account ??
     (options.requireUsage === false && thread.accountId
-      ? await db.account
-          .findFirst({ where: { id: thread.accountId, provider: login } })
-          .then((a) => (a && (teammate.harness !== 'pi' || isPiAccount(a.label)) ? a : null))
+      ? await db.account.findFirst({ where: { id: thread.accountId, provider: login } })
       : null)
-  if (!current) throw teammate.harness === 'pi' ? noPiAccount(login) : noAccount(login)
+  if (!current) throw noAccount(login)
   // Chief's daily pass for a person (src/chief-pass.ts): it reads and answers by their rules, with
   // no App, repository or computer of anyone's to act on.
   const passing = !!thread.chiefPassId && teammate.kind === 'chief'
