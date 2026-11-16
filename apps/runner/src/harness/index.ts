@@ -114,6 +114,7 @@ import { createLocalSandboxSession, freePort, stopGroup } from './local-sandbox.
 import { SIDE_REPLY_ENV } from './side-reply-env.js'
 import { claimHandOver, type HandedOver } from '../hand-over.js'
 import { asTeammate, bridgeBrowser, threadNet } from '../thread-net.js'
+import { type PiPackage, loadPi } from '../pi-package.js'
 import { createPiHarness, piModel, piSkills } from './pi.js'
 import { ReplyWatch, terminalTools } from './replies.js'
 import { declareDone, Outbox } from './outbox.js'
@@ -378,6 +379,8 @@ type PiSetup = {
   /** Brigade's instructions, which Pi reads from no file (AGENTS.md, CLAUDE.md). */
   instructions: string
   skills: ReturnType<typeof piSkills>
+  /** Pi's package, installed by the runner on first use (pi-package.ts). */
+  pi: PiPackage
 }
 
 function createAgent(
@@ -409,45 +412,48 @@ function createAgent(
   const chief = spec.teammate.kind === 'chief'
   // The thread's effort; none leaves each CLI on its own default.
   const effort = spec.effort ?? undefined
-  const harness = onPi
-    ? createPiHarness({
-        account: spec.account,
-        effort,
-        mcpServers,
-        skills: pi?.skills ?? [],
-      })
-    : codex
-      ? createCodex({
-          ...settings,
-          // Codex reads 32 KiB of AGENTS.md by default; Brigade's, with memory last, is longer.
-          codexConfig: { ...CODEX_SETTINGS, project_doc_max_bytes: INSTRUCTIONS_MAX_BYTES },
-          ...(effort ? { reasoningEffort: effort } : {}),
+  if (onPi && !pi) throw new Error('A turn on Pi needs its setup (instructions, skills, package)')
+  const harness =
+    onPi && pi
+      ? createPiHarness({
+          pi: pi.pi,
+          account: spec.account,
+          effort,
+          mcpServers,
+          skills: pi.skills,
         })
-      : createClaudeCode({
-          ...settings,
-          ...(effort ? { effort } : {}),
-          // Never deferred behind tool search: the tools that end most turns (a ticket, a card, the
-          // thread done, a child's report) come right before the answer, with no tool load between.
-          // Each load is a model round trip of its own (about 2 s; 538 in 928 turns before these).
-          toolHints: Object.fromEntries(
-            [
-              ...ALWAYS_LOADED,
-              ...machineToolsInView(spec, machine),
-              ...(chief ? [PROPOSE_TEAM_TOOL] : []),
-              // A pass's ways out, loaded with no tool search before them.
-              ...(spec.pass && chief
-                ? spec.pass.acts === true
-                  ? ['chief_answer', 'chief_retry', 'chief_report']
-                  : ['chief_report']
-                : []),
-              // A big App's catalog (catalogTools): a few small tools, found then called, without a
-              // tool search before them.
-              ...Object.entries(apps)
-                .filter(([, t]) => (t as unknown as Record<symbol, unknown>)[CATALOG_TOOL])
-                .map(([name]) => name),
-            ].map((name) => [name, { alwaysLoad: true }]),
-          ),
-        })
+      : codex
+        ? createCodex({
+            ...settings,
+            // Codex reads 32 KiB of AGENTS.md by default; Brigade's, with memory last, is longer.
+            codexConfig: { ...CODEX_SETTINGS, project_doc_max_bytes: INSTRUCTIONS_MAX_BYTES },
+            ...(effort ? { reasoningEffort: effort } : {}),
+          })
+        : createClaudeCode({
+            ...settings,
+            ...(effort ? { effort } : {}),
+            // Never deferred behind tool search: the tools that end most turns (a ticket, a card, the
+            // thread done, a child's report) come right before the answer, with no tool load between.
+            // Each load is a model round trip of its own (about 2 s; 538 in 928 turns before these).
+            toolHints: Object.fromEntries(
+              [
+                ...ALWAYS_LOADED,
+                ...machineToolsInView(spec, machine),
+                ...(chief ? [PROPOSE_TEAM_TOOL] : []),
+                // A pass's ways out, loaded with no tool search before them.
+                ...(spec.pass && chief
+                  ? spec.pass.acts === true
+                    ? ['chief_answer', 'chief_retry', 'chief_report']
+                    : ['chief_report']
+                  : []),
+                // A big App's catalog (catalogTools): a few small tools, found then called, without a
+                // tool search before them.
+                ...Object.entries(apps)
+                  .filter(([, t]) => (t as unknown as Record<symbol, unknown>)[CATALOG_TOOL])
+                  .map(([name]) => name),
+              ].map((name) => [name, { alwaysLoad: true }]),
+            ),
+          })
   // Chief's daily pass for a person (docs/chief-answers.md): it reads its brief's items and reports
   // on them (or, with chief_acts, acts on them), and nothing else; the API gives it no App.
   const passing = !!spec.pass && chief
@@ -2465,7 +2471,9 @@ export class HarnessThread {
       computer ? this.macDesktop(computer) : this.cloudDesktop(),
       this.context.machine,
       this.arrivals,
-      onPi ? { instructions: text, skills: piSkills(this.workDir, skills) } : undefined,
+      onPi
+        ? { instructions: text, skills: piSkills(this.workDir, skills), pi: await loadPi() }
+        : undefined,
     )
     const adopt = await this.takeHandedOver(account)
     const sandbox = createLocalSandboxSession({

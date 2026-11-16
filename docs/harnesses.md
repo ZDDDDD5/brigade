@@ -12,6 +12,16 @@ limits and fallbacks are the login's.
 Pi (`@ai-sdk/harness-pi`, `apps/runner/src/harness/pi.ts`) runs inside the runner, not as a CLI of
 its own. Its file tools and shell go through the thread's sandbox, as the teammate's Linux user.
 
+- **Installed on first use.** The runner's bundle doesn't carry Pi: its dependencies (pi-coding-agent,
+  the OpenAI, Google and AWS SDKs) would take the bundle past the 25 MiB a Worker asset may be, and
+  the API serves the bundle as one (#888's deploy failed on it). The bundle carries Pi's manifest and
+  lockfile (`apps/runner/pi`); the first turn on Pi installs exactly that tree with the runner's own
+  pnpm (`--frozen-lockfile`, which checks each package's integrity) beside the runner, in
+  `<install dir>/pi/<lockfile hash>`, where updates leave it (`apps/runner/src/pi-package.ts`). In
+  the repository the devDependency's copy is used. To move Pi to a new version, change both
+  `apps/runner/package.json`'s devDependency and `apps/runner/pi/package.json`, then
+  `pnpm install --lockfile-only --ignore-workspace` in `apps/runner/pi`; CI's Runner bundle job
+  checks the bundle's size and runs Pi's tests on an install made as runners make it.
 - **Who has it.** Only where the `pi_harness` feature is open (docs/feature-flags.md): the teammate
   form offers it, the API accepts it, and a thread's spec is made for it. It is open to Brigade's
   own workspace only, to benchmark Pi against Claude Code and Codex.
@@ -21,7 +31,7 @@ its own. Its file tools and shell go through the thread's sandbox, as the teamma
   and never falls back to the member's others. A Pi thread with none says so and does not run.
 - **Tokens.** Pi never refreshes or writes a login. Before each request it reads the access token
   the login holds now (`loginCredentials`): a cloud computer's Claude token from `claude
-  setup-token` (it never expires), else Claude Code's `.credentials.json` (an expired one fails the
+setup-token` (it never expires), else Claude Code's `.credentials.json` (an expired one fails the
   turn until Claude Code refreshes it), and Codex's `auth.json`, which Codex itself refreshes when
   it is about to expire (`refreshCodexLogin`: `codex app-server`, `account/read` with
   `refreshToken`). Refresh tokens rotate, so one refresher per login keeps Claude Code and Codex

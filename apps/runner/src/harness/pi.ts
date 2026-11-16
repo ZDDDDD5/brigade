@@ -16,10 +16,11 @@
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { createPi, type PiCredentialStore } from '@ai-sdk/harness-pi'
+import type { PiCredentialStore } from '@ai-sdk/harness-pi'
 import { type AccountRef, type Effort, type ThreadSkill, SKILL_ENTRY } from '@brigade/contracts'
 import { accountDir, accountToken } from '../accounts.js'
 import { refreshCodexLogin } from '../codex-usage.js'
+import type { PiPackage } from '../pi-package.js'
 
 type Credential = NonNullable<Awaited<ReturnType<PiCredentialStore['read']>>>
 
@@ -197,19 +198,21 @@ export const piSkills = (workDir: string, skills: Pick<ThreadSkill, 'name' | 'de
  * Code does (`mcp__browser__browser_click`), and its skills as Pi's resources.
  */
 export function createPiHarness(input: {
+  /** Pi's package (loadPi): the runner installs it on first use, not in its bundle. */
+  pi: PiPackage
   account: AccountRef
   effort: Effort | undefined
   mcpServers: Record<string, unknown>
   skills: ReturnType<typeof piSkills>
   /** Tests: another store, and providers' addresses (a local server for the vendor's API). */
   credentials?: PiCredentialStore
-  providers?: Parameters<typeof createPi>[0] extends infer S
+  providers?: Parameters<PiPackage['createPi']>[0] extends infer S
     ? S extends { providers?: infer P }
       ? P
       : never
     : never
 }) {
-  return createPi({
+  return input.pi.createPi({
     // An empty record: no key from the runner's own environment, only the login's (credentials).
     auth: {},
     credentials: input.credentials ?? loginCredentials(input.account),
