@@ -151,8 +151,10 @@ export function statusAfter(current: SessionStatus, event: AgentEvent): SessionS
     // Answered a message while its ticket or question stays open: it still waits on a person.
     case 'turn.completed':
       return event.waiting ? 'waiting' : 'idle'
+    // Moved to another account, the turn goes on there: it runs, whatever the old account's
+    // last word left (an error event for its limit would otherwise keep it failed).
     case 'account.switched':
-      return event.toAccountId ? current : 'paused'
+      return event.toAccountId ? 'running' : 'paused'
     // A takeover pauses the teammate once its turn is over. Handed back before that, the turn
     // goes on: it still runs. Handed back after, it waits on what it asked, or on nothing.
     case 'control.changed':
