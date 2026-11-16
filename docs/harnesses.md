@@ -25,10 +25,11 @@ its own. Its file tools and shell go through the thread's sandbox, as the teamma
 - **Who has it.** Only where the `pi_harness` feature is open (docs/feature-flags.md): the teammate
   form offers it, the API accepts it, and a thread's spec is made for it. It is open to Brigade's
   own workspace only, to benchmark Pi against Claude Code and Codex.
-- **Which accounts.** Pi calls the providers' APIs as Claude Code and Codex do, which the providers
-  do not allow another client to: they may suspend a login Pi runs on. So Pi runs only on accounts
-  whose name starts with "Pi" under Accounts (`isPiAccount`), a secondary login set aside for it,
-  and never falls back to the member's others. A Pi thread with none says so and does not run.
+- **Which accounts.** Pi runs on the same accounts as Claude Code and Codex, chosen and switched
+  the same way (its model's login: `loginOf`). It calls the providers' APIs as Claude Code and Codex
+  do, which the providers do not allow another client to: they may suspend a login Pi runs on. The
+  member accepted that risk for the benchmark (16 Nov 2026), after an earlier version kept Pi to
+  accounts named "Pi".
 - **Tokens.** Pi never refreshes or writes a login. Before each request it reads the access token
   the login holds now (`loginCredentials`): a cloud computer's Claude token from `claude
 setup-token` (it never expires), else Claude Code's `.credentials.json` (an expired one fails the

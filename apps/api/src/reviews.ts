@@ -343,7 +343,6 @@ async function pickReviewer(
         memberId: input.memberId,
         computerId: input.computerId,
         provider: loginOf(t.harness, t.model),
-        pi: t.harness === 'pi',
       })
     ).length > 0
   if (input.asked) {
