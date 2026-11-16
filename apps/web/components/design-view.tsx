@@ -7,7 +7,8 @@
 // new version, by this member); ask the thread that made it about an element;
 // knobs to try values and save them; export; hand-off to a thread that builds
 // it. The pages and the canvas talk through the bridge the sandbox host adds to
-// them (apps/api/src/design-bridge.ts), by postMessage only.
+// them (apps/api/src/design-bridge.ts), by postMessage only. A save by anyone else
+// (a teammate working on it) shows at once: the boards whose page changed load it.
 import {
   DESIGN_ENTRY,
   designBoards,
@@ -61,6 +62,8 @@ import {
   type CanvasBoard,
   type CanvasGroup,
   type CanvasHandle,
+  type CanvasMode,
+  type DragPhase,
   type Inspected,
   type PageMessage,
   type Selected,
@@ -95,9 +98,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { api, blobOfDataUrl, uploadFile } from '@/lib/api'
+import { movedTranslate } from '@/lib/design-move'
 import { stepOption } from '@/lib/design-options'
 import { addDesignEdit, useDesignEdits, useEditsSender } from '@/lib/pending-edits'
 import { API_URL } from '@/lib/config'
+import { useLive } from '@/lib/use-live'
 import { cn } from '@/lib/utils'
 
 /** What a comment is about: an element on a board, else the whole design. */
@@ -199,6 +204,7 @@ function DesignFrame({
   libraryHref,
   picker,
   controls,
+  hidden = false,
 }: {
   /** The design's library folder ("acme/pricing.design"). */
   folder: string
@@ -221,6 +227,8 @@ function DesignFrame({
   picker?: ReactNode
   /** The panel's own buttons, at the end of the bar: expand, close. */
   controls: ReactNode
+  /** Kept beside a thread while another one shows: changes wait until it shows again. */
+  hidden?: boolean
 }) {
   const folders = useMemo(
     () => (options && options.length > 1 && options.includes(folder) ? options : [folder]),
@@ -230,10 +238,19 @@ function DesignFrame({
   const [views, setViews] = useState<Record<string, DesignViewInfo>>({})
   const [error, setError] = useState<string>()
   const [reloadAll, setReloadAll] = useState(0)
+  /** Reload: every board loads its page again, whatever version it shows. */
+  const forced = useRef(false)
+  /** The library changed: the view again, quietly; only boards whose page changed load. */
+  const [refreshes, setRefreshes] = useState(0)
+  const quiet = useRef(false)
+  /** A change came while hidden or while this person's own were on their way: a look once done. */
+  const behind = useRef(false)
+  const hiddenRef = useRef(hidden)
+  hiddenRef.current = hidden
   const root = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const canvas = useRef<CanvasHandle>(null)
-  const [mode, setMode] = useState<'select' | 'hand' | 'play'>('select')
+  const [mode, setMode] = useState<CanvasMode>('select')
   const [selection, setSelection] = useState<Selected[]>([])
   const [inspected, setInspected] = useState<Record<string, Inspected>>({})
   const [tab, setTab] = useState<'properties' | 'ask' | 'knobs' | null>(null)
@@ -249,18 +266,25 @@ function DesignFrame({
   const [busy, setBusy] = useState<string>()
   const [slides, setSlides] = useState(0)
   const [, rerender] = useState(0)
+  /** The Ask box takes the focus each time this changes: an element was picked in Comment. */
+  const [askFocus, setAskFocus] = useState(0)
   /** The version of the page each board shows. */
   const shown = useRef(new Map<string, string>())
   /** Each board's address: kept while its page is the one it shows, so a new view does not reload it. */
   const [srcs, setSrcs] = useState<Record<string, string>>({})
+  const srcsRef = useRef(srcs)
+  srcsRef.current = srcs
   const thumbnail = useRef<ReturnType<typeof setTimeout>>(undefined)
   const view = views[folder]
   const shareLink = useShare(view?.entryId)
 
   const edits = useRef<DesignEdits>(null)
   edits.current ??= new DesignEdits({
-    onSaved: (f, file) => {
+    onSaved: (f, file, result) => {
       setNotice({ text: 'Saved.' })
+      // Its boards show this version now: changed in place, not loaded again.
+      for (const b of canvasBoards())
+        if (b.folder === f && b.file === file) shown.current.set(b.key, result.sha256)
       // The gallery's picture is the first board's.
       const first = canvasBoards().find((b) => b.folder === f)
       if (first?.file !== file) return
@@ -286,13 +310,43 @@ function DesignFrame({
       setNotice({ text: message, error: true })
       canvas.current?.reload(f, file)
     },
-    onChange: () => rerender((n) => n + 1),
+    onChange: () => {
+      rerender((n) => n + 1)
+      // What changed while this person's own changes were saving: now that theirs are known.
+      if (behind.current && !hiddenRef.current && !edits.current?.busy) refreshNow()
+    },
   })
   const canvasBoards = () => canvas.current?.boards() ?? []
 
+  function refreshNow() {
+    behind.current = false
+    quiet.current = true
+    setRefreshes((n) => n + 1)
+  }
+  // Someone saved in the library (a teammate working on this design, often): the view again.
+  // Not while hidden, nor while this person's own changes are on their way, whose answers say
+  // which versions are theirs: once they are.
+  useLive((message) => {
+    if (message.type !== 'library.updated') return
+    if (hiddenRef.current || edits.current!.busy) behind.current = true
+    else refreshNow()
+  })
+  useEffect(() => {
+    if (!hidden && behind.current && !edits.current!.busy) refreshNow()
+  }, [hidden])
+
   useEffect(() => {
     let live = true
-    setError(undefined)
+    const force = forced.current
+    forced.current = false
+    // A look because the library changed: what shows stays as it is if it fails.
+    const quietly = quiet.current
+    quiet.current = false
+    const known = views
+    const previous = known[folder]
+    // A save answered while the view was asked may be missing from it: asked again then.
+    const saves = edits.current!.saves
+    if (!quietly) setError(undefined)
     Promise.all(
       folders.map((f) =>
         api<DesignViewInfo>('/designs/view', { body: { path: f } }).then((v) => [f, v] as const),
@@ -300,44 +354,86 @@ function DesignFrame({
     ).then(
       (loaded) => {
         if (!live) return
+        if (quietly && (edits.current!.busy || edits.current!.saves !== saves)) {
+          behind.current = true
+          if (!edits.current!.busy && !hiddenRef.current) refreshNow()
+          return
+        }
         const next = Object.fromEntries(loaded)
         setViews(next)
-        setSrcs((before) => {
-          const after: Record<string, string> = {}
-          for (const [f, v] of loaded)
-            designBoards(v.manifest).forEach((b, i) => {
-              const key = `${f}#${i}`
-              const sha = v.files[b.file]
-              const was = shown.current.get(key)
-              const keep =
-                reloadAll === 0 &&
-                before[key] &&
-                sha &&
-                (was === sha || edits.current!.own.has(sha))
-              after[key] = keep ? before[key]! : pageUrl(v, b.file)
-            })
-          return after
-        })
+        // A board keeps its page while that is the version it shows (as loaded, or as this
+        // canvas saved it since); another version (someone else saved it), or other styles,
+        // scripts or images it loads, load it again, and what was selected on it goes.
+        const before = srcsRef.current
+        const after: Record<string, string> = {}
+        const reloaded = new Set<string>()
+        // Boards to load again whose address came back the same (an API before view
+        // addresses were unique): their frames are loaded again by hand.
+        const same = new Map<string, { folder: string; file: string }>()
+        for (const [f, v] of loaded) {
+          const assetsChanged =
+            known[f]?.assets !== undefined &&
+            v.assets !== undefined &&
+            known[f]!.assets !== v.assets
+          designBoards(v.manifest).forEach((b, i) => {
+            const key = `${f}#${i}`
+            const sha = v.files[b.file]
+            const keep =
+              !force && !assetsChanged && before[key] && sha && shown.current.get(key) === sha
+            after[key] = keep ? before[key]! : pageUrl(v, b.file)
+            if (before[key] && !keep) {
+              reloaded.add(key)
+              if (after[key] === before[key])
+                same.set(`${f}\n${b.file}`, { folder: f, file: b.file })
+            }
+          })
+        }
+        setSrcs(after)
+        for (const { folder: f, file } of same.values()) canvas.current?.reload(f, file)
+        if (reloaded.size) {
+          setSelection((all) => all.filter((s) => !reloaded.has(s.board)))
+          // Their elements are numbered anew: where they were moved by hand is read again.
+          moved.current.clear()
+        }
         for (const [f, v] of loaded)
           for (const [file, sha] of Object.entries(v.files)) edits.current!.seen(f, file, sha)
         const primary = next[folder]
         if (primary) {
-          setValues(Object.fromEntries(primary.knobs.map((k) => [k.var, k.value])))
+          const saved = Object.fromEntries(primary.knobs.map((k) => [k.var, k.value]))
+          // Values being tried stay, unless their knob's saved value changed meanwhile.
+          setValues((tried) =>
+            quietly && previous
+              ? Object.fromEntries(
+                  primary.knobs.map((k) => {
+                    const was = previous.knobs.find((o) => o.var === k.var)
+                    return [
+                      k.var,
+                      was?.value === k.value && tried[k.var] !== undefined
+                        ? tried[k.var]!
+                        : k.value,
+                    ]
+                  }),
+                )
+              : saved,
+          )
           onInfo?.(primary)
         }
       },
-      (e: Error) => live && setError(e.message),
+      (e: Error) => live && !quietly && setError(e.message),
     )
     return () => {
       live = false
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per design, version and reload
-  }, [folders, version, reloadAll])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per design, version, reload and change
+  }, [folders, version, reloadAll, refreshes])
 
   useEffect(() => {
     const element = root.current
     if (!element) return
-    const observer = new ResizeObserver(([entry]) => setWidth(entry!.contentRect.width))
+    // Hidden, it keeps the width it had: its layout does not change while out of sight.
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry!.contentRect.width > 0) setWidth(entry!.contentRect.width)
+    })
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
@@ -395,6 +491,12 @@ function DesignFrame({
               : s,
           ),
         )
+        // The page says where the element is now: a move made by hand is in it.
+        if (element.bid !== null) moved.current.delete(moveKey(board, element.bid))
+        if (picking.current === key) {
+          picking.current = null
+          onPicked.current(board, element)
+        }
       } else if (m.type === 'typed' && m.text !== null) {
         const element = inspected[`${board.key}:${m.h}`]
         change(board, [{ id: m.bid, text: m.text }], element)
@@ -427,6 +529,7 @@ function DesignFrame({
 
   function applyUndo(entry: DesignChange | null) {
     if (!entry) return
+    moved.current.clear()
     for (const op of entry.ops) canvas.current?.postToFile(entry.folder, entry.file, live(op))
     refreshInspected()
   }
@@ -451,12 +554,115 @@ function DesignFrame({
     change(lastBoard, [{ id: last.bid, text }], lastInspected)
   }
 
+  // -- Moving elements by hand ---------------------------------------------------
+
+  /** Where an element moved by hand was put last, until its page says so itself. */
+  const moved = useRef(new Map<string, string>())
+  const moveKey = (board: CanvasBoard, bid: number) => `${board.folder}\n${board.file}\n${bid}`
+  type Moving = { key: string; board: CanvasBoard; bid: number; from: string; before: Inspected }
+  /** The elements being dragged: each once, where it started and what it had. */
+  const dragged = useRef<Map<string, Moving> | null>(null)
+
+  /** The selected elements that can move: written in their page, each element once. */
+  function movable(): Moving[] {
+    const all = new Map<string, Moving>()
+    for (const s of selection) {
+      const board = boardByKey(s.board)
+      const element = inspected[`${s.board}:${s.h}`]
+      if (!board || s.bid === null || !element?.editable.style) continue
+      const key = moveKey(board, s.bid)
+      if (all.has(key)) continue
+      const from = moved.current.get(key) ?? element.computed.translate ?? 'none'
+      all.set(key, { key, board, bid: s.bid, from, before: element })
+    }
+    return [...all.values()]
+  }
+
+  /** Dragging the selection on the canvas: shown as it moves, saved as a change once dropped. */
+  function onDrag(phase: DragPhase, delta: { x: number; y: number }) {
+    if (phase === 'start') {
+      dragged.current = new Map()
+      if (selection.length && !movable().length && lastInspected) {
+        setNotice({
+          text: lastInspected.scripted
+            ? `The page's script made this element: ask ${view?.teammate?.name ?? 'the teammate'} to move it.`
+            : 'This element cannot be moved by hand.',
+        })
+      }
+    }
+    const list = dragged.current
+    if (!list) return
+    // An element picked as the drag began joins it once its page has described it.
+    for (const m of movable()) if (!list.has(m.key)) list.set(m.key, m)
+    for (const m of list.values()) {
+      const translate =
+        phase === 'cancel'
+          ? (m.before.inline.translate ?? null)
+          : movedTranslate(m.from, delta.x, delta.y)
+      if (phase !== 'end') {
+        canvas.current?.postToFile(m.board.folder, m.board.file, {
+          type: 'brigade:style',
+          bid: m.bid,
+          style: { translate },
+        })
+      } else if (translate !== null && translate !== movedTranslate(m.from, 0, 0)) {
+        moved.current.set(m.key, translate)
+        change(m.board, [{ id: m.bid, style: { translate } }], m.before)
+      } else {
+        // Dropped where it was: what the page had.
+        canvas.current?.postToFile(m.board.folder, m.board.file, {
+          type: 'brigade:style',
+          bid: m.bid,
+          style: { translate: m.before.inline.translate ?? null },
+        })
+      }
+    }
+    if (phase === 'end' || phase === 'cancel') dragged.current = null
+  }
+
+  /** The arrow keys move the selection by a pixel, ⇧ by ten: one step of undo while they go. */
+  function nudge(dx: number, dy: number) {
+    const list = movable()
+    for (const m of list) {
+      const translate = movedTranslate(m.from, dx, dy)
+      moved.current.set(m.key, translate)
+      change(m.board, [{ id: m.bid, style: { translate } }], m.before, 'nudge')
+    }
+    return list.length > 0
+  }
+
+  // -- Comment: pick elements to say what should change on each ------------------
+
+  /** In Comment, the element just picked, until its page describes it. */
+  const picking = useRef<string | null>(null)
+
+  function onSelect(next: Selected[]) {
+    setSelection(next)
+    const last = next.at(-1)
+    picking.current = mode === 'comment' && last ? `${last.board}:${last.h}` : null
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey
+    const arrows: Record<string, [number, number]> = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1],
+    }
     if (mod && e.key.toLowerCase() === 'z') {
       e.preventDefault()
       applyUndo(e.shiftKey ? edits.current!.redo() : edits.current!.undo())
+    } else if (mode === 'select' && !mod && !e.altKey && arrows[e.key] && selection.length) {
+      const [x, y] = arrows[e.key]!
+      const step = e.shiftKey ? 10 : 1
+      if (nudge(x * step, y * step)) e.preventDefault()
     } else if (e.key === 'Escape') {
+      if (mode === 'comment' && selection.length === 0) {
+        e.preventDefault()
+        setMode('select')
+        return
+      }
       if (selection.length === 0) return
       e.preventDefault()
       const parent = lastInspected?.parent
@@ -465,9 +671,10 @@ function DesignFrame({
           ? [{ board: last.board, h: parent, bid: null }]
           : [],
       )
-    } else if (!mod && !e.altKey && (e.key === 'v' || e.key === 'h')) {
+    } else if (!mod && !e.altKey && (e.key === 'v' || e.key === 'h' || e.key === 'c')) {
       e.preventDefault()
-      setMode(e.key === 'v' ? 'select' : 'hand')
+      if (e.key === 'c') setSelection([])
+      setMode(e.key === 'v' ? 'select' : e.key === 'h' ? 'hand' : 'comment')
     } else if ((e.key === 'Enter' || e.key === 'F2') && last && lastInspected?.editable.text) {
       e.preventDefault()
       canvas.current?.retype(last)
@@ -543,6 +750,30 @@ function DesignFrame({
       { key: e.id, board: e.board, rect: e.rect, n: at >= 0 ? at + 1 : designEdits.indexOf(e) + 1 },
     ]
   })
+
+  // Beside its thread (not expanded over it, where its composer is out of sight), an element
+  // picked in Comment goes straight to the composer's edits, where its note is written, as an
+  // element picked in the preview does; elsewhere the Ask box opens on it.
+  const direct = pending && !expanded
+  const onPicked = useRef<(board: CanvasBoard, element: Inspected) => void>(() => {})
+  onPicked.current = (board, element) => {
+    if (direct && threadId) {
+      const at: Target = { board, element }
+      addDesignEdit(threadId, {
+        folder: board.folder,
+        board: board.key,
+        rect: element.rect,
+        label: commentLabel(at, board.folder),
+        where: commentWhere({ folder: board.folder, target: at }),
+        note: '',
+      })
+      // Its numbered pin marks it now.
+      setSelection([])
+      return
+    }
+    setTab('ask')
+    setAskFocus((n) => n + 1)
+  }
 
   async function sendComment(body: string) {
     if (pending && threadId) {
@@ -653,6 +884,7 @@ function DesignFrame({
   const askBox = view && (
     <CommentBox
       target={target}
+      focus={askFocus}
       to={
         commentThread === threadId && threadId
           ? 'this thread'
@@ -767,6 +999,7 @@ function DesignFrame({
               onSelect={() => {
                 setSelection([])
                 shown.current.clear()
+                forced.current = true
                 setReloadAll((n) => n + 1)
               }}
             >
@@ -781,19 +1014,30 @@ function DesignFrame({
           <>
             <Button
               type="button"
-              variant={tab === 'ask' ? 'secondary' : 'ghost'}
+              variant={(direct ? mode === 'comment' : tab === 'ask') ? 'secondary' : 'ghost'}
               size={compact ? 'icon-sm' : 'sm'}
               tooltip={
-                ownEdits.length ? `Comment · ${ownEdits.length} waiting in the composer` : 'Comment'
+                direct
+                  ? mode === 'comment'
+                    ? 'Stop commenting (Esc)'
+                    : `Comment: click elements and say what should change on each, then send them together${ownEdits.length ? ` · ${ownEdits.length} waiting in the composer` : ''} (C)`
+                  : ownEdits.length
+                    ? `Comment · ${ownEdits.length} waiting in the composer`
+                    : 'Comment'
               }
               aria-label={
                 compact || ownEdits.length
                   ? `Comment${ownEdits.length ? `, ${ownEdits.length} waiting` : ''}`
                   : undefined
               }
-              aria-pressed={tab === 'ask'}
+              aria-pressed={direct ? mode === 'comment' : tab === 'ask'}
               disabled={!view}
-              onClick={() => setTab(tab === 'ask' ? null : 'ask')}
+              onClick={() => {
+                if (!direct) return setTab(tab === 'ask' ? null : 'ask')
+                setSelection([])
+                setTab(null)
+                setMode(mode === 'comment' ? 'select' : 'comment')
+              }}
             >
               <MessageSquarePlus aria-hidden />
               {!compact && 'Comment'}
@@ -837,6 +1081,13 @@ function DesignFrame({
         {controls}
       </div>
 
+      {mode === 'comment' && view && (
+        <p role="status" className="border-b px-3 py-1.5 text-xs text-muted-foreground">
+          {direct
+            ? `Click an element to add it to your edits, then say in the composer what should change there${ownEdits.length ? ` · ${ownEdits.length} added` : ''}. Esc to stop.`
+            : 'Click an element to comment on it. Esc to stop.'}
+        </p>
+      )}
       {(busy || notice) && (
         <p
           role="status"
@@ -862,7 +1113,16 @@ function DesignFrame({
           <div role="radiogroup" aria-label="Mode" className="flex rounded-md bg-muted p-0.5">
             {(
               [
-                ['select', MousePointer2, 'Select: pick elements to change or ask about (V)'],
+                [
+                  'select',
+                  MousePointer2,
+                  'Select: pick elements to change, drag them to move them (V)',
+                ],
+                [
+                  'comment',
+                  MessageSquarePlus,
+                  'Comment: click elements to say what should change (C)',
+                ],
                 ['hand', Hand, 'Hand: drag to move around the canvas (H)'],
                 ['play', Play, 'Play: use the pages'],
               ] as const
@@ -874,7 +1134,7 @@ function DesignFrame({
                   aria-checked={mode === m}
                   onClick={() => {
                     setMode(m)
-                    if (m === 'play') setSelection([])
+                    if (m === 'play' || m === 'comment') setSelection([])
                   }}
                   className={cn(
                     'flex size-7 items-center justify-center rounded',
@@ -936,9 +1196,10 @@ function DesignFrame({
             mode={mode}
             selection={selection}
             pins={pins}
-            onSelect={setSelection}
+            onSelect={onSelect}
             onMessage={onPage}
             onKeyDown={onKeyDown}
+            onDrag={onDrag}
             onDoubleClick={(s) => {
               if (inspected[`${s.board}:${s.h}`]?.editable.text) canvas.current?.retype(s)
             }}
@@ -1016,9 +1277,11 @@ function DesignFrame({
               <p className="p-3 text-xs text-muted-foreground">
                 {mode === 'play'
                   ? 'Play: the pages work as they would in a browser. Switch to Select to change them.'
-                  : mode === 'hand'
-                    ? 'Hand: drag anywhere to move around the canvas. Switch to Select (V) to change elements.'
-                    : 'Select an element on a board to change its text, size, spacing and look. Space + drag, the Hand (H) or the trackpad pans, pinch or ⌘ + scroll zooms, ⇧1 fits everything.'}
+                  : mode === 'comment'
+                    ? 'Comment: click an element, then say what should change there.'
+                    : mode === 'hand'
+                      ? 'Hand: drag anywhere to move around the canvas. Switch to Select (V) to change elements.'
+                      : 'Select an element on a board to change its text, size, spacing and look; drag it, or use the arrow keys, to move it. Space + drag, the Hand (H) or the trackpad pans, pinch or ⌘ + scroll zooms, ⇧1 fits everything.'}
               </p>
             )}
           </aside>
@@ -1069,12 +1332,15 @@ function DesignFrame({
 
 function CommentBox({
   target,
+  focus = 0,
   to,
   onClear,
   onSend,
   pending,
 }: {
   target: Target | null
+  /** Takes the focus each time this changes past 0: an element was just picked. */
+  focus?: number
   to: string
   onClear: () => void
   onSend: (body: string) => Promise<boolean>
@@ -1083,6 +1349,10 @@ function CommentBox({
 }) {
   const [body, setBody] = useState('')
   const [sending, setSending] = useState(false)
+  const box = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (focus > 0) box.current?.focus({ preventScroll: true })
+  }, [focus])
 
   async function send() {
     if (!body.trim() || sending) return
@@ -1120,6 +1390,7 @@ function CommentBox({
           </div>
         )}
         <Textarea
+          ref={box}
           aria-label="Comment"
           value={body}
           rows={3}
@@ -1351,6 +1622,7 @@ export function DesignPanel({
   libraryLink = true,
   options,
   expand = false,
+  hidden = false,
 }: {
   folder: string
   version?: string
@@ -1363,6 +1635,11 @@ export function DesignPanel({
   options?: string[]
   /** Opens over the whole page rather than beside it. */
   expand?: boolean
+  /**
+   * Kept beside a thread while another one shows (components/kept-previews.tsx): its pages stay
+   * as they were, not loaded again when it shows.
+   */
+  hidden?: boolean
 }) {
   const [info, setInfo] = useState<DesignViewInfo>()
   const [expanded, setExpanded] = useState(expand)
@@ -1433,7 +1710,7 @@ export function DesignPanel({
   }
 
   useEffect(() => {
-    if (!expanded) return
+    if (!expanded || hidden) return
     const onKey = (e: globalThis.KeyboardEvent) => {
       // The canvas takes Escape while something is selected on it.
       if (e.key !== 'Escape' || start || e.defaultPrevented) return
@@ -1443,11 +1720,12 @@ export function DesignPanel({
     // As the key comes back up: after the canvas had it.
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [expanded, start])
+  }, [expanded, start, hidden])
 
   return (
     <SidePanel
       aria-label={`Design ${title}`}
+      hidden={hidden}
       onClose={onClose}
       onKeyDown={onKeyDown}
       tabIndex={-1}
@@ -1467,6 +1745,7 @@ export function DesignPanel({
         {...(current === folder ? { version } : {})}
         {...(all ? { options: choices.map((o) => o.path) } : {})}
         threadId={threadId}
+        hidden={hidden}
         expanded={expanded}
         onExpand={() => setExpanded(true)}
         onInfo={setInfo}
@@ -1537,7 +1816,7 @@ export function DesignPanel({
           </>
         }
       />
-      {start && <StartThreadDialog start={start} onClose={() => setStart(undefined)} />}
+      {start && !hidden && <StartThreadDialog start={start} onClose={() => setStart(undefined)} />}
     </SidePanel>
   )
 }

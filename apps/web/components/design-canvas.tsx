@@ -5,7 +5,9 @@
 // is under the pointer, what an element is and how tall the page is, by
 // postMessage only. In Select a clear layer over each board takes the pointer,
 // so the page gets no clicks and the canvas asks the page what is under it; in
-// Play the pages work. Outlines and titles are drawn above the world, in screen
+// Play the pages work. In Select, dragging a selected element moves it (the view turns
+// the move into a style of the element); in Comment a click picks an element to say
+// what should change there. Outlines and titles are drawn above the world, in screen
 // pixels, so they stay sharp at any zoom. Only a few boards are live at once
 // (those filling most of the view, once it holds still); the others, and boards
 // too small on screen to use, show a picture taken of their page.
@@ -73,6 +75,12 @@ export type PageMessage =
   | { type: 'ready'; sha: string; file: string; slides: number }
   | { type: 'inspected'; element: Inspected }
   | { type: 'typed'; h: number; bid: number; text: string | null }
+
+/** The canvas's modes: see DesignCanvasInner's `mode`. */
+export type CanvasMode = 'select' | 'comment' | 'hand' | 'play'
+
+/** How far an element was dragged, in its page's pixels. */
+export type DragPhase = 'start' | 'move' | 'end' | 'cancel'
 
 export type CanvasHandle = {
   /** Send a message to a board's page. */
@@ -148,12 +156,16 @@ function DesignCanvasInner({
   onMessage,
   onKeyDown,
   onDoubleClick,
+  onDrag,
   handle,
   className,
 }: {
   groups: CanvasGroup[]
-  /** Select: pick elements; Hand: drag anywhere to move the view; Play: the pages work. */
-  mode: 'select' | 'hand' | 'play'
+  /**
+   * Select: pick elements, drag selected ones to move them; Comment: pick elements to comment
+   * on; Hand: drag anywhere to move the view; Play: the pages work.
+   */
+  mode: CanvasMode
   selection: Selected[]
   /** Comments waiting in the thread's composer: a numbered pin on each element. */
   pins?: { key: string; board: string; rect: Rect; n: number }[]
@@ -162,6 +174,11 @@ function DesignCanvasInner({
   /** Keys the canvas does not take itself (Escape, undo). */
   onKeyDown?: (e: ReactKeyboardEvent) => void
   onDoubleClick?: (selected: Selected) => void
+  /**
+   * The selection dragged in Select: once it starts, as it moves and when it ends, by how far
+   * from where it started, in the pages' pixels. Cancelled by Escape or a lost pointer.
+   */
+  onDrag?: (phase: DragPhase, delta: { x: number; y: number }) => void
   handle?: Ref<CanvasHandle>
   className?: string
 }) {
@@ -204,12 +221,16 @@ function DesignCanvasInner({
   const [hover, setHover] = useState<{ board: string; element: PageElement } | null>(null)
   const [rects, setRects] = useState<Record<string, Rect | null>>({})
   const [retyping, setRetyping] = useState<Selected | null>(null)
+  /** The selection being dragged: the pointer is down and has moved. */
+  const [dragging, setDragging] = useState(false)
   const [panning, setPanning] = useState<'space' | 'drag' | null>(null)
   const frames = useRef(new Map<string, HTMLIFrameElement>())
   const seqs = useRef({
     next: 1,
     hover: new Map<string, number>(),
     select: new Map<number, boolean>(),
+    /** Select hits sent as the pointer went down: the selection may be dragged once it comes. */
+    dragAfter: new Set<number>(),
   })
   const captures = useRef(new Map<string, (m: Extract<FromPage, { type: 'captured' }>) => void>())
   const fitted = useRef(false)
@@ -254,9 +275,12 @@ function DesignCanvasInner({
   useLayoutEffect(() => {
     const element = box.current
     if (!element) return
-    const observer = new ResizeObserver(([entry]) =>
-      setSize({ width: entry!.contentRect.width, height: entry!.contentRect.height }),
-    )
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry!.contentRect
+      // Hidden (kept beside a thread while another shows): the boards stay as they were.
+      if (width === 0 && height === 0) return
+      setSize({ width, height })
+    })
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
@@ -605,6 +629,10 @@ function DesignCanvasInner({
   onSelectRef.current = onSelect
   const selectionRef = useRef(selection)
   selectionRef.current = selection
+  const rectsRef = useRef(rects)
+  rectsRef.current = rects
+  const onDragRef = useRef(onDrag)
+  onDragRef.current = onDrag
 
   useEffect(() => {
     const onWindowMessage = (e: MessageEvent) => {
@@ -621,13 +649,18 @@ function DesignCanvasInner({
         if (select !== undefined) {
           seqs.current.select.delete(m.seq)
           const element = m.element
-          if (!element) return
+          if (!element) {
+            seqs.current.dragAfter.delete(m.seq)
+            return
+          }
           const picked = {
             board: key,
             h: Number(element.h),
             bid: typeof element.bid === 'number' ? element.bid : null,
           }
           setRects((all) => ({ ...all, [selectedKey(picked)]: element.rect }))
+          if (seqs.current.dragAfter.delete(m.seq) && press.current?.seq === m.seq)
+            press.current.ready = true
           const current = selectionRef.current
           onSelectRef.current(
             select
@@ -796,7 +829,7 @@ function DesignCanvasInner({
   }
   const hoverFrame = useRef(0)
   function onOverlayMove(e: React.MouseEvent, board: string) {
-    if (modeRef.current === 'hand') return
+    if (modeRef.current === 'hand' || press.current?.dragging) return
     if (!frames.current.has(board)) return
     const point = pagePoint(e)
     cancelAnimationFrame(hoverFrame.current)
@@ -806,8 +839,114 @@ function DesignCanvasInner({
       post(board, { type: 'brigade:hit', seq, ...point })
     })
   }
+  // -- Dragging the selection in Select --------------------------------------
+
+  /**
+   * The pointer down on a board in Select. On a selected element, a drag moves the selection
+   * (a click without one selects what is under it, as before); elsewhere it selects what is
+   * under it at once, and a drag then moves that once the page has said what it is.
+   */
+  const press = useRef<{
+    board: string
+    x: number
+    y: number
+    seq: number | null
+    /** The selection to move is the one shown. */
+    ready: boolean
+    dragging: boolean
+    /** It selected on the way down, or dragged: the click that follows is not another one. */
+    done: boolean
+  } | null>(null)
+
+  function onOverlayDown(e: React.PointerEvent, board: string) {
+    press.current = null
+    if (e.pointerType === 'touch' || e.button !== 0 || e.shiftKey || e.altKey) return
+    if (modeRef.current !== 'select' || !frames.current.has(board)) return
+    const point = pagePoint(e)
+    const inside = selectionRef.current.some((s) => {
+      const r = s.board === board ? rectsRef.current[selectedKey(s)] : null
+      return (
+        !!r &&
+        point.x >= r.x &&
+        point.x <= r.x + r.width &&
+        point.y >= r.y &&
+        point.y <= r.y + r.height
+      )
+    })
+    let seq: number | null = null
+    if (!inside) {
+      seq = seqs.current.next++
+      seqs.current.select.set(seq, false)
+      seqs.current.dragAfter.add(seq)
+      post(board, { type: 'brigade:hit', seq, ...point })
+    }
+    press.current = {
+      board,
+      x: e.clientX,
+      y: e.clientY,
+      seq,
+      ready: inside,
+      dragging: false,
+      done: !inside,
+    }
+    // Moves outside the board, or the canvas, still come here.
+    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+    box.current?.focus({ preventScroll: true })
+  }
+
+  const cancelDrag = useCallback(() => {
+    const p = press.current
+    if (!p?.dragging) return false
+    p.dragging = false
+    p.ready = false
+    setDragging(false)
+    onDragRef.current?.('cancel', { x: 0, y: 0 })
+    return true
+  }, [])
+
+  useEffect(() => {
+    const delta = (e: PointerEvent, p: { x: number; y: number }) => ({
+      x: (e.clientX - p.x) / viewRef.current.zoom,
+      y: (e.clientY - p.y) / viewRef.current.zoom,
+    })
+    const move = (e: PointerEvent) => {
+      const p = press.current
+      if (!p?.ready || e.buttons === 0) return
+      if (!p.dragging) {
+        if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < 4) return
+        p.dragging = true
+        p.done = true
+        setDragging(true)
+        setHover(null)
+        onDragRef.current?.('start', { x: 0, y: 0 })
+      }
+      onDragRef.current?.('move', delta(e, p))
+    }
+    const up = (e: PointerEvent) => {
+      const p = press.current
+      if (!p) return
+      p.ready = false
+      if (!p.dragging) return
+      p.dragging = false
+      setDragging(false)
+      onDragRef.current?.(e.type === 'pointercancel' ? 'cancel' : 'end', delta(e, p))
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+  }, [])
+
   function onOverlayClick(e: React.MouseEvent, board: string) {
     if (modeRef.current === 'hand') return
+    // Selected as the pointer went down, or dragged: done.
+    const p = press.current
+    press.current = null
+    if (p?.board === board && p.done) return
     // A board showing its picture: brought close, where its page loads.
     if (!frames.current.has(board)) {
       const b = boardOf(board)
@@ -824,6 +963,11 @@ function DesignCanvasInner({
 
   function onKey(e: ReactKeyboardEvent) {
     if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable]')) return
+    // Escape while dragging puts the selection back where it was.
+    if (e.key === 'Escape' && cancelDrag()) {
+      e.preventDefault()
+      return
+    }
     const mod = e.metaKey || e.ctrlKey
     if (e.shiftKey && e.code === 'Digit1') {
       e.preventDefault()
@@ -945,10 +1089,14 @@ function DesignCanvasInner({
       setReady((all) => (all[key] ? { ...all, [key]: false } : all))
     }
   }, [])
-  const overlay = useRef({ onOverlayMove, onOverlayClick })
-  overlay.current = { onOverlayMove, onOverlayClick }
+  const overlay = useRef({ onOverlayMove, onOverlayClick, onOverlayDown })
+  overlay.current = { onOverlayMove, onOverlayClick, onOverlayDown }
   const onBoardMove = useCallback(
     (e: React.MouseEvent, key: string) => overlay.current.onOverlayMove(e, key),
+    [],
+  )
+  const onBoardDown = useCallback(
+    (e: React.PointerEvent, key: string) => overlay.current.onOverlayDown(e, key),
     [],
   )
   const onBoardClick = useCallback(
@@ -962,7 +1110,7 @@ function DesignCanvasInner({
   const onDoubleClickRef = useRef(onDoubleClick)
   onDoubleClickRef.current = onDoubleClick
   const onBoardDoubleClick = useCallback((key: string) => {
-    if (modeRef.current === 'hand') return
+    if (modeRef.current !== 'select') return
     const last = selectionRef.current.at(-1)
     if (last?.board === key) onDoubleClickRef.current?.(last)
   }, [])
@@ -1003,7 +1151,13 @@ function DesignCanvasInner({
       }}
       className={cn(
         'relative min-h-0 flex-1 overflow-hidden bg-muted/40 outline-none select-none',
-        panning ? 'cursor-grabbing' : mode === 'hand' ? 'cursor-grab' : 'cursor-default',
+        panning
+          ? 'cursor-grabbing'
+          : dragging
+            ? 'cursor-move'
+            : mode === 'hand'
+              ? 'cursor-grab'
+              : 'cursor-default',
         className,
       )}
       style={{ touchAction: 'none' }}
@@ -1026,6 +1180,7 @@ function DesignCanvasInner({
             select={mode !== 'play' && !panning && !(retyping && retyping.board === b.key)}
             onFrame={onFrame}
             onMove={onBoardMove}
+            onDown={onBoardDown}
             onLeave={onBoardLeave}
             onClick={onBoardClick}
             onDoubleClick={onBoardDoubleClick}
@@ -1064,7 +1219,8 @@ function DesignCanvasInner({
             </div>
           )
         })}
-        {mode === 'select' &&
+        {(mode === 'select' || mode === 'comment') &&
+          !dragging &&
           hover &&
           !selection.some((s) => s.board === hover.board && s.h === hover.element.h) && (
             <Outline box={outline(hover.board, hover.element.rect)} kind="hover" />
@@ -1143,6 +1299,7 @@ const BoardView = memo(function BoardView({
   select,
   onFrame,
   onMove,
+  onDown,
   onLeave,
   onClick,
   onDoubleClick,
@@ -1156,6 +1313,7 @@ const BoardView = memo(function BoardView({
   select: boolean
   onFrame: (key: string, frame: HTMLIFrameElement | null) => void
   onMove: (e: React.MouseEvent, board: string) => void
+  onDown: (e: React.PointerEvent, board: string) => void
   onLeave: (board: string) => void
   onClick: (e: React.MouseEvent, board: string) => void
   onDoubleClick: (board: string) => void
@@ -1198,6 +1356,7 @@ const BoardView = memo(function BoardView({
           // The canvas's cursor: an arrow in Select, a hand in Hand.
           className="absolute inset-0"
           onMouseMove={(e) => onMove(e, key)}
+          onPointerDown={(e) => onDown(e, key)}
           onMouseLeave={() => onLeave(key)}
           onClick={(e) => onClick(e, key)}
           onDoubleClick={() => onDoubleClick(key)}

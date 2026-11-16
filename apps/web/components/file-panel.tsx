@@ -79,12 +79,30 @@ export function FilePanel(props: FilePanelProps) {
   if (tools && !folder.startsWith('/') && toolFolderOf(folder) === folder)
     return <ToolPanel folder={folder} threadId={props.threadId} onClose={props.onClose} />
   if (!folder.startsWith('/') && designFolderOf(folder) === folder)
-    return designOptionsOf(folder) ? (
-      <OptionPanel folder={folder} threadId={props.threadId} onClose={props.onClose} />
-    ) : (
-      <DesignPanel folder={folder} threadId={props.threadId} onClose={props.onClose} />
-    )
+    return <DesignFolderPanel folder={folder} threadId={props.threadId} onClose={props.onClose} />
   return <ThreadFilePanel {...props} />
+}
+
+/**
+ * A design's folder beside a thread: the design, or one of its options as an earlier message
+ * named it. Kept while another thread shows (components/kept-previews.tsx), hidden.
+ */
+export function DesignFolderPanel({
+  folder,
+  threadId,
+  onClose,
+  hidden = false,
+}: {
+  folder: string
+  threadId: string
+  onClose: () => void
+  hidden?: boolean
+}) {
+  return designOptionsOf(folder) ? (
+    <OptionPanel folder={folder} threadId={threadId} onClose={onClose} hidden={hidden} />
+  ) : (
+    <DesignPanel folder={folder} threadId={threadId} onClose={onClose} hidden={hidden} />
+  )
 }
 
 /**
@@ -95,10 +113,12 @@ function OptionPanel({
   folder,
   threadId,
   onClose,
+  hidden = false,
 }: {
   folder: string
   threadId: string
   onClose: () => void
+  hidden?: boolean
 }) {
   const [where, setWhere] = useState<DesignWhere>()
   const [error, setError] = useState<string>()
@@ -117,11 +137,16 @@ function OptionPanel({
   }, [folder])
 
   if (where && !where.trashed)
-    return <DesignPanel folder={where.path} threadId={threadId} onClose={onClose} />
+    return <DesignPanel folder={where.path} threadId={threadId} onClose={onClose} hidden={hidden} />
 
   const slash = folder.lastIndexOf('/')
   return (
-    <SidePanel aria-label={`Design ${folder.slice(slash + 1)}`} onClose={onClose} raiseKey={folder}>
+    <SidePanel
+      aria-label={`Design ${folder.slice(slash + 1)}`}
+      hidden={hidden}
+      onClose={onClose}
+      raiseKey={folder}
+    >
       <div className="flex flex-nowrap items-center gap-2 border-b px-3 py-2.5">
         <Palette aria-hidden className="size-4 shrink-0 text-muted-foreground" />
         <div className="flex min-w-0 flex-1 flex-col">

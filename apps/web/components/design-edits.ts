@@ -29,8 +29,10 @@ export class DesignEdits {
   private saving = new Map<string, Promise<void>>()
   private done: (DesignChange & { at: number })[] = []
   private undone: DesignChange[] = []
-  /** Versions this canvas saved: a view that reports them is not a reason to reload. */
+  /** Versions this canvas saved. */
   readonly own = new Set<string>()
+  /** Saves answered so far: a view asked before the last one may not have it. */
+  saves = 0
 
   constructor(
     private events: {
@@ -41,10 +43,25 @@ export class DesignEdits {
     },
   ) {}
 
-  /** The version of a page the boards show, when nothing of it is waiting. */
+  /**
+   * The version of a page the boards show, when nothing of it is waiting. Another version than
+   * the one known, not saved here (someone else saved the page), numbers its elements anew: the
+   * steps of undo made on the one before would change other elements, so they go.
+   */
   seen(folder: string, file: string, sha256: string) {
     const key = fileKey(folder, file)
-    if (!this.queued.get(key)?.length && !this.saving.has(key)) this.base.set(key, sha256)
+    if (this.queued.get(key)?.length || this.saving.has(key)) return
+    const was = this.base.get(key)
+    if (was && was !== sha256 && !this.own.has(sha256)) this.forget(key)
+    this.base.set(key, sha256)
+  }
+
+  /** The steps of undo and redo made on a page. */
+  private forget(key: string) {
+    const before = this.done.length + this.undone.length
+    this.done = this.done.filter((c) => fileKey(c.folder, c.file) !== key)
+    this.undone = this.undone.filter((c) => fileKey(c.folder, c.file) !== key)
+    if (this.done.length + this.undone.length !== before) this.events.onChange()
   }
 
   get canUndo() {
@@ -131,13 +148,13 @@ export class DesignEdits {
           })
           this.base.set(key, result.sha256)
           this.own.add(result.sha256)
+          this.saves++
           this.events.onSaved(folder, file, result)
         }
       } catch (error) {
         // What waits and the steps of undo were made on a page that is not there any more.
         this.queued.set(key, [])
-        this.done = this.done.filter((c) => fileKey(c.folder, c.file) !== key)
-        this.undone = this.undone.filter((c) => fileKey(c.folder, c.file) !== key)
+        this.forget(key)
         this.base.delete(key)
         this.events.onLost(folder, file, (error as Error).message)
       }

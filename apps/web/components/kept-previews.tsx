@@ -1,13 +1,14 @@
 'use client'
-// A thread's preview, or a library tool open beside it, kept while the person is on another
+// A thread's preview, or a library tool or design open beside it, kept while the person is on another
 // thread: its frame stays in the page, hidden, so coming back finds the app as it was left (the
 // page, what was typed, where it was scrolled), not loaded again. A browser loads a frame again
 // whenever it leaves the page, so the panels are rendered here, by the dashboard, rather than by
 // the thread's conversation, which goes when the thread does: the conversation hands its panel's
-// props over (KeepPreview, KeepTool) and the dashboard renders them (KeptPreviews).
+// props over (KeepPreview, KeepTool, KeepDesign) and the dashboard renders them (KeptPreviews).
 // The latest few hidden ones of each kind are kept, since each still runs its page in this tab;
 // one closed, or replaced by something else beside its thread, goes.
 import { useLayoutEffect, useSyncExternalStore, type ComponentType } from 'react'
+import { DesignFolderPanel } from '@/components/file-panel'
 import { PreviewPanel } from '@/components/preview-panel'
 import { ToolPanel } from '@/components/tool-view'
 
@@ -106,11 +107,17 @@ export const dropKeptPreview = previews.drop
 export const KeepTool = tools.Keep
 export const dropKeptTool = tools.drop
 
+type DesignProps = { threadId: string; folder: string; onClose: () => void }
+const designs = keeper<DesignProps>(DesignFolderPanel, (p) => `${p.threadId}:${p.folder}`)
+
+export const KeepDesign = designs.Keep
+export const dropKeptDesign = designs.drop
+
 /** Whether a kept panel shows: changes as one opens or closes beside the page. */
 export function useKeptPanelShown() {
   return useSyncExternalStore(
     subscribe,
-    () => previews.anyShown() || tools.anyShown(),
+    () => previews.anyShown() || tools.anyShown() || designs.anyShown(),
     () => false,
   )
 }
@@ -121,6 +128,7 @@ export function KeptPreviews() {
     <>
       <previews.Kept />
       <tools.Kept />
+      <designs.Kept />
     </>
   )
 }
