@@ -33,7 +33,7 @@ export async function openLink(raw: string) {
   if (!runnerSupported())
     return alert(
       "Teammates can't run on this computer yet",
-      'Brigade runs teammates on macOS and Linux. Connect a Mac or a Linux machine, or use Brigade Cloud.',
+      'Brigade runs teammates on macOS, Windows and Linux. Connect one of those, or use Brigade Cloud.',
       'warning',
     )
   const host = new URL(link.api).host

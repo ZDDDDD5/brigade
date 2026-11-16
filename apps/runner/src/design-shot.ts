@@ -26,6 +26,7 @@ import {
   type DesignViewport,
 } from '@brigade/contracts'
 import { chromium } from 'playwright-core'
+import { WINDOWS_CHROMES } from './windows.js'
 
 type Input = {
   folder: string
@@ -49,6 +50,7 @@ const CHROMES = [
   '/usr/bin/chromium',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  ...WINDOWS_CHROMES,
 ]
 
 async function json<T>(file: string, schema: { safeParse: (v: unknown) => { data?: T } }) {

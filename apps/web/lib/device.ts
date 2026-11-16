@@ -1,6 +1,6 @@
 /**
- * Where this page is open: Brigade.app runs on a Mac, the runner on a Mac or Linux. Windows is
- * told so: Brigade.app runs there, but no teammate does (apps/desktop/src/runner.ts).
+ * Where this page is open: Brigade.app runs teammates on a Mac or a Windows PC (from the release
+ * that does there: windows-app.ts), the runner alone on Linux.
  */
 export type Device = 'mac' | 'linux' | 'windows' | 'other'
 

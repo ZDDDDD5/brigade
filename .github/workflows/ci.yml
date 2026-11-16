@@ -130,6 +130,45 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/ci/test.mjs apps/desktop --import tsx
 
+  # The runner on Windows (apps/runner/src/windows.ts), where Brigade.app runs it natively: its
+  # tests but those test/not-on-windows.txt lists (what runs only on Linux or macOS), the real
+  # install.ps1, and Brigade.app's typecheck and tests. So the Windows layer can't rot unnoticed.
+  windows:
+    name: Windows (runner, installer, desktop)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the shared packages
+        run: pnpm exec turbo run build --filter='@brigade/runner^...' --filter=@brigade/contracts
+
+      - name: Typecheck (runner, desktop)
+        run: pnpm --filter @brigade/runner --filter @brigade/desktop typecheck
+
+      - name: Runner
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/test.mjs apps/runner --import tsx
+
+      - name: Installer (install.ps1)
+        if: ${{ !cancelled() }}
+        working-directory: apps/api
+        run: node --import tsx --test test/runner-install-windows.test.ts
+
+      - name: Desktop
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/test.mjs apps/desktop --import tsx
+
   # The runner's bundle, as the API's deploy builds it (Workers Builds, scripts/deploy/workers.sh):
   # the API serves it as a Worker asset, and Workers take none past 25 MiB, so a bigger one fails
   # the deploy after the merge (#849, #888). bundle.sh fails past 24 MiB, here before the merge.

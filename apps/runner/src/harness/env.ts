@@ -7,6 +7,7 @@ import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { agentDesktopBinary, shellQuote } from '../agent-desktop.js'
+import { pathKey } from '../windows.js'
 
 /** API keys never reach a harness. */
 const API_KEYS =
@@ -109,6 +110,10 @@ export function harnessEnv(extra: Record<string, string> = {}): Record<string, s
   } catch (error) {
     console.warn(`could not write the agent-desktop shim: ${String(error)}`)
   }
-  env.PATH = [SHIM_DIR, dirname(process.execPath), env.PATH].filter(Boolean).join(delimiter)
+  // Windows names it Path, and two of them would leave the child either one.
+  const key = pathKey(env)
+  const path = env[key]
+  delete env[key]
+  env.PATH = [SHIM_DIR, dirname(process.execPath), path].filter(Boolean).join(delimiter)
   return { ...env, ...extra }
 }

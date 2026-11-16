@@ -65,7 +65,7 @@ Website: ${SITE_URL}. Docs: ${DOCS_URL}. Source code: ${REPO_URL}. Live demo, no
 - Starts on its own: from triggers (an email, a webhook, an App event such as a failed payment) and schedules.
 - Apps: Gmail, Google Calendar, Drive, Docs and Sheets, GitHub, Stripe, Notion, Linear, Atlassian, PostHog, Mixpanel, Google Analytics, Search Console, Ahrefs, Cloudflare, Vercel, Neon, Supabase, Resend and more, plus any MCP server and custom webhooks. With Cloud, each teammate can have its own email address.
 - Teams: members share a workspace: threads, lists, the library of documents and memory.
-- Where it runs: free on the user's own computer (macOS or Linux; Windows is not supported). Brigade Cloud ($99 a month per workspace) gives teammates a computer of their own that keeps working when the user's is off.
+- Where it runs: free on the user's own computer (macOS, Windows or Linux). Brigade Cloud ($99 a month per workspace) gives teammates a computer of their own that keeps working when the user's is off.
 - Open source: the whole product is on GitHub under the MIT license and can be self-hosted.
 
 ## Who it is for

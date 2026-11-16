@@ -1,0 +1,2 @@
+# Runner tests left out on Windows (scripts/ci/test.mjs): each runs what the runner does only on
+# Linux or macOS. One file per line, why after the #. Every other test runs on Windows too.

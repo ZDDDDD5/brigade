@@ -11,6 +11,7 @@ import type { HarnessV1NetworkSandboxSession } from '@ai-sdk/harness'
 import { runnerCgroups, type TurnCgroup } from '../preview-cgroup.js'
 import { processGroups } from '../process-groups.js'
 import { asTeammate, threadNet, type ThreadNet } from '../thread-net.js'
+import { ownGroup, posixShell, stopTree, toMsys, toNative, WINDOWS } from '../windows.js'
 
 type SandboxSession = ReturnType<HarnessV1NetworkSandboxSession['restricted']>
 type ProcessOptions = Parameters<SandboxSession['spawn']>[0]
@@ -27,7 +28,8 @@ type SandboxProcess = {
 /** Node's error code, such as ENOENT. */
 const code = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.code
 
-/** Stop a process group. One a teammate's sudo started is killed as that teammate, who owns it. */
+/** Stop a process group (on Windows, a process tree). One a teammate's sudo started is killed
+ * as that teammate, who owns it. */
 export function stopGroup(pid: number, runAs?: string) {
   if (runAs) {
     spawnChild('sudo', ['-n', '-u', runAs, '--', 'kill', '-TERM', '--', `-${pid}`], {
@@ -35,11 +37,7 @@ export function stopGroup(pid: number, runAs?: string) {
     }).on('error', () => undefined)
     return
   }
-  try {
-    process.kill(-pid, 'SIGTERM')
-  } catch {
-    // already gone
-  }
+  stopTree(pid)
 }
 
 /**
@@ -87,7 +85,14 @@ export function createLocalSandboxSession(options: {
 } {
   const children = new Set<ChildProcess>()
   let adopted = options.adopt ?? []
-  const at = (path: string) => (isAbsolute(path) ? path : resolve(options.workingDirectory, path))
+  // On Windows, the harness works with Git Bash's paths (windows.ts): files take Windows ones.
+  const at = (path: string) =>
+    WINDOWS
+      ? toNative(path, options.workingDirectory)
+      : isAbsolute(path)
+        ? path
+        : resolve(options.workingDirectory, path)
+  const shown = WINDOWS ? toMsys(options.workingDirectory) : options.workingDirectory
   const runAs = options.runAs
   const shell = options.shell ?? 'sh'
   const net = runAs && options.thread ? threadNet(options.thread) : Promise.resolve(null)
@@ -116,11 +121,11 @@ export function createLocalSandboxSession(options: {
   ) => {
     const input = stdin ? 'pipe' : 'ignore'
     if (!runAs)
-      return spawnChild(shell, ['-c', command], {
+      return spawnChild(posixShell(shell), ['-c', command], {
         cwd,
         env,
         stdio: [input, 'pipe', 'pipe'],
-        detached: true,
+        ...ownGroup(),
       })
     // sudo -E passes the environment without putting it on the command line. On a cloud
     // computer the runner's service gives it a low OOM score (cgroups.conf in the API's
@@ -297,7 +302,7 @@ export function createLocalSandboxSession(options: {
   }
 
   const restricted: SandboxSession = {
-    description: `Local computer. Working directory: ${options.workingDirectory}`,
+    description: `Local computer. Working directory: ${shown}`,
     readFile: async ({ path }) => {
       if (!runAs)
         return (await exists(path))
@@ -401,7 +406,7 @@ export function createLocalSandboxSession(options: {
   return {
     ...restricted,
     id: options.id,
-    defaultWorkingDirectory: options.workingDirectory,
+    defaultWorkingDirectory: shown,
     ports: [options.port],
     getPortEndpoint: async ({ port, protocol }) => ({ url: await endpoint(port, protocol) }),
     getPortUrl: async ({ port, protocol }) => endpoint(port, protocol),
