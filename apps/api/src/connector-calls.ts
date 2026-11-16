@@ -20,7 +20,12 @@ import {
   type GitHubCredential,
 } from './connectors/github-app.js'
 import { refreshGoogle, type GoogleCredential } from './connectors/google-oauth.js'
-import { tokenRefused, withMetaToken, type MetaCredential } from './connectors/meta-oauth.js'
+import {
+  describeMetaToken,
+  tokenRefused,
+  withMetaToken,
+  type MetaCredential,
+} from './connectors/meta-oauth.js'
 import { refreshMcp, type McpCredential } from './connectors/mcp.js'
 import { serverOf } from './mcp-servers.js'
 import { isMcp, mcpOperation } from './mcp-tools.js'
@@ -689,7 +694,22 @@ export async function authorisedFetch(
           .clone()
           .json()
           .catch(() => null)
-        if (tokenRefused(response.status, body)) await needsReauth()
+        if (tokenRefused(response.status, body)) {
+          // A write Meta refuses while reads with the same token work is not an expired
+          // sign-in: say what Meta knows of the token (never the token) in the error the
+          // teammate sees and in the logs, and keep the account connected.
+          if ((init.method ?? 'GET').toUpperCase() !== 'GET') {
+            const about = await describeMetaToken(credential.accessToken)
+            console.warn(`meta write refused (${connection.id}): ${about}`)
+            const e = (body as { error?: { message?: string } } | null)?.error
+            if (e) e.message = `${e.message ?? 'Refused'} [token: ${about}]`
+            return new Response(JSON.stringify(body), {
+              status: response.status,
+              headers: { 'content-type': 'application/json' },
+            })
+          }
+          await needsReauth()
+        }
       }
       return response
     }

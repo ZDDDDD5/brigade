@@ -372,3 +372,33 @@ test('a write carries the token in its form body, a read in a Bearer header', ()
   const read = withMetaToken({}, 'tok')
   assert.equal((read.headers as Record<string, string>).authorization, 'Bearer tok')
 })
+
+test('a refused write is explained by what Meta says of the token, never the token', async () => {
+  const { describeMetaToken } = await import('../src/connectors/meta-oauth.js')
+  const real = globalThis.fetch
+  let sent = ''
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    sent = String(init.body)
+    return new Response(
+      JSON.stringify({
+        data: {
+          type: 'USER',
+          app_id: '1',
+          is_valid: true,
+          expires_at: 0,
+          scopes: ['ads_read', 'ads_management'],
+          granular_scopes: [{ scope: 'ads_management', target_ids: ['act_9'] }, { scope: 'ads_read' }],
+        },
+      }),
+    )
+  }) as typeof fetch
+  try {
+    const about = await describeMetaToken('secret-token')
+    assert.match(about, /type=USER/)
+    assert.match(about, /granular=ads_management\[act_9\] ads_read\[all\]/)
+    assert.ok(!about.includes('secret-token'))
+    assert.ok(sent.includes('input_token=secret-token'))
+  } finally {
+    globalThis.fetch = real
+  }
+})
