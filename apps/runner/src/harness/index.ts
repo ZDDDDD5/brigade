@@ -811,7 +811,7 @@ export class HarnessThread {
   ) {
     this.key = spec.starter ? spec.sessionId : `${spec.sessionId}-${spec.teammate.id}`
     this.stateFile = join(stateDir, `${this.key}.json`)
-    this.outbox = new Outbox((event) => this.emitEvent(event))
+    this.outbox = new Outbox((event) => this.out(event))
   }
 
   async run(input: ThreadInput, spec: ThreadSpec, signal: AbortSignal): Promise<TurnOutcome> {
@@ -2696,12 +2696,25 @@ export class HarnessThread {
 
   private emit(event: DistributiveOmit<AgentEvent, 'at'>) {
     const stamped = { ...event, at: new Date().toISOString() } as AgentEvent
-    if (stamped.type === 'tool.finished') {
-      this.toolStats.calls++
-      if (stamped.isError) this.toolStats.errors++
-    }
     this.noteBackground(stamped)
     this.outbox.send(stamped)
+  }
+
+  /**
+   * An event as it goes out, with the turn's tool stats (for the harness benchmark): each finished
+   * tool call counts, the harness's own as much as the runner's, and the turn's end says how many
+   * went out before it, held ones (a done block's call) included.
+   */
+  private out(event: AgentEvent) {
+    if (event.type === 'tool.finished') {
+      this.toolStats.calls++
+      if (event.isError) this.toolStats.errors++
+    }
+    this.emitEvent(
+      event.type === 'turn.completed'
+        ? { ...event, toolCalls: this.toolStats.calls, toolErrors: this.toolStats.errors }
+        : event,
+    )
   }
 
   /** What the turn runs in the background now, from its events (background.ts). */
@@ -2740,9 +2753,7 @@ export class HarnessThread {
       type: 'turn.completed',
       finishReason,
       ...(this.saved?.later?.length ? { waiting: true } : {}),
-      // For the harness benchmark (docs/harnesses.md): this run of the turn's tool calls.
-      toolCalls: this.toolStats.calls,
-      toolErrors: this.toolStats.errors,
+      // Its tool stats are set as it goes out (out), after the calls sent before it.
     })
   }
 }

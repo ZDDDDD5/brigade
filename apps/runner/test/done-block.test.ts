@@ -306,6 +306,13 @@ async function turn(
   }
 }
 
+/** The turn's tool stats, as the harness benchmark reads them (turn.completed). */
+const stats = (events: AgentEvent[]) => {
+  const done = events.find((e) => e.type === 'turn.completed') as
+    { toolCalls?: number; toolErrors?: number } | undefined
+  return [done?.toolCalls, done?.toolErrors]
+}
+
 const shown = (seen: string[]) =>
   seen.filter((s) => !['usage.updated', 'raw', 'message.delta'].includes(s))
 
@@ -324,6 +331,8 @@ test('the turn ends once Brigade declared the thread done, the reply before it',
   ])
   const reply = t.events.find((e) => e.type === 'message.done') as { text: string }
   assert.equal(reply.text, REPLY, 'the person never sees the block')
+  // Its complete_thread counts among the turn's tool calls.
+  assert.deepEqual(stats(t.events), [1, 0])
 })
 
 test('answered early, the turn’s end and the guess at the next message wait for Brigade’s answer', async () => {
@@ -350,6 +359,7 @@ test('refused, the turn still ends, with what is open under the reply', async ()
     isError: boolean
   }
   assert.deepEqual([finished.output, finished.isError], [{ error: open }, true])
+  assert.deepEqual(stats(t.events), [1, 1])
   assert.equal(shown(t.seen).at(-1), 'turn.completed')
 })
 
