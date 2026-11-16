@@ -86,3 +86,40 @@ jobs:
           else
             node test/e2e/smoke.mjs
           fi
+
+  # Computer use on Linux, served by Brigade.app itself: the packaged app in an X11 desktop session
+  # (Xvfb with Mutter, as GNOME on Xorg), asked what the runner asks, its effects checked on GNOME
+  # Calculator and Text Editor (test/e2e/linux-computer-use.mjs). agent-desktop, which reads apps'
+  # interfaces, needs Ubuntu 24.04. GNOME on Wayland runs the same test by hand
+  # (test/e2e/linux-sessions.sh … wayland): headless gnome-shell is too slow to start reliably here.
+  linux-computer-use:
+    name: Linux computer use
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @brigade/desktop...
+      - name: Package
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: apps/desktop/scripts/build.sh --dir
+      - name: Desktop session
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb mutter at-spi2-core dbus-x11 xdotool imagemagick \
+            gnome-calculator gnome-text-editor >/dev/null
+      # The agent-desktop the runner pins (apps/runner's devDependency).
+      - name: agent-desktop
+        run: |
+          VERSION=$(node -p "require('./apps/runner/package.json').devDependencies['agent-desktop']")
+          mkdir -p "$RUNNER_TEMP/agent-desktop" && cd "$RUNNER_TEMP/agent-desktop"
+          npm pack "agent-desktop@$VERSION" >/dev/null && tar xzf agent-desktop-*.tgz
+          echo "AGENT_DESKTOP=$PWD/package/bin/agent-desktop-linux-x64" >> "$GITHUB_ENV"
+      - name: Computer use (X11)
+        working-directory: apps/desktop
+        run: test/e2e/linux-sessions.sh release/out/linux-unpacked/brigade-desktop "$AGENT_DESKTOP" x11

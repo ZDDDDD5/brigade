@@ -4,8 +4,12 @@
 // the runner or the terminal that started it. A command it starts (run) gets
 // them too, which a command in a teammate's own shell does not. It listens on a Unix socket in
 // ~/.brigade/computer-use and checks the token it writes beside it.
-import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+//
+// On a member's Linux computer, Brigade.app answers on the same socket itself (apps/desktop
+// src/linux): no permission to hold there, but the pill with Stop and the input that Wayland lets
+// no other process send. It writes the path that starts it to ~/.brigade/computer-use/app.
+import { execFile, spawn } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { homedir } from 'node:os'
@@ -33,11 +37,22 @@ export class ComputerUseError extends Error {
 }
 
 /**
- * The installed helper app, on macOS only: $BRIGADE_COMPUTER_USE_APP (Brigade.app sets it), the
- * one inside Brigade.app (for a runner started in a terminal), ~/Applications or /Applications.
+ * The installed helper app: $BRIGADE_COMPUTER_USE_APP (Brigade.app sets it), the one inside
+ * Brigade.app (for a runner started in a terminal), ~/Applications or /Applications. On Linux,
+ * Brigade.app's own executable, as it last wrote it.
  */
-export function computerUseApp(): string | undefined {
-  if (process.platform !== 'darwin') return
+export function computerUseApp(platform = process.platform): string | undefined {
+  if (platform === 'linux') {
+    const fromApp = (() => {
+      try {
+        return readFileSync(join(DIR, 'app'), 'utf8').trim()
+      } catch {
+        return undefined
+      }
+    })()
+    return [process.env.BRIGADE_COMPUTER_USE_APP, fromApp].find((path) => path && existsSync(path))
+  }
+  if (platform !== 'darwin') return
   const candidates = [
     process.env.BRIGADE_COMPUTER_USE_APP,
     join('/Applications/Brigade.app/Contents/Resources', COMPUTER_USE_APP),
@@ -146,8 +161,11 @@ export class ComputerUseClient {
 
   private launch() {
     this.launching ??= (async () => {
+      if (process.platform === 'linux')
+        // Brigade.app, which serves computer use as it starts (a second launch goes to the first).
+        spawn(this.app, ['--computer-use'], { detached: true, stdio: 'ignore' }).unref()
       // -g: in the background, without taking the person's focus.
-      await execFileAsync('open', ['-g', '-a', this.app])
+      else await execFileAsync('open', ['-g', '-a', this.app])
       const until = Date.now() + LAUNCH_MS
       for (;;) {
         try {
@@ -216,7 +234,8 @@ export class ComputerUseClient {
 
 let shared: ComputerUseClient | undefined
 
-/** One client for the runner's threads, when the app is installed on this Mac. */
+/** One client for the runner's threads, when the app is installed on this Mac (or Brigade.app on
+ * this Linux computer). */
 export function computerUseClient(): ComputerUseClient | undefined {
   const app = computerUseApp()
   if (!app) return

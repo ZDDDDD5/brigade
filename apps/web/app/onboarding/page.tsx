@@ -38,6 +38,7 @@ import {
 } from '@/lib/api'
 import { authClient } from '@/lib/auth-client'
 import { detectDevice, type Device } from '@/lib/device'
+import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
 import { MAC_APP_URL } from '@/lib/mac-app'
 import { useWindowsAppReady, WINDOWS_APP_URL } from '@/lib/windows-app'
 import { markSignedIn, markSignedOut } from '@/lib/signed-in'
@@ -563,10 +564,10 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
   // Once they set up their own machine, Brigade Cloud steps back to one line.
   const cloudCompact = planNeeded && (!!link || !!machine)
 
-  // On Linux and Chromebooks the command is the way in: show it straight away.
+  // On Chromebooks the command is the way in: show it straight away.
   const linuxLink = useRef(false)
   useEffect(() => {
-    if ((device !== 'linux' && device !== 'chromeos') || !computers.data || machine) return
+    if (device !== 'chromeos' || !computers.data || machine) return
     if (linuxLink.current) return
     linuxLink.current = true
     void getLink()
@@ -717,29 +718,52 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
   ) : null
 
   const free = <StatusBadge status="free" tone="success" />
-  /** Brigade.app's download and link, where it runs teammates: a Mac, or a Windows PC. */
-  const app =
-    device === 'mac'
+  /** Brigade.app's download and link, where it runs teammates: a Mac, a Linux desktop (a .deb,
+   * or the AppImage for other distributions), or a Windows PC. */
+  const app: {
+    os: string
+    name: string
+    icon: React.ReactNode
+    url: string
+    meta: string
+    asks: string
+    terminal: boolean
+    label?: string
+    other?: { url: string; label: string }
+  } | null =
+    device === 'linux'
       ? {
-          os: 'Mac',
-          name: 'Mac',
-          icon: <AppleLogo />,
-          url: MAC_APP_URL,
-          meta: 'Uses the Claude or Codex login already on it. Your teammates work while your Mac is awake.',
-          asks: 'Brigade.app asks before it installs anything.',
+          os: 'Linux',
+          name: 'computer',
+          icon: <Laptop />,
+          url: LINUX_DEB_URL,
+          label: 'Download Brigade for Linux (.deb)',
+          other: { url: LINUX_APPIMAGE_URL, label: 'Not Ubuntu or Debian? Get the AppImage' },
+          meta: 'Uses the Claude or Codex login already on it. Your teammates work while it is on.',
+          asks: 'Brigade asks before it installs anything.',
           terminal: true,
         }
-      : device === 'windows' && windowsReady
+      : device === 'mac'
         ? {
-            os: 'Windows',
-            name: 'PC',
-            icon: <WindowsLogo />,
-            url: WINDOWS_APP_URL,
-            meta: 'You sign in to Claude or ChatGPT once it is linked. Your teammates work while your PC is on.',
-            asks: 'Brigade asks before it installs anything, then sets itself up in a few minutes.',
-            terminal: false,
+            os: 'Mac',
+            name: 'Mac',
+            icon: <AppleLogo />,
+            url: MAC_APP_URL,
+            meta: 'Uses the Claude or Codex login already on it. Your teammates work while your Mac is awake.',
+            asks: 'Brigade.app asks before it installs anything.',
+            terminal: true,
           }
-        : null
+        : device === 'windows' && windowsReady
+          ? {
+              os: 'Windows',
+              name: 'PC',
+              icon: <WindowsLogo />,
+              url: WINDOWS_APP_URL,
+              meta: 'You sign in to Claude or ChatGPT once it is linked. Your teammates work while your PC is on.',
+              asks: 'Brigade asks before it installs anything, then sets itself up in a few minutes.',
+              terminal: false,
+            }
+          : null
   const until = link && new Date(link.expiresAt).toLocaleTimeString([], { timeStyle: 'short' })
   const expired = !!link && Date.parse(link.expiresAt) <= now
   const slow = !!link && now - link.issuedAt >= SLOW_LINK_MS
@@ -797,9 +821,18 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
             <Button variant="outline" size="lg" asChild>
               <a href={app.url} onClick={() => void getLink()}>
                 {app.icon}
-                Download Brigade for {app.os}
+                {app.label ?? `Download Brigade for ${app.os}`}
               </a>
             </Button>
+            {app.other && (
+              <a
+                href={app.other.url}
+                onClick={() => void getLink()}
+                className="text-center text-xs text-muted-foreground underline underline-offset-4"
+              >
+                {app.other.label}
+              </a>
+            )}
             {app.terminal && (
               <button
                 type="button"
@@ -818,9 +851,14 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
           </>
         ) : terminal || !link.appLink ? (
           <>
-            <p className="text-sm text-muted-foreground">Run this in a terminal on your Mac:</p>
+            <p className="text-sm text-muted-foreground">
+              Run this in a terminal on {device === 'mac' ? 'your Mac' : 'it'}:
+            </p>
             <Command command={link.command} />
-            {waitFor('Mac', 'code')}
+            {waitFor(device === 'mac' ? 'Mac' : 'machine', 'code')}
+            {device === 'linux' && slow && !expired && (
+              <TerminalHelp onNewCode={() => void getLink()} />
+            )}
           </>
         ) : (
           <>
@@ -867,29 +905,6 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
               </details>
             )}
           </>
-        )}
-      </CardContent>
-    </Card>
-  ) : device === 'linux' ? (
-    <Card className={cn(!link && 'bg-transparent shadow-none')}>
-      <CardContent className="flex flex-col gap-4">
-        <CardHead
-          icon={<Terminal />}
-          title="Run them on this machine"
-          meta="Uses the claude or codex login already on it. Your teammates work while it is on."
-          aside={free}
-        />
-        {link ? (
-          <>
-            <p className="text-sm text-muted-foreground">Run this in a terminal on it:</p>
-            <Command command={link.command} />
-            {waitFor('machine', 'code')}
-            {slow && !expired && <TerminalHelp onNewCode={() => void getLink()} />}
-          </>
-        ) : (
-          <Button variant="outline" className="self-start" onClick={() => void getLink()}>
-            Get the install command
-          </Button>
         )}
       </CardContent>
     </Card>

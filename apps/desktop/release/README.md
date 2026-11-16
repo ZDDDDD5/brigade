@@ -14,13 +14,13 @@ installed app from updating: they all read the latest release.
 
 What a release holds:
 
-| File                                                                         | For                                                                         |
-| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `Brigade.dmg`                                                                | Installing on macOS: the dashboard links to it (`apps/web/lib/mac-app.ts`). |
-| `Brigade-<version>-universal-mac.zip`, `latest-mac.yml`                      | Updates on macOS.                                                           |
-| `Brigade-Setup.exe`, `latest.yml`                                            | Installing and updating on Windows (not code-signed yet).                   |
-| `Brigade-x86_64.AppImage`, `brigade_<version>_amd64.deb`, `latest-linux.yml` | Installing and updating on Linux.                                           |
-| `Brigade.app.tar.gz`, `latest.json`                                          | The Tauri Brigade.app (0.3.x) updating to this one.                         |
+| File                                                               | For                                                                                                   |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `Brigade.dmg`                                                      | Installing on macOS: the dashboard links to it (`apps/web/lib/mac-app.ts`).                           |
+| `Brigade-<version>-universal-mac.zip`, `latest-mac.yml`            | Updates on macOS.                                                                                     |
+| `Brigade-Setup.exe`, `latest.yml`                                  | Installing and updating on Windows (not code-signed yet).                                             |
+| `Brigade-amd64.deb`, `Brigade-x86_64.AppImage`, `latest-linux.yml` | Installing and updating on Linux: the dashboard links to the first two (`apps/web/lib/linux-app.ts`). |
+| `Brigade.app.tar.gz`, `latest.json`                                | The Tauri Brigade.app (0.3.x) updating to this one.                                                   |
 
 Installed apps check the latest release at launch and every six hours, download a newer version
 and offer "Restart to update" (`src/updates.ts`).

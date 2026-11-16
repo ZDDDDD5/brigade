@@ -65,6 +65,9 @@ operators hold the encryption key, as any hosted service does; if that matters t
   permissions. While a teammate acts, a pill on screen shows its name with a **Stop** button. A command that needs
   those permissions to work in your apps runs through the same helper, under the same pill, and nothing it started
   keeps running after it ends. Brigade.app itself never needs Accessibility.
+- **Computer use on Linux** is served by Brigade.app itself, on a socket only your user can open, with the same pill
+  and **Stop**. On Wayland, screenshots need your desktop's permission, asked once, and on GNOME the pointer and
+  keyboard go through GNOME's remote desktop, whose screen-sharing icon shows while a teammate acts.
 - **Computer use on a Windows PC** needs no permission: the runner, started by Brigade in your session, reads and
   uses your apps through Windows' UI Automation as you would. There is no Stop pill on screen: stop a teammate's
   turn in its thread.

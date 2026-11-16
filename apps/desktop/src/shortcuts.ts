@@ -5,9 +5,9 @@ import type { Settings } from './settings.js'
 
 export type Kind = 'screenshot' | 'newThread'
 
-/** A screenshot needs Brigade Computer Use, which is macOS only. */
+/** A screenshot needs Brigade Computer Use: on macOS, and in Brigade.app itself on Linux. */
 export const kinds = (platform = process.platform): Kind[] =>
-  platform === 'darwin' ? ['screenshot', 'newThread'] : ['newThread']
+  platform === 'darwin' || platform === 'linux' ? ['screenshot', 'newThread'] : ['newThread']
 
 type Choice = { id: string; label: string }
 
@@ -16,12 +16,18 @@ type Choice = { id: string; label: string }
 export function choices(kind: Kind, platform = process.platform): Choice[] {
   const mac = platform === 'darwin'
   if (kind === 'screenshot')
-    return [
-      { id: 'cmd+shift+2', label: '⌘⇧2' },
-      { id: 'ctrl+shift+s', label: '⌃⇧S' },
-      { id: 'ctrl+alt+cmd+b', label: '⌃⌥⌘B' },
-      { id: 'off', label: 'Off' },
-    ]
+    return mac
+      ? [
+          { id: 'cmd+shift+2', label: '⌘⇧2' },
+          { id: 'ctrl+shift+s', label: '⌃⇧S' },
+          { id: 'ctrl+alt+cmd+b', label: '⌃⌥⌘B' },
+          { id: 'off', label: 'Off' },
+        ]
+      : [
+          { id: 'ctrl+shift+2', label: 'Ctrl+Shift+2' },
+          { id: 'ctrl+alt+s', label: 'Ctrl+Alt+S' },
+          { id: 'off', label: 'Off' },
+        ]
   return mac
     ? [
         { id: 'cmd+shift+1', label: '⌘⇧1' },

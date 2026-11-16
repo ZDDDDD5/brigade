@@ -3853,6 +3853,13 @@ const ABOUT_MAC =
   'with the top-left of the main display at 0,0: the same units as computer_screenshot and computer_ui_tree. ' +
   'While you act, a pill on their screen shows your name with a Stop button.'
 
+/** On a member's Linux computer, where Brigade.app serves computer use itself. */
+const ABOUT_COMPUTER_LINUX =
+  "On the person's own Linux computer (this computer), through Brigade.app. Coordinates are screen points " +
+  'with the top-left of the main display at 0,0: the same units as computer_screenshot and computer_ui_tree. ' +
+  'Shortcuts use ctrl where a Mac uses cmd (cmd is the Super key here). ' +
+  'While you act, a pill on their screen shows your name with a Stop button.'
+
 const point = {
   x: { type: 'number', description: 'Screen x, in points' },
   y: { type: 'number', description: 'Screen y, in points' },
@@ -3868,7 +3875,7 @@ const APP_FOR_KEYS = {
 } as const
 
 /**
- * See and use the apps on a member's Mac: screenshots, the mouse and keyboard,
+ * See and use the apps on a member's Mac or Linux computer: screenshots, the mouse and keyboard,
  * opening apps and reading their interface. For what nothing else reaches:
  * the shell, a CLI or an app's own tools come first.
  */
@@ -3877,13 +3884,17 @@ export function computerUseTools(
   /** Input for a named app, straight to its process (desktop-tools.ts's macAppInput). */
   appInput?: AppInput,
   /**
-   * A Mac (Brigade Computer Use), or a Windows PC (agent-desktop, harness/windows-computer.ts),
-   * which has no computer_run (its commands need no helper's permission there) nor ui_tree.
+   * A Mac (Brigade Computer Use), a Linux computer (Brigade.app serves the same requests), or a
+   * Windows PC (agent-desktop, harness/windows-computer.ts), which has no computer_run (its
+   * commands need no helper's permission there) nor ui_tree.
    */
-  system: 'mac' | 'windows' = 'mac',
+  system: 'mac' | 'windows' | 'linux' = process.platform === 'linux' ? 'linux' : 'mac',
 ): Record<string, Tool> {
   const windows = system === 'windows'
-  const ABOUT_COMPUTER = windows ? ABOUT_WINDOWS : ABOUT_MAC
+  const linux = system === 'linux'
+  const about = windows ? ABOUT_WINDOWS : linux ? ABOUT_COMPUTER_LINUX : ABOUT_MAC
+  /** "Mac", "PC" or "computer", as the descriptions name it. */
+  const here = windows ? 'PC' : linux ? 'computer' : 'Mac'
   const act =
     (method: string) =>
     (input: object, { abortSignal }: { abortSignal?: AbortSignal }) =>
@@ -3934,7 +3945,7 @@ export function computerUseTools(
         'Take a screenshot of a display. Returns the PNG it saved in your working directory (images/...): open it ' +
         'to look at it. Take one before acting on what is on screen and after, to check it worked. With share, ' +
         'the thread shows it too, for when the person asked to see their screen. ' +
-        ABOUT_COMPUTER,
+        about,
       inputSchema: jsonSchema<{ display?: number; share?: boolean }>({
         type: 'object',
         properties: {
@@ -3965,7 +3976,7 @@ export function computerUseTools(
       },
     }),
     computer_click: tool({
-      description: 'Click at a point on screen. ' + ABOUT_COMPUTER,
+      description: 'Click at a point on screen. ' + about,
       inputSchema: jsonSchema<{
         x: number
         y: number
@@ -3994,7 +4005,7 @@ export function computerUseTools(
     }),
     computer_move: tool({
       description:
-        'Move the pointer to a point, e.g. to show a tooltip or a menu on hover. ' + ABOUT_COMPUTER,
+        'Move the pointer to a point, e.g. to show a tooltip or a menu on hover. ' + about,
       inputSchema: jsonSchema<{ x: number; y: number }>({
         type: 'object',
         properties: point,
@@ -4003,7 +4014,7 @@ export function computerUseTools(
       execute: act('move'),
     }),
     computer_drag: tool({
-      description: 'Press at one point, drag to another and release. ' + ABOUT_COMPUTER,
+      description: 'Press at one point, drag to another and release. ' + about,
       inputSchema: jsonSchema<{ fromX: number; fromY: number; toX: number; toY: number }>({
         type: 'object',
         properties: {
@@ -4017,7 +4028,7 @@ export function computerUseTools(
       execute: act('drag'),
     }),
     computer_scroll: tool({
-      description: 'Scroll at a point. ' + ABOUT_COMPUTER,
+      description: 'Scroll at a point. ' + about,
       inputSchema: jsonSchema<{
         x: number
         y: number
@@ -4040,7 +4051,7 @@ export function computerUseTools(
         'the field that has its focus, even when another app comes to the front meanwhile, and the app ' +
         'stays where it is. Without one, it goes to the app in front, which the answer names (front), ' +
         'and a newline presses Return. computer_act (type, set_value) on a ref comes first. ' +
-        ABOUT_COMPUTER,
+        about,
       inputSchema: jsonSchema<{ text: string; app?: string }>({
         type: 'object',
         properties: { text: { type: 'string' }, app: APP_FOR_KEYS },
@@ -4057,12 +4068,12 @@ export function computerUseTools(
     }),
     computer_key: tool({
       description:
-        'Press a key or a shortcut: "return", "escape", "tab", "cmd+n", "cmd+shift+t", "down". Name the ' +
+        `Press a key or a shortcut: "return", "escape", "tab", "${linux || windows ? 'ctrl+n' : 'cmd+n'}", "${linux || windows ? 'ctrl+shift+t' : 'cmd+shift+t'}", "down". Name the ` +
         'app it is for: it is sent only if that app is in front as it goes, to what has its focus (its ' +
         'dialogs and sheets too); nothing is sent otherwise. An app behind others takes no key, ' +
         "so it is refused there unless front: true brings the app forward first (taking the person's focus). " +
         'Without app, it goes to the app in front, which the answer names (front). ' +
-        ABOUT_COMPUTER,
+        about,
       inputSchema: jsonSchema<{ key: string; app?: string; front?: boolean }>({
         type: 'object',
         properties: {
@@ -4072,7 +4083,7 @@ export function computerUseTools(
             type: 'boolean',
             description:
               "Bring the app to the front first when it is behind another, taking the person's focus: " +
-              'only when they are not using the Mac (default false)',
+              `only when they are not using the ${here} (default false)`,
           },
         },
         required: ['key'],
@@ -4092,7 +4103,7 @@ export function computerUseTools(
                 throw new Error(
                   `${app} is behind ${front?.name ?? 'another app'}, and an app behind others takes no key ` +
                     '(its menus, which shortcuts go through, are off there), so nothing was sent. If the person ' +
-                    `is not using the Mac, call again with front: true: it brings ${app} to the front first, ` +
+                    `is not using the ${here}, call again with front: true: it brings ${app} to the front first, ` +
                     'taking their focus. Text for one of its fields goes in from behind: computer_act on its ref, ' +
                     'or computer_type with app.',
                 )
@@ -4137,18 +4148,20 @@ export function computerUseTools(
       },
     }),
     computer_apps: tool({
-      description:
-        `The apps running on this ${windows ? 'PC' : 'Mac'}, which one is in front. ` +
-        ABOUT_COMPUTER,
+      description: `The apps running on this ${here}, which one is in front. ` + about,
       inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
       execute: act('apps'),
     }),
     computer_open_app: tool({
       description:
-        'Open an app (or bring it to the front) by name or bundle id, e.g. "Visual Studio Code" or ' +
-        '"com.apple.Notes". It answers once a window of it is there, with its windows (an app may open ' +
-        'on a dialog: TextEdit on its Open panel, whose New Document makes a document). ' +
-        ABOUT_COMPUTER,
+        (linux
+          ? 'Open an app (or bring it to the front) by the name computer_apps lists, its desktop entry ' +
+            '(e.g. "Text Editor" or "org.gnome.TextEditor") or its command ("firefox"). It answers once a ' +
+            'window of it is there, with its windows. '
+          : 'Open an app (or bring it to the front) by name or bundle id, e.g. "Visual Studio Code" or ' +
+            '"com.apple.Notes". It answers once a window of it is there, with its windows (an app may open ' +
+            'on a dialog: TextEdit on its Open panel, whose New Document makes a document). ') +
+        about,
       inputSchema: jsonSchema<{ app: string }>({
         type: 'object',
         properties: { app: { type: 'string' } },
@@ -4183,19 +4196,29 @@ export function computerUseTools(
       },
     }),
     computer_run: tool({
-      description:
-        'Run a shell command (zsh) through Brigade Computer Use, so that it gets the helper’s Accessibility and ' +
-        'Screen Recording: for a command that clicks, types in, reads or records other apps, such as ' +
-        'agent-desktop (for what computer_snapshot and computer_act do not cover: its batch, wait or find), ' +
-        'osascript with System Events or a screen recorder. Commands in your own shell have ' +
-        'neither on this Mac, and fail for lack of them (agent-desktop: PERM_DENIED): run those here, and ' +
-        'everything else in your shell. While it runs, the pill shows your name with Stop; whatever it leaves ' +
-        'running in the background is stopped when it ends. Returns its output (stdout and stderr, the last ' +
-        `${COMMAND_OUTPUT_MAX / 1000} KB) and exit code. On the person's own Mac (this computer).`,
+      description: linux
+        ? 'Run a shell command (bash) in the person’s own desktop session, through Brigade.app: for a command ' +
+          'that clicks, types in, reads or records other apps, such as agent-desktop (for what ' +
+          'computer_snapshot and computer_act do not cover: its batch, wait or find), xdotool or a screen ' +
+          'recorder. It gets the session’s display and buses whatever your shell has. Everything else goes in ' +
+          'your shell. While it runs, the pill shows your name with Stop; whatever it leaves running in its ' +
+          'process group is stopped when it ends. Returns its output (stdout and stderr, the last ' +
+          `${COMMAND_OUTPUT_MAX / 1000} KB) and exit code. On the person's own Linux computer (this computer).`
+        : 'Run a shell command (zsh) through Brigade Computer Use, so that it gets the helper’s Accessibility and ' +
+          'Screen Recording: for a command that clicks, types in, reads or records other apps, such as ' +
+          'agent-desktop (for what computer_snapshot and computer_act do not cover: its batch, wait or find), ' +
+          'osascript with System Events or a screen recorder. Commands in your own shell have ' +
+          'neither on this Mac, and fail for lack of them (agent-desktop: PERM_DENIED): run those here, and ' +
+          'everything else in your shell. While it runs, the pill shows your name with Stop; whatever it leaves ' +
+          'running in the background is stopped when it ends. Returns its output (stdout and stderr, the last ' +
+          `${COMMAND_OUTPUT_MAX / 1000} KB) and exit code. On the person's own Mac (this computer).`,
       inputSchema: jsonSchema<{ command: string; cwd?: string; timeout?: number }>({
         type: 'object',
         properties: {
-          command: { type: 'string', description: 'The command line, run with zsh -c' },
+          command: {
+            type: 'string',
+            description: `The command line, run with ${linux ? 'bash' : 'zsh'} -c`,
+          },
           cwd: {
             type: 'string',
             description: 'Where it runs: relative to your working directory (default), or absolute',
@@ -4230,7 +4253,7 @@ export function computerUseTools(
         } catch (error) {
           if (error instanceof ComputerUseError && error.code === 'unknown_method')
             throw new Error(
-              'The Brigade Computer Use on this Mac is too old to run commands: ask the person to update ' +
+              `The Brigade Computer Use on this ${here} is too old to run commands: ask the person to update ` +
                 'Brigade.app (Check for Updates… in its menu), then try again.',
             )
           throw error
@@ -4244,7 +4267,7 @@ export function computerUseTools(
         "An app's interface as text: each element's role, title, value and frame [x,y w×h] in screen points. " +
         'Cheaper and more exact than a screenshot to find what to click: click the middle of its frame. ' +
         'computer_snapshot comes first: its refs act without moving the pointer. ' +
-        ABOUT_COMPUTER,
+        about,
       inputSchema: jsonSchema<{
         app?: string
         maxDepth?: number
@@ -4255,7 +4278,9 @@ export function computerUseTools(
         properties: {
           app: {
             type: 'string',
-            description: 'Name, bundle id or pid (default: the app in front)',
+            description: linux
+              ? 'Name or desktop entry, as computer_apps lists it (default: the app in front)'
+              : 'Name, bundle id or pid (default: the app in front)',
           },
           maxDepth: { type: 'number', description: 'Default 12' },
           maxNodes: { type: 'number', description: 'Default 400' },

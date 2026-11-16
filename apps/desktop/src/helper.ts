@@ -1,6 +1,8 @@
 // Brigade Computer Use.app (apps/computer-use-macos), shipped inside Brigade.app on macOS:
 // it holds Screen Recording and Accessibility. Asked over its socket (the runner's protocol,
 // apps/runner/src/computer-use.ts) and started in the background when it isn't running.
+// On Linux, Brigade.app itself answers on that socket (linux/computer-use.ts): `app` is then
+// Brigade.app's own executable, and there is nothing to start.
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
@@ -21,6 +23,7 @@ export class Helper {
   constructor(readonly app: string | undefined) {}
 
   static find(resources: string) {
+    if (process.platform === 'linux') return linuxExecutable()
     const app = join(resources, 'Brigade Computer Use.app')
     return process.platform === 'darwin' && existsSync(app) ? app : undefined
   }
@@ -29,7 +32,7 @@ export class Helper {
    * replaced, so the next request starts the one inside this Brigade.app with a fresh view of
    * its permissions. It holds no state worth keeping; the runner starts it on demand. */
   restart() {
-    if (!this.app) return
+    if (!this.app || process.platform !== 'darwin') return
     execFile('pkill', ['-x', 'brigade-computer-use'], () => {})
   }
 
@@ -85,7 +88,7 @@ export class Helper {
 
   /** In the background (-g). Opening it also makes macOS ask for what is missing. */
   launch() {
-    if (!this.app) return
+    if (!this.app || process.platform !== 'darwin') return
     execFile('open', ['-g', '-a', this.app], () => {})
   }
 
@@ -125,6 +128,12 @@ export class Helper {
     }
     return { screen: result.screenRecording === true, accessibility: result.accessibility === true }
   }
+}
+
+/** What starts this Brigade.app on Linux: the AppImage when it runs as one (its executable is
+ * inside a mount that goes away), else the installed executable. */
+export function linuxExecutable() {
+  return process.env.APPIMAGE || process.execPath
 }
 
 function unwrap(reply: Reply) {

@@ -23,6 +23,8 @@ import { cn } from '@/lib/utils'
 import { Hint } from '@/components/ui/tooltip'
 import { api, useApi, type Computer, type ComputersResponse } from '@/lib/api'
 import { useLive } from '@/lib/use-live'
+import { detectDevice } from '@/lib/device'
+import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
 import { MAC_APP_URL } from '@/lib/mac-app'
 import { useWindowsAppReady, WINDOWS_APP_URL } from '@/lib/windows-app'
 
@@ -74,16 +76,31 @@ export default function Computers() {
   const [busy, setBusy] = useState(false)
   const [replacing, setReplacing] = useState(false)
 
-  // On a Mac, the app links this computer; on Windows too, from the release that runs teammates
-  // there; elsewhere, the command in a terminal.
+  // On a Mac or a Linux desktop, the app links this computer; on Windows too, from the release
+  // that runs teammates there; elsewhere, the command in a terminal.
   const [mac, setMac] = useState(false)
   const [windows, setWindows] = useState(false)
+  const [linux, setLinux] = useState(false)
   const windowsReady = useWindowsAppReady()
-  const app = mac
+  const app: {
+    name: string
+    os: string
+    url: string
+    label?: string
+    other?: { url: string; label: string }
+  } | null = mac
     ? { name: 'Mac', os: 'Mac', url: MAC_APP_URL }
     : windows && windowsReady
       ? { name: 'PC', os: 'Windows', url: WINDOWS_APP_URL }
-      : null
+      : linux
+        ? {
+            name: 'computer',
+            os: 'Linux',
+            url: LINUX_DEB_URL,
+            label: 'Download for Ubuntu or Debian (.deb)',
+            other: { url: LINUX_APPIMAGE_URL, label: 'AppImage' },
+          }
+        : null
 
   useLive((message) => {
     if (message.type === 'computer.updated') void computers.reload()
@@ -108,6 +125,7 @@ export default function Computers() {
   useEffect(() => {
     setMac(/Mac/.test(navigator.userAgent) && !/iPhone|iPad/.test(navigator.userAgent))
     setWindows(/Windows/.test(navigator.userAgent))
+    setLinux(detectDevice(navigator.userAgent) === 'linux')
     // "Connect this computer…" in Brigade.app's menu opens ?desktop=1: the code is what it came for.
     if (new URLSearchParams(window.location.search).has('desktop')) void getLink()
     // Once, on load.
@@ -318,8 +336,13 @@ export default function Computers() {
               <>
                 <div className="flex flex-wrap gap-2">
                   <Button asChild variant="outline">
-                    <a href={app.url}>Download Brigade for {app.os}</a>
+                    <a href={app.url}>{app.label ?? `Download Brigade for ${app.os}`}</a>
                   </Button>
+                  {app.other && (
+                    <Button asChild variant="outline">
+                      <a href={app.other.url}>{app.other.label}</a>
+                    </Button>
+                  )}
                   <Button asChild>
                     <a href={link.appLink}>Open in Brigade</a>
                   </Button>

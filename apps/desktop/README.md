@@ -13,7 +13,8 @@ Windows and Linux); it:
   over its top right, in a view of its own so it never finds its own field (`src/find.ts`,
   `page/find.html`); a code editor that has its own search keeps the key;
 - on macOS, takes screenshots for that window and lets teammates use the Mac's apps through
-  Brigade Computer Use.app (`apps/computer-use-macos`), which it ships inside;
+  Brigade Computer Use.app (`apps/computer-use-macos`), which it ships inside; on Linux, it answers
+  those requests itself (`src/linux`, `docs/development.md`);
 - walks a new member through what is missing (`src/setup.ts`, `page/setup.html`), opens at login
   (`src/autostart.ts`) and updates itself (`src/updates.ts`);
 - shows the person's notifications itself once turned on in Settings, Notifications: Electron has

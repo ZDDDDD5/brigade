@@ -203,6 +203,9 @@ importers:
       typescript:
         specifier: 7.0.2
         version: 7.0.2
+      x11:
+        specifier: 4.4.0
+        version: 4.4.0
 
   apps/docs: {}
 
@@ -7285,6 +7288,10 @@ packages:
         optional: true
       utf-8-validate:
         optional: true
+
+  x11@4.4.0:
+    resolution: {integrity: sha512-xqIUMvrWJawtd8pQgD85t0sUnBbk94Bd21Gevn0vPYvRH0hkyP3CQjeT85aJEw+ZK/txO4mIwj1P9LM1+mhuJA==}
+    engines: {node: '>=18'}
 
   xml-name-validator@5.0.0:
     resolution: {integrity: sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==}
@@ -15061,6 +15068,8 @@ snapshots:
   ws@8.21.0: {}
 
   ws@8.22.0: {}
+
+  x11@4.4.0: {}
 
   xml-name-validator@5.0.0: {}
 

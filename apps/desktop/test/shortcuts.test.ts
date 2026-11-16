@@ -20,9 +20,10 @@ test('writes them as Electron does', () => {
   assert.equal(accelerator('off'), undefined)
 })
 
-test('screenshots on macOS only, and no shortcut offered twice', () => {
+test('screenshots on macOS and Linux, and no shortcut offered twice', () => {
   assert.deepEqual(kinds('darwin'), ['screenshot', 'newThread'])
-  assert.deepEqual(kinds('linux'), ['newThread'])
+  assert.deepEqual(kinds('linux'), ['screenshot', 'newThread'])
+  assert.deepEqual(kinds('win32'), ['newThread'])
   for (const platform of ['darwin', 'linux', 'win32'] as const) {
     const ids = kinds(platform).flatMap((k) => choices(k, platform).map((c) => c.id))
     const real = ids.filter((id) => id !== 'off')

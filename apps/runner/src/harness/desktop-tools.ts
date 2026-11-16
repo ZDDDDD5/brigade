@@ -50,10 +50,15 @@ export type Desktop = {
 /** The teammate's browser, as agent-desktop names it on Linux. */
 const CLOUD_APP = 'chrome'
 
+/** A member's own computer is a Mac, or Linux where Brigade.app serves computer use itself. */
+const MEMBER_LINUX = process.platform === 'linux'
+
 const ABOUT = {
-  mac:
-    "On the person's own Mac (this computer), through Brigade Computer Use: while you act, a pill on " +
-    'their screen shows your name with a Stop button.',
+  mac: MEMBER_LINUX
+    ? "On the person's own Linux computer (this computer), through Brigade.app: while you act, a pill on " +
+      'their screen shows your name with a Stop button. Shortcuts use ctrl where a Mac uses cmd.'
+    : "On the person's own Mac (this computer), through Brigade Computer Use: while you act, a pill on " +
+      'their screen shows your name with a Stop button.',
   windows:
     "On the person's own Windows PC (this computer), in their session: you use their apps as they " +
     'would, so leave alone what they are working in unless asked.',
@@ -132,10 +137,13 @@ function stepProperties(where: Desktop['where']): Record<string, JSONSchema7> {
 }
 
 /** The surfaces agent-desktop reads on each: a Mac has a focused element and popovers, Linux not. */
+const LINUX_SURFACES = ['window', 'menu', 'sheet', 'alert'] as const
 const SURFACES = {
-  mac: ['window', 'focused', 'menu', 'menubar', 'sheet', 'popover', 'alert'],
-  windows: ['window', 'focused', 'menu', 'sheet', 'start-menu', 'taskbar', 'system-tray'],
-  cloud: ['window', 'menu', 'sheet', 'alert'],
+  mac: MEMBER_LINUX
+    ? LINUX_SURFACES
+    : (['window', 'focused', 'menu', 'menubar', 'sheet', 'popover', 'alert'] as const),
+  windows: ['window', 'focused', 'menu', 'sheet', 'start-menu', 'taskbar', 'system-tray'] as const,
+  cloud: LINUX_SURFACES,
 } as const
 
 /** The windows agent-desktop lists when a command matched several: their ids and titles. */
@@ -1034,7 +1042,7 @@ export function macDesktopExec(
       } catch (error) {
         if (error instanceof ComputerUseError && error.code === 'unknown_method')
           throw new Error(
-            'The Brigade Computer Use on this Mac is too old for this: ask the person to update ' +
+            `The Brigade Computer Use on this ${MEMBER_LINUX ? 'computer' : 'Mac'} is too old for this: ask the person to update ` +
               'Brigade.app (Check for Updates… in its menu), or use computer_screenshot and computer_click.',
           )
         throw error

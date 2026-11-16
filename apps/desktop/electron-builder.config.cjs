@@ -63,5 +63,6 @@ module.exports = {
     ],
   },
   appImage: { artifactName: 'Brigade-x86_64.AppImage' },
-  deb: { artifactName: 'brigade_${version}_amd64.deb' },
+  // Names without the version: the dashboard links to the latest release's (apps/web/lib/linux-app.ts).
+  deb: { artifactName: 'Brigade-amd64.deb' },
 }
