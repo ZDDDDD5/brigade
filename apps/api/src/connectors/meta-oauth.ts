@@ -106,6 +106,58 @@ export function withMetaToken(init: RequestInit, accessToken: string): RequestIn
   }
 }
 
+/**
+ * What Meta says of a token, without the token: its type, app, validity and permissions, with the
+ * objects each permission was granted on. For a write Meta refuses while reads work, it tells
+ * whether the token lacks ads_management on that ad account or is of a kind Meta will not let
+ * write. Asked with the app's own token (app ID and secret), in a POST body, never a URL.
+ */
+export async function describeMetaToken(accessToken: string): Promise<string> {
+  try {
+    const response = await fetch(`${GRAPH}/debug_token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        input_token: accessToken,
+        access_token: `${env.META_APP_ID}|${env.META_APP_SECRET}`,
+        method: 'GET',
+      }),
+    })
+    const body = (await response.json().catch(() => ({}))) as {
+      data?: {
+        type?: string
+        app_id?: string
+        is_valid?: boolean
+        expires_at?: number
+        data_access_expires_at?: number
+        scopes?: string[]
+        granular_scopes?: { scope: string; target_ids?: string[] }[]
+        error?: { code?: number; subcode?: number; message?: string }
+      }
+      error?: { message?: string }
+    }
+    const d = body.data
+    if (!d) return `debug_token failed: ${body.error?.message ?? response.status}`
+    const granular = (d.granular_scopes ?? [])
+      .map((g) => `${g.scope}${g.target_ids ? `[${g.target_ids.join(',')}]` : '[all]'}`)
+      .join(' ')
+    return [
+      `type=${d.type}`,
+      `app=${d.app_id}`,
+      `valid=${d.is_valid}`,
+      d.error ? `error=${d.error.code}/${d.error.subcode} ${d.error.message ?? ''}` : '',
+      `expires=${d.expires_at ? new Date(d.expires_at * 1000).toISOString() : 'never'}`,
+      `dataAccess=${d.data_access_expires_at ? new Date(d.data_access_expires_at * 1000).toISOString() : '-'}`,
+      `scopes=${(d.scopes ?? []).join(',')}`,
+      granular ? `granular=${granular}` : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+  } catch (error) {
+    return `debug_token failed: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
 /** Whether a Graph API error says the token no longer works (OAuthException 190, or 102). */
 export const tokenRefused = (status: number, body: unknown) => {
   const code = (body as { error?: { code?: number } } | null)?.error?.code
