@@ -13,6 +13,7 @@ import { cancelQuit, stopForQuit } from './lifecycle.js'
 import { showLogs } from './logs.js'
 import { runnerSupported, workspace } from './runner.js'
 import { dashboard } from './settings.js'
+import * as workspaces from './workspaces.js'
 import { showDashboard } from './windows.js'
 
 const SCREEN_SETTINGS =
@@ -197,7 +198,8 @@ let window: BrowserWindow | undefined
 /** hasAiSignIn, asked again every few seconds at most (a Mac asks its keychain). */
 let ai: { at: number; found: Promise<boolean> } | undefined
 const aiSignIn = () => {
-  if (!ai || Date.now() - ai.at > 5_000) ai = { at: Date.now(), found: hasAiSignIn() }
+  if (!ai || Date.now() - ai.at > 5_000)
+    ai = { at: Date.now(), found: hasAiSignIn(workspaces.homeOf(workspaces.active())) }
   return ai.found
 }
 
