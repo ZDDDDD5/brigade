@@ -108,7 +108,11 @@ test('the next runner stops the groups the one before left running', async () =>
   assert.equal(mine.length, 3)
 
   const reaped = await new ProcessGroups(file).reap()
-  assert.match(reaped ?? '', /^3 process\(es\) of turn t/)
+  // Windows: the console host (conhost.exe) the leader got is its child too, and goes with it.
+  assert.match(
+    reaped ?? '',
+    process.platform === 'win32' ? /^[34] process\(es\) of turn t/ : /^3 process\(es\) of turn t/,
+  )
   const left = (await processes()).filter((p) => mine.some((m) => m.pid === p.pid))
   assert.deepEqual(left, [])
   // The list is the new runner's now: a runner after it finds nothing to stop.
