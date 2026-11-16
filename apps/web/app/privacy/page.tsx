@@ -158,6 +158,30 @@ export default function Privacy() {
         or train generalized AI or machine learning models.
       </p>
 
+      <h2>Data from Meta</h2>
+      <p>
+        When you connect the Meta Ads App with Facebook, Brigade asks for <code>ads_read</code>,{' '}
+        <code>ads_management</code> and <code>business_management</code>, and uses them only for the
+        work you or your teammates ask for: reading the reports, campaigns, ad sets and ads of the
+        ad accounts you pick, and pausing, activating or changing the budget of a campaign, ad set
+        or ad when you ask, each change approved first as your teammate&apos;s access says. Brigade
+        also reads your Facebook name, to show which account is connected.
+      </p>
+      <p>
+        Your Meta access token is kept encrypted in the vault. What a teammate reads or writes with
+        it is kept in the thread where it did the work, until you delete that thread, and is sent to
+        your Claude or Codex subscription only to do that work. We don&apos;t use data from Meta for
+        ads, sell it, use it to train AI models, or let anyone read it, except when you ask us to
+        for support, for security, or when the law requires it.
+      </p>
+      <p id="meta-data-deletion">
+        To delete your data from Meta: disconnect the account in Apps › Meta Ads, which deletes its
+        token, or delete the threads that used it. You can also remove Brigade in your Facebook
+        settings (Settings › Business integrations), which ends its access at once, and email{' '}
+        <a href={`mailto:${OPERATOR.email}`}>{OPERATOR.email}</a> to have everything Brigade kept
+        from your Meta account deleted within 30 days.
+      </p>
+
       <h2>Who we share it with</h2>
       <p>
         We share your data only with the services that run Brigade for us, and only what each needs:
