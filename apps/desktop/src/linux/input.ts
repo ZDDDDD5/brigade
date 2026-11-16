@@ -24,6 +24,13 @@ export type Check = () => void
 
 /** The mouse and keyboard. */
 export interface Input {
+  /**
+   * Called right before each event that presses, moves or scrolls is sent, after whatever the
+   * action awaited to prepare it (a session, the keymap): InputLine sets it to the turn's check
+   * for the time of an action, so a Stop that came meanwhile sends nothing more. Releases are
+   * always sent.
+   */
+  guard?: Check | undefined
   move(p: Point): Promise<void>
   click(p: Point, button: string, count: number, modifiers: string[], check?: Check): Promise<void>
   drag(from: Point, to: Point, check?: Check): Promise<void>

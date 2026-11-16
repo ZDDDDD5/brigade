@@ -9,7 +9,8 @@ import {
 } from '../src/linux/dbus.js'
 import { cropOf, monitorAt } from '../src/linux/input.js'
 import { charKeysym, keyKeysym, parseCombo } from '../src/linux/keys.js'
-import { mutterMonitors } from '../src/linux/mutter.js'
+import { MutterInput, mutterMonitors } from '../src/linux/mutter.js'
+import type { Bus } from '../src/linux/dbus.js'
 import { InputLine } from '../src/linux/input-line.js'
 import { Sessions } from '../src/linux/sessions.js'
 import { X11Input } from '../src/linux/x11-input.js'
@@ -165,19 +166,21 @@ test('one teammate turn at a time, until the person presses Stop', () => {
 })
 
 /** XTEST through a stand-in X connection: what was sent, in order. */
-function fakeX11(onKey?: (count: number) => void) {
+function fakeX11(onKey?: (count: number) => void, beforeKeymap?: () => Promise<void>) {
   let keys = 0
   let cursor: { x: number; y: number } | undefined
   const clicked: { x: number; y: number }[] = []
   const pressed = new Set<number>()
   const client = {
     GetKeyboardMapping: (_s: number, _c: number, cb: (e: null, rows: number[][]) => void) =>
-      cb(null, [
-        [0x61, 0x41],
-        [0xffe1, 0],
-        [0xffe3, 0],
-        [0, 0],
-      ]),
+      void (beforeKeymap?.() ?? Promise.resolve()).then(() =>
+        cb(null, [
+          [0x61, 0x41],
+          [0xffe1, 0],
+          [0xffe3, 0],
+          [0, 0],
+        ]),
+      ),
     GetInputFocus: (cb: (e: null) => void) => setImmediate(() => cb(null)),
     ChangeKeyboardMapping: () => undefined,
   }
@@ -256,4 +259,93 @@ test('a drag stopped midway lets go of the button', async () => {
     /pressed Stop/,
   )
   assert.equal(x.pressed.size, 0)
+})
+
+test('Stop while the input is starting sends nothing', async () => {
+  const sessions = new Sessions({ show: () => undefined, hide: () => undefined })
+  const x = fakeX11()
+  let started!: () => void
+  const line = new InputLine(
+    sessions,
+    () => new Promise((resolve) => (started = () => resolve(x.input))),
+  )
+  const id = sessions.begin({ id: 'starting' })
+  const sent = line.run(id, (input) => input.key('a'))
+  await new Promise((resolve) => setImmediate(resolve))
+  sessions.stop()
+  started()
+  await assert.rejects(sent, /pressed Stop/)
+  assert.equal(x.keys(), 0)
+})
+
+test('Stop while the keymap is read sends no key, and nothing stays pressed', async () => {
+  const sessions = new Sessions({ show: () => undefined, hide: () => undefined })
+  const x = fakeX11(undefined, async () => {
+    sessions.stop()
+  })
+  const line = new InputLine(sessions, async () => x.input)
+  const id = sessions.begin({ id: 'keymap' })
+  await assert.rejects(
+    line.run(id, (input) => input.key('ctrl+a')),
+    /pressed Stop/,
+  )
+  assert.equal(x.keys(), 0)
+  assert.equal(x.pressed.size, 0)
+})
+
+test('on GNOME Wayland, Stop while the session opens sends no key, and releases a held modifier', async () => {
+  const sessions = new Sessions({ show: () => undefined, hide: () => undefined })
+  const calls: { member: string; body: unknown[] }[] = []
+  let opened!: () => void
+  const opening = new Promise<void>((resolve) => (opened = resolve))
+  const bus = {
+    on: () => undefined,
+    off: () => undefined,
+    match: async () => undefined,
+    property: async () => 'id',
+    call: async ({ member, body }: { member: string; body?: unknown[] }) => {
+      calls.push({ member, body: body ?? [] })
+      if (member === 'CreateSession') {
+        await opening
+        return ['/session']
+      }
+      if (member === 'GetCurrentState') return [1, [], [], { 'layout-mode': 1 }]
+      return []
+    },
+  } as unknown as Bus
+  const input = new MutterInput(bus, () => undefined)
+  const line = new InputLine(sessions, async () => input)
+  const id = sessions.begin({ id: 'wayland' })
+  const sent = line.run(id, (i) => i.key('a'))
+  await new Promise((resolve) => setImmediate(resolve))
+  sessions.stop()
+  opened()
+  await assert.rejects(sent, /pressed Stop/)
+  const keys = calls.filter((c) => c.member === 'NotifyKeyboardKeysym')
+  assert.deepEqual(keys, [])
+
+  // A modifier pressed, then Stop before the key: the modifier is let go.
+  const sessions2 = new Sessions({ show: () => undefined, hide: () => undefined })
+  const line2 = new InputLine(sessions2, async () => input)
+  const id2 = sessions2.begin({ id: 'wayland2' })
+  const before = calls.length
+  const realCall = bus.call.bind(bus)
+  ;(bus as unknown as { call: typeof bus.call }).call = async (c) => {
+    const answer = await realCall(c)
+    if (c.member === 'NotifyKeyboardKeysym' && (c.body as unknown[])[1] === true) sessions2.stop()
+    return answer
+  }
+  await assert.rejects(
+    line2.run(id2, (i) => i.key('ctrl+a')),
+    /pressed Stop/,
+  )
+  const sent2 = calls.slice(before).filter((c) => c.member === 'NotifyKeyboardKeysym')
+  assert.deepEqual(
+    sent2.map((c) => c.body),
+    [
+      [0xffe3, true],
+      [0xffe3, false],
+    ],
+  )
+  await input.close()
 })

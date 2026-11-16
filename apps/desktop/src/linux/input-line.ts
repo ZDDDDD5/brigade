@@ -1,7 +1,8 @@
 // The mouse and keyboard, one action at a time across every connection: the runner opens a
 // socket per request, and two clicks sent in parallel once both landed on the second's point.
 // An action waits for those before it, then runs only while its turn may still act: Stop or a
-// cancel while it waited sends nothing, and `check` stops a long one between its steps.
+// cancel while it waited sends nothing, and the input checks it again right before each press,
+// move or scroll it sends, after whatever it awaited to prepare it.
 import type { Check, Input } from './input.js'
 import { HelperError, STOPPED_MESSAGE, type Sessions } from './sessions.js'
 
@@ -23,7 +24,15 @@ export class InputLine {
     try {
       await before
       check()
-      return await work(await this.input(), check)
+      const input = await this.input()
+      // Again after the input's start, and before each event it sends (Input.guard).
+      check()
+      input.guard = check
+      try {
+        return await work(input, check)
+      } finally {
+        input.guard = undefined
+      }
     } finally {
       done()
     }

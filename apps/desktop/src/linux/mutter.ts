@@ -229,8 +229,13 @@ export class MutterInput implements Input {
     return session
   }
 
-  private async notify(member: string, signature: string, body: unknown[]) {
+  guard: Check | undefined
+
+  /** `starts`: a press, a move or a scroll, sent only while the turn may still act (guard),
+   * checked once the session is there; a release always goes. */
+  private async notify(member: string, signature: string, body: unknown[], starts = true) {
     const session = await this.use()
+    if (starts) this.guard?.()
     try {
       await this.bus.call({
         destination: RD,
@@ -265,12 +270,13 @@ export class MutterInput implements Input {
     ])
   }
 
-  private keysym(keysym: number, pressed: boolean) {
-    return this.notify('NotifyKeyboardKeysym', 'ub', [keysym, pressed])
+  /** `cleanup`: a press that undoes what a stopped action left (Escape), sent even then. */
+  private keysym(keysym: number, pressed: boolean, cleanup = false) {
+    return this.notify('NotifyKeyboardKeysym', 'ub', [keysym, pressed], pressed && !cleanup)
   }
 
   private button(number: number, pressed: boolean) {
-    return this.notify('NotifyPointerButton', 'ib', [EVDEV[number]!, pressed])
+    return this.notify('NotifyPointerButton', 'ib', [EVDEV[number]!, pressed], pressed)
   }
 
   async move(p: Point) {
@@ -283,8 +289,12 @@ export class MutterInput implements Input {
     const held = modifiers.map(modifierKeysym)
     await this.place(p)
     await sleep(20)
-    for (const keysym of held) await this.keysym(keysym, true)
+    const down: number[] = []
     try {
+      for (const keysym of held) {
+        await this.keysym(keysym, true)
+        down.push(keysym)
+      }
       for (let i = 0; i < Math.max(1, Math.min(count, 3)); i++) {
         check?.()
         await this.button(number, true)
@@ -292,7 +302,7 @@ export class MutterInput implements Input {
         await sleep(50)
       }
     } finally {
-      for (const keysym of [...held].reverse()) await this.keysym(keysym, false)
+      for (const keysym of down.reverse()) await this.keysym(keysym, false)
     }
   }
 
@@ -351,31 +361,55 @@ export class MutterInput implements Input {
   }
 
   private async unicode(code: number) {
-    await this.keysym(0xffe3, true) // Control_L
-    await this.keysym(0xffe1, true) // Shift_L
-    await this.keysym(0x75, true) // u
-    await this.keysym(0x75, false)
-    await this.keysym(0xffe1, false)
-    await this.keysym(0xffe3, false)
-    await sleep(20)
-    for (const digit of code.toString(16)) {
-      const keysym = digit.charCodeAt(0)
+    const down: number[] = []
+    const press = async (keysym: number) => {
       await this.keysym(keysym, true)
-      await this.keysym(keysym, false)
+      down.push(keysym)
     }
-    await this.keysym(0x20, true)
-    await this.keysym(0x20, false)
-    await sleep(20)
+    const release = async (keysym: number) => {
+      await this.keysym(keysym, false)
+      down.splice(down.lastIndexOf(keysym), 1)
+    }
+    let entering = false
+    try {
+      await press(0xffe3) // Control_L
+      await press(0xffe1) // Shift_L
+      await press(0x75) // u
+      await release(0x75)
+      await release(0xffe1)
+      await release(0xffe3)
+      entering = true
+      await sleep(20)
+      for (const digit of code.toString(16)) {
+        await press(digit.charCodeAt(0))
+        await release(digit.charCodeAt(0))
+      }
+      await press(0x20)
+      await release(0x20)
+      await sleep(20)
+    } catch (error) {
+      // Stopped halfway: nothing left held, and the code being entered is dropped (Escape).
+      for (const keysym of down.reverse()) await this.keysym(keysym, false).catch(() => undefined)
+      if (entering) {
+        await this.keysym(0xff1b, true, true).catch(() => undefined)
+        await this.keysym(0xff1b, false).catch(() => undefined)
+      }
+      throw error
+    }
   }
 
   async key(combo: string) {
     const { modifiers, key } = parseCombo(combo)
-    for (const keysym of modifiers) await this.keysym(keysym, true)
+    const down: number[] = []
     try {
+      for (const keysym of modifiers) {
+        await this.keysym(keysym, true)
+        down.push(keysym)
+      }
       await this.keysym(key, true)
       await this.keysym(key, false)
     } finally {
-      for (const keysym of [...modifiers].reverse()) await this.keysym(keysym, false)
+      for (const keysym of down.reverse()) await this.keysym(keysym, false)
     }
     await sleep(20)
   }

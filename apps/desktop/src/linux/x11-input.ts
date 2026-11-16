@@ -112,7 +112,11 @@ export class X11Input implements Input {
     return { x: Math.round(p.x * s), y: Math.round(p.y * s) }
   }
 
+  guard: Check | undefined
+
   private fake(type: number, detail: number, x = 0, y = 0) {
+    // A press or a move, not a release: only while the turn may still act.
+    if (type !== this.xtest.KeyRelease && type !== this.xtest.ButtonRelease) this.guard?.()
     this.xtest.FakeInput(type, detail, 0, type === this.xtest.MotionNotify ? this.root : 0, x, y)
   }
 
