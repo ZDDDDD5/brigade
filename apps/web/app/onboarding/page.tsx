@@ -37,6 +37,7 @@ import {
   type ThreadSummary,
 } from '@/lib/api'
 import { authClient } from '@/lib/auth-client'
+import { detectDevice, type Device } from '@/lib/device'
 import { MAC_APP_URL } from '@/lib/mac-app'
 import { markSignedIn, markSignedOut } from '@/lib/signed-in'
 import { useLive } from '@/lib/use-live'
@@ -290,17 +291,6 @@ export default function Onboarding() {
 
 type LinkCode = { command: string; expiresAt: string; appLink?: string }
 
-/** Where this page is open: Brigade.app runs on a Mac, the runner on a Mac or Linux. */
-type Device = 'mac' | 'linux' | 'other'
-
-function detectDevice(): Device {
-  const ua = navigator.userAgent
-  if (/iPhone|iPad|Android/.test(ua)) return 'other'
-  if (/Mac/.test(ua)) return 'mac'
-  if (/Linux|X11/.test(ua)) return 'linux'
-  return 'other'
-}
-
 /** Apple's mark, in the text color, for the Mac download. */
 function AppleLogo({ className }: { className?: string }) {
   return (
@@ -488,7 +478,7 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
     return () => clearInterval(timer)
   }, [reloadAccounts, reloadComputers, check])
 
-  useEffect(() => setDevice(detectDevice()), [])
+  useEffect(() => setDevice(detectDevice(navigator.userAgent)), [])
 
   const getLink = useCallback(() => {
     setError(undefined)
@@ -827,13 +817,21 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
         )}
       </CardContent>
     </Card>
-  ) : device === 'other' ? (
+  ) : device === 'other' || device === 'windows' ? (
     <Card className="bg-transparent shadow-none">
       <CardContent className="flex flex-col gap-4">
         <CardHead
           icon={<Laptop />}
-          title="Have a Mac or Linux machine?"
-          meta="Your teammates can run there, on its Claude or Codex login"
+          title={
+            device === 'windows'
+              ? "Teammates don't run on Windows yet"
+              : 'Have a Mac or Linux machine?'
+          }
+          meta={
+            device === 'windows'
+              ? 'They run for free on a Mac or Linux machine, on its Claude or Codex login'
+              : 'Your teammates can run there, on its Claude or Codex login'
+          }
           aside={free}
         />
         {link ? (
