@@ -409,10 +409,12 @@ export function ToolPanel({
           ) : null}
         </div>
       </div>
-      {accountsOpen && view && (
+      {/* Dialogs open over the whole page, outside the panel: none while it is hidden. What the
+          page asks meanwhile waits for it to show again, and Accounts opens again with it. */}
+      {!hidden && accountsOpen && view && (
         <ToolAccounts view={view} onChanged={refresh} onClose={() => setAccountsOpen(false)} />
       )}
-      {first && <Confirm asking={first} onAnswer={settle} />}
+      {!hidden && first && <Confirm asking={first} onAnswer={settle} />}
     </SidePanel>
   )
 }
