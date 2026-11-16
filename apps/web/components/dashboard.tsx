@@ -880,6 +880,7 @@ function NewThreadRailItem() {
 
 /** ⌘, (Ctrl+, elsewhere) opens Settings, as in most apps; not over a dialog. */
 function useSettingsShortcut() {
+  const router = useRouter()
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented || e.repeat) return
@@ -887,11 +888,12 @@ function useSettingsShortcut() {
       if (!command || e.shiftKey || e.altKey || e.key !== ',') return
       if (document.querySelector('[role=dialog][data-state=open]')) return
       e.preventDefault()
-      openSettings()
+      // Where no dialog shows Settings (Brigade.app's quick-capture window): its address.
+      if (!openSettings()) router.push('/app/settings')
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [router])
 }
 
 /** Folds the sidebar to its icons and back (⌘B); on a phone, opens it. */

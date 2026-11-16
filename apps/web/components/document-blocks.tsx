@@ -57,8 +57,9 @@ function DocumentMention({ mention }: { mention: Mention }) {
       documents.open(libraryDocument({ id: mention.id, path: mention.label }))
     else if (mention.kind === 'teammate') router.push(`/app/teammates/${mention.id}`)
     else if (mention.kind === 'thread') router.push(`/app/threads/${mention.id}`)
-    else if (mention.kind === 'connection') openSettings('/app/connections')
-    else if (mention.kind === 'project' && !isLegacyProjectMention(mention))
+    else if (mention.kind === 'connection') {
+      if (!openSettings('/app/connections')) router.push('/app/connections')
+    } else if (mention.kind === 'project' && !isLegacyProjectMention(mention))
       router.push(`/app/projects/${mention.id}`)
     else if (mention.kind === 'repository' || mention.kind === 'project')
       window.open(`https://github.com/${mention.id}`, '_blank', 'noopener')

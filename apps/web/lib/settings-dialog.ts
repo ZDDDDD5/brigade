@@ -115,13 +115,35 @@ function subscribe(listener: () => void) {
 }
 
 /**
+ * The dialogs mounted to show Settings (SettingsDialog). A page without one, such as Brigade.app's
+ * quick-capture window (/app/capture, outside the dashboard's shell), opens nothing in place: its
+ * links to a section go to its address instead.
+ */
+let hosts = 0
+export function hostSettings() {
+  hosts++
+  return () => void hosts--
+}
+
+/**
  * Open Settings in place, on the section an address names (the first by default), or move it to
- * that section. Returns false, doing nothing, for an address that is no section's.
+ * that section. Returns false, doing nothing, for an address that is no section's, or where no
+ * dialog shows Settings: the caller then goes to the address.
  */
 export function openSettings(href = '/app/settings') {
   const at = settingsAddress(href)
+  if (!at || !hosts) return false
+  show(at)
+  return true
+}
+
+/**
+ * Settings on the section an address names, even before the dialog mounts: a section's address
+ * loaded on its own (SettingsAddress), whose dialog mounts after it.
+ */
+export function showSettings(href: string) {
+  const at = settingsAddress(href)
   if (at) show(at)
-  return !!at
 }
 
 export function closeSettings() {

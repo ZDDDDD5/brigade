@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import type { MouseEvent } from 'react'
 import {
+  clickSettings,
   closeSettings,
+  hostSettings,
   openSettings,
   searchSettings,
   settingsAddress,
   settingsHref,
   SETTINGS_SECTIONS,
+  showSettings,
 } from '../lib/settings-dialog'
 
 test("each section's address opens it", () => {
@@ -39,11 +43,55 @@ test('other addresses are no section', () => {
     assert.equal(settingsAddress(href), null, href)
 })
 
+/** A plain left click on a link, which says whether it was taken. */
+function click() {
+  let prevented = false
+  const e = {
+    defaultPrevented: false,
+    button: 0,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault: () => void (prevented = true),
+  }
+  return { e: e as unknown as MouseEvent<HTMLAnchorElement>, prevented: () => prevented }
+}
+
 test('opening an address that is no section does nothing', () => {
+  const unhost = hostSettings()
   closeSettings()
   assert.equal(openSettings('/app/board'), false)
   assert.equal(openSettings('/app/vault'), true)
   closeSettings()
+  unhost()
+})
+
+test("where no dialog shows Settings (Brigade.app's quick-capture window), a link goes to its address", () => {
+  closeSettings()
+  assert.equal(openSettings('/app/computers'), false)
+  const link = click()
+  clickSettings(link.e, '/app/computers')
+  assert.equal(link.prevented(), false)
+})
+
+test('with the dialog mounted, a link to a section opens it in place', () => {
+  const unhost = hostSettings()
+  const link = click()
+  clickSettings(link.e, '/app/accounts')
+  assert.equal(link.prevented(), true)
+  closeSettings()
+  unhost()
+})
+
+test("a section's address loaded on its own opens it before the dialog mounts", () => {
+  closeSettings()
+  showSettings('/app/billing?subscribed=1')
+  // The dialog mounting next finds it: openSettings now moves it, as from the dialog's nav.
+  const unhost = hostSettings()
+  assert.equal(openSettings('/app/usage'), true)
+  closeSettings()
+  unhost()
 })
 
 test('the search finds a section by its name, its group or what it holds', () => {

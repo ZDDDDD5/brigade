@@ -27,11 +27,13 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
   clickSettings,
   closeSettings,
+  hostSettings,
   openSettings,
   searchSettings,
   settingsAddress,
   settingsHref,
   SETTINGS_SECTIONS,
+  showSettings,
   useSettings,
   type SettingsSection,
 } from '@/lib/settings-dialog'
@@ -79,6 +81,7 @@ export function SettingsDialog() {
   const Section = SECTIONS[section]
   const [query, setQuery] = useState('')
   useCloseOnNavigation(!!shown)
+  useEffect(hostSettings, [])
 
   return (
     <Dialog open={!!shown} onOpenChange={(open) => !open && closeSettings()}>
@@ -249,7 +252,7 @@ function useCloseOnNavigation(open: boolean) {
 export function SettingsAddress() {
   const router = useRouter()
   useEffect(() => {
-    openSettings(location.pathname + location.search)
+    showSettings(location.pathname + location.search)
     router.replace('/app')
   }, [router])
   return null
