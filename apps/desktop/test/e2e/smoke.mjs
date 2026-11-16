@@ -303,7 +303,8 @@ try {
   if (process.platform !== 'win32') {
     await app.evaluate(() => globalThis.brigadeTest.setup.show())
     const setup = await windowAt('setup.html')
-    await setup.waitForSelector('#steps li')
+    // Each teammate is a point on the road (its pebble and name hang off it): present, not sized.
+    await setup.waitForSelector('#steps li', { state: 'attached' })
     const steps = await setup.$$eval('#steps li .title', (els) => els.map((e) => e.textContent))
     check('setup steps', () => assert.ok(steps.includes('Connected to a workspace'), steps.join()))
     const heading = await setup.textContent('#moving h1')
