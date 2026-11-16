@@ -113,7 +113,7 @@ test('the search finds settings inside a section, behind the features the member
   const inside = (q: string, features: string[] = []) =>
     searchSettings(q, features).map((s) => [s.section, s.settings.map((f) => f.anchor)])
   assert.deepEqual(inside('appearance', ['themes']), [
-    ['preferences', ['appearance', 'import-a-theme']],
+    ['preferences', ['appearance', 'suggested-themes', 'import-a-theme']],
   ])
   assert.deepEqual(inside('appearance'), [])
   assert.deepEqual(inside('dark theme', ['themes']), [['preferences', ['appearance']]])

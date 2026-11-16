@@ -175,6 +175,16 @@ export type ThemeFile = z.infer<typeof ThemeFile>
 /** One of a theme's files, as the dashboard and the teammate read it. */
 export type ThemeFileRef = { name: string; contentType: string; size: number }
 
+/** A theme's main colours, as it gives them, for a small preview of it in lists. */
+export type ThemeSwatch = {
+  canvas?: string
+  accent?: string
+  background?: string
+  sidebar?: string
+  card?: string
+  primary?: string
+}
+
 /** A saved theme, in lists. */
 export type ThemeSummary = {
   id: string
@@ -182,6 +192,20 @@ export type ThemeSummary = {
   hasCss: boolean
   files: string[]
   updatedAt: string
+  swatch: ThemeSwatch
+}
+
+/** The colours a theme's preview shows, from the theme itself. */
+export function themeSwatch(theme: Pick<ThemeFile, 'canvas' | 'accent' | 'colors'>): ThemeSwatch {
+  const colors: Partial<Record<string, string>> = theme.colors ?? {}
+  const swatch: ThemeSwatch = {}
+  if (theme.canvas) swatch.canvas = theme.canvas
+  if (theme.accent) swatch.accent = theme.accent
+  for (const key of ['background', 'sidebar', 'card', 'primary'] as const) {
+    const value = colors[key]
+    if (value) swatch[key] = value
+  }
+  return swatch
 }
 
 /** What one look change did. */
@@ -452,6 +476,10 @@ export const THEME_HOOKS = [
   { selector: '[data-look="thread-header"]', what: 'the bar at the top of a thread' },
   { selector: '[data-look="person-message"]', what: "a person's message bubble" },
   { selector: '[data-look="teammate-message"]', what: "a teammate's reply" },
+  {
+    selector: '[data-look="message-actions"]',
+    what: "a reply's Copy and Reply buttons, inside the reply",
+  },
   { selector: '[data-look="tool-step"]', what: "a line of a teammate's work, folded" },
   {
     selector: '[data-look="chat-card"]',

@@ -75,7 +75,9 @@ only to them through the workspace's hub). A window wears only its latest load's
 - Opening the dashboard with `?safe-look` keeps that tab without the theme until it closes, with
   a pill to wear it again.
 - The thread's card has Undo, for the member whose look it is.
-- Preferences → Appearance lists the themes, the last changes ("Go back here"), import and export.
+- Preferences → Appearance shows the themes as a gallery of small previews in their own colours
+  (`ThemeSummary.swatch`): a click wears one, its menu exports or deletes it, a tile imports one.
+  The last changes fold into one History line ("Go back here").
 
 A theme dresses the dashboard's pages (`/app`) only, never the public site. The worn theme's
 colours are kept in the browser and put on the page by a script in its head, before it paints.
@@ -94,6 +96,15 @@ person has the feature (`ThreadSpec.themes`):
 
 The theme is always the thread starter's, and only while they alone ask in the thread: once another member asks there (`shownAccounts`), the tools are no longer offered and the API refuses them, so nobody else's words restyle (or hide controls in) the starter's dashboard. An API from before themes answers the tools with
 "Brigade's server does not have themes yet".
+
+## Suggested themes
+
+Appearance also offers ready-made themes (`apps/web/lib/suggested-themes.ts`: Midnight, Matrix,
+Synthwave, Amber CRT, Paper, Blueprint, Retro 95). A click saves one under its id as the member's
+own and wears it, through the same import as a shared theme, so it is checked the same way; from
+then on it is theirs to change with a teammate, and it leaves the suggestions.
+`apps/web/test/suggested-themes.test.ts` checks that each one passes the API's checks and styles
+only `data-look` and `data-slot` names still in the dashboard.
 
 ## Sharing
 
