@@ -180,7 +180,13 @@ export async function handleConnectorCall(
       : {}
   const callContext = (extra: Partial<ConnectorContext> = {}) =>
     ({
-      fetch: (url: string, init?: RequestInit) => fetch(url, init),
+      // Signed like the call itself: a check that reads the App (Meta Ads reads which ad
+      // account an object belongs to) would otherwise go out with no credential and be
+      // refused (Meta: 401, OAuthException 190). Opened only when a check fetches.
+      fetch: brigade
+        ? (url: string, init?: RequestInit) => fetch(url, init)
+        : async (url: string, init?: RequestInit) =>
+            (await authorisedFetch(db, scope, connection))(url, init),
       callId: call.callId,
       settings: connection.settings,
       ...own,
