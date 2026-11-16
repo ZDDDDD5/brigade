@@ -14,7 +14,7 @@ You can use your own computer for free, Brigade's cloud computer, or both.
 | **Routines and triggers**       | Only while your computer is on      | On time, even at 3 a.m.                              |
 | **AI usage**                    | Your Claude or ChatGPT plan         | Your Claude or ChatGPT plan                          |
 | **Systems**                     | macOS, Windows, Linux               | Nothing to install                                   |
-| **Computer use**                | Any app on your Mac                 | Its own browser; you can take control of its desktop |
+| **Computer use**                | Any app on your Mac or Windows PC   | Its own browser; you can take control of its desktop |
 | **Take control, Teach a task**  | Not yet                             | Yes                                                  |
 | **Website logins from Secrets** | Not yet                             | Yes                                                  |
 | **Turns at once**               | Up to 8 by default                  | Up to 8, shared by the workspace                     |
@@ -58,8 +58,10 @@ Accessibility to Brigade itself.
 Teammates run as your own Windows account, in Git Bash (Git for Windows' bash) for Claude Code and in PowerShell for
 Codex, and work while your PC is on. What differs from a Mac:
 
-- No computer use. Teammates work only while your PC is awake: **Keep screen awake** in Brigade's menu stops it
-  from sleeping.
+- **Computer use** works with no permission to give: teammates read an app's interface through Windows' UI
+  Automation and act on it, and take screenshots, click and press keys where that isn't enough. There is no pill with
+  a Stop button on screen as on a Mac: stop the teammate's turn in its thread.
+- Teammates work only while your PC is awake: **Keep screen awake** in Brigade's menu stops it from sleeping.
 - A preview runs until it is stopped: on a Mac an unused one pauses to free memory.
 - An update of the runner restarts the turns running then from where their conversation was, rather than letting
   them go on, and restarts the previews running then.

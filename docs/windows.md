@@ -60,7 +60,13 @@ change what that account can. Brigade asks before it links the computer, and say
 
 ## What is degraded or missing on Windows
 
-- **Computer use**: macOS only (Brigade Computer Use.app). Off on Windows, as on Linux.
+- **Computer use** works, with agent-desktop's Windows build (UI Automation), run by the runner itself in the
+  person's session (`harness/windows-computer.ts`): computer_snapshot and computer_act on refs, and the screen tools
+  (screenshot, click, move, drag, scroll, keys, apps, open an app) answered as the Mac's helper answers them. No
+  computer_run or computer_ui_tree (no helper permission to borrow; computer_snapshot reads an app's tree), no Stop
+  pill on screen (the turn is stopped in its thread), and computer_type needs the app named. agent-desktop's
+  Windows build needs the Visual C++ runtime, which a Windows without Visual C++ lacks: `agent-desktop.ts` puts an
+  app-local `vcruntime140.dll` beside it, from python.org's embeddable Python, pinned by SHA-256.
 - **Previews**: they start, are proxied and stop. An unused one is not paused (no SIGSTOP), and none is measured or
   held in a cgroup (Linux only). An update of the runner restarts the previews running then, rather than handing
   them over.
