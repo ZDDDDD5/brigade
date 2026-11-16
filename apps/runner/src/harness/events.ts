@@ -422,7 +422,7 @@ export class EventMapper {
   /** Recognise an out-of-usage error from either harness. */
   static exhaustedBy(message: string): { resetsAt: string | null } | undefined {
     if (
-      !/usage limit|limit reached|hit your (usage )?limit|out of (usage|credits)|quota exceeded|rate_limit_error|too many requests/i.test(
+      !/usage limit|limit reached|hit your (?:[\w-]+ )?limit|out of (usage|credits)|quota exceeded|rate_limit_error|too many requests/i.test(
         message,
       )
     )
@@ -708,7 +708,11 @@ export class EventMapper {
       case 'error': {
         const message = errorMessage(part.error)
         const exhausted = EventMapper.exhaustedBy(message)
-        if (exhausted) return void (this.exhausted = exhausted)
+        // Its text rarely says when the limit resets; the rate limit event before it may have.
+        if (exhausted)
+          return void (this.exhausted = {
+            resetsAt: exhausted.resetsAt ?? this.exhausted?.resetsAt ?? null,
+          })
         this.error ??= message
         // No failure of the teammate's: the thread goes on in a new session (HarnessThread.run).
         if (EventMapper.sessionLost(message)) return void (this.lost = true)

@@ -104,3 +104,18 @@ test('a message settled by its side reply leaves the thread as its turn left it'
     'running',
   )
 })
+
+test('a turn that moves to another account once its own ran out runs again, not failed', () => {
+  const limit: AgentEvent = { at, type: 'error', message: "You've hit your 5-hour limit" }
+  const switched = (toAccountId: string | null): AgentEvent => ({
+    at,
+    type: 'account.switched',
+    fromAccountId: 'a1',
+    toAccountId,
+    reason: 'usage_limit',
+    resetsAt: null,
+  })
+  assert.equal(fold([limit, switched('a2')], 'running'), 'running')
+  // No account left: it pauses, as before.
+  assert.equal(fold([limit, switched(null)], 'running'), 'paused')
+})
