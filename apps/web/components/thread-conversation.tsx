@@ -33,6 +33,7 @@ import {
   type ReplyTo,
   suggestionFor,
   toolFolderOf,
+  designFolderOf,
 } from '@brigade/contracts'
 import Link from 'next/link'
 import {
@@ -73,7 +74,14 @@ import { TeachTask } from '@/components/teach-task'
 import { AskedDocument, DocumentsButton, useDocumentPanel } from '@/components/document-panel'
 import { FileLinksProvider } from '@/components/file-links'
 import { FilePanel } from '@/components/file-panel'
-import { dropKeptPreview, dropKeptTool, KeepPreview, KeepTool } from '@/components/kept-previews'
+import {
+  dropKeptDesign,
+  dropKeptPreview,
+  dropKeptTool,
+  KeepDesign,
+  KeepPreview,
+  KeepTool,
+} from '@/components/kept-previews'
 import {
   PHASE,
   previewLive,
@@ -129,6 +137,7 @@ import {
   setDesignEdits,
   setEditsSender,
   type EditsSender,
+  designEditsOf,
   updateDesignEdit,
   useDesignEdits,
   withUnsent,
@@ -477,7 +486,11 @@ export function ThreadConversation({
   const [focusEdit, setFocusEdit] = useState<string>()
   const lastDesignEdit = designEdits.at(-1)?.id
   useEffect(() => {
-    if (lastDesignEdit) setFocusEdit(undefined)
+    if (!lastDesignEdit) return
+    // Picked on the canvas in Comment, it comes without its note: written here, as a preview's.
+    const added = designEditsOf(id).find((d) => d.id === lastDesignEdit)
+    setFocusEdit(added && !added.note ? lastDesignEdit : undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- when one is added
   }, [lastDesignEdit])
   const pendingEdits = [
     ...elements.map((e) => ({ at: e.at, element: e, design: undefined })),
@@ -558,6 +571,16 @@ export function ThreadConversation({
   useEffect(() => {
     if (!keptTool) dropKeptTool(id)
   }, [id, keptTool])
+  // A design beside it (its folder, as its mention names it): kept the same way, its canvas as
+  // it was left (boards loaded, where it was zoomed, what was selected).
+  const keptDesign = useMemo(() => {
+    if (!file) return undefined
+    const path = file.path.trim().replace(/\/+$/, '')
+    return !path.startsWith('/') && designFolderOf(path) === path ? path : undefined
+  }, [file])
+  useEffect(() => {
+    if (!keptDesign) dropKeptDesign(id)
+  }, [id, keptDesign])
   useEffect(() => {
     rememberThreadSide(
       id,
@@ -1499,7 +1522,15 @@ export function ThreadConversation({
           onClose={() => setFile(undefined)}
         />
       )}
-      {expanded && file && !keptTool && (
+      {file && keptDesign && (
+        <KeepDesign
+          shown={expanded}
+          threadId={t.id}
+          folder={keptDesign}
+          onClose={() => setFile(undefined)}
+        />
+      )}
+      {expanded && file && !keptTool && !keptDesign && (
         <FilePanel
           key={`${file.teammateId ?? ''}:${file.path}`}
           threadId={t.id}

@@ -20,6 +20,8 @@ const HTML_TO_IMAGE = 'https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/h
 const COMPUTED = [
   'display',
   'position',
+  // Where a person moved it by hand (the canvas drags and nudges with translate).
+  'translate',
   'flex-direction',
   'flex-wrap',
   'justify-content',
