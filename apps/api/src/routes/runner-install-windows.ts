@@ -211,9 +211,9 @@ Rename-Folder $Staged $Runner
 & $Node -e @'
 const fs = require('fs'), path = require('path')
 const root = process.argv[1]
-for (const line of fs.readFileSync(path.join(root, '.symlinks'), 'utf8').split('\n')) {
+for (const line of fs.readFileSync(path.join(root, '.symlinks'), 'utf8').split('\\n')) {
   if (!line) continue
-  const [link, target] = line.split('\t')
+  const [link, target] = line.split('\\t')
   const at = path.join(root, link)
   fs.mkdirSync(path.dirname(at), { recursive: true })
   fs.symlinkSync(path.resolve(path.dirname(at), target), at, 'junction')
