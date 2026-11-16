@@ -3,8 +3,12 @@ import { BrigadeMark } from '@/components/brigade-mark'
 import { REPO_URL } from '@/lib/github-proof'
 import { AuthLink } from './auth-link'
 import { Dancers } from './dancers'
-import { c, Icon, SIGN_IN, SIGN_UP } from './parts'
+import { DownloadButton } from './download-button'
+import { c, Icon, SIGN_IN } from './parts'
 import { SiteAnalytics } from './site-analytics'
+
+/** The pricing band's Cloud plan, from any page. */
+const CLOUD = '/#pricing'
 
 export function Header() {
   return (
@@ -19,9 +23,13 @@ export function Header() {
           Pricing
         </a>
         <AuthLink href={SIGN_IN}>Sign in</AuthLink>
-        <AuthLink className={c('btn pri')} href={SIGN_UP}>
-          Sign up
-        </AuthLink>
+        {/* 24/7 is Brigade Cloud's promise (free teammates stop when the computer sleeps), so
+            it leads to the Cloud plan, never to a plain sign-up. */}
+        <a className={c('btn pri')} href={CLOUD}>
+          <span>
+            <span className={c('hide-m')}>Get your </span>24/7 AI team
+          </span>
+        </a>
         {/* No star count while it's small; on phones the icon alone keeps the bar on one line. */}
         <a className={c('btn')} href={REPO_URL} aria-label="Star Brigade on GitHub">
           <Icon name="github" />
@@ -50,10 +58,12 @@ export function Hero() {
             in one list on your phone.
           </p>
           <div className={c('cta-row')}>
-            <AuthLink className={c('btn pri lg')} href={SIGN_UP}>
-              Sign up
-            </AuthLink>
+            <DownloadButton />
+            <a className={c('btn pri lg')} href={CLOUD}>
+              Get your 24/7 AI team
+            </a>
           </div>
+          <p className={c('fine-m')}>Free desktop app for Mac, Windows and Linux.</p>
         </div>
       </div>
     </section>
