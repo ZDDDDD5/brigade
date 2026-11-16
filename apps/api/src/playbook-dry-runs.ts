@@ -13,7 +13,6 @@ import {
   type PlaybookDryRunView,
   type PlaybookManifest,
   type PlaybookOutcome,
-  loginOf,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { ingestExternal } from './attachments.js'
@@ -259,11 +258,7 @@ async function startEvent(
   const from = dryRun.sessionId
     ? await db.session.findFirst({
         where: { id: dryRun.sessionId },
-        select: {
-          computerId: true,
-          accountId: true,
-          teammate: { select: { harness: true, model: true } },
-        },
+        select: { computerId: true, accountId: true, teammate: { select: { harness: true } } },
       })
     : null
   if (!installation || !from) return failed('The thread it was started from is gone')
@@ -276,11 +271,7 @@ async function startEvent(
       teammate: installation.teammate,
       computer: { id: from.computerId },
       memberId: dryRun.startedByMemberId,
-      accountId:
-        loginOf(from.teammate.harness, from.teammate.model) ===
-        loginOf(installation.teammate.harness, installation.teammate.model)
-          ? from.accountId
-          : null,
+      accountId: from.teammate.harness === installation.teammate.harness ? from.accountId : null,
       title: `Dry run · ${replay.title}`,
       text: replay.text,
       // No conversation: a real event of the same one later starts its own run.

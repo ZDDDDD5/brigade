@@ -16,7 +16,6 @@ import {
 import { HTTPException } from 'hono/http-exception'
 import { parse, serializeOuter, type DefaultTreeAdapterTypes } from 'parse5'
 import { usableBy } from './account-sharing.js'
-import { accountRef } from './routes/accounts.js'
 import { publicUrl } from './connectors/mcp.js'
 import type { ScopedDb } from './db.js'
 import { hubs } from './hub.js'
@@ -686,7 +685,7 @@ export async function describeSite(
     {
       type: 'project.describe',
       requestId,
-      account: accountRef(account),
+      account: { id: account.id, provider: account.provider, source: account.source },
       url: site.url,
       text: site.text,
       logos: site.logos.map((l) => l.hint),

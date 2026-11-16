@@ -25,8 +25,6 @@ import {
   type ThreadSpec,
   type TicketAnswer,
   type UsageRunKind,
-  harnessName,
-  loginOf,
   runModel,
   WIDGET_GUIDE_TOOL,
 } from '@brigade/contracts'
@@ -113,8 +111,7 @@ import {
 import { createLocalSandboxSession, freePort, stopGroup } from './local-sandbox.js'
 import { SIDE_REPLY_ENV } from './side-reply-env.js'
 import { claimHandOver, type HandedOver } from '../hand-over.js'
-import { asTeammate, bridgeBrowser, threadNet } from '../thread-net.js'
-import { createPiHarness, piModel, piSkills } from './pi.js'
+import { bridgeBrowser, threadNet } from '../thread-net.js'
 import { ReplyWatch, terminalTools } from './replies.js'
 import { declareDone, Outbox } from './outbox.js'
 import { Arrivals } from './arrivals.js'
@@ -331,53 +328,9 @@ export const machineToolsInView = (spec: Pick<ThreadSpec, 'machine'>, machine: u
   spec.machine && machine ? ['run_on_machine'] : []
 
 /** The teammate's model for the harness; none leaves Claude Code on the account's own. */
-function withModel(
-  teammate: Pick<ThreadSpec['teammate'], 'harness' | 'model'>,
-  account?: AccountRef,
-) {
+function withModel(teammate: Pick<ThreadSpec['teammate'], 'harness' | 'model'>) {
   const model = runModel(teammate.harness, teammate.model)
-  if (!model) return {}
-  // Pi resolves it under the login's own provider (pi.ts), never another one with that model.
-  return { model: teammate.harness === 'pi' && account ? piModel(account, model) : model }
-}
-
-/**
- * The login's own CLI and the teammate's model, for a run beside its turns (memory, a title, a
- * side reply): Claude Code or Codex. A Pi teammate's runs go to the CLI of the login it runs on.
- */
-const cliOf = (
-  teammate: Pick<ThreadSpec['teammate'], 'harness' | 'model'>,
-): Pick<ThreadSpec['teammate'], 'harness' | 'model'> => ({
-  harness: loginOf(teammate.harness, teammate.model),
-  model: teammate.model,
-})
-
-/**
- * An MCP server on stdio for Pi, whose client starts it from the runner's own process: on a cloud
- * computer, as the teammate's user in the thread's network, where Claude Code and Codex start it
- * themselves (the browser relay reaches only its teammate's browser).
- */
-async function piMcpServer(
-  server: { command: string; args: string[] },
-  runAs: string | undefined,
-  sessionId: string,
-) {
-  if (!runAs) return { type: 'stdio', command: server.command, args: server.args }
-  const { file, args } = asTeammate(runAs, await threadNet(sessionId))
-  // Pi's client gives it the runner's whole environment, which sudo -E would pass on to the
-  // teammate: it starts with none but where to find programs.
-  return {
-    type: 'stdio',
-    command: 'env',
-    args: ['-i', `PATH=${process.env.PATH ?? ''}`, file, ...args, server.command, ...server.args],
-  }
-}
-
-/** What a Pi turn is given beside the spec: its instructions and skills (attach). */
-type PiSetup = {
-  /** Brigade's instructions, which Pi reads from no file (AGENTS.md, CLAUDE.md). */
-  instructions: string
-  skills: ReturnType<typeof piSkills>
+  return model ? { model } : {}
 }
 
 function createAgent(
@@ -394,7 +347,6 @@ function createAgent(
   desktop: Desktop | undefined,
   machine: MachineRunTools | undefined,
   arrivals: Arrivals,
-  pi?: PiSetup,
 ) {
   // auth {}: the adapter adds no credential of its own. The vendor CLI uses the
   // account's token from the environment if it has one, else the login in its
@@ -405,49 +357,41 @@ function createAgent(
     defer: spec.teammate.harness === 'codex',
   })
   const codex = spec.teammate.harness === 'codex'
-  const onPi = spec.teammate.harness === 'pi'
   const chief = spec.teammate.kind === 'chief'
   // The thread's effort; none leaves each CLI on its own default.
   const effort = spec.effort ?? undefined
-  const harness = onPi
-    ? createPiHarness({
-        account: spec.account,
-        effort,
-        mcpServers,
-        skills: pi?.skills ?? [],
+  const harness = codex
+    ? createCodex({
+        ...settings,
+        // Codex reads 32 KiB of AGENTS.md by default; Brigade's, with memory last, is longer.
+        codexConfig: { ...CODEX_SETTINGS, project_doc_max_bytes: INSTRUCTIONS_MAX_BYTES },
+        ...(effort ? { reasoningEffort: effort } : {}),
       })
-    : codex
-      ? createCodex({
-          ...settings,
-          // Codex reads 32 KiB of AGENTS.md by default; Brigade's, with memory last, is longer.
-          codexConfig: { ...CODEX_SETTINGS, project_doc_max_bytes: INSTRUCTIONS_MAX_BYTES },
-          ...(effort ? { reasoningEffort: effort } : {}),
-        })
-      : createClaudeCode({
-          ...settings,
-          ...(effort ? { effort } : {}),
-          // Never deferred behind tool search: the tools that end most turns (a ticket, a card, the
-          // thread done, a child's report) come right before the answer, with no tool load between.
-          // Each load is a model round trip of its own (about 2 s; 538 in 928 turns before these).
-          toolHints: Object.fromEntries(
-            [
-              ...ALWAYS_LOADED,
-              ...machineToolsInView(spec, machine),
-              ...(chief ? [PROPOSE_TEAM_TOOL] : []),
-              // A pass's ways out, loaded with no tool search before them.
-              ...(spec.pass && chief
-                ? spec.pass.acts === true
-                  ? ['chief_answer', 'chief_retry', 'chief_report']
-                  : ['chief_report']
-                : []),
-              // A big App's catalog (catalogTools): a few small tools, found then called, without a
-              // tool search before them.
-              ...Object.entries(apps)
-                .filter(([, t]) => (t as unknown as Record<symbol, unknown>)[CATALOG_TOOL])
-                .map(([name]) => name),
-            ].map((name) => [name, { alwaysLoad: true }]),
-          ),
-        })
+    : createClaudeCode({
+        ...settings,
+        ...(effort ? { effort } : {}),
+        // Never deferred behind tool search: the tools that end most turns (a ticket, a card, the
+        // thread done, a child's report) come right before the answer, with no tool load between.
+        // Each load is a model round trip of its own (about 2 s; 538 in 928 turns before these).
+        toolHints: Object.fromEntries(
+          [
+            ...ALWAYS_LOADED,
+            ...machineToolsInView(spec, machine),
+            ...(chief ? [PROPOSE_TEAM_TOOL] : []),
+            // A pass's ways out, loaded with no tool search before them.
+            ...(spec.pass && chief
+              ? spec.pass.acts === true
+                ? ['chief_answer', 'chief_retry', 'chief_report']
+                : ['chief_report']
+              : []),
+            // A big App's catalog (catalogTools): a few small tools, found then called, without a
+            // tool search before them.
+            ...Object.entries(apps)
+              .filter(([, t]) => (t as unknown as Record<symbol, unknown>)[CATALOG_TOOL])
+              .map(([name]) => name),
+          ].map((name) => [name, { alwaysLoad: true }]),
+        ),
+      })
   // Chief's daily pass for a person (docs/chief-answers.md): it reads its brief's items and reports
   // on them (or, with chief_acts, acts on them), and nothing else; the API gives it no App.
   const passing = !!spec.pass && chief
@@ -528,8 +472,8 @@ function createAgent(
         // Apps read and used by accessibility refs: on a Mac beside the tools above, on a cloud
         // computer in the teammate's own browser window.
         ...(desktop ? desktopTools(desktop) : {}),
-        // Claude Code asks with its own question tool; Codex's and Pi's adapters have none.
-        ...(codex || onPi ? { [ASK_USER_TOOL]: askUserTool } : {}),
+        // Claude Code asks with its own question tool; Codex's adapter has none.
+        ...(codex ? { [ASK_USER_TOOL]: askUserTool } : {}),
         [OPEN_TICKET_TOOL]: openTicketTool,
         [SHOW_WIDGET_TOOL]: showWidgetTool,
         [WIDGET_GUIDE_TOOL]: widgetGuideTool,
@@ -548,16 +492,8 @@ function createAgent(
       toolApproval: Object.fromEntries(
         Object.keys(tools).map((name) => [name, 'not-applicable' as const]),
       ),
-      ...withModel(spec.teammate, spec.account),
-      ...(onPi
-        ? {
-            instructions: [pi?.instructions, spec.teammate.instructions]
-              .filter(Boolean)
-              .join('\n\n'),
-          }
-        : spec.teammate.instructions
-          ? { instructions: spec.teammate.instructions }
-          : {}),
+      ...withModel(spec.teammate),
+      ...(spec.teammate.instructions ? { instructions: spec.teammate.instructions } : {}),
       // Codex cannot ask before built-in tool calls (spec, known limits).
       permissionMode: spec.teammate.harness === 'codex' ? 'allow-all' : spec.permissionMode,
       sandboxConfig: { workDir: '.' },
@@ -577,8 +513,6 @@ type Live = {
   sandbox: ReturnType<typeof createLocalSandboxSession>
   account: AccountRef
   credentials: ThreadCredentials
-  /** The harness it runs on (TeammateHarness): a teammate moved to another starts anew. */
-  harness?: string
   /** The connector tools, effort and suggestions the agent was made with (agentKey). */
   made: string
   /**
@@ -591,40 +525,6 @@ type Live = {
     /** Which changed is not known: the conversation was saved before its tools were kept. */
     unsure?: boolean
   }
-}
-
-/** A saved harness state's harness, as TeammateHarness names it; undefined when it says none. */
-export function resumeHarness(resume: unknown): string | undefined {
-  const state = resume as
-    { harnessId?: unknown; continueFrom?: { harnessId?: unknown } } | undefined
-  const id = state?.continueFrom?.harnessId ?? state?.harnessId
-  return id === 'claude-code' ? 'claude_code' : typeof id === 'string' ? id : undefined
-}
-
-/**
- * The teammate was moved to another harness (Pi to Claude Code, say) since its conversation was
- * saved: that conversation is the other harness's, which this one cannot resume.
- */
-export const harnessChanged = (saved: SavedState | undefined, spec: ThreadSpec) => {
-  // Read from the saved conversation itself: none, nothing to resume.
-  const was = resumeHarness(saved?.resume)
-  return was !== undefined && was !== spec.teammate.harness.replace('-', '_')
-}
-
-/**
- * The saved conversation a new session resumes: the one kept on its account, and of its own
- * harness only, since another's it cannot resume (newHarness).
- */
-export const savedResume = (
-  saved: SavedState | undefined,
-  spec: ThreadSpec,
-  account: Pick<AccountRef, 'id'>,
-) => (saved?.accountId === account.id && !harnessChanged(saved, spec) ? saved.resume : undefined)
-
-/** Codex's and Pi's harness in an agent's key; Claude Code's left out, as before Pi. */
-const harnessKey = (spec: ThreadSpec): string[] => {
-  const harness: string | undefined = spec.teammate?.harness
-  return harness === 'codex' || harness === 'pi' ? [harness] : []
 }
 
 /**
@@ -645,8 +545,6 @@ export const agentKey = (spec: ThreadSpec) =>
     spec.suggestions,
     // The machine's tools come and go with the starter's choice; left out when off, as before it.
     ...(spec.machine ? ['machine'] : []),
-    // Its harness: a teammate moved to another one gets a new agent. Left out for Claude Code.
-    ...harnessKey(spec),
   ])
 
 type TurnStream = Awaited<ReturnType<Live['agent']['stream']>>['fullStream']
@@ -711,17 +609,6 @@ function answers(host: string, port: number) {
  */
 function resumable(harness: ThreadSpec['teammate']['harness'], resume: unknown): unknown {
   const base = { type: 'resume-session', specificationVersion: 'harness-v1' }
-  // Pi keeps its conversation in the state itself (no file of its own): the last one saved, without
-  // the tool calls a cut-off turn waited on.
-  if (harness === 'pi') {
-    const state = resume as
-      | { data?: Record<string, unknown>; continueFrom?: { data?: Record<string, unknown> } }
-      | undefined
-    const data = state?.continueFrom?.data ?? state?.data
-    if (!data || !(data.entries || data.leafId)) return undefined
-    const { pendingToolBatch: _pending, ...rest } = data
-    return { ...base, harnessId: 'pi', data: rest }
-  }
   if (harness !== 'codex') return { ...base, harnessId: 'claude-code', data: {} }
   const state = resume as
     { data?: { threadId?: unknown }; continueFrom?: { data?: { threadId?: unknown } } } | undefined
@@ -780,8 +667,6 @@ export class HarnessThread {
   private readonly key: string
   /** Prompts so far: each is its own computer-use session, which the person can stop. */
   private prompts = 0
-  /** The tool calls of the run under way, and those that failed (turn.completed). */
-  private toolStats = { calls: 0, errors: 0 }
   /** Writes of the state file, in order. */
   private saving: Promise<void> = Promise.resolve()
   /**
@@ -810,7 +695,6 @@ export class HarnessThread {
 
   async run(input: ThreadInput, spec: ThreadSpec, signal: AbortSignal): Promise<TurnOutcome> {
     this.spec = spec
-    this.toolStats = { calls: 0, errors: 0 }
     await this.load()
     // An answer that comes as a message while messages wait on a decision: kept until it is
     // made (Threads asks first, before the turn starts).
@@ -846,16 +730,6 @@ export class HarnessThread {
       const resumed = await this.recover(input.text, spec)
       if (!resumed) return { status: 'idle' }
       ;({ input, handoff } = resumed)
-    }
-    // Moved to another harness: a new session there, told the conversation so far.
-    else if (
-      input.kind === 'prompt' &&
-      (this.live?.harness !== undefined
-        ? this.live.harness !== spec.teammate.harness
-        : harnessChanged(this.saved, spec))
-    ) {
-      // The new session is told the message too: its conversation so far has it not yet.
-      handoff = [await this.newHarness(spec), input.text].filter(Boolean).join('\n\n')
     }
     // A new prompt runs on the account the API chose; an approval stays on the live session.
     else if (input.kind === 'prompt' && this.saved && this.saved.accountId !== spec.account.id) {
@@ -907,7 +781,6 @@ export class HarnessThread {
           const said = outcome.said ?? (input.kind === 'resume' ? input.text : undefined)
           handoff = await this.startAnew(
             input.kind === 'prompt' && said === input.text ? undefined : said,
-            outcome.why,
           )
           input = { kind: 'prompt', text: handoff }
           approved = outcome.approved
@@ -965,9 +838,8 @@ export class HarnessThread {
           console.warn(`could not save thread state: ${errorMessage(error)}`),
         )
       }
-      // Codex's harness reports no limits (nor Pi's on a Codex login): read once the turn is over,
-      // without holding it up.
-      if (result && loginOf(spec.teammate.harness, spec.teammate.model) === 'codex') {
+      // Codex's harness reports no limits: read once the turn is over, without holding it up.
+      if (result && spec.teammate.harness === 'codex') {
         const account = this.current
         void readCodexLimits(account).then((limits) => {
           if (limits?.length) this.emit({ type: 'usage.updated', accountId: account.id, limits })
@@ -1022,10 +894,6 @@ export class HarnessThread {
       value: `The computer restarted during this turn. ${spec.teammate.name} carries on.`,
     })
     const told = [RESTARTED, unseen].filter(Boolean).join('\n\n')
-    if (harnessChanged(saved, spec)) {
-      const handoff = await this.newHarness(spec)
-      return { input: { kind: 'resume', text: '' }, handoff: `${handoff}\n\n${told}` }
-    }
     if (saved.accountId !== spec.account.id) {
       const handoff = await this.switchTo(spec.account, 'unavailable', null)
       return { input: { kind: 'resume', text: '' }, handoff: `${handoff}\n\n${told}` }
@@ -1078,12 +946,9 @@ export class HarnessThread {
     return this.drain !== undefined
   }
 
-  /**
-   * A turn runs in a live session, whose conversation a side reply can fork (sideReply). Not Pi's:
-   * its conversation lives in the runner, where no CLI can fork it.
-   */
+  /** A turn runs in a live session, whose conversation a side reply can fork (sideReply). */
   get forkable() {
-    return this.live !== undefined && this.spec.teammate.harness !== 'pi'
+    return this.live !== undefined
   }
 
   /** The guess no longer matters (a new message, a stop): the answered turn's stream ends now. */
@@ -1480,12 +1345,9 @@ export class HarnessThread {
     this.arrivals.handOver()
     const resume = await Promise.race([detached, sleep(HAND_OVER_MS, undefined, { ref: false })])
     this.handingOver = false
-    // Pi runs in this runner, and stops with it: nothing goes on for the next runner to attach
-    // to. Its conversation so far is kept, and the next runner continues the turn (recover).
-    const inRunner = this.spec.teammate.harness === 'pi'
-    if (!resume || groups.length === 0 || inRunner) {
+    if (!resume || groups.length === 0) {
       this.handOverFailed = true
-      this.saved = { ...this.saved!, ...(inRunner && resume ? { resume } : {}), inTurn: true }
+      this.saved = { ...this.saved!, inTurn: true }
       await this.persist()
       await live.sandbox.destroy()
       return []
@@ -1567,14 +1429,7 @@ export class HarnessThread {
      * The harness no longer has the conversation it resumed (EventMapper.sessionLost). `said`:
      * what to tell a new session of this turn's input; `approved`: the call it approved.
      */
-    | {
-        kind: 'lost'
-        error: string
-        said: string | undefined
-        approved: Call | undefined
-        /** Why the new session starts, when not that the harness lost the conversation. */
-        why?: string
-      }
+    | { kind: 'lost'; error: string; said: string | undefined; approved: Call | undefined }
   > {
     let attached: Live | undefined
     // A turn before this one waits on nothing now; a turn handed over goes on waiting (attach).
@@ -1587,10 +1442,9 @@ export class HarnessThread {
     // The call an answer or an approval is for: the transcript has only what was written.
     let asked: Call | undefined
     // Lost, its conversation: what a new session is told of this turn's input.
-    const lost = (error: string, why?: string) => ({
+    const lost = (error: string) => ({
       kind: 'lost' as const,
       error,
-      ...(why ? { why } : {}),
       said:
         input.kind === 'answer'
           ? answerInNewSession(asked, this.answerResult(input.questionId, input.answer, asked))
@@ -1741,25 +1595,6 @@ export class HarnessThread {
       const aside = input.kind === 'prompt' && input.text !== '' && this.asksOnly()
       // Which, read before closing the turn they wait in.
       const calls = aside ? this.waitingAsks() : []
-      // An answer to a call of the harness the teammate ran on before (Pi, say): the new one
-      // cannot continue that turn. A new session is told the thread so far, then the call and
-      // its answer (answerInNewSession), as when a harness lost its conversation.
-      if (
-        answer &&
-        (this.live?.harness !== undefined
-          ? this.live.harness !== this.spec.teammate.harness
-          : harnessChanged(this.saved, this.spec))
-      ) {
-        await this.park().catch(() => undefined)
-        asked =
-          input.kind === 'answer' || input.kind === 'ticket'
-            ? this.toolCalls.get(answerId(input))
-            : this.approvals.get(input.approvalId)
-        return lost(
-          'The teammate moved to another harness',
-          `This conversation continues in a new session because you now run on ${harnessName(this.spec.teammate.harness)}.`,
-        )
-      }
       let closed = !this.live && (answer || aside) && this.closeTurn()
       const live = (attached = await this.attach())
       // Handed over while it waited on work in the background, it is watched on from where it was.
@@ -2163,12 +1998,7 @@ export class HarnessThread {
    * closed so, or on Codex, which keeps continuing it.
    */
   private closeTurn() {
-    if (
-      this.spec.teammate.harness === 'codex' ||
-      this.spec.teammate.harness === 'pi' ||
-      !this.saved
-    )
-      return false
+    if (this.spec.teammate.harness === 'codex' || !this.saved) return false
     const closed = closeTurn(this.saved.resume)
     if (!closed) return false
     for (const { toolCallId, ...call } of closed.waiting)
@@ -2199,7 +2029,7 @@ export class HarnessThread {
    * the thread goes on in a new session on this computer, whose first message is what was said
    * so far, then `said`, what the turn had to tell the lost one besides.
    */
-  private async startAnew(said: string | undefined, why?: string) {
+  private async startAnew(said: string | undefined) {
     const saved = (this.saved ??= { accountId: this.current.id, transcript: [] })
     // Gone with that conversation: the turn it was in, and any harness it was handed over in.
     delete saved.resume
@@ -2208,15 +2038,13 @@ export class HarnessThread {
     saved.inTurn = true
     await this.persist()
     const name = this.spec.teammate.name
-    if (!why)
-      this.emit({
-        type: 'raw',
-        source: 'runner',
-        value: `${name}'s previous session was no longer on this computer, so ${name} carries on in a new one, from the thread's conversation.`,
-      })
+    this.emit({
+      type: 'raw',
+      source: 'runner',
+      value: `${name}'s previous session was no longer on this computer, so ${name} carries on in a new one, from the thread's conversation.`,
+    })
     const handoff = this.handoff(
-      why ??
-        'This conversation continues in a new session because the previous one was no longer on this computer (Claude Code deletes old conversations).',
+      'This conversation continues in a new session because the previous one was no longer on this computer (Claude Code deletes old conversations).',
     )
     return said ? `${handoff}\n\n${said}` : handoff
   }
@@ -2254,25 +2082,6 @@ export class HarnessThread {
     await this.persist()
     return this.handoff(
       'This conversation continues in a new session because the previous one could not go on (its account ran out of usage).',
-    )
-  }
-
-  /**
-   * The teammate moved to another harness: its conversation is the old one's, which this one
-   * cannot resume. A new session, on the spec's account, is told the conversation so far.
-   */
-  private async newHarness(spec: ThreadSpec) {
-    await this.drop()
-    this.saved = {
-      ...(this.saved?.recoveries ? { recoveries: this.saved.recoveries } : {}),
-      ...(this.saved?.later?.length ? { later: this.saved.later } : {}),
-      ...(this.saved?.steered ? { steered: this.saved.steered } : {}),
-      accountId: spec.account.id,
-      transcript: this.saved?.transcript ?? [],
-    }
-    await this.persist()
-    return this.handoff(
-      `This conversation continues in a new session because you now run on ${harnessName(spec.teammate.harness)}.`,
     )
   }
 
@@ -2372,23 +2181,27 @@ export class HarnessThread {
     await writeMemoryFiles(this.workDir, threadTopicFiles(memory, this.spec), this.runAs).catch(
       (error) => console.warn(`could not write memory topics: ${errorMessage(error)}`),
     )
-    const text = instructions(
+    await writeInstructions(
+      this.workDir,
       this.spec,
-      memory,
-      libraryDir,
-      tabsFile
-        ? { ready: true }
-        : { ready: false, ...(browserError ? { error: browserError } : {}) },
-    )
-    await writeInstructions(this.workDir, this.spec, text, this.runAs).catch((error) =>
-      console.warn(`could not write instructions: ${errorMessage(error)}`),
-    )
+      instructions(
+        this.spec,
+        memory,
+        libraryDir,
+        tabsFile
+          ? { ready: true }
+          : { ready: false, ...(browserError ? { error: browserError } : {}) },
+      ),
+      this.runAs,
+    ).catch((error) => console.warn(`could not write instructions: ${errorMessage(error)}`))
     // Skills through the harness's own skills folder: Brigade's, then the workspace's.
-    const skills = [...builtinSkills(this.spec, libraryDir), ...(this.spec.skills ?? [])]
-    await writeSkills(this.workDir, this.spec, skills, this.context.skillFile, this.runAs).catch(
-      (error) => console.warn(`could not write skills: ${errorMessage(error)}`),
-    )
-    const onPi = this.spec.teammate.harness === 'pi'
+    await writeSkills(
+      this.workDir,
+      this.spec,
+      [...builtinSkills(this.spec, libraryDir), ...(this.spec.skills ?? [])],
+      this.context.skillFile,
+      this.runAs,
+    ).catch((error) => console.warn(`could not write skills: ${errorMessage(error)}`))
     const credentials = new ThreadCredentials({
       sessionId: this.spec.sessionId,
       request: this.requestCredential,
@@ -2403,15 +2216,9 @@ export class HarnessThread {
       credentials,
       browser && tabsFile
         ? {
-            browser: onPi
-              ? await piMcpServer(
-                  browserMcpServer(browser, tabsFile),
-                  this.runAs,
-                  this.spec.sessionId,
-                )
-              : browserMcpServer(browser, tabsFile, {
-                  lazy: this.spec.teammate.harness !== 'codex',
-                }),
+            browser: browserMcpServer(browser, tabsFile, {
+              lazy: this.spec.teammate.harness !== 'codex',
+            }),
           }
         : {},
       {
@@ -2465,7 +2272,6 @@ export class HarnessThread {
       computer ? this.macDesktop(computer) : this.cloudDesktop(),
       this.context.machine,
       this.arrivals,
-      onPi ? { instructions: text, skills: piSkills(this.workDir, skills) } : undefined,
     )
     const adopt = await this.takeHandedOver(account)
     const sandbox = createLocalSandboxSession({
@@ -2475,7 +2281,7 @@ export class HarnessThread {
       // The runner, not Claude Code, asks for a reply the turn did not give (ReplyWatch). After
       // each turn, Claude Code guesses the person's next message where the thread wants it.
       env:
-        this.spec.teammate.harness === 'codex' || this.spec.teammate.harness === 'pi'
+        this.spec.teammate.harness === 'codex'
           ? env
           : {
               ...env,
@@ -2488,7 +2294,7 @@ export class HarnessThread {
       // The harness the runner before handed over, which this session attaches to: stopped with it.
       ...(adopt.length ? { adopt } : {}),
     })
-    const saved = savedResume(this.saved, this.spec, account)
+    const saved = this.saved?.accountId === account.id ? this.saved.resume : undefined
     const resume = saved ? withTools(saved, tools) : undefined
     const session = await agent.createSession({
       sessionId: this.key,
@@ -2497,15 +2303,7 @@ export class HarnessThread {
     })
     sandbox.dropAdopted()
     return this.begin(
-      {
-        agent,
-        session,
-        sandbox,
-        account,
-        credentials,
-        harness: this.spec.teammate.harness,
-        made: agentKey(this.spec),
-      },
+      { agent, session, sandbox, account, credentials, made: agentKey(this.spec) },
       specs,
       resume,
       apps,
@@ -2686,10 +2484,6 @@ export class HarnessThread {
 
   private emit(event: DistributiveOmit<AgentEvent, 'at'>) {
     const stamped = { ...event, at: new Date().toISOString() } as AgentEvent
-    if (stamped.type === 'tool.finished') {
-      this.toolStats.calls++
-      if (stamped.isError) this.toolStats.errors++
-    }
     this.noteBackground(stamped)
     this.outbox.send(stamped)
   }
@@ -2730,9 +2524,6 @@ export class HarnessThread {
       type: 'turn.completed',
       finishReason,
       ...(this.saved?.later?.length ? { waiting: true } : {}),
-      // For the harness benchmark (docs/harnesses.md): this run of the turn's tool calls.
-      toolCalls: this.toolStats.calls,
-      toolErrors: this.toolStats.errors,
     })
   }
 }
@@ -2873,9 +2664,7 @@ export async function runOnce(input: {
     // Its prompt is read once: a one-hour cache write costs twice the input, a five-minute one 1.25 times.
     CLAUDE_CODE_PROMPT_CACHE_TTL: '5m',
   }
-  // A Pi teammate's runs go to its login's own CLI (cliOf), as before Pi.
-  const teammate = cliOf(spec.teammate)
-  const codex = teammate.harness === 'codex'
+  const codex = spec.teammate.harness === 'codex'
   const settings = { auth: {} }
   const agent = new HarnessAgent({
     harness: codex
@@ -2883,7 +2672,7 @@ export async function runOnce(input: {
       : createClaudeCode(settings),
     tools: {},
     ...(input.noTools ? { activeTools: [] } : {}),
-    ...(input.model ? { model: input.model } : withModel(teammate)),
+    ...(input.model ? { model: input.model } : withModel(spec.teammate)),
     // Nothing to do but answer; Codex cannot ask, so it gets an empty directory.
     permissionMode: codex ? 'allow-all' : 'allow-reads',
     sandboxConfig: { workDir: '.' },

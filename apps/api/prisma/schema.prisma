@@ -477,12 +477,9 @@ model Runner {
   @@index([workspaceId])
 }
 
-/// What runs a teammate (Teammate.harness), and a login's CLI (Account.provider, only claude_code or
-/// codex). pi: Pi, on the login of its model's vendor (loginOf), behind the pi_harness feature.
 enum Harness {
   claude_code
   codex
-  pi
 }
 
 /// chief: the teammate every workspace has one of. It sets up the team and routes work.

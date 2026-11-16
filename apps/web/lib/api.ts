@@ -1,7 +1,7 @@
 'use client'
 import {
   type Effort,
-  TeammateHarness,
+  HarnessId,
   modelLabel,
   playbookApprovalOf,
   type FolderRule,
@@ -474,7 +474,7 @@ export type Teammate = {
   /** chief: the teammate every workspace has, which sets up the team and routes work. */
   kind: 'teammate' | 'chief'
   instructions: string
-  harness: TeammateHarness
+  harness: 'claude_code' | 'codex'
   model: string | null
   permissionPolicy: { connectorWrites?: 'allow' | 'ask' | 'deny' } | null
   caps: Caps | null
@@ -1406,15 +1406,14 @@ export function waitsOn(t: Ticket, me: Me) {
   return admin || (t.payload.memberId ? t.payload.memberId === me.memberId : starter)
 }
 
-export const harnessLabel = (harness: string) =>
-  harness === 'codex' ? 'Codex' : harness === 'pi' ? 'Pi' : 'Claude'
+export const harnessLabel = (harness: string) => (harness === 'codex' ? 'Codex' : 'Claude')
 
 /**
  * What a teammate runs on, as people name it: its model ("Opus 5.5"), else the
  * harness ("Claude"), since the default model depends on the account.
  */
 export const teammateModelLabel = (t: { harness: string; model: string | null }) => {
-  const harness = TeammateHarness.safeParse(t.harness)
+  const harness = HarnessId.safeParse(t.harness)
   return t.model && harness.success ? modelLabel(harness.data, t.model) : harnessLabel(t.harness)
 }
 

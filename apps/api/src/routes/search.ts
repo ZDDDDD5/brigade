@@ -456,7 +456,7 @@ export const search = new Hono<AppEnv>()
           kind: 'teammate',
           id: t.id,
           title: t.name,
-          detail: t.harness === 'codex' ? 'Codex' : t.harness === 'pi' ? 'Pi' : 'Claude',
+          detail: t.harness === 'codex' ? 'Codex' : 'Claude',
           score: score(t.name),
         }),
       ),
