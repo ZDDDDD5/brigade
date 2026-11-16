@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button'
 import { ApiError, useApi } from '@/lib/api'
 import { API_URL } from '@/lib/config'
 import { cn } from '@/lib/utils'
+import { clickSettings } from '@/lib/settings-dialog'
 
 /** How often the waveform takes the microphone's level, in ms: one bar each time. */
 const STEP_MS = 60
@@ -263,7 +264,11 @@ export function DictationButton({
         className={cn(style, 'text-muted-foreground')}
         tooltip="Dictation comes with Brigade Cloud"
       >
-        <Link href="/app/billing" aria-label="Dictation comes with Brigade Cloud">
+        <Link
+          href="/app/billing"
+          onClick={(e) => clickSettings(e, '/app/billing')}
+          aria-label="Dictation comes with Brigade Cloud"
+        >
           <Mic aria-hidden />
         </Link>
       </Button>

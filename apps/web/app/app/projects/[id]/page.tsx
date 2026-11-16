@@ -14,6 +14,7 @@ import { describeCron } from '@/components/schedules'
 import { StatusDot } from '@/components/status-badge'
 import { Card } from '@/components/ui/card'
 import { useApi, type Schedule, type Trigger } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 
 /** Lists shown before "All": the rest are on the Lists page. */
 const LISTS_SHOWN = 4
@@ -186,6 +187,7 @@ export default function ProjectOverview() {
               <li key={r.key}>
                 <Link
                   href={r.href}
+                  onClick={(e) => clickSettings(e, r.href)}
                   className="flex items-center gap-3 px-4 py-2 text-sm transition-colors hover:bg-accent/60"
                 >
                   <StatusDot status={r.status} className="size-1.5" />

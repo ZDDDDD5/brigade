@@ -13,6 +13,7 @@ import { StatusBadge, type StatusTone } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { credentialManagersOnly, pullHref, type Me, type Ticket } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 
 const typeLabel: Record<Ticket['type'], string> = {
   approval: 'approval',
@@ -276,7 +277,9 @@ export function TicketRow({
       <>
         {t.type === 'sign_in' && (
           <Button asChild size="sm">
-            <Link href="/app/accounts">Sign in</Link>
+            <Link href="/app/accounts" onClick={(e) => clickSettings(e, '/app/accounts')}>
+              Sign in
+            </Link>
           </Button>
         )}
         {t.payload.pullRequest && (

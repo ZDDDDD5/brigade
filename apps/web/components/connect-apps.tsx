@@ -1,7 +1,7 @@
 'use client'
 // Connect apps: the popup the sidebar's button opens (openConnectApps). The catalog to
 // search and add from, and the Apps already connected one click away; each App opens its
-// sheet on top. Settings → Apps shows the same, as a page (ConnectApps).
+// sheet on top. Settings → Apps shows the same, as a section (ConnectApps).
 import { useEffect, useState, type ReactNode } from 'react'
 import { Check, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { AppSheet } from '@/components/app-sheet'
@@ -204,7 +204,7 @@ function Title({ dialog, children }: { dialog: boolean; children: ReactNode }) {
   return dialog ? (
     <DialogTitle className="flex-1 text-xl font-bold tracking-tight">{children}</DialogTitle>
   ) : (
-    <h1 className="flex-1 text-3xl font-extrabold tracking-tight">{children}</h1>
+    <h1 className="flex-1 text-2xl font-extrabold tracking-tight">{children}</h1>
   )
 }
 

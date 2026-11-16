@@ -1,18 +1,12 @@
 'use client'
 import {
-  Bell,
-  BookOpenText,
-  Building2,
   BookOpenCheck,
   CalendarClock,
-  ChartColumn,
   ChevronDown,
-  CreditCard,
   GitPullRequest,
   Inbox,
   Keyboard,
   Palette,
-  KeyRound,
   Library,
   ListChecks,
   LogOut,
@@ -23,16 +17,11 @@ import {
   Plus,
   Search,
   Settings,
-  ShieldCheck,
-  SlidersHorizontal,
   Sun,
-  UserRound,
-  Users,
   UsersRound,
   FolderKanban,
   SquareKanban,
   Target,
-  type LucideIcon,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useTheme } from 'next-themes'
@@ -57,6 +46,7 @@ import { ProviderLogo, type ProviderKind } from '@/components/provider-logo'
 import { useAppNotifications } from '@/components/notifications'
 import { NewProjectDialog, ProjectIcon } from '@/components/projects'
 import { SearchDialog } from '@/components/search'
+import { SettingsDialog } from '@/components/settings-dialog'
 import { SidebarResizer, useSidebarWidth } from '@/components/sidebar-resizer'
 import { RailMenu } from '@/components/rail-menu'
 import { SidebarWork, useSidebarOrder } from '@/components/sidebar-threads'
@@ -128,6 +118,7 @@ import { DEMO, signUp } from '@/lib/demo/flag'
 import { setDocumentScope } from '@/lib/prepare-document'
 import { markSignedIn, clearBrowserData, markSignedOut } from '@/lib/signed-in'
 import { isMac, useIsMac } from '@/lib/platform'
+import { openSettings, SETTINGS_SECTIONS, settingsHref } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
 import { takeOffTheme, ThemeRuntime, useWornTheme } from '@/components/theme-runtime'
 
@@ -173,42 +164,12 @@ const WORK_NAV = [
   { href: '/app/routines', label: 'Routines', icon: CalendarClock },
 ]
 
-/** The Settings page's sections, in groups, its first one first: the member's own, then the
- * workspace and its plan, then what teammates work with and who may reach it. */
-export const SETTINGS_GROUPS: {
-  label: string
-  items: { href: string; label: string; icon: LucideIcon; search?: string }[]
-}[] = [
-  {
-    label: 'You',
-    items: [
-      { href: '/app/preferences', label: 'Preferences', icon: SlidersHorizontal },
-      { href: '/app/notifications', label: 'Notifications', icon: Bell },
-      { href: '/app/accounts', label: 'AI Accounts', icon: UserRound },
-    ],
-  },
-  {
-    label: 'Workspace',
-    items: [
-      { href: '/app/workspace', label: 'General', icon: Building2, search: 'Workspace' },
-      { href: '/app/members', label: 'Members', icon: Users },
-      { href: '/app/computers', label: 'Computers', icon: Monitor },
-      { href: '/app/usage', label: 'Usage', icon: ChartColumn },
-      { href: '/app/billing', label: 'Billing', icon: CreditCard },
-    ],
-  },
-  {
-    label: 'Teammates',
-    items: [
-      { href: '/app/connections', label: 'Apps', icon: Plug },
-      { href: '/app/skills', label: 'Skills', icon: BookOpenText },
-      { href: '/app/vault', label: 'Secrets', icon: KeyRound },
-      { href: '/app/security', label: 'Security', icon: ShieldCheck },
-    ],
-  },
-]
-
-export const SETTINGS_NAV = SETTINGS_GROUPS.flatMap((g) => g.items)
+/** Settings' sections, which open its dialog (lib/settings-dialog.ts). */
+const SETTINGS_NAV = SETTINGS_SECTIONS.map((s) => ({
+  href: settingsHref(s.section),
+  label: s.label,
+  search: 'search' in s ? s.search : undefined,
+}))
 
 export const NAV: { href: string; label: string; search?: string }[] = [
   ...WORK_NAV,
@@ -722,13 +683,11 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         </span>
                       </DropdownMenuLabel>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem asChild>
-                        <Link href="/app/settings">
-                          <Settings /> Settings
-                          <span className="text-muted-foreground ml-auto text-xs">
-                            {mac ? '⌘,' : 'Ctrl+,'}
-                          </span>
-                        </Link>
+                      <DropdownMenuItem onSelect={() => openSettings()}>
+                        <Settings /> Settings
+                        <span className="text-muted-foreground ml-auto text-xs">
+                          {mac ? '⌘,' : 'Ctrl+,'}
+                        </span>
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <UsageMenu accounts={accounts.data} />
@@ -794,6 +753,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <SearchDialog open={searching} onOpenChange={setSearching} />
           <ShortcutsDialog />
           <ConnectAppsDialog />
+          <SettingsDialog />
           <AppNotifications needsYou={badge.size} />
           <NewProjectDialog open={creatingProject} onOpenChange={setCreatingProject} />
         </ThreadPanelProvider>
@@ -946,7 +906,8 @@ function useSettingsShortcut() {
       if (!command || e.shiftKey || e.altKey || e.key !== ',') return
       if (document.querySelector('[role=dialog][data-state=open]')) return
       e.preventDefault()
-      router.push('/app/settings')
+      // Where no dialog shows Settings (Brigade.app's quick-capture window): its address.
+      if (!openSettings()) router.push('/app/settings')
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)

@@ -70,6 +70,7 @@ import { newThreadId, pendingRow, pendingThreads } from '@/lib/pending-threads'
 import { preloadThreadEvents } from '@/lib/use-thread-events'
 import { cn } from '@/lib/utils'
 import { captures, desktopPlatform } from '@/lib/brigade-app'
+import { clickSettings } from '@/lib/settings-dialog'
 
 const quietSelect =
   'h-8 border-transparent bg-transparent shadow-none hover:bg-accent dark:bg-transparent dark:hover:bg-accent/50'
@@ -648,7 +649,11 @@ export function NewThread({
     notice = (
       <>
         No computer is online.{' '}
-        <Link href="/app/computers" className={link}>
+        <Link
+          href="/app/computers"
+          onClick={(e) => clickSettings(e, '/app/computers')}
+          className={link}
+        >
           Link your machine
         </Link>{' '}
         to run threads on it.
@@ -658,7 +663,11 @@ export function NewThread({
     notice = (
       <>
         No {loginName(login)} account on {computerName(computer!)}.{' '}
-        <Link href="/app/accounts" className={link}>
+        <Link
+          href="/app/accounts"
+          onClick={(e) => clickSettings(e, '/app/accounts')}
+          className={link}
+        >
           Add one
         </Link>
       </>

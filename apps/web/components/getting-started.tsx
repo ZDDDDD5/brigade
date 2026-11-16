@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { useApi, type ConnectionsResponse, type ThreadSummary } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
 
 const dismissedKey = (workspaceId: string) => `brigade.checklist.dismissed.${workspaceId}`
@@ -119,7 +120,9 @@ export function GettingStarted({ threads }: { threads: ThreadSummary[] | undefin
               </div>
               {!s.done && s.href && s.action && (
                 <Button asChild size="sm" variant={next ? 'default' : 'outline'}>
-                  <Link href={s.href}>{s.action}</Link>
+                  <Link href={s.href} onClick={(e) => clickSettings(e, s.href!)}>
+                    {s.action}
+                  </Link>
                 </Button>
               )}
             </li>

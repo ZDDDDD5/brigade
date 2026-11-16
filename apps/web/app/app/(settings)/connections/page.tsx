@@ -1,37 +1,20 @@
 'use client'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { Suspense, useEffect, useMemo, useState } from 'react'
-import { CircleCheck, ShieldCheck } from 'lucide-react'
-import { AppSheet } from '@/components/app-sheet'
-import { ConnectApps, type Open } from '@/components/connect-apps'
-import { useApi, type ConnectionsResponse, type Trigger, type TriggerCatalog } from '@/lib/api'
-import { desktopSignedInLink, tellSignIn } from '@/lib/sign-in-window'
+// Settings is a dialog: this section's address opens it over Today (components/settings-dialog.tsx).
+// The sign-in tab's last page (?popup=1) stays a page of its own, which closes the tab.
+import { useSearchParams } from 'next/navigation'
+import { Suspense } from 'react'
+import { SettingsAddress } from '@/components/settings-dialog'
+import { SignedIn } from '@/components/settings/connections'
 
-/** Why an account was not connected, from the error a provider's redirect brought back. */
-const CONNECT_ERRORS: Record<string, string> = {
-  expired: 'The request expired. Start again.',
-  forbidden: 'You are no longer in this workspace.',
-  declined: 'Access was not granted.',
-  google: 'Google did not complete the sign-in. Try again.',
-  mcp: 'The sign-in did not complete. Try again.',
-  stripe_accounts:
-    'Brigade connects one Stripe account at a time, live or a sandbox: on Stripe’s page, choose a single one. Connect again for another.',
-  github: 'GitHub did not complete the sign-in. Try again.',
-  github_requested:
-    "Your request to install Brigade was sent to the GitHub organization's owners. Connect GitHub again once they approve it.",
-  github_not_yours:
-    'Your GitHub account cannot reach that installation. Sign in to GitHub as someone who can, and try again.',
-}
-
-export default function AppsPage() {
+export default function AppsAddress() {
   return (
     <Suspense>
-      <Apps />
+      <Address />
     </Suspense>
   )
 }
 
-function Apps() {
+function Address() {
   const params = useSearchParams()
   // Back from a provider in the sign-in tab: the page that opened it shows the account.
   if (params.get('popup'))
@@ -42,137 +25,5 @@ function Apps() {
         desktop={params.get('desktop')}
       />
     )
-  return <AppsList />
-}
-
-/** The sign-in tab's last page: closes itself, or says to. */
-function SignedIn({
-  connected,
-  error,
-  desktop,
-}: {
-  connected: string | null
-  error: string | null
-  /** Started in Brigade.app, which waits for the result: its one-time value. */
-  desktop: string | null
-}) {
-  useEffect(() => {
-    const result = { ...(connected ? { connected } : {}), ...(error ? { error } : {}) }
-    // Back to Brigade.app, whose page waits: the browser tab stays, saying so.
-    if (desktop) return void (window.location.href = desktopSignedInLink(desktop, result))
-    // The page that opened the tab learns which account signed in, before the tab closes.
-    tellSignIn(result)
-    if (!error) window.close()
-  }, [connected, error, desktop])
-  return (
-    <div className="flex flex-col gap-2 py-16 text-center">
-      <p className="font-semibold">{error ? 'The account was not connected.' : 'Connected.'}</p>
-      <p className="text-sm text-muted-foreground">
-        {error
-          ? (CONNECT_ERRORS[error] ?? `(${error})`)
-          : 'You can close this tab and go back to Brigade.'}
-      </p>
-    </div>
-  )
-}
-
-function AppsList() {
-  const params = useSearchParams()
-  const router = useRouter()
-  const data = useApi<ConnectionsResponse>('/connections', ['connections.updated'])
-  const triggers = useApi<Trigger[]>('/triggers')
-  const catalog = useApi<TriggerCatalog>('/triggers/catalog')
-  const [open, setOpen] = useState<Open>()
-
-  const connections = useMemo(() => data.data?.connections ?? [], [data.data])
-
-  // Back from a provider's sign-in: open the App the new account belongs to.
-  const connected = params.get('connected')
-  const [shown, setShown] = useState<string>()
-  useEffect(() => {
-    const account = connected && connections.find((c) => c.id === connected)
-    if (!account || shown === account.id) return
-    setShown(account.id)
-    setOpen({ kind: account.kind, appId: account.appId })
-  }, [connected, connections, shown])
-
-  // Opened for one App (/app/connections?app=cloudflare, from a page that needs it): its sheet.
-  // Once: a sign-in started from it comes back with the account and its own `connected`.
-  const asked = params.get('app')
-  const known = !!data.data && !!asked && asked in data.data.catalog
-  const [askedShown, setAskedShown] = useState<string>()
-  useEffect(() => {
-    if (!known || askedShown === asked) return
-    setAskedShown(asked!)
-    setOpen({ kind: asked as Open['kind'] })
-  }, [known, asked, askedShown])
-
-  function close() {
-    setOpen(undefined)
-    if (connected || asked || params.get('error')) router.replace('/app/connections')
-  }
-
-  const reload = () => Promise.all([data.reload(), triggers.reload()])
-  // A built-in App opened from the catalog becomes the added one once its first account connects.
-  const sheetApp = data.data?.apps.find((a) =>
-    open?.appId ? a.id === open.appId : a.key === open?.kind,
-  )
-
-  return (
-    <div className="flex flex-col gap-8">
-      <div className="flex flex-col">
-        <ConnectApps
-          data={data.data}
-          onOpen={setOpen}
-          intro={
-            <>
-              <p className="max-w-prose text-muted-foreground">
-                The services your teammates work in. Connect your accounts, then choose which
-                teammates get each one.
-              </p>
-              <div className="flex gap-3 rounded-lg bg-accent p-4 text-sm">
-                <ShieldCheck
-                  className="mt-0.5 size-4 shrink-0 text-accent-foreground"
-                  aria-hidden
-                />
-                <p>
-                  <span className="font-semibold text-accent-foreground">
-                    An account’s key stays encrypted in Brigade and never reaches a computer:
-                  </span>{' '}
-                  every call goes through Brigade, which checks the teammate&apos;s access, asks a
-                  person before changes when its policy says so, and logs the call.
-                </p>
-              </div>
-              {connected && (
-                <p className="flex items-center gap-2 rounded-lg bg-success/15 p-3 text-sm font-semibold text-success">
-                  <CircleCheck className="size-4" aria-hidden />
-                  Connected.
-                </p>
-              )}
-              {params.get('error') && (
-                <p className="text-sm text-destructive-text">
-                  The account was not connected.{' '}
-                  {CONNECT_ERRORS[params.get('error')!] ?? `(${params.get('error')})`}
-                </p>
-              )}
-            </>
-          }
-        />
-      </div>
-
-      {open && data.data && (
-        <AppSheet
-          key={open.appId ?? open.kind}
-          kind={open.kind}
-          app={sheetApp}
-          data={data.data}
-          triggers={triggers.data ?? []}
-          catalog={catalog.data}
-          reload={reload}
-          onClose={close}
-          onAdded={(appId) => setOpen({ kind: 'mcp', appId })}
-        />
-      )}
-    </div>
-  )
+  return <SettingsAddress />
 }

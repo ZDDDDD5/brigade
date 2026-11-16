@@ -34,6 +34,7 @@ import { isMac, useIsMac } from '@/lib/platform'
 import { isMarkdownName } from '@/lib/file-view'
 import { HOVER_MS, prepareDocument } from '@/lib/prepare-document'
 import { libraryFile } from '@/lib/search-open'
+import { openSettings } from '@/lib/settings-dialog'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { api, pullHref } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -306,7 +307,7 @@ export function SearchDialog({
       onOpenChange(false)
       const file = libraryFile(item)
       if (file) documents.open(libraryDocument(file))
-      else router.push(item.href)
+      else if (!openSettings(item.href)) router.push(item.href)
     },
     [onOpenChange, router, workspaceId, documents],
   )

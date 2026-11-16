@@ -54,6 +54,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Hint } from '@/components/ui/tooltip'
 import { api, uploadFile, useApi } from '@/lib/api'
 import { ProjectIcon } from '@/components/projects'
+import { clickSettings } from '@/lib/settings-dialog'
 
 type Scope = { everywhere: boolean; teammateIds: string[]; projectIds: string[] }
 
@@ -286,7 +287,7 @@ export function Skills({ admin }: { admin: boolean }) {
     <div className="flex flex-col gap-7">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-extrabold tracking-tight">
+          <h1 className="text-2xl font-extrabold tracking-tight">
             Skills{' '}
             {skills.data && <span className="font-bold text-muted-foreground">{list.length}</span>}
           </h1>
@@ -294,7 +295,11 @@ export function Skills({ admin }: { admin: boolean }) {
             How your teammates do certain work. A teammate reads a skill when the work matches its
             description, or when a message starts with its <span className="font-mono">/name</span>.
             A skill gives no access: that stays with{' '}
-            <Link href="/app/connections" className="font-medium text-primary hover:underline">
+            <Link
+              href="/app/connections"
+              onClick={(e) => clickSettings(e, '/app/connections')}
+              className="font-medium text-primary hover:underline"
+            >
               Apps
             </Link>
             .
