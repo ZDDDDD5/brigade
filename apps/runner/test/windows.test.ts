@@ -155,3 +155,66 @@ test('the local sandbox runs commands and reads and writes files', async () => {
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test("Windows' computer use asks agent-desktop as the Mac's helper is asked", async () => {
+  const { windowsComputer } = await import('../src/harness/windows-computer.js')
+  const calls: string[][] = []
+  const answers: Record<string, unknown> = {
+    'list-apps': {
+      apps: [
+        { name: 'Notepad.exe', pid: 7 },
+        { name: 'Code.exe', pid: 8 },
+      ],
+    },
+    'list-windows': [{ app_name: 'Notepad.exe', is_focused: true }],
+    'list-displays': [{ bounds: { x: 0, y: 0, width: 1280, height: 800 } }],
+    screenshot: { width: 1280, height: 800 },
+    launch: { app: 'notepad.exe', pid: 9 },
+  }
+  const exec = async (args: string[]) => {
+    calls.push(args)
+    return JSON.stringify({ ok: true, data: answers[args[0]!] ?? {} })
+  }
+  const computer = windowsComputer(exec, {
+    workDir: '.',
+    env: () => ({}),
+    screenshotPath: () => ({ path: 'images/x.png', absolute: '/x.png' }),
+    share: () => undefined,
+  })
+  assert.deepEqual(await computer.request('apps', {}), {
+    apps: [
+      { name: 'Notepad', pid: 7, active: true },
+      { name: 'Code', pid: 8, active: false },
+    ],
+  })
+  assert.deepEqual(await computer.request('screenshot', { path: '/x.png', display: 0 }), {
+    width: 1280,
+    height: 800,
+    origin: { x: 0, y: 0 },
+    displays: 1,
+  })
+  await computer.request('click', { x: 10.4, y: 20, count: 2, modifiers: ['cmd'] })
+  assert.deepEqual(calls.at(-1), [
+    'mouse-click',
+    '--headed',
+    '--xy=10,20',
+    '--button',
+    'left',
+    '--count',
+    '2',
+    '--modifiers',
+    'ctrl',
+  ])
+  await computer.request('scroll', { x: 1, y: 2, direction: 'down', amount: 3 })
+  assert.deepEqual(calls.at(-1), ['mouse-wheel', '--headed', '--x=1', '--y=2', '--dy=-3'])
+  // A key for an app goes only while it is in front.
+  await computer.request('key', { key: 'cmd+s', app: 'Notepad' })
+  assert.deepEqual(calls.at(-1), ['press', '--headed', 'ctrl+s'])
+  await assert.rejects(computer.request('key', { key: 'return', app: 'Code' }), /not in front/)
+  assert.deepEqual(await computer.request('open_app', { app: 'Notepad' }), {
+    name: 'notepad',
+    pid: 9,
+    active: true,
+  })
+  await assert.rejects(computer.request('run', {}), /not offered on Windows/)
+})

@@ -1,6 +1,6 @@
 // agent-desktop (vercel-labs/agent-desktop): reads an app's interface through the OS's
-// accessibility API (AX on macOS, AT-SPI on Linux) and acts on its elements by ref, without
-// moving the pointer or taking focus.
+// accessibility API (AX on macOS, AT-SPI on Linux, UI Automation on Windows) and acts on its
+// elements by ref, without moving the pointer or taking focus.
 //
 // The runner's bundle doesn't carry it: its binaries for every platform (12 MB compressed) took
 // the bundle past the 25 MiB a Worker asset may be, and the API serves the bundle as one (#849's
@@ -12,11 +12,17 @@
 //
 // Where it runs is the caller's (DesktopExec): on a member's Mac, through Brigade Computer Use,
 // which holds Accessibility (harness/desktop-tools.ts); on a cloud computer, as the teammate's
-// Linux user on the desktop, reading its own apps only (desktop.ts).
+// Linux user on the desktop, reading its own apps only (desktop.ts); on a member's Windows PC, by
+// the runner itself, which runs in the person's session (windows-computer.ts).
+//
+// Its Windows build needs the Visual C++ runtime (VCRUNTIME140.dll), which a Windows without
+// Visual C++ installed lacks (it exits at once, 0xC0000135), and installing it needs an
+// administrator. So it gets its own copy beside it, as Microsoft allows ("app-local"): the one
+// python.org's embeddable Python ships, pinned by the archive's and the DLL's SHA-256.
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { arch, platform } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -30,6 +36,24 @@ export const AGENT_DESKTOP_VERSION = '1.3.1'
 export const AGENT_DESKTOP_INTEGRITY =
   'sha512-5pBKkFkdB/VIAWRfqoA8lYp5/fenfxUHI15Pc4k8Nn2LmLxxo1PkAb0WLypknyOCczuIwuzFp/rZHGGawEV+hw=='
 const TARBALL = `https://registry.npmjs.org/agent-desktop/-/agent-desktop-${AGENT_DESKTOP_VERSION}.tgz`
+
+/**
+ * The Visual C++ runtime for agent-desktop on Windows: from python.org's embeddable Python
+ * (3.13.12), pinned. VCRUNTIME140.dll 14.42, Microsoft's, signed.
+ */
+export const VCRUNTIME = {
+  x64: {
+    url: 'https://www.python.org/ftp/python/3.13.12/python-3.13.12-embed-amd64.zip',
+    sha256: '76f238f606250c87c6beac75dccd35ee99070a13490555936abb6cb64ecce3d0',
+    dll: '052ad6a20d375957e82aa6a3c441ea548d89be0981516ca7eb306e063d5027f4',
+  },
+  arm64: {
+    url: 'https://www.python.org/ftp/python/3.13.12/python-3.13.12-embed-arm64.zip',
+    sha256: 'b034042d46e20de57dab22de1813d56bde286899d9d9991255a7c0e1f7efbfa0',
+    dll: '560cd0ab1ec81b8b2197b119e198453a9c23d2f9e846f15c79a26bf5d75b68c4',
+  },
+} as const
+const VCRUNTIME_DLL = 'vcruntime140.dll'
 
 /** Where a runner keeps its download: beside the runner (<install dir>/runner), not inside it. */
 export const AGENT_DESKTOP_DIR = join(
@@ -66,6 +90,8 @@ export function binaryIn(bin: string, os: string, cpu: string): AgentDesktopBina
   if (!names) return
   const path = join(bin, names[0]!)
   if (!existsSync(path)) return
+  // Windows: only with the runtime beside it (the package's own copy has none).
+  if (os === 'win32') return existsSync(join(bin, VCRUNTIME_DLL)) ? { path } : undefined
   if (os !== 'darwin') return { path }
   const macosHelper = join(bin, names[1]!)
   return existsSync(macosHelper) ? { path, macosHelper } : undefined
@@ -73,7 +99,9 @@ export function binaryIn(bin: string, os: string, cpu: string): AgentDesktopBina
 
 /** The files a platform needs, the binary first; none for a platform agent-desktop doesn't run on. */
 function binaryNames(os: string, cpu: string) {
-  if ((os !== 'darwin' && os !== 'linux') || (cpu !== 'arm64' && cpu !== 'x64')) return
+  if ((os !== 'darwin' && os !== 'linux' && os !== 'win32') || (cpu !== 'arm64' && cpu !== 'x64'))
+    return
+  if (os === 'win32') return [`agent-desktop-win32-${cpu}.exe`]
   return os === 'darwin'
     ? [`agent-desktop-${os}-${cpu}`, `agent-desktop-macos-helper-${os}-${cpu}`]
     : [`agent-desktop-${os}-${cpu}`, `agent-desktop-linux-clipboard-owner-${os}-${cpu}`]
@@ -180,6 +208,7 @@ async function download(
       ...names.map((name) => `package/bin/${name}`),
     ])
     const unpacked = join(staging, 'package', 'bin')
+    if (os === 'win32') await vcruntime(cpu, unpacked, get, deadline)
     for (const name of names) await chmod(join(unpacked, name), 0o755)
     await chmod(unpacked, 0o755)
     await rm(dir, { recursive: true, force: true })
@@ -190,6 +219,34 @@ async function download(
   const binary = binaryIn(dir, os, cpu)
   if (!binary) throw new Error('agent-desktop was downloaded, but its binary is missing')
   return binary
+}
+
+/** The Visual C++ runtime into `dir`, from its pinned archive, both checked (VCRUNTIME). */
+async function vcruntime(cpu: string, dir: string, get: typeof fetch, deadline: AbortSignal) {
+  const pinned = cpu === 'arm64' ? VCRUNTIME.arm64 : VCRUNTIME.x64
+  const response = await get(pinned.url, { signal: deadline }).catch((error: unknown) => {
+    throw new Error(`The Visual C++ runtime could not be downloaded: ${String(error)}`)
+  })
+  if (!response.ok)
+    throw new Error(`The Visual C++ runtime could not be downloaded: ${response.status}`)
+  const bytes = Buffer.from(await response.arrayBuffer())
+  if (createHash('sha256').update(bytes).digest('hex') !== pinned.sha256)
+    throw new Error(
+      'The Visual C++ runtime was not used: its download does not match the one pinned',
+    )
+  const zip = join(dir, 'runtime.zip')
+  await writeFile(zip, bytes)
+  // Windows' own tar (bsdtar) reads zip archives; GNU tar, first on the runner's PATH, doesn't.
+  const tar = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+  await run(tar, ['-xf', zip, '-C', dir, VCRUNTIME_DLL])
+  await rm(zip, { force: true })
+  const dll = createHash('sha256')
+    .update(await readFile(join(dir, VCRUNTIME_DLL)))
+    .digest('hex')
+  if (dll !== pinned.dll) {
+    await rm(join(dir, VCRUNTIME_DLL), { force: true })
+    throw new Error('The Visual C++ runtime was not used: it does not match the one pinned')
+  }
 }
 
 /** Runs agent-desktop with these arguments where the caller says; resolves to its stdout. */

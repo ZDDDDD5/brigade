@@ -38,8 +38,9 @@ export type Keyboard = {
 
 export type Desktop = {
   exec: DesktopExec
-  /** A member's Mac, or a cloud computer's desktop (the teammate's own browser). */
-  where: 'mac' | 'cloud'
+  /** A member's Mac or Windows PC (its apps), or a cloud computer's desktop (the teammate's own
+   * browser). */
+  where: 'mac' | 'windows' | 'cloud'
   /** Before each call: on a cloud computer, the teammate's browser started. */
   ready?: (signal?: AbortSignal) => Promise<void>
   /** On a cloud computer: what agent-desktop can't type or press there. */
@@ -53,6 +54,9 @@ const ABOUT = {
   mac:
     "On the person's own Mac (this computer), through Brigade Computer Use: while you act, a pill on " +
     'their screen shows your name with a Stop button.',
+  windows:
+    "On the person's own Windows PC (this computer), in their session: you use their apps as they " +
+    'would, so leave alone what they are working in unless asked.',
   cloud:
     "On this cloud computer's desktop, in your own browser's windows only: Chrome's own interface, which " +
     'the browser_* tools do not reach (a permission prompt, a sign-in dialog, a bubble such as "Save ' +
@@ -112,10 +116,10 @@ export type ActToolInput = Partial<Omit<ActInput, 'headed'>> & {
 }
 
 /** What an action on a ref takes, alone or as one of computer_act's steps. */
-function stepProperties(where: 'mac' | 'cloud'): Record<string, JSONSchema7> {
+function stepProperties(where: Desktop['where']): Record<string, JSONSchema7> {
   return {
     ref: { type: 'string', description: 'The ref, as the snapshot gives it: @s…:e…' },
-    action: { type: 'string', enum: [...(where === 'mac' ? ACTIONS : CLOUD_ACTIONS)] },
+    action: { type: 'string', enum: [...(where !== 'cloud' ? ACTIONS : CLOUD_ACTIONS)] },
     text: { type: 'string', description: 'For type and set_value' },
     option: { type: 'string', description: 'For select: the option to pick' },
     direction: {
@@ -130,6 +134,7 @@ function stepProperties(where: 'mac' | 'cloud'): Record<string, JSONSchema7> {
 /** The surfaces agent-desktop reads on each: a Mac has a focused element and popovers, Linux not. */
 const SURFACES = {
   mac: ['window', 'focused', 'menu', 'menubar', 'sheet', 'popover', 'alert'],
+  windows: ['window', 'focused', 'menu', 'sheet', 'start-menu', 'taskbar', 'system-tray'],
   cloud: ['window', 'menu', 'sheet', 'alert'],
 } as const
 
@@ -483,7 +488,7 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
       reads.set(data.snapshot_id, {
         ...read,
         // On a cloud computer the window picked in the browser says it already.
-        ...(where === 'mac' && !read.app && typeof data.app === 'string' && data.app
+        ...(where !== 'cloud' && !read.app && typeof data.app === 'string' && data.app
           ? { app: data.app }
           : {}),
       })
@@ -582,7 +587,7 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
         '(@s…:e…) and what it can do {click, …}. Act on a ref with computer_act: it works through ' +
         "the app's accessibility, without moving the pointer or taking the keyboard focus, so it is the " +
         'first way to use an app. ' +
-        (where === 'mac'
+        (where !== 'cloud'
           ? 'Use computer_screenshot and computer_click for what the tree does not show (a canvas, a ' +
             'game, an element without a ref). '
           : 'A dialog or a bubble is a window of its own, or a sheet (surface: sheet). ') +
@@ -597,14 +602,14 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
           app: {
             type: 'string',
             description:
-              where === 'mac'
+              where !== 'cloud'
                 ? 'The app, by the name computer_apps lists (default: the one in front)'
                 : `The app (default ${CLOUD_APP}, your browser)`,
           },
           window: {
             type: 'string',
             description:
-              where === 'mac'
+              where !== 'cloud'
                 ? 'A window id, when the app has several (an error lists them)'
                 : 'A window id from otherWindows (default: the window in front)',
           },
@@ -666,7 +671,7 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
         'Act on an element by its ref from computer_snapshot: click, type or set_value (text), select ' +
         '(option), toggle, check, expand, scroll… Through accessibility: the pointer and the keyboard ' +
         'focus stay where they are. ' +
-        (where === 'mac'
+        (where !== 'cloud'
           ? 'When an element does not take an action that way (a web page field often won’t take type), ' +
             "headed: true uses the real keyboard and mouse instead, taking the person's pointer and focus " +
             'for a moment. '
@@ -691,7 +696,7 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
               required: ['ref', 'action'],
             },
           },
-          ...(where === 'mac'
+          ...(where !== 'cloud'
             ? {
                 headed: {
                   type: 'boolean',
@@ -708,7 +713,7 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
       }),
       execute: async (input, { abortSignal }) => {
         // A cloud computer's desktop takes no headed input from agent-desktop (see the top).
-        const headed = where === 'mac' && !!input.headed
+        const headed = where !== 'cloud' && !!input.headed
         const many = !!input.steps?.length
         const steps: ActInput[] = many
           ? input.steps!.map((step) => ({ ...step, headed }))
@@ -729,7 +734,7 @@ export function desktopTools(desktop: Desktop): Record<string, Tool> {
           if (!step.ref || !step.action)
             throw new Error('Give a ref and an action, or steps that each have them.')
           if (
-            !(where === 'mac' ? ACTIONS : (CLOUD_ACTIONS as readonly Action[])).includes(
+            !(where !== 'cloud' ? ACTIONS : (CLOUD_ACTIONS as readonly Action[])).includes(
               step.action,
             )
           )

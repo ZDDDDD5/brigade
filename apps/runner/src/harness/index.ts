@@ -165,6 +165,7 @@ import {
   widgetGuideTool,
 } from './tools.js'
 import { desktopTools, macAppInput, macDesktopExec, type Desktop } from './desktop-tools.js'
+import { localDesktopExec, windowsComputer } from './windows-computer.js'
 
 export type {
   ConnectorCaller,
@@ -530,7 +531,11 @@ function createAgent(
           : {}),
         ...(makeImage ? imageTools(makeImage) : {}),
         ...(computer
-          ? computerUseTools(computer, desktop?.where === 'mac' ? macAppInput(desktop) : undefined)
+          ? computerUseTools(
+              computer,
+              desktop && desktop.where !== 'cloud' ? macAppInput(desktop) : undefined,
+              desktop?.where === 'windows' ? 'windows' : 'mac',
+            )
           : {}),
         // Apps read and used by accessibility refs: on a Mac beside the tools above, on a cloud
         // computer in the teammate's own browser window.
@@ -2060,7 +2065,9 @@ export class HarnessThread {
    * helper, answering that it's missing: a thread that used them can't resume without them.
    */
   private computerUse(): ComputerUse | undefined {
-    if (this.runAs || process.platform !== 'darwin') return
+    if (this.runAs) return
+    if (WINDOWS) return windowsComputer(this.windowsDesktop().exec, this.computerBase())
+    if (process.platform !== 'darwin') return
     const client = computerUseClient()
     return {
       request: (method, params, signal, options) =>
@@ -2081,6 +2088,13 @@ export class HarnessThread {
                   '(it includes it), then try again.',
               ),
             ),
+      ...this.computerBase(),
+    }
+  }
+
+  /** What computer use on a member's computer needs beside its requests. */
+  private computerBase(): Omit<ComputerUse, 'request'> {
+    return {
       workDir: this.workDir,
       env: () => harnessEnv(),
       screenshotPath: () => {
@@ -2094,6 +2108,19 @@ export class HarnessThread {
           toolCallId,
           prompt: 'Screenshot of the screen',
         }),
+    }
+  }
+
+  /**
+   * On a member's Windows PC: agent-desktop run by the runner, which runs in the person's session
+   * (windows-computer.ts), beside the screen tools.
+   */
+  private windowsDesktop(): Desktop {
+    return {
+      exec: localDesktopExec(
+        async (signal) => (await ensureAgentDesktop(signal ? { signal } : {})).path,
+      ),
+      where: 'windows',
     }
   }
 
@@ -2471,7 +2498,11 @@ export class HarnessThread {
       this.context.preview,
       this.spec.imageAccount ? (input, signal) => this.makeImage(input, signal) : undefined,
       computer,
-      computer ? this.macDesktop(computer) : this.cloudDesktop(),
+      computer
+        ? WINDOWS
+          ? this.windowsDesktop()
+          : this.macDesktop(computer)
+        : this.cloudDesktop(),
       this.context.machine,
       this.arrivals,
       onPi

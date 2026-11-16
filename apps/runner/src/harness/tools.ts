@@ -3843,7 +3843,12 @@ const COMMAND_TIMEOUT_DEFAULT = 120
 const COMMAND_TIMEOUT_MAX = 1800
 const COMMAND_OUTPUT_MAX = 100_000
 
-const ABOUT_COMPUTER =
+const ABOUT_WINDOWS =
+  "On the person's own Windows PC (this computer), in their session. Coordinates are screen pixels " +
+  'with the top-left of the main display at 0,0: the same units as computer_screenshot. Clicks, keys and ' +
+  "the pointer are the person's own: act when they are not using the PC, or ask first."
+
+const ABOUT_MAC =
   "On the person's own Mac (this computer), through Brigade Computer Use. Coordinates are screen points " +
   'with the top-left of the main display at 0,0: the same units as computer_screenshot and computer_ui_tree. ' +
   'While you act, a pill on their screen shows your name with a Stop button.'
@@ -3871,7 +3876,14 @@ export function computerUseTools(
   computer: ComputerUse,
   /** Input for a named app, straight to its process (desktop-tools.ts's macAppInput). */
   appInput?: AppInput,
+  /**
+   * A Mac (Brigade Computer Use), or a Windows PC (agent-desktop, harness/windows-computer.ts),
+   * which has no computer_run (its commands need no helper's permission there) nor ui_tree.
+   */
+  system: 'mac' | 'windows' = 'mac',
 ): Record<string, Tool> {
+  const windows = system === 'windows'
+  const ABOUT_COMPUTER = windows ? ABOUT_WINDOWS : ABOUT_MAC
   const act =
     (method: string) =>
     (input: object, { abortSignal }: { abortSignal?: AbortSignal }) =>
@@ -3916,7 +3928,7 @@ export function computerUseTools(
       )
     return appInput
   }
-  return {
+  const tools: Record<string, Tool> = {
     computer_screenshot: tool({
       description:
         'Take a screenshot of a display. Returns the PNG it saved in your working directory (images/...): open it ' +
@@ -4125,7 +4137,9 @@ export function computerUseTools(
       },
     }),
     computer_apps: tool({
-      description: 'The apps running on this Mac, which one is in front. ' + ABOUT_COMPUTER,
+      description:
+        `The apps running on this ${windows ? 'PC' : 'Mac'}, which one is in front. ` +
+        ABOUT_COMPUTER,
       inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
       execute: act('apps'),
     }),
@@ -4251,6 +4265,13 @@ export function computerUseTools(
       execute: act('ui_tree'),
     }),
   }
+  // Windows: commands need no helper to reach other apps there (the shell's own do), and
+  // computer_snapshot reads an app's tree.
+  if (windows) {
+    delete tools.computer_run
+    delete tools.computer_ui_tree
+  }
+  return tools
 }
 
 /** The contract propose_goal takes (GoalContractInput), described for the model. */
