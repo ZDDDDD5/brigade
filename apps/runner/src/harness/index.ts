@@ -25,6 +25,7 @@ import {
   type ThreadSpec,
   type TicketAnswer,
   type UsageRunKind,
+  loginOf,
   runModel,
   WIDGET_GUIDE_TOOL,
 } from '@brigade/contracts'
@@ -111,7 +112,8 @@ import {
 import { createLocalSandboxSession, freePort, stopGroup } from './local-sandbox.js'
 import { SIDE_REPLY_ENV } from './side-reply-env.js'
 import { claimHandOver, type HandedOver } from '../hand-over.js'
-import { bridgeBrowser, threadNet } from '../thread-net.js'
+import { asTeammate, bridgeBrowser, threadNet } from '../thread-net.js'
+import { createPiHarness, piModel, piSkills } from './pi.js'
 import { ReplyWatch, terminalTools } from './replies.js'
 import { declareDone, Outbox } from './outbox.js'
 import { Arrivals } from './arrivals.js'
@@ -328,9 +330,53 @@ export const machineToolsInView = (spec: Pick<ThreadSpec, 'machine'>, machine: u
   spec.machine && machine ? ['run_on_machine'] : []
 
 /** The teammate's model for the harness; none leaves Claude Code on the account's own. */
-function withModel(teammate: Pick<ThreadSpec['teammate'], 'harness' | 'model'>) {
+function withModel(
+  teammate: Pick<ThreadSpec['teammate'], 'harness' | 'model'>,
+  account?: AccountRef,
+) {
   const model = runModel(teammate.harness, teammate.model)
-  return model ? { model } : {}
+  if (!model) return {}
+  // Pi resolves it under the login's own provider (pi.ts), never another one with that model.
+  return { model: teammate.harness === 'pi' && account ? piModel(account, model) : model }
+}
+
+/**
+ * The login's own CLI and the teammate's model, for a run beside its turns (memory, a title, a
+ * side reply): Claude Code or Codex. A Pi teammate's runs go to the CLI of the login it runs on.
+ */
+const cliOf = (
+  teammate: Pick<ThreadSpec['teammate'], 'harness' | 'model'>,
+): Pick<ThreadSpec['teammate'], 'harness' | 'model'> => ({
+  harness: loginOf(teammate.harness, teammate.model),
+  model: teammate.model,
+})
+
+/**
+ * An MCP server on stdio for Pi, whose client starts it from the runner's own process: on a cloud
+ * computer, as the teammate's user in the thread's network, where Claude Code and Codex start it
+ * themselves (the browser relay reaches only its teammate's browser).
+ */
+async function piMcpServer(
+  server: { command: string; args: string[] },
+  runAs: string | undefined,
+  sessionId: string,
+) {
+  if (!runAs) return { type: 'stdio', command: server.command, args: server.args }
+  const { file, args } = asTeammate(runAs, await threadNet(sessionId))
+  // Pi's client gives it the runner's whole environment, which sudo -E would pass on to the
+  // teammate: it starts with none but where to find programs.
+  return {
+    type: 'stdio',
+    command: 'env',
+    args: ['-i', `PATH=${process.env.PATH ?? ''}`, file, ...args, server.command, ...server.args],
+  }
+}
+
+/** What a Pi turn is given beside the spec: its instructions and skills (attach). */
+type PiSetup = {
+  /** Brigade's instructions, which Pi reads from no file (AGENTS.md, CLAUDE.md). */
+  instructions: string
+  skills: ReturnType<typeof piSkills>
 }
 
 function createAgent(
@@ -347,6 +393,7 @@ function createAgent(
   desktop: Desktop | undefined,
   machine: MachineRunTools | undefined,
   arrivals: Arrivals,
+  pi?: PiSetup,
 ) {
   // auth {}: the adapter adds no credential of its own. The vendor CLI uses the
   // account's token from the environment if it has one, else the login in its
@@ -357,41 +404,49 @@ function createAgent(
     defer: spec.teammate.harness === 'codex',
   })
   const codex = spec.teammate.harness === 'codex'
+  const onPi = spec.teammate.harness === 'pi'
   const chief = spec.teammate.kind === 'chief'
   // The thread's effort; none leaves each CLI on its own default.
   const effort = spec.effort ?? undefined
-  const harness = codex
-    ? createCodex({
-        ...settings,
-        // Codex reads 32 KiB of AGENTS.md by default; Brigade's, with memory last, is longer.
-        codexConfig: { ...CODEX_SETTINGS, project_doc_max_bytes: INSTRUCTIONS_MAX_BYTES },
-        ...(effort ? { reasoningEffort: effort } : {}),
+  const harness = onPi
+    ? createPiHarness({
+        account: spec.account,
+        effort,
+        mcpServers,
+        skills: pi?.skills ?? [],
       })
-    : createClaudeCode({
-        ...settings,
-        ...(effort ? { effort } : {}),
-        // Never deferred behind tool search: the tools that end most turns (a ticket, a card, the
-        // thread done, a child's report) come right before the answer, with no tool load between.
-        // Each load is a model round trip of its own (about 2 s; 538 in 928 turns before these).
-        toolHints: Object.fromEntries(
-          [
-            ...ALWAYS_LOADED,
-            ...machineToolsInView(spec, machine),
-            ...(chief ? [PROPOSE_TEAM_TOOL] : []),
-            // A pass's ways out, loaded with no tool search before them.
-            ...(spec.pass && chief
-              ? spec.pass.acts === true
-                ? ['chief_answer', 'chief_retry', 'chief_report']
-                : ['chief_report']
-              : []),
-            // A big App's catalog (catalogTools): a few small tools, found then called, without a
-            // tool search before them.
-            ...Object.entries(apps)
-              .filter(([, t]) => (t as unknown as Record<symbol, unknown>)[CATALOG_TOOL])
-              .map(([name]) => name),
-          ].map((name) => [name, { alwaysLoad: true }]),
-        ),
-      })
+    : codex
+      ? createCodex({
+          ...settings,
+          // Codex reads 32 KiB of AGENTS.md by default; Brigade's, with memory last, is longer.
+          codexConfig: { ...CODEX_SETTINGS, project_doc_max_bytes: INSTRUCTIONS_MAX_BYTES },
+          ...(effort ? { reasoningEffort: effort } : {}),
+        })
+      : createClaudeCode({
+          ...settings,
+          ...(effort ? { effort } : {}),
+          // Never deferred behind tool search: the tools that end most turns (a ticket, a card, the
+          // thread done, a child's report) come right before the answer, with no tool load between.
+          // Each load is a model round trip of its own (about 2 s; 538 in 928 turns before these).
+          toolHints: Object.fromEntries(
+            [
+              ...ALWAYS_LOADED,
+              ...machineToolsInView(spec, machine),
+              ...(chief ? [PROPOSE_TEAM_TOOL] : []),
+              // A pass's ways out, loaded with no tool search before them.
+              ...(spec.pass && chief
+                ? spec.pass.acts === true
+                  ? ['chief_answer', 'chief_retry', 'chief_report']
+                  : ['chief_report']
+                : []),
+              // A big App's catalog (catalogTools): a few small tools, found then called, without a
+              // tool search before them.
+              ...Object.entries(apps)
+                .filter(([, t]) => (t as unknown as Record<symbol, unknown>)[CATALOG_TOOL])
+                .map(([name]) => name),
+            ].map((name) => [name, { alwaysLoad: true }]),
+          ),
+        })
   // Chief's daily pass for a person (docs/chief-answers.md): it reads its brief's items and reports
   // on them (or, with chief_acts, acts on them), and nothing else; the API gives it no App.
   const passing = !!spec.pass && chief
@@ -472,8 +527,8 @@ function createAgent(
         // Apps read and used by accessibility refs: on a Mac beside the tools above, on a cloud
         // computer in the teammate's own browser window.
         ...(desktop ? desktopTools(desktop) : {}),
-        // Claude Code asks with its own question tool; Codex's adapter has none.
-        ...(codex ? { [ASK_USER_TOOL]: askUserTool } : {}),
+        // Claude Code asks with its own question tool; Codex's and Pi's adapters have none.
+        ...(codex || onPi ? { [ASK_USER_TOOL]: askUserTool } : {}),
         [OPEN_TICKET_TOOL]: openTicketTool,
         [SHOW_WIDGET_TOOL]: showWidgetTool,
         [WIDGET_GUIDE_TOOL]: widgetGuideTool,
@@ -492,8 +547,16 @@ function createAgent(
       toolApproval: Object.fromEntries(
         Object.keys(tools).map((name) => [name, 'not-applicable' as const]),
       ),
-      ...withModel(spec.teammate),
-      ...(spec.teammate.instructions ? { instructions: spec.teammate.instructions } : {}),
+      ...withModel(spec.teammate, spec.account),
+      ...(onPi
+        ? {
+            instructions: [pi?.instructions, spec.teammate.instructions]
+              .filter(Boolean)
+              .join('\n\n'),
+          }
+        : spec.teammate.instructions
+          ? { instructions: spec.teammate.instructions }
+          : {}),
       // Codex cannot ask before built-in tool calls (spec, known limits).
       permissionMode: spec.teammate.harness === 'codex' ? 'allow-all' : spec.permissionMode,
       sandboxConfig: { workDir: '.' },
@@ -609,6 +672,17 @@ function answers(host: string, port: number) {
  */
 function resumable(harness: ThreadSpec['teammate']['harness'], resume: unknown): unknown {
   const base = { type: 'resume-session', specificationVersion: 'harness-v1' }
+  // Pi keeps its conversation in the state itself (no file of its own): the last one saved, without
+  // the tool calls a cut-off turn waited on.
+  if (harness === 'pi') {
+    const state = resume as
+      | { data?: Record<string, unknown>; continueFrom?: { data?: Record<string, unknown> } }
+      | undefined
+    const data = state?.continueFrom?.data ?? state?.data
+    if (!data || !(data.entries || data.leafId)) return undefined
+    const { pendingToolBatch: _pending, ...rest } = data
+    return { ...base, harnessId: 'pi', data: rest }
+  }
   if (harness !== 'codex') return { ...base, harnessId: 'claude-code', data: {} }
   const state = resume as
     { data?: { threadId?: unknown }; continueFrom?: { data?: { threadId?: unknown } } } | undefined
@@ -667,6 +741,8 @@ export class HarnessThread {
   private readonly key: string
   /** Prompts so far: each is its own computer-use session, which the person can stop. */
   private prompts = 0
+  /** The tool calls of the run under way, and those that failed (turn.completed). */
+  private toolStats = { calls: 0, errors: 0 }
   /** Writes of the state file, in order. */
   private saving: Promise<void> = Promise.resolve()
   /**
@@ -695,6 +771,7 @@ export class HarnessThread {
 
   async run(input: ThreadInput, spec: ThreadSpec, signal: AbortSignal): Promise<TurnOutcome> {
     this.spec = spec
+    this.toolStats = { calls: 0, errors: 0 }
     await this.load()
     // An answer that comes as a message while messages wait on a decision: kept until it is
     // made (Threads asks first, before the turn starts).
@@ -838,8 +915,9 @@ export class HarnessThread {
           console.warn(`could not save thread state: ${errorMessage(error)}`),
         )
       }
-      // Codex's harness reports no limits: read once the turn is over, without holding it up.
-      if (result && spec.teammate.harness === 'codex') {
+      // Codex's harness reports no limits (nor Pi's on a Codex login): read once the turn is over,
+      // without holding it up.
+      if (result && loginOf(spec.teammate.harness, spec.teammate.model) === 'codex') {
         const account = this.current
         void readCodexLimits(account).then((limits) => {
           if (limits?.length) this.emit({ type: 'usage.updated', accountId: account.id, limits })
@@ -946,9 +1024,12 @@ export class HarnessThread {
     return this.drain !== undefined
   }
 
-  /** A turn runs in a live session, whose conversation a side reply can fork (sideReply). */
+  /**
+   * A turn runs in a live session, whose conversation a side reply can fork (sideReply). Not Pi's:
+   * its conversation lives in the runner, where no CLI can fork it.
+   */
   get forkable() {
-    return this.live !== undefined
+    return this.live !== undefined && this.spec.teammate.harness !== 'pi'
   }
 
   /** The guess no longer matters (a new message, a stop): the answered turn's stream ends now. */
@@ -1345,9 +1426,12 @@ export class HarnessThread {
     this.arrivals.handOver()
     const resume = await Promise.race([detached, sleep(HAND_OVER_MS, undefined, { ref: false })])
     this.handingOver = false
-    if (!resume || groups.length === 0) {
+    // Pi runs in this runner, and stops with it: nothing goes on for the next runner to attach
+    // to. Its conversation so far is kept, and the next runner continues the turn (recover).
+    const inRunner = this.spec.teammate.harness === 'pi'
+    if (!resume || groups.length === 0 || inRunner) {
       this.handOverFailed = true
-      this.saved = { ...this.saved!, inTurn: true }
+      this.saved = { ...this.saved!, ...(inRunner && resume ? { resume } : {}), inTurn: true }
       await this.persist()
       await live.sandbox.destroy()
       return []
@@ -1998,7 +2082,12 @@ export class HarnessThread {
    * closed so, or on Codex, which keeps continuing it.
    */
   private closeTurn() {
-    if (this.spec.teammate.harness === 'codex' || !this.saved) return false
+    if (
+      this.spec.teammate.harness === 'codex' ||
+      this.spec.teammate.harness === 'pi' ||
+      !this.saved
+    )
+      return false
     const closed = closeTurn(this.saved.resume)
     if (!closed) return false
     for (const { toolCallId, ...call } of closed.waiting)
@@ -2181,27 +2270,23 @@ export class HarnessThread {
     await writeMemoryFiles(this.workDir, threadTopicFiles(memory, this.spec), this.runAs).catch(
       (error) => console.warn(`could not write memory topics: ${errorMessage(error)}`),
     )
-    await writeInstructions(
-      this.workDir,
+    const text = instructions(
       this.spec,
-      instructions(
-        this.spec,
-        memory,
-        libraryDir,
-        tabsFile
-          ? { ready: true }
-          : { ready: false, ...(browserError ? { error: browserError } : {}) },
-      ),
-      this.runAs,
-    ).catch((error) => console.warn(`could not write instructions: ${errorMessage(error)}`))
+      memory,
+      libraryDir,
+      tabsFile
+        ? { ready: true }
+        : { ready: false, ...(browserError ? { error: browserError } : {}) },
+    )
+    await writeInstructions(this.workDir, this.spec, text, this.runAs).catch((error) =>
+      console.warn(`could not write instructions: ${errorMessage(error)}`),
+    )
     // Skills through the harness's own skills folder: Brigade's, then the workspace's.
-    await writeSkills(
-      this.workDir,
-      this.spec,
-      [...builtinSkills(this.spec, libraryDir), ...(this.spec.skills ?? [])],
-      this.context.skillFile,
-      this.runAs,
-    ).catch((error) => console.warn(`could not write skills: ${errorMessage(error)}`))
+    const skills = [...builtinSkills(this.spec, libraryDir), ...(this.spec.skills ?? [])]
+    await writeSkills(this.workDir, this.spec, skills, this.context.skillFile, this.runAs).catch(
+      (error) => console.warn(`could not write skills: ${errorMessage(error)}`),
+    )
+    const onPi = this.spec.teammate.harness === 'pi'
     const credentials = new ThreadCredentials({
       sessionId: this.spec.sessionId,
       request: this.requestCredential,
@@ -2216,9 +2301,15 @@ export class HarnessThread {
       credentials,
       browser && tabsFile
         ? {
-            browser: browserMcpServer(browser, tabsFile, {
-              lazy: this.spec.teammate.harness !== 'codex',
-            }),
+            browser: onPi
+              ? await piMcpServer(
+                  browserMcpServer(browser, tabsFile),
+                  this.runAs,
+                  this.spec.sessionId,
+                )
+              : browserMcpServer(browser, tabsFile, {
+                  lazy: this.spec.teammate.harness !== 'codex',
+                }),
           }
         : {},
       {
@@ -2272,6 +2363,7 @@ export class HarnessThread {
       computer ? this.macDesktop(computer) : this.cloudDesktop(),
       this.context.machine,
       this.arrivals,
+      onPi ? { instructions: text, skills: piSkills(this.workDir, skills) } : undefined,
     )
     const adopt = await this.takeHandedOver(account)
     const sandbox = createLocalSandboxSession({
@@ -2281,7 +2373,7 @@ export class HarnessThread {
       // The runner, not Claude Code, asks for a reply the turn did not give (ReplyWatch). After
       // each turn, Claude Code guesses the person's next message where the thread wants it.
       env:
-        this.spec.teammate.harness === 'codex'
+        this.spec.teammate.harness === 'codex' || this.spec.teammate.harness === 'pi'
           ? env
           : {
               ...env,
@@ -2484,6 +2576,10 @@ export class HarnessThread {
 
   private emit(event: DistributiveOmit<AgentEvent, 'at'>) {
     const stamped = { ...event, at: new Date().toISOString() } as AgentEvent
+    if (stamped.type === 'tool.finished') {
+      this.toolStats.calls++
+      if (stamped.isError) this.toolStats.errors++
+    }
     this.noteBackground(stamped)
     this.outbox.send(stamped)
   }
@@ -2524,6 +2620,9 @@ export class HarnessThread {
       type: 'turn.completed',
       finishReason,
       ...(this.saved?.later?.length ? { waiting: true } : {}),
+      // For the harness benchmark (docs/harnesses.md): this run of the turn's tool calls.
+      toolCalls: this.toolStats.calls,
+      toolErrors: this.toolStats.errors,
     })
   }
 }
@@ -2664,7 +2763,9 @@ export async function runOnce(input: {
     // Its prompt is read once: a one-hour cache write costs twice the input, a five-minute one 1.25 times.
     CLAUDE_CODE_PROMPT_CACHE_TTL: '5m',
   }
-  const codex = spec.teammate.harness === 'codex'
+  // A Pi teammate's runs go to its login's own CLI (cliOf), as before Pi.
+  const teammate = cliOf(spec.teammate)
+  const codex = teammate.harness === 'codex'
   const settings = { auth: {} }
   const agent = new HarnessAgent({
     harness: codex
@@ -2672,7 +2773,7 @@ export async function runOnce(input: {
       : createClaudeCode(settings),
     tools: {},
     ...(input.noTools ? { activeTools: [] } : {}),
-    ...(input.model ? { model: input.model } : withModel(spec.teammate)),
+    ...(input.model ? { model: input.model } : withModel(teammate)),
     // Nothing to do but answer; Codex cannot ask, so it gets an empty directory.
     permissionMode: codex ? 'allow-all' : 'allow-reads',
     sandboxConfig: { workDir: '.' },
