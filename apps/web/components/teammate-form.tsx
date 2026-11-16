@@ -1,15 +1,7 @@
 'use client'
-import {
-  CODEX_DEFAULT_MODEL,
-  HARNESS_MODELS,
-  isHarnessModel,
-  modelLabel,
-  PI_DEFAULT_MODEL,
-  type TeammateHarness,
-} from '@brigade/contracts'
+import { CODEX_DEFAULT_MODEL, HARNESS_MODELS, isHarnessModel, modelLabel } from '@brigade/contracts'
 import { TriangleAlert } from 'lucide-react'
 import { Fragment, useState, type ReactNode } from 'react'
-import { useDashboard } from '@/components/dashboard'
 import { HarnessLogo } from '@/components/harness-logo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,7 +23,7 @@ export type TeammateInput = {
   name: string
   title: string
   instructions: string
-  harness: TeammateHarness
+  harness: 'claude_code' | 'codex'
   model: string | null
 }
 
@@ -39,14 +31,6 @@ type Harness = TeammateInput['harness']
 /** Radix Select can't hold null: this stands for "the account's default model". */
 const DEFAULT_MODEL = 'default'
 const HARNESSES: Harness[] = ['claude_code', 'codex']
-
-/** The Default option's line: Codex's and Pi's model is Brigade's, Claude Code's the account's. */
-const defaultLine = (h: Harness) =>
-  h === 'codex'
-    ? modelLabel(h, CODEX_DEFAULT_MODEL)
-    : h === 'pi'
-      ? modelLabel(h, PI_DEFAULT_MODEL)
-      : 'The account’s default model'
 
 export function TeammateForm({
   initial,
@@ -60,12 +44,6 @@ export function TeammateForm({
   /** On the left of the submit button, e.g. Archive. */
   footer?: ReactNode
 }) {
-  // Pi only with the pi_harness feature (docs/harnesses.md), or for a teammate already on it.
-  const { me } = useDashboard()
-  const harnesses: Harness[] =
-    me.features?.includes('pi_harness') || initial?.harness === 'pi'
-      ? [...HARNESSES, 'pi']
-      : HARNESSES
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [harness, setHarness] = useState<Harness>(initial?.harness ?? 'claude_code')
@@ -149,7 +127,7 @@ export function TeammateForm({
             </SelectValue>
           </SelectTrigger>
           <SelectContent position="popper" className="max-h-96">
-            {harnesses.map((h, i) => (
+            {HARNESSES.map((h, i) => (
               <Fragment key={h}>
                 {i > 0 && <SelectSeparator />}
                 <SelectGroup>
@@ -158,7 +136,9 @@ export function TeammateForm({
                     {harnessLabel(h)}
                   </SelectLabel>
                   <ModelOption value={`${h}:${DEFAULT_MODEL}`} label="Default">
-                    {defaultLine(h)}
+                    {h === 'codex'
+                      ? modelLabel(h, CODEX_DEFAULT_MODEL)
+                      : 'The account’s default model'}
                   </ModelOption>
                   {HARNESS_MODELS[h].map((m) => (
                     <ModelOption key={m.id} value={`${h}:${m.id}`} label={m.label}>
@@ -180,14 +160,6 @@ export function TeammateForm({
             <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
             Codex cannot ask before running commands or editing files, so its threads run them
             without asking.
-          </p>
-        )}
-        {harness === 'pi' && (
-          <p className="flex items-start gap-1.5 text-xs text-warning">
-            <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-            Pi runs only on accounts named “Pi” under Accounts: use a secondary Claude or ChatGPT
-            login. The providers don’t allow other apps to use these logins and may suspend the
-            account. Pi has no sub-agents and can’t answer a message on the side while it works.
           </p>
         )}
       </div>

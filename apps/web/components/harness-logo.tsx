@@ -31,13 +31,6 @@ export function HarnessLogo({
     viewBox: '0 0 24 24',
     className: cn('size-4 shrink-0', className),
   } as const
-  // Pi has no mark of its own Brigade may use: its letter, in the text color.
-  if (harness === 'pi')
-    return (
-      <svg fill="currentColor" {...common}>
-        <path d="M4 6.5h16v2.6h-2.7v8.2c0 .8.4 1.2 1.2 1.2h1.3V21h-2.2c-2 0-3-1-3-3V9.1h-5v11.9H6.9V9.1H4Z" />
-      </svg>
-    )
   if (harness === 'codex')
     return (
       <svg fill="currentColor" {...common}>

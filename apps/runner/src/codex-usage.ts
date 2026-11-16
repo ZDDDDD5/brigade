@@ -48,15 +48,8 @@ export function codexLimits(reply: unknown): Limits {
   )
 }
 
-/**
- * Ask a `codex app-server` on the account's login one thing (by default its limits). Rejects when
- * it cannot.
- */
-function ask(
-  account: AccountRef,
-  method = 'account/rateLimits/read',
-  params?: Record<string, unknown>,
-): Promise<unknown> {
+/** Ask a `codex app-server` on the account's login for its limits. Rejects when it cannot. */
+function ask(account: AccountRef): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const child = spawn('codex', ['app-server'], {
       env: harnessEnv(accountEnv(account)),
@@ -90,7 +83,7 @@ function ask(
         if (message.id === 1) {
           if (message.error) return done(new Error(message.error.message ?? 'initialize failed'))
           send({ method: 'initialized' })
-          send({ id: 2, method, ...(params ? { params } : {}) })
+          send({ id: 2, method: 'account/rateLimits/read' })
         } else if (message.id === 2) {
           if (message.error) return done(new Error(message.error.message ?? 'read failed'))
           return done(null, message.result)
@@ -129,23 +122,3 @@ export function readCodexLimits(account: AccountRef): Promise<Limits | null> {
   reads.set(key, read)
   return read
 }
-
-/**
- * Have Codex itself refresh the account's login (`account/read` with refreshToken), as it does
- * before its own turns: Codex rotates the refresh token, and it stays the only one that does, so
- * Pi on the same login (harness/pi.ts) never signs Codex out. It writes the new tokens to the
- * login's auth.json, which Brigade's backup sends on (account-backups.ts). Calls no model.
- */
-export async function refreshCodexLogin(account: AccountRef): Promise<void> {
-  if (account.provider !== 'codex') return
-  const key = `${account.source}:${account.id}`
-  const running = refreshes.get(key)
-  if (running) return running
-  const refresh = ask(account, 'account/read', { refreshToken: true })
-    .then(() => undefined)
-    .finally(() => refreshes.delete(key))
-  refreshes.set(key, refresh)
-  return refresh
-}
-
-const refreshes = new Map<string, Promise<void>>()

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
-import { codexLimits, readCodexLimits, refreshCodexLogin } from '../src/codex-usage.js'
+import { codexLimits, readCodexLimits } from '../src/codex-usage.js'
 
 // The shape of codex-cli 0.163's reply to account/rateLimits/read (GetAccountRateLimitsResponse).
 const REPLY = {
@@ -67,32 +67,4 @@ test('null when Codex cannot say, such as signed out', async () => {
     }),
   )
   assert.equal(await readCodexLimits({ id: 'acct2', provider: 'codex', source: 'machine' }), null)
-})
-
-test('a ChatGPT login is refreshed by Codex itself: account/read with refreshToken (Pi)', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'fake-codex-'))
-  const asked = join(dir, 'asked.jsonl')
-  // Keeps what it was asked, and answers as codex-cli 0.169 does (GetAccountResponse).
-  const script = `#!/usr/bin/env node
-const fs = require('node:fs')
-const rl = require('node:readline').createInterface({ input: process.stdin })
-rl.on('line', (line) => {
-  fs.appendFileSync(${JSON.stringify(asked)}, line + '\\n')
-  const m = JSON.parse(line)
-  if (m.id === 1) console.log(JSON.stringify({ id: 1, result: { userAgent: 'fake' } }))
-  if (m.id === 2) console.log(JSON.stringify({ id: 2, result: { account: { type: 'chatgpt' }, requiresOpenaiAuth: true } }))
-})
-`
-  await writeFile(join(dir, 'codex'), script)
-  await chmod(join(dir, 'codex'), 0o755)
-  process.env.PATH = `${dir}${delimiter}${process.env.PATH}`
-  const account = { id: 'acct3', provider: 'codex', source: 'machine' } as const
-  // Turns that need it together share one refresh.
-  await Promise.all([refreshCodexLogin(account), refreshCodexLogin(account)])
-  const lines = (await readFile(asked, 'utf8'))
-    .trim()
-    .split('\n')
-    .map((l) => JSON.parse(l))
-  const reads = lines.filter((m) => m.method === 'account/read')
-  assert.deepEqual(reads, [{ id: 2, method: 'account/read', params: { refreshToken: true } }])
 })

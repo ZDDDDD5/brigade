@@ -133,15 +133,8 @@ export * from './usage.js'
  *     person's rules in teammates' instructions (the spec's `rules`), and chief_rules.
  * 54: goals (GOAL_PROTOCOL, docs/goals.md): `/goal` rewritten into words, propose_goal, goal_status and
  *     goal_report as schedule.call operations, and a goal's command measurement (goal.measure, goal.measured).
- * 55: teammates on Pi (PI_PROTOCOL): ThreadSpec.teammate.harness may be `pi`, and turn.started and
- *     turn.completed carry what the Pi benchmark compares (harness, model, tool calls and errors).
  */
-export const PROTOCOL_VERSION = 55
-/**
- * Runners from this version on run a teammate on Pi (TeammateHarness). The API starts no Pi turn on
- * an older one, whose spec would not parse: it says the computer's Brigade must update first.
- */
-export const PI_PROTOCOL = 55
+export const PROTOCOL_VERSION = 54
 /**
  * Runners from this version on run Chief's daily pass (ThreadSpec.pass) with its tools. The API
  * starts no pass on an older one: what waits on the person waits, as before.

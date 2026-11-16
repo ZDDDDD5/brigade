@@ -44,16 +44,7 @@ import { UsageRunKind } from './usage.js'
 /** Longest clipboard text carried between a person's browser and a desktop. */
 export const CLIPBOARD_MAX = 1_000_000
 
-/** A login's provider: the vendor CLI it signs in with (Claude Code or Codex). */
 export const HarnessId = z.enum(['claude_code', 'codex'])
-
-/**
- * What runs a teammate's turns. Claude Code and Codex are each their own login's CLI. Pi (behind
- * the pi_harness feature) runs inside the runner on one of those logins, the one its model is
- * from (loginOf in models.ts). A new harness goes here, with its login in loginOf.
- */
-export const TeammateHarness = z.enum(['claude_code', 'codex', 'pi'])
-export type TeammateHarness = z.infer<typeof TeammateHarness>
 
 /** Most responses in one usage.responses. */
 export const LOGGED_RESPONSES_MAX = 500
@@ -182,7 +173,7 @@ export const ThreadSpec = z.object({
     id: z.string(),
     name: z.string(),
     instructions: z.string(),
-    harness: TeammateHarness,
+    harness: HarnessId,
     model: z.string().nullable(),
     kind: TeammateKind.default('teammate'),
   }),

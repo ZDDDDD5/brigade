@@ -1,10 +1,4 @@
-import {
-  AddAccount,
-  isPiAccount,
-  SubmitLoginCode,
-  UpdateAccount,
-  type AccountRef,
-} from '@brigade/contracts'
+import { AddAccount, SubmitLoginCode, UpdateAccount, type AccountRef } from '@brigade/contracts'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { isShared, mayManage, usableBy } from '../account-sharing.js'
@@ -19,11 +13,10 @@ import {
   type WorkspaceScope,
 } from '../scope.js'
 
-/** An account row: its provider is a login's CLI, never another harness (Harness has those too). */
-type AccountRow = { id: string; provider: string; source: 'machine' | 'brigade' }
+type AccountRow = { id: string; provider: 'claude_code' | 'codex'; source: 'machine' | 'brigade' }
 export const accountRef = (a: AccountRow): AccountRef => ({
   id: a.id,
-  provider: a.provider === 'codex' ? 'codex' : 'claude_code',
+  provider: a.provider,
   source: a.source,
 })
 
@@ -43,22 +36,18 @@ export async function usableAccounts(
     computerId: string
     provider: 'claude_code' | 'codex'
     preferredId?: string | null
-    /** For a teammate on Pi: only the accounts set aside for it (isPiAccount). */
-    pi?: boolean
   },
 ) {
   const now = new Date()
-  const rows = await db.account
-    .findMany({
-      where: {
-        ...usableBy(input.memberId),
-        computerId: input.computerId,
-        provider: input.provider,
-        status: { in: ['ready', 'unverified'] },
-      },
-      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-    })
-    .then((found) => (input.pi ? found.filter((r) => isPiAccount(r.label)) : found))
+  const rows = await db.account.findMany({
+    where: {
+      ...usableBy(input.memberId),
+      computerId: input.computerId,
+      provider: input.provider,
+      status: { in: ['ready', 'unverified'] },
+    },
+    orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+  })
   const exhausted = (r: (typeof rows)[number]) =>
     r.exhaustedUntil && r.exhaustedUntil > now ? 1 : 0
   // Stable: the default, then the oldest, within each group.

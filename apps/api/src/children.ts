@@ -29,7 +29,6 @@ import {
   verdictLine,
   WAKEUPS_IN_A_ROW,
   wakesParent,
-  loginOf,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { attachToThread } from './attachments.js'
@@ -1503,11 +1502,7 @@ export async function handleChildCall(
       teammate: assignee,
       computer: parent.computer,
       memberId: session.startedByMemberId,
-      accountId:
-        loginOf(assignee.harness, assignee.model) ===
-        loginOf(parent.teammate.harness, parent.teammate.model)
-          ? session.accountId
-          : null,
+      accountId: assignee.harness === parent.teammate.harness ? session.accountId : null,
       title: op.title,
       text: childPrompt({
         from: teammate.name,

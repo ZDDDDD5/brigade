@@ -40,8 +40,7 @@ export type ComputerStatus = (typeof ComputerStatus)[keyof typeof ComputerStatus
 
 export const Harness = {
   claude_code: 'claude_code',
-  codex: 'codex',
-  pi: 'pi'
+  codex: 'codex'
 } as const
 
 export type Harness = (typeof Harness)[keyof typeof Harness]

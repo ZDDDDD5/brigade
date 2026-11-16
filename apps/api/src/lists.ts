@@ -31,7 +31,6 @@ import {
   handedLines,
   handOffMessage,
   projectFolder,
-  loginOf,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import type { z } from 'zod'
@@ -764,7 +763,7 @@ export async function handOff(
   const actor: Actor = { type: 'member', id: memberId }
   // Where it runs first: with no computer to run on, nothing is changed.
   const [computer, projectId] = await Promise.all([
-    computerFor(db, memberId, loginOf(teammate.harness, teammate.model), teammate.harness === 'pi'),
+    computerFor(db, memberId, teammate.harness),
     input.projectId ?? projectOf(db, file.path),
   ])
   // The files under each line, as they were when it was picked: before its marker is saved.
