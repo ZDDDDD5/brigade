@@ -99,6 +99,9 @@ export function track(event: string, input: TrackInput) {
     timestamp: new Date().toISOString(),
     properties: {
       ...safeProps(input.properties ?? {}),
+      // On the event too, not only the person: PostHog's test-account filter reads either,
+      // and an event keeps what it was sent with.
+      ...(typeof input.set?.internal === 'boolean' && { internal: input.set.internal }),
       ...(input.workspaceId && { $groups: { workspace: input.workspaceId } }),
       ...(input.organizationId && { organization_id: input.organizationId }),
       ...(input.set && { $set: input.set }),
@@ -131,10 +134,17 @@ export function enqueue(message: Message) {
 /** Whom an event is of: a user, or nobody (a workspace's own work). */
 export type Person = { userId: string; internal: boolean }
 
-/** Whether an address is one of Brigade's own people (POSTHOG_INTERNAL_EMAIL_DOMAINS). */
+/**
+ * Whether an address is one of Brigade's own people (POSTHOG_INTERNAL_EMAIL_DOMAINS): a domain
+ * there takes its addresses and its subdomains'; a whole address there (the team's Gmail
+ * accounts) takes only itself.
+ */
 export function isInternalEmail(email: string, domains = env.POSTHOG_INTERNAL_EMAIL_DOMAINS) {
-  const domain = email.split('@').pop()?.toLowerCase() ?? ''
-  return domains.some((d) => domain === d || domain.endsWith(`.${d}`))
+  const address = email.trim().toLowerCase()
+  const domain = address.split('@').pop() ?? ''
+  return domains.some((d) =>
+    d.includes('@') ? address === d : domain === d || domain.endsWith(`.${d}`),
+  )
 }
 
 /** Looked up once per process: a member's or a thread's person does not change. */

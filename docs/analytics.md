@@ -19,7 +19,7 @@ Three rules hold everywhere:
 | ----------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POSTHOG_KEY`                       | `brigade-api` secret (`wrangler secret put`) | The project's API key (`phc_…`). Without it the API sends nothing.                                                                                                                                 |
 | `POSTHOG_HOST`                      | `brigade-api`, optional                      | Ingestion address. Default `https://eu.i.posthog.com`.                                                                                                                                             |
-| `POSTHOG_INTERNAL_EMAIL_DOMAINS`    | `brigade-api` secret, optional               | Domains, comma-separated, whose people are Brigade's own: their events carry `internal: true`.                                                                                                     |
+| `POSTHOG_INTERNAL_EMAIL_DOMAINS`    | `brigade-api` secret, optional               | Domains, and whole addresses for the team's accounts on a shared domain (`someone@gmail.com`), comma-separated, whose people are Brigade's own: their events carry `internal: true`.               |
 | `NEXT_PUBLIC_POSTHOG_KEY`           | `brigade-web` build variable (Workers Build) | The same key, inlined into the website at build time. Without it the site loads nothing. Never in the demo.                                                                                        |
 | `GOOGLE_ADS_CUSTOMER_ID`            | `brigade-api` secret                         | The Google Ads account's id (`123-456-7890`). With the next three, sign-ups and subscriptions from Google ads are sent to it (below).                                                              |
 | `GOOGLE_ADS_LOGIN_CUSTOMER_ID`      | `brigade-api` secret, optional               | Its manager account's id, when the service account reaches the account through one.                                                                                                                |
@@ -80,7 +80,10 @@ HN and X often drop the referrer.
 
 The person's properties, set once by `signed_up`: `signup_channel`, `signup_source`,
 `signup_medium`, `signup_campaign`, `signup_referrer`, `signup_landing_page`, `signup_method`
-(`email_code`, `google`, `password`). Each event of a person also sets `internal`. `onboarding_answered` sets what they answered to
+(`email_code`, `google`, `password`). Each event of a person also carries `internal`, as an event
+property and set on the person: PostHog's test-account filter (project settings → Filter out
+internal and test users) is `internal` is not `true`, on the event, so it holds for past events
+whatever the person later became. Events of no person (`workspace:<id>`) carry none. `onboarding_answered` sets what they answered to
 onboarding's questions (`@brigade/contracts`' `ONBOARDING_QUESTIONS`, also kept on
 `User.onboardingAnswers`): `role`, `team_size`, `first_work` and `heard_from`, each an option's id;
 a question skipped sets nothing.

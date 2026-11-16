@@ -24,7 +24,7 @@ process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
 process.env.PASSWORD_SIGN_IN = 'false'
 process.env.RESEND_API_KEY = ''
 process.env.POSTHOG_KEY = ''
-process.env.POSTHOG_INTERNAL_EMAIL_DOMAINS = 'brigade.lol, @team.example'
+process.env.POSTHOG_INTERNAL_EMAIL_DOMAINS = 'brigade.lol, @team.example, Founder@Gmail.com'
 delete process.env.TURNSTILE_SECRET_KEY
 
 async function reachable() {
@@ -284,6 +284,10 @@ test('internal people are matched by their domain, the address never sent', () =
   assert.equal(analytics.isInternalEmail('georges@brigade.lol'), true)
   assert.equal(analytics.isInternalEmail('x@eu.team.example'), true)
   assert.equal(analytics.isInternalEmail('x@notbrigade.lol'), false)
+  // A whole address takes only itself, not its domain.
+  assert.equal(analytics.isInternalEmail('founder@gmail.com'), true)
+  assert.equal(analytics.isInternalEmail('someone@gmail.com'), false)
+  assert.equal(analytics.isInternalEmail('founder@gmail.com.evil.example'), false)
   assert.equal(analytics.signupMethod('/sign-in/email-otp'), 'email_code')
   assert.equal(analytics.signupMethod('/callback/:id'), 'google')
 })
@@ -325,6 +329,23 @@ test('with a key, events go together to the EU host, with the workspace group', 
   assert.equal(b!.properties.$process_person_profile, false)
   assert.equal(b!.properties.organization_id, 'o1')
   assert.equal(b!.properties.title, undefined, 'only safe properties')
+})
+
+test("a person's internal flag rides on each event too, for the test-account filter", async () => {
+  withKey()
+  await analytics.trackFor({ userId: 'u1', internal: true }, 'thread_interrupted', {
+    organizationId: 'o',
+  })
+  await analytics.trackFor({ userId: 'u2', internal: false }, 'thread_interrupted', {
+    organizationId: 'o',
+  })
+  await analytics.trackFor(null, 'trigger_received', { organizationId: 'o', workspaceId: 'w' })
+  await analytics.flushAnalytics()
+  const [mine, theirs, nobody] = sent.flatMap((r) => r.body.batch)
+  assert.equal(mine!.properties.internal, true)
+  assert.equal(mine!.properties.$set.internal, true)
+  assert.equal(theirs!.properties.internal, false)
+  assert.equal(nobody!.properties.internal, undefined, 'no person, no flag')
 })
 
 test('a failing PostHog never throws into the caller', async () => {
@@ -403,6 +424,7 @@ test(
     assert.equal(signedUp.properties.$set_once.signup_channel, 'hacker_news')
     assert.equal(signedUp.properties.$set_once.signup_method, 'email_code')
     assert.equal(signedUp.properties.$set.internal, true)
+    assert.equal(signedUp.properties.internal, true, 'on the event too')
     assert.ok(!JSON.stringify(sent).includes(email), 'the address is never sent')
 
     // Set once: a later record keeps the first, and sends nothing.
