@@ -32,6 +32,11 @@ export const SETTINGS_SECTIONS = [
         keywords: 'theme themes look colours colors dark light font style restyle',
         feature: 'themes',
       },
+      {
+        label: 'Suggested themes',
+        keywords: 'appearance midnight matrix synthwave amber paper blueprint retro',
+        feature: 'themes',
+      },
       { label: 'Import a theme', keywords: 'appearance', feature: 'themes' },
       { label: 'Danger zone', keywords: '' },
       { label: 'Delete my account', keywords: 'remove' },

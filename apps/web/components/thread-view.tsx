@@ -3046,6 +3046,7 @@ export function ThreadItems({
                 {/* With its next message close under it, they float beside its first line, where a pointer shows them. */}
                 {item.done && (
                   <div
+                    data-look="message-actions"
                     className={cn(
                       '-ml-1.5 flex',
                       run?.followed &&

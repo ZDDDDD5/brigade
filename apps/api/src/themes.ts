@@ -15,6 +15,7 @@ import {
   themeFileType,
   themeGuide,
   themeSlug,
+  themeSwatch,
   type LookChange,
   type LookChangeKind,
   type ScheduleOperation,
@@ -137,6 +138,10 @@ const summary = (row: {
   hasCss: !!fileOf(row.file)?.css,
   files: row.files.map((f) => f.name),
   updatedAt: row.updatedAt.toISOString(),
+  swatch: (() => {
+    const file = fileOf(row.file)
+    return file ? themeSwatch(file) : {}
+  })(),
 })
 
 const toChange = (row: {
