@@ -145,6 +145,11 @@ const again = await pool(failed, 1, (file) => report(file, 1))
 const broken = again.filter((r) => !r.ok)
 const flaky = again.filter((r) => r.ok)
 
+// GitHub shows 10 errors a step: the whole list first, as a notice of its own.
+if (broken.length)
+  console.log(
+    `::notice title=${property(`${folder}: ${broken.length} test file(s) failed`)}::${data(broken.map((r) => r.file).join('\n'))}`,
+  )
 for (const result of broken) {
   console.log(`::group::${join(folder, result.file)} failed twice`)
   console.log(result.output)

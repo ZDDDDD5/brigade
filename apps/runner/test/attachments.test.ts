@@ -60,7 +60,9 @@ test('a large file comes from the bucket by redirect, without the token, and lan
   assert.deepEqual(failed, [])
   assert.equal(bucketHeaders.authorization, undefined)
   assert.ok((await readFile(join(workDir, ref.path))).equals(bytes))
-  assert.equal((await stat(join(workDir, ref.path))).mode & 0o777, 0o644)
+  // Windows keeps no POSIX modes.
+  if (process.platform !== 'win32')
+    assert.equal((await stat(join(workDir, ref.path))).mode & 0o777, 0o644)
 
   // Another teammate's folder: from the cache, without asking again.
   bucketHeaders = {}
@@ -218,7 +220,9 @@ test('a large file streams into the folder alone: no copy stays in the cache, an
     [],
   )
   assert.ok((await readFile(join(workDir, ref.path))).equals(bytes))
-  assert.equal((await stat(join(workDir, ref.path))).mode & 0o777, 0o644)
+  // Windows keeps no POSIX modes.
+  if (process.platform !== 'win32')
+    assert.equal((await stat(join(workDir, ref.path))).mode & 0o777, 0o644)
   assert.equal(fetching, 1)
   await assert.rejects(stat(join(home, 'attachments', ref.id)), 'not in the cache')
   assert.deepEqual(await names(join(workDir, 'attachments')), ['render.mp4'], 'nothing beside it')

@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, delimiter } from 'node:path'
 import { HarnessAgent } from '@ai-sdk/harness/agent'
 import { createCodex } from '@ai-sdk/harness-codex'
 import { createLocalSandboxSession, freePort } from '../../src/harness/local-sandbox.js'
+import { toNative, WINDOWS } from '../../src/windows.js'
 
 // Runs of the Codex bridge (patched) with a stand-in for `codex app-server`: what the bridge
 // asks Codex, without Codex. The stand-in answers each request, plays one turn that says
@@ -58,7 +59,7 @@ export async function fakeInstall(dir: string) {
     JSON.stringify({ name: '@openai/codex', type: 'module', bin: { codex: 'bin/codex.js' } }),
   )
   await writeFile(join(codex, 'bin', 'codex.js'), FAKE_APP_SERVER)
-  await symlink(packageDir('ws'), join(modules, 'ws'))
+  await symlink(packageDir('ws'), join(modules, 'ws'), 'junction')
 }
 
 /** One turn through the Codex bridge: its text, and the requests the stand-in got, in order. */
@@ -82,7 +83,9 @@ export async function codexBridgeTurn(options: {
     workingDirectory: work,
     port: await freePort(),
     env: {
-      PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
+      // Windows needs its own variables (SystemRoot…) for node to start.
+      ...(WINDOWS ? (process.env as Record<string, string>) : {}),
+      PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH}`,
       HOME: home,
       CODEX_HOME: join(home, '.codex'),
       FAKE_CODEX_RECORD: record,
@@ -92,7 +95,7 @@ export async function codexBridgeTurn(options: {
   const run = sandbox.run
   const bootstrapRun: typeof run = async (input) => {
     if (input.command.startsWith('pnpm install')) {
-      await fakeInstall(resolve(work, input.workingDirectory ?? '.'))
+      await fakeInstall(toNative(input.workingDirectory ?? '.', work))
       return { exitCode: 0, stdout: '', stderr: '' }
     }
     return run(input)

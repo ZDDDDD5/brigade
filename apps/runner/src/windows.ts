@@ -186,3 +186,6 @@ export const WINDOWS_CHROMES = WINDOWS
           : [],
     )
   : []
+
+/** A relative path as the dashboard and git write it, with / (Windows' relative() gives \). */
+export const slashes = (path: string) => (WINDOWS ? path.replace(/\\/g, '/') : path)

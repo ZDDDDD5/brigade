@@ -22,6 +22,7 @@ import { asText, inside, parseGrep, readStart, real, SAFE_ID, sha256, workDir } 
 import { run } from './repos.js'
 import { teammateHome } from './teammates.js'
 import { asTeammate, threadNet } from './thread-net.js'
+import { slashes } from './windows.js'
 
 type Request = Extract<ApiToRunner, { type: 'thread.code' }>
 type Result = Extract<RunnerToApi, { type: 'thread.code.result' }>
@@ -154,7 +155,7 @@ async function inRepository(own: string, path: string, user: string | undefined)
   )
   const realTop = top && (await real(top, user))
   if (!realTop || !inside(own, realTop)) return undefined
-  return { top: realTop, rel: relative(realTop, file), file }
+  return { top: realTop, rel: slashes(relative(realTop, file)), file }
 }
 
 /** `git diff --name-status -z --no-renames`: files and their status, `prefix` before each path. */
@@ -278,7 +279,7 @@ export async function codeFiles(request: Request): Promise<Result> {
         const paths = out
           .split('\n')
           .filter(Boolean)
-          .map((p) => relative(own, p))
+          .map((p) => slashes(relative(own, p)))
           .filter((p) => p && !p.startsWith('..'))
         return { ...base, ok: true, files: matchFiles(paths, query) }
       }

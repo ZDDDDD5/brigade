@@ -1,11 +1,12 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, delimiter } from 'node:path'
 import { HarnessAgent } from '@ai-sdk/harness/agent'
 import { createClaudeCode } from '@ai-sdk/harness-claude-code'
 import type { ToolSet } from 'ai'
 import { createLocalSandboxSession, freePort } from '../../src/harness/local-sandbox.js'
+import { toNative, WINDOWS } from '../../src/windows.js'
 
 // Runs of the Claude Code bridge (patched) with a stand-in for the Claude Agent SDK, whose
 // `query` is the module given: what the bridge gives Claude Code, and what it does with what
@@ -34,7 +35,7 @@ export async function fakeInstall(dir: string, sdk: string) {
   // Again over an earlier turn's install, in a home kept from it.
   const link = async (target: string, path: string) => {
     await rm(path, { recursive: true, force: true })
-    await symlink(target, path)
+    await symlink(target, path, 'junction')
   }
   await link(mcpSdkDir(), join(modules, '@modelcontextprotocol', 'sdk'))
   await link(packageDir('ws'), join(modules, 'ws'))
@@ -77,7 +78,9 @@ export async function bridgeTurn(
     workingDirectory: work,
     port: await freePort(),
     env: {
-      PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
+      // Windows needs its own variables (SystemRoot…) for node to start.
+      ...(WINDOWS ? (process.env as Record<string, string>) : {}),
+      PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH}`,
       HOME: home,
       FAKE_SDK_RECORD: record,
       ...options.env,
@@ -87,7 +90,7 @@ export async function bridgeTurn(
   const run = sandbox.run
   const bootstrapRun: typeof run = async (input) => {
     if (input.command.startsWith('pnpm install')) {
-      await fakeInstall(resolve(work, input.workingDirectory ?? '.'), sdk)
+      await fakeInstall(toNative(input.workingDirectory ?? '.', work), sdk)
       return { exitCode: 0, stdout: '', stderr: '' }
     }
     if (input.command.includes('claude --version'))
