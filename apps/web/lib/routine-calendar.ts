@@ -104,34 +104,56 @@ export function slotCron(date: Date) {
   return `${date.getMinutes()} ${date.getHours()} * * ${date.getDay()}`
 }
 
-export type Placed<T> = T & { lane: number; lanes: number }
+/**
+ * One day's runs stacked into cards, in time order: a run joins the card above when it would start
+ * before that card ends (each run a row `rowMinutes` tall), so runs close in time read as a list
+ * rather than squeezed side by side.
+ */
+export function stackOut<T extends { minute: number }>(items: T[], rowMinutes: number) {
+  const cards: { minute: number; items: T[] }[] = []
+  for (const item of [...items].sort((a, b) => a.minute - b.minute)) {
+    const last = cards.at(-1)
+    if (last && item.minute < last.minute + last.items.length * rowMinutes) last.items.push(item)
+    else cards.push({ minute: item.minute, items: [item] })
+  }
+  return cards
+}
+
+type Firing = {
+  cron: string
+  timezone: string
+  lastError: string | null
+  pausedAt: string | null
+  createdAt: string
+  /** Oldest first. */
+  recentRuns: { createdAt: string }[]
+}
 
 /**
- * Side-by-side lanes for one day's blocks, each `span` minutes tall from its `minute`: blocks
- * that overlap share the width, as in a calendar.
+ * The times its cron planned in [from, to) that started no run: while its last firing could not
+ * start (`lastError`), every firing since its last run started (or since it was made).
  */
-export function laneOut<T extends { minute: number }>(items: T[], span: number): Placed<T>[] {
-  const sorted = [...items].sort((a, b) => a.minute - b.minute)
-  const out: Placed<T>[] = []
-  let cluster: Placed<T>[] = []
-  let laneEnds: number[] = []
-  let clusterEnd = -Infinity
-  const close = () => {
-    for (const item of cluster) item.lanes = laneEnds.length
-    cluster = []
-    laneEnds = []
-    clusterEnd = -Infinity
-  }
-  for (const item of sorted) {
-    if (item.minute >= clusterEnd) close()
-    let lane = laneEnds.findIndex((end) => end <= item.minute)
-    if (lane === -1) lane = laneEnds.length
-    laneEnds[lane] = item.minute + span
-    clusterEnd = Math.max(clusterEnd, item.minute + span)
-    const placed = { ...item, lane, lanes: 1 }
-    cluster.push(placed)
-    out.push(placed)
-  }
-  close()
-  return out
+export function missedRuns(schedule: Firing, from: Date, to: Date) {
+  if (!schedule.lastError || schedule.pausedAt) return []
+  const last = schedule.recentRuns.at(-1)
+  const since = Math.max(
+    from.getTime(),
+    new Date(schedule.createdAt).getTime(),
+    last ? new Date(last.createdAt).getTime() + 60_000 : 0,
+  )
+  if (since >= to.getTime()) return []
+  return runsBetween(schedule.cron, schedule.timezone, new Date(since), to).runs
+}
+
+/**
+ * The hours the grid shows, [from, to): those around its runs and the time now, at least `least`
+ * of them; the rest fold away. With nothing to show, the working day.
+ */
+export function hoursShown(minutes: number[], least = 6) {
+  if (!minutes.length) return { from: 8, to: 18 }
+  let from = Math.max(0, Math.floor(Math.min(...minutes) / 60) - 1)
+  let to = Math.min(24, Math.floor(Math.max(...minutes) / 60) + 2)
+  if (to - from < least) to = Math.min(24, from + least)
+  if (to - from < least) from = Math.max(0, to - least)
+  return { from, to }
 }
