@@ -50,3 +50,12 @@ test('in a thread with a machine of its own, run_on_machine is always in view; e
   // No machine tools on this runner (a member's own machine): nothing to show.
   assert.deepEqual(machineToolsInView({ machine: true }, undefined), [])
 })
+
+test('a teammate moved to another harness gets a new agent; Claude Code keeps its key as before', () => {
+  const spec = (harness: string) =>
+    agentKey({ connectors: [], effort: null, teammate: { harness } } as unknown as ThreadSpec)
+  assert.notEqual(spec('pi'), spec('claude_code'))
+  assert.notEqual(spec('pi'), spec('codex'))
+  assert.notEqual(spec('codex'), spec('claude_code'))
+  assert.equal(spec('claude_code'), JSON.stringify([null, [], undefined]))
+})

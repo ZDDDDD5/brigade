@@ -4,6 +4,10 @@ import { randomUUID } from 'node:crypto'
 import {
   type AgentEvent,
   type Effort,
+  type HarnessId,
+  loginName,
+  loginOf,
+  type TeammateHarness,
   mentionedIds,
   type ReplyTo,
   RETRY_PROTOCOL,
@@ -27,6 +31,7 @@ import {
   currentTeammate,
   loadThread,
   noAccount,
+  noPiAccount,
   noteAsker,
   specFor,
   teammateIn,
@@ -436,13 +441,9 @@ const childOf = (
  * Where a member's new thread runs when nothing else says (a list's lines handed over, a thread a
  * teammate starts for another on a computer that cannot run it): the workspace computer, else one
  * of their own machines that is online; the first where they have an account with usage left for
- * the teammate's harness.
+ * the teammate's login (loginOf).
  */
-export async function computerFor(
-  db: ScopedDb,
-  memberId: string,
-  harness: 'claude_code' | 'codex',
-) {
+export async function computerFor(db: ScopedDb, memberId: string, login: HarnessId, pi = false) {
   const machines = await db.computer.findMany({
     where: { kind: 'member_machine', memberId },
     orderBy: { updatedAt: 'desc' },
@@ -463,13 +464,14 @@ export async function computerFor(
     const accounts = await usableAccounts(db, {
       memberId,
       computerId: computer.id,
-      provider: harness,
+      provider: login,
+      pi,
     })
     if (accounts.some((a) => !a.exhaustedUntil || a.exhaustedUntil <= new Date())) return computer
     if (accounts.length) fallback ??= computer
   }
   if (fallback) return fallback
-  const name = harness === 'codex' ? 'Codex' : 'Claude'
+  const name = loginName(login)
   throw new HTTPException(409, {
     message: candidates.length
       ? `No ${name} account you can use is ready on the computers it could run on. Add or sign in to one under Accounts.`
@@ -486,7 +488,7 @@ export async function startThread(
   db: ScopedDb,
   scope: Scope,
   input: {
-    teammate: { id: string; name: string; harness: 'claude_code' | 'codex' }
+    teammate: { id: string; name: string; harness: TeammateHarness; model: string | null }
     computer: { id: string }
     memberId: string
     accountId?: string | null
@@ -585,10 +587,14 @@ export async function startThread(
   const [account] = await usableAccounts(db, {
     memberId: input.memberId,
     computerId: input.computer.id,
-    provider: input.teammate.harness,
+    provider: loginOf(input.teammate.harness, input.teammate.model),
     preferredId: input.accountId ?? null,
+    pi: input.teammate.harness === 'pi',
   })
-  if (!account) throw noAccount(input.teammate.harness)
+  if (!account)
+    throw (input.teammate.harness === 'pi' ? noPiAccount : noAccount)(
+      loginOf(input.teammate.harness, input.teammate.model),
+    )
   const made =
     input.id && !input.fresh ? await db.session.findFirst({ where: { id: input.id } }) : null
   const created =

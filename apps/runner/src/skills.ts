@@ -15,7 +15,10 @@ import { SKILL_ENTRY, type ThreadSkill, type ThreadSpec, skillMarkdown } from '@
 const MANIFEST = '.brigade-skills.json'
 
 export const skillsDir = (spec: ThreadSpec) =>
-  spec.teammate.harness === 'codex' ? join('.agents', 'skills') : join('.claude', 'skills')
+  // Pi is told where they are (harness/pi.ts, piSkills).
+  spec.teammate.harness === 'codex' || spec.teammate.harness === 'pi'
+    ? join('.agents', 'skills')
+    : join('.claude', 'skills')
 
 // Run by node as the teammate's user, the skills as JSON on stdin. Folders in
 // the old manifest go; a folder Brigade did not write keeps its name. A script
