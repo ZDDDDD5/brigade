@@ -4,7 +4,7 @@
 // under a short-lived signed address, as a sandboxed document.
 import { mayWrite } from './account-sharing.js'
 import type { Role } from './scope.js'
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import {
   DESIGN_ENTRY,
   DESIGN_KNOBS,
@@ -210,18 +210,25 @@ export async function threadDesignSystems(
 /** How long a design's address works. Reopening the design gets a new one. */
 const VIEW_SECONDS = 4 * 60 * 60
 
-type ViewClaim = { o: string; w: string; p: string; e: number }
+/** `n`: a nonce, so each view has its own address and its pages' files are fetched anew. */
+type ViewClaim = { o: string; w: string; p: string; e: number; n?: string }
 
 const b64url = (data: Buffer | string) => Buffer.from(data).toString('base64url')
 const sign = (payload: string) =>
   b64url(createHmac('sha256', `design-view:${env.BETTER_AUTH_SECRET}`).update(payload).digest())
 
-function viewToken(scope: Scope, folder: string) {
+/**
+ * A design's address for one view. Never the same twice, even within a second: a canvas that
+ * reloads a page after its styles or images changed gets their new versions, not the ones the
+ * browser cached under the last address.
+ */
+export function viewToken(scope: Pick<Scope, 'organizationId' | 'workspaceId'>, folder: string) {
   const claim: ViewClaim = {
     o: scope.organizationId,
     w: scope.workspaceId,
     p: folder,
     e: Math.floor(Date.now() / 1000) + VIEW_SECONDS,
+    n: randomBytes(6).toString('base64url'),
   }
   const payload = b64url(JSON.stringify(claim))
   return { token: `${payload}.${sign(payload)}`, expiresAt: new Date(claim.e * 1000) }

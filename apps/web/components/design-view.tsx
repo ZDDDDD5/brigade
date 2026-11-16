@@ -367,6 +367,9 @@ function DesignFrame({
         const before = srcsRef.current
         const after: Record<string, string> = {}
         const reloaded = new Set<string>()
+        // Boards to load again whose address came back the same (an API before view
+        // addresses were unique): their frames are loaded again by hand.
+        const same = new Map<string, { folder: string; file: string }>()
         for (const [f, v] of loaded) {
           const assetsChanged =
             known[f]?.assets !== undefined &&
@@ -378,10 +381,15 @@ function DesignFrame({
             const keep =
               !force && !assetsChanged && before[key] && sha && shown.current.get(key) === sha
             after[key] = keep ? before[key]! : pageUrl(v, b.file)
-            if (before[key] && after[key] !== before[key]) reloaded.add(key)
+            if (before[key] && !keep) {
+              reloaded.add(key)
+              if (after[key] === before[key])
+                same.set(`${f}\n${b.file}`, { folder: f, file: b.file })
+            }
           })
         }
         setSrcs(after)
+        for (const { folder: f, file } of same.values()) canvas.current?.reload(f, file)
         if (reloaded.size) {
           setSelection((all) => all.filter((s) => !reloaded.has(s.board)))
           // Their elements are numbered anew: where they were moved by hand is read again.

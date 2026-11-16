@@ -5,7 +5,7 @@ import { test } from 'node:test'
 process.env.DATABASE_URL ??= 'postgresql://test@localhost/test'
 process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
 process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
-const { designAssets } = await import('../src/designs.js')
+const { designAssets, viewToken } = await import('../src/designs.js')
 
 const F = 'acme/landing.design'
 const row = (name: string, sha256: string, contentType = 'text/css') => ({
@@ -39,4 +39,10 @@ test('not with the pages, the manifest, the knobs or the picture', () => {
   assert.equal(designAssets(F, swap('design.json', 'm2')), base)
   assert.equal(designAssets(F, swap('knobs.json', 'k2')), base)
   assert.equal(designAssets(F, swap('thumbnail.png', 't2')), base)
+})
+
+test('two views of a design never share an address, even within a second', () => {
+  const scope = { organizationId: 'org', workspaceId: 'ws' }
+  const tokens = new Set(Array.from({ length: 20 }, () => viewToken(scope, F).token))
+  assert.equal(tokens.size, 20)
 })
