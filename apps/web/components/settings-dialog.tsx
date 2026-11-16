@@ -90,6 +90,8 @@ export function SettingsDialog() {
       <DialogContent
         showCloseButton={false}
         aria-describedby={undefined}
+        // A theme's hook for Settings (THEME_HOOKS, docs/themes.md).
+        data-look="settings"
         // Esc empties the search first.
         onEscapeKeyDown={(e) => {
           if (query && document.activeElement?.closest('[data-settings-search]')) {

@@ -6,6 +6,7 @@ import {
   GitPullRequest,
   Inbox,
   Keyboard,
+  Palette,
   Library,
   ListChecks,
   LogOut,
@@ -119,6 +120,7 @@ import { markSignedIn, clearBrowserData, markSignedOut } from '@/lib/signed-in'
 import { isMac, useIsMac } from '@/lib/platform'
 import { openSettings, SETTINGS_SECTIONS, settingsHref } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
+import { takeOffTheme, ThemeRuntime, useWornTheme } from '@/components/theme-runtime'
 
 export { StatusBadge } from '@/components/status-badge'
 
@@ -251,6 +253,8 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   // Brigade.app's window on macOS without a title bar (lib/desktop-frame.ts).
   const frame = useDesktopFrame()
   const { theme = 'dark', setTheme } = useTheme()
+  // A theme the member wears (docs/themes.md): their menu takes it off, whatever it hides.
+  const { worn: wornTheme, safe: safeLook } = useWornTheme()
   const ThemeIcon = THEMES.find((t) => t.value === theme)?.icon ?? Monitor
   const [sidebarWidth, setSidebarWidth] = useSidebarWidth()
   // Tickets waiting on this member, live and refreshed as the member moves around.
@@ -431,14 +435,23 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     reloadInboxCount,
     inboxWaiting,
   }
+  // The member's own look (docs/themes.md), while they have the themes feature.
+  const themes = <ThemeRuntime enabled={data.features?.includes('themes') ?? false} />
   if (alone)
-    return <DashboardContext.Provider value={dashboard}>{children}</DashboardContext.Provider>
+    return (
+      <DashboardContext.Provider value={dashboard}>
+        {themes}
+        {children}
+      </DashboardContext.Provider>
+    )
 
   return (
     <DashboardContext.Provider value={dashboard}>
+      {themes}
       <DocumentPanelProvider>
         <ThreadPanelProvider>
           <SidebarProvider
+            data-look="app"
             open={sidebarOpen}
             onOpenChange={setSidebarOpen}
             style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
@@ -714,6 +727,11 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                           ))}
                         </div>
                       </div>
+                      {wornTheme && !safeLook && (
+                        <DropdownMenuItem onSelect={() => void takeOffTheme()}>
+                          <Palette /> Take off {wornTheme.theme.name}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem onSelect={openShortcuts}>
                         <Keyboard /> Keyboard shortcuts
                         <span className="text-muted-foreground ml-auto text-xs">
