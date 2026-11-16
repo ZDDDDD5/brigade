@@ -12,7 +12,7 @@ patchedDependencies:
     hash: 5b6b51ab1bbbdba8c758324821c5fbd06988208cbcfef2a10c68b38aef7410e4
     path: patches/@ai-sdk__harness-codex@1.0.178.patch
   '@ai-sdk/harness@1.0.176':
-    hash: cc8baf18056b1e15289f64fd0483aa640631c60dc906f592b2096dbe09d05257
+    hash: 80e07662000e9acfafd6461cc9f0046ec980b88cb3c235550d7b28839ae6751a
     path: patches/@ai-sdk__harness@1.0.176.patch
   '@blocknote/react@0.56.0':
     hash: 90b9d38e870da2cb008e8695c2fc7354575d7073902f432286ef3986f7c23ab5
@@ -225,7 +225,7 @@ importers:
     dependencies:
       '@ai-sdk/harness':
         specifier: 1.0.176
-        version: 1.0.176(patch_hash=cc8baf18056b1e15289f64fd0483aa640631c60dc906f592b2096dbe09d05257)(ws@8.22.0)(zod@4.6.7)
+        version: 1.0.176(patch_hash=80e07662000e9acfafd6461cc9f0046ec980b88cb3c235550d7b28839ae6751a)(ws@8.22.0)(zod@4.6.7)
       '@ai-sdk/harness-claude-code':
         specifier: 1.0.180
         version: 1.0.180(patch_hash=c3c085cc3a258a9c6f701f7069b7f7ec8d0d6dc869eae5139d561c69734bba1c)(zod@4.6.7)
@@ -7415,7 +7415,7 @@ snapshots:
 
   '@ai-sdk/harness-claude-code@1.0.180(patch_hash=c3c085cc3a258a9c6f701f7069b7f7ec8d0d6dc869eae5139d561c69734bba1c)(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/harness': 1.0.176(patch_hash=cc8baf18056b1e15289f64fd0483aa640631c60dc906f592b2096dbe09d05257)(ws@8.22.0)(zod@4.6.7)
+      '@ai-sdk/harness': 1.0.176(patch_hash=80e07662000e9acfafd6461cc9f0046ec980b88cb3c235550d7b28839ae6751a)(ws@8.22.0)(zod@4.6.7)
       '@ai-sdk/provider': 4.0.37
       '@ai-sdk/provider-utils': 5.0.76(zod@4.6.7)
       ws: 8.22.0
@@ -7426,7 +7426,7 @@ snapshots:
 
   '@ai-sdk/harness-codex@1.0.178(patch_hash=5b6b51ab1bbbdba8c758324821c5fbd06988208cbcfef2a10c68b38aef7410e4)(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/harness': 1.0.176(patch_hash=cc8baf18056b1e15289f64fd0483aa640631c60dc906f592b2096dbe09d05257)(ws@8.22.0)(zod@4.6.7)
+      '@ai-sdk/harness': 1.0.176(patch_hash=80e07662000e9acfafd6461cc9f0046ec980b88cb3c235550d7b28839ae6751a)(ws@8.22.0)(zod@4.6.7)
       '@ai-sdk/provider': 4.0.37
       '@ai-sdk/provider-utils': 5.0.76(zod@4.6.7)
       ws: 8.22.0
@@ -7437,7 +7437,7 @@ snapshots:
 
   '@ai-sdk/harness-pi@1.0.179(@aws-sdk/credential-provider-node@3.972.86)(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.5)(ws@8.22.0)(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/harness': 1.0.176(patch_hash=cc8baf18056b1e15289f64fd0483aa640631c60dc906f592b2096dbe09d05257)(ws@8.22.0)(zod@4.6.7)
+      '@ai-sdk/harness': 1.0.176(patch_hash=80e07662000e9acfafd6461cc9f0046ec980b88cb3c235550d7b28839ae6751a)(ws@8.22.0)(zod@4.6.7)
       '@ai-sdk/provider-utils': 5.0.76(zod@4.6.7)
       '@earendil-works/pi-coding-agent': 1.5.2(@aws-sdk/credential-provider-node@3.972.86)(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(@smithy/hash-node@4.5.2)(@smithy/signature-v4@5.7.5)(ws@8.22.0)(zod@4.6.7)
       typebox: 1.4.7
@@ -7453,7 +7453,7 @@ snapshots:
       - utf-8-validate
       - ws
 
-  '@ai-sdk/harness@1.0.176(patch_hash=cc8baf18056b1e15289f64fd0483aa640631c60dc906f592b2096dbe09d05257)(ws@8.22.0)(zod@4.6.7)':
+  '@ai-sdk/harness@1.0.176(patch_hash=80e07662000e9acfafd6461cc9f0046ec980b88cb3c235550d7b28839ae6751a)(ws@8.22.0)(zod@4.6.7)':
     dependencies:
       '@ai-sdk/provider': 4.0.37
       '@ai-sdk/provider-utils': 5.0.76(zod@4.6.7)
