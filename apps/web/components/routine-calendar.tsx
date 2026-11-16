@@ -12,7 +12,7 @@ import {
   RotateCw,
 } from 'lucide-react'
 import Link from 'next/link'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { isAdmin, TeammateAvatar, useDashboard } from '@/components/dashboard'
 import { describeCron, localTimezone, OUTCOME, zoneName } from '@/components/schedules'
 import { Button } from '@/components/ui/button'
@@ -116,10 +116,13 @@ export function RoutineCalendar({
     return () => clearInterval(timer)
   }, [])
   const [start, setStart] = useState(() => weekStart(new Date()))
-  const end = addDays(start, DAYS)
+  const end = useMemo(() => addDays(start, DAYS), [start])
   // Crons a drag saved, shown until the list comes back with them.
   const [saved, setSaved] = useState<Record<string, string>>({})
   const [drag, setDrag] = useState<Drag | null>(null)
+  // The drag as the pointer left it, read between renders; state only once the pointer moved,
+  // so a plain click opens the menu in one render.
+  const dragging = useRef<Drag | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
   const [allHours, setAllHours] = useState(false)
   const [note, setNote] = useState<{ text: string; error?: boolean; undo?: () => void }>()
@@ -326,115 +329,80 @@ export function RoutineCalendar({
     )
   }
 
-  const open = (key: string) => (next: boolean) => setMenu(next ? key : null)
-
-  /** One run's row in a card: who does it and what; the time when its card holds several. */
-  const row = (b: Block, timed: boolean) => {
-    const s = b.schedule
-    const canMove = b.kind === 'planned' && movable(s)
-    return (
-      <DropdownMenu key={b.key} open={menu === b.key} onOpenChange={open(b.key)}>
-        <Tooltip delayDuration={TIP_DELAY}>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={`${s.title}, ${hhmm(b.minute)}`}
-              onClick={(e) => {
-                e.stopPropagation()
-                if (!canMove) setMenu(b.key)
-              }}
-              onKeyDown={(e) => {
-                if (canMove && (e.key === 'Enter' || e.key === ' ')) {
-                  e.preventDefault()
-                  setMenu(b.key)
-                }
-              }}
-              onPointerDown={(e) => {
-                if (!canMove || e.button !== 0) return
-                e.currentTarget.setPointerCapture(e.pointerId)
-                setDrag({
-                  key: b.key,
-                  schedule: s,
-                  at: b.at,
-                  day: b.day,
-                  minute: b.minute,
-                  x: e.clientX,
-                  y: e.clientY,
-                  columnWidth: (days.current?.clientWidth ?? 700) / DAYS,
-                  moved: false,
-                  minutes: 0,
-                  days: 0,
-                })
-              }}
-              onPointerMove={(e) => {
-                if (drag?.key !== b.key) return
-                const dx = e.clientX - drag.x
-                const dy = e.clientY - drag.y
-                const moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 4
-                if (!moved) return
-                const weekly = movableOf(saved[s.id] ?? s.cron)?.kind === 'weekly'
-                setDrag({
-                  ...drag,
-                  moved,
-                  minutes: clamp(
-                    Math.round(dy / ((HOUR * SNAP) / 60)) * SNAP,
-                    from * 60 - drag.minute,
-                    to * 60 - SNAP - drag.minute,
-                  ),
-                  days: weekly
-                    ? clamp(Math.round(dx / drag.columnWidth), -drag.day, DAYS - 1 - drag.day)
-                    : 0,
-                })
-              }}
-              onPointerUp={() => {
-                if (drag?.key !== b.key) return
-                setDrag(null)
-                if (drag.moved) drop(drag)
-                else setMenu(b.key)
-              }}
-              onPointerCancel={() => setDrag(null)}
-              className={cn(
-                'relative flex w-full items-center gap-1 overflow-hidden rounded-[6px] px-1 text-left text-xs select-none',
-                b.kind === 'planned' && 'bg-primary/10 hover:bg-primary/15',
-                b.kind === 'run' && 'bg-secondary text-muted-foreground hover:bg-secondary/80',
-                b.kind === 'missed' &&
-                  'border border-dashed border-warning text-muted-foreground hover:bg-warning/10',
-                canMove && 'cursor-grab touch-none',
-                moving(b) && 'opacity-40',
-              )}
-              style={{ height: ROW - 2 }}
-            >
-              <TeammateAvatar teammate={s.teammate} className="size-3.5 shrink-0" />
-              <span className="min-w-0 flex-1 truncate font-semibold">{s.title}</span>
-              {timed && (
-                <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
-                  {hhmm(b.minute)}
-                </span>
-              )}
-              {b.run && (
-                <span
-                  aria-label={OUTCOME[b.run.outcome].label}
-                  className={cn('size-1.5 shrink-0 rounded-full', OUTCOME[b.run.outcome].dot)}
-                />
-              )}
-              <DropdownMenuTrigger asChild>
-                <span aria-hidden className="pointer-events-none absolute inset-0" />
-              </DropdownMenuTrigger>
-            </button>
-          </TooltipTrigger>
-          {!drag && menu !== b.key && (
-            <TooltipContent side="right" align="start" className="flex max-w-64 flex-col gap-0.5">
-              {about(b)}
-              {canMove && (
-                <span className="text-xs text-muted-foreground">Drag to move all its runs</span>
-              )}
-            </TooltipContent>
-          )}
-        </Tooltip>
-        {menuFor(b)}
-      </DropdownMenu>
-    )
+  const pointer = {
+    down(b: Block, e: React.PointerEvent<HTMLButtonElement>) {
+      if (e.button !== 0) return
+      e.currentTarget.setPointerCapture(e.pointerId)
+      dragging.current = {
+        key: b.key,
+        schedule: b.schedule,
+        at: b.at,
+        day: b.day,
+        minute: b.minute,
+        x: e.clientX,
+        y: e.clientY,
+        columnWidth: (days.current?.clientWidth ?? 700) / DAYS,
+        moved: false,
+        minutes: 0,
+        days: 0,
+      }
+    },
+    move(b: Block, e: React.PointerEvent<HTMLButtonElement>) {
+      const d = dragging.current
+      if (d?.key !== b.key) return
+      const dx = e.clientX - d.x
+      const dy = e.clientY - d.y
+      if (!d.moved && Math.abs(dx) + Math.abs(dy) <= 4) return
+      const s = b.schedule
+      const weekly = movableOf(saved[s.id] ?? s.cron)?.kind === 'weekly'
+      const next = {
+        ...d,
+        moved: true,
+        minutes: clamp(
+          Math.round(dy / ((HOUR * SNAP) / 60)) * SNAP,
+          from * 60 - d.minute,
+          to * 60 - SNAP - d.minute,
+        ),
+        days: weekly ? clamp(Math.round(dx / d.columnWidth), -d.day, DAYS - 1 - d.day) : 0,
+      }
+      dragging.current = next
+      if (!d.moved || next.minutes !== d.minutes || next.days !== d.days) setDrag(next)
+    },
+    up(b: Block) {
+      const d = dragging.current
+      if (d?.key !== b.key) return
+      dragging.current = null
+      if (d.moved) {
+        setDrag(null)
+        drop(d)
+      } else setMenu(b.key)
+    },
+    cancel() {
+      dragging.current = null
+      setDrag(null)
+    },
+    open(key: string, next: boolean) {
+      setMenu(next ? key : null)
+    },
+    menu: menuFor,
+    about,
   }
+  // Rows get stable handlers that call this render's, so a click re-renders only the rows it changes.
+  const live = useRef(pointer)
+  live.current = pointer
+  const on = useMemo<RowHandlers>(
+    () => ({
+      down: (b, e) => live.current.down(b, e),
+      move: (b, e) => live.current.move(b, e),
+      up: (b) => live.current.up(b),
+      cancel: () => live.current.cancel(),
+      open: (key, next) => live.current.open(key, next),
+      menu: (b) => live.current.menu(b),
+      about: (b) => live.current.about(b),
+    }),
+    [],
+  )
+  const open = (key: string) => (next: boolean) => setMenu(next ? key : null)
 
   const fold = (label: string, up: boolean) => (
     <button
@@ -609,7 +577,18 @@ export function RoutineCalendar({
                       className="absolute z-10 flex flex-col gap-0.5"
                       style={{ ...column(card.day), top: y(card.minute) + 1 }}
                     >
-                      {card.items.map((b) => row(b, timed))}
+                      {card.items.map((b) => (
+                        <Row
+                          key={b.key}
+                          block={b}
+                          timed={timed}
+                          open={menu === b.key}
+                          canMove={b.kind === 'planned' && movable(b.schedule)}
+                          faded={Boolean(moving(b))}
+                          quiet={drag !== null}
+                          on={on}
+                        />
+                      ))}
                     </div>
                   )
                 })}
@@ -668,3 +647,101 @@ export function RoutineCalendar({
     </div>
   )
 }
+
+type RowHandlers = {
+  down: (b: Block, e: React.PointerEvent<HTMLButtonElement>) => void
+  move: (b: Block, e: React.PointerEvent<HTMLButtonElement>) => void
+  up: (b: Block) => void
+  cancel: () => void
+  open: (key: string, open: boolean) => void
+  menu: (b: Block) => React.ReactNode
+  about: (b: Block) => React.ReactNode
+}
+
+/**
+ * One run's row in a card: who does it and what; the time when its card holds several. Memoized:
+ * opening one run's menu re-renders that row, not the week.
+ */
+const Row = memo(function Row({
+  block: b,
+  timed,
+  open,
+  canMove,
+  faded,
+  quiet,
+  on,
+}: {
+  block: Block
+  timed: boolean
+  open: boolean
+  canMove: boolean
+  /** Its routine is being dragged: a copy follows the pointer. */
+  faded: boolean
+  /** No tooltip while something is dragged. */
+  quiet: boolean
+  on: RowHandlers
+}) {
+  const s = b.schedule
+  return (
+    <DropdownMenu open={open} onOpenChange={(next) => on.open(b.key, next)}>
+      <Tooltip delayDuration={TIP_DELAY}>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={`${s.title}, ${hhmm(b.minute)}`}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (!canMove) on.open(b.key, true)
+            }}
+            onKeyDown={(e) => {
+              if (canMove && (e.key === 'Enter' || e.key === ' ')) {
+                e.preventDefault()
+                on.open(b.key, true)
+              }
+            }}
+            onPointerDown={canMove ? (e) => on.down(b, e) : undefined}
+            onPointerMove={canMove ? (e) => on.move(b, e) : undefined}
+            onPointerUp={canMove ? () => on.up(b) : undefined}
+            onPointerCancel={canMove ? () => on.cancel() : undefined}
+            className={cn(
+              'relative flex w-full items-center gap-1 overflow-hidden rounded-[6px] px-1 text-left text-xs select-none',
+              b.kind === 'planned' && 'bg-primary/10 hover:bg-primary/15',
+              b.kind === 'run' && 'bg-secondary text-muted-foreground hover:bg-secondary/80',
+              b.kind === 'missed' &&
+                'border border-dashed border-warning text-muted-foreground hover:bg-warning/10',
+              canMove && 'cursor-grab touch-none',
+              faded && 'opacity-40',
+            )}
+            style={{ height: ROW - 2 }}
+          >
+            <TeammateAvatar teammate={s.teammate} className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1 truncate font-semibold">{s.title}</span>
+            {timed && (
+              <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
+                {hhmm(b.minute)}
+              </span>
+            )}
+            {b.run && (
+              <span
+                aria-label={OUTCOME[b.run.outcome].label}
+                className={cn('size-1.5 shrink-0 rounded-full', OUTCOME[b.run.outcome].dot)}
+              />
+            )}
+            <DropdownMenuTrigger asChild>
+              <span aria-hidden className="pointer-events-none absolute inset-0" />
+            </DropdownMenuTrigger>
+          </button>
+        </TooltipTrigger>
+        {!quiet && !open && (
+          <TooltipContent side="right" align="start" className="flex max-w-64 flex-col gap-0.5">
+            {on.about(b)}
+            {canMove && (
+              <span className="text-xs text-muted-foreground">Drag to move all its runs</span>
+            )}
+          </TooltipContent>
+        )}
+      </Tooltip>
+      {open && on.menu(b)}
+    </DropdownMenu>
+  )
+})
