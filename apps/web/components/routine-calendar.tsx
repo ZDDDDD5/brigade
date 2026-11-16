@@ -28,12 +28,15 @@ import { api, type Schedule } from '@/lib/api'
 import {
   addDays,
   dayIndex,
+  droppedAt,
   hoursShown,
   minuteOfDay,
   missedRuns,
   movableOf,
   movedCron,
   runsBetween,
+  RECENT_RUNS,
+  runsClipped,
   slotCron,
   stackOut,
   weekStart,
@@ -140,7 +143,7 @@ export function RoutineCalendar({
   const today = dayIndex(now, start)
   const thisWeek = today >= 0 && today < DAYS
 
-  const { blocks, often, paused } = useMemo(() => {
+  const { blocks, often, paused, clipped } = useMemo(() => {
     const blocks: Block[] = []
     const often: Schedule[] = []
     const add = (schedule: Schedule, at: Date, key: string, kind: Block['kind'], run?: Run) =>
@@ -170,7 +173,12 @@ export function RoutineCalendar({
       if (s.pausedAt) continue
       for (const at of runs) if (at > now) add(s, at, `${s.id}-${at.getTime()}`, 'planned')
     }
-    return { blocks, often, paused: schedules.filter((s) => s.pausedAt).length }
+    return {
+      blocks,
+      often,
+      paused: schedules.filter((s) => s.pausedAt).length,
+      clipped: schedules.some((s) => !often.includes(s) && runsClipped(s, start)),
+    }
   }, [schedules, saved, start, end, now])
 
   // The hours shown follow the runs where they are, not where a drag moves them.
@@ -236,7 +244,7 @@ export function RoutineCalendar({
     const before = saved[s.id] ?? s.cron
     const rhythm = movableOf(before)
     if (!rhythm || (!d.minutes && !d.days)) return
-    const at = new Date(addDays(d.at, d.days).getTime() + d.minutes * 60_000)
+    const at = droppedAt(d.at, d.days, d.minutes)
     const cron = movedCron(rhythm, at, s.timezone)
     if (cron !== before) void write(s, cron, before)
   }
@@ -641,6 +649,8 @@ export function RoutineCalendar({
             Drag a routine to move all its runs, or click an empty slot to add one.
             {paused > 0 &&
               ` ${paused} paused ${paused === 1 ? 'routine isn’t' : 'routines aren’t'} shown.`}
+            {clipped &&
+              ` Each routine shows its latest ${RECENT_RUNS} runs: earlier ones aren’t drawn.`}
           </>
         )}
       </p>

@@ -107,6 +107,37 @@ export function movedCron(movable: Movable, to: Date, timezone: string) {
   return `${minute} ${hour} * * ${day}`
 }
 
+/**
+ * Where a run dragged by `days` and `minutes` on the grid lands: the wall-clock time the grid
+ * shows there, in the browser's timezone. Not that much elapsed time: across a DST change the
+ * two differ by an hour.
+ */
+export function droppedAt(at: Date, days: number, minutes: number) {
+  return new Date(
+    at.getFullYear(),
+    at.getMonth(),
+    at.getDate() + days,
+    at.getHours(),
+    at.getMinutes() + minutes,
+  )
+}
+
+/** How many of its latest runs a schedule comes with (RECENT_RUNS in apps/api/src/schedules.ts). */
+export const RECENT_RUNS = 8
+
+/** Whether runs of it since `from` may be missing: it comes with only its latest RECENT_RUNS. */
+export function runsClipped(
+  schedule: { createdAt: string; recentRuns: { createdAt: string }[] },
+  from: Date,
+) {
+  const oldest = schedule.recentRuns[0]
+  return (
+    schedule.recentRuns.length >= RECENT_RUNS &&
+    new Date(oldest!.createdAt) > from &&
+    new Date(schedule.createdAt) < new Date(oldest!.createdAt)
+  )
+}
+
 /** A weekly cron at a slot of the calendar, in the browser's timezone (a new routine's default). */
 export function slotCron(date: Date) {
   return `${date.getMinutes()} ${date.getHours()} * * ${date.getDay()}`
