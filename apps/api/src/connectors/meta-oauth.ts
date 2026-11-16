@@ -89,6 +89,23 @@ export async function metaAccount(accessToken: string) {
   return { id: me.id ?? null, name: me.name ?? null }
 }
 
+/**
+ * A Graph API request signed with a user token. Meta takes a Bearer header on reads but refuses
+ * it on writes (a POST answers 401, OAuthException 190; checked 16 Nov 2026), so a form body
+ * carries the token itself.
+ */
+export function withMetaToken(init: RequestInit, accessToken: string): RequestInit {
+  if (init.body instanceof URLSearchParams) {
+    const body = new URLSearchParams(init.body)
+    body.set('access_token', accessToken)
+    return { ...init, body }
+  }
+  return {
+    ...init,
+    headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${accessToken}` },
+  }
+}
+
 /** Whether a Graph API error says the token no longer works (OAuthException 190, or 102). */
 export const tokenRefused = (status: number, body: unknown) => {
   const code = (body as { error?: { code?: number } } | null)?.error?.code
