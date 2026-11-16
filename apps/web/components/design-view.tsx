@@ -280,8 +280,11 @@ function DesignFrame({
 
   const edits = useRef<DesignEdits>(null)
   edits.current ??= new DesignEdits({
-    onSaved: (f, file) => {
+    onSaved: (f, file, result) => {
       setNotice({ text: 'Saved.' })
+      // Its boards show this version now: changed in place, not loaded again.
+      for (const b of canvasBoards())
+        if (b.folder === f && b.file === file) shown.current.set(b.key, result.sha256)
       // The gallery's picture is the first board's.
       const first = canvasBoards().find((b) => b.folder === f)
       if (first?.file !== file) return
@@ -339,7 +342,10 @@ function DesignFrame({
     // A look because the library changed: what shows stays as it is if it fails.
     const quietly = quiet.current
     quiet.current = false
-    const previous = views[folder]
+    const known = views
+    const previous = known[folder]
+    // A save answered while the view was asked may be missing from it: asked again then.
+    const saves = edits.current!.saves
     if (!quietly) setError(undefined)
     Promise.all(
       folders.map((f) =>
@@ -348,25 +354,39 @@ function DesignFrame({
     ).then(
       (loaded) => {
         if (!live) return
+        if (quietly && (edits.current!.busy || edits.current!.saves !== saves)) {
+          behind.current = true
+          if (!edits.current!.busy && !hiddenRef.current) refreshNow()
+          return
+        }
         const next = Object.fromEntries(loaded)
         setViews(next)
-        // A board keeps its page while it is the version it shows, or one this canvas saved;
-        // another version (someone else saved it) loads, and what was selected on it goes.
+        // A board keeps its page while that is the version it shows (as loaded, or as this
+        // canvas saved it since); another version (someone else saved it), or other styles,
+        // scripts or images it loads, load it again, and what was selected on it goes.
         const before = srcsRef.current
         const after: Record<string, string> = {}
         const reloaded = new Set<string>()
-        for (const [f, v] of loaded)
+        for (const [f, v] of loaded) {
+          const assetsChanged =
+            known[f]?.assets !== undefined &&
+            v.assets !== undefined &&
+            known[f]!.assets !== v.assets
           designBoards(v.manifest).forEach((b, i) => {
             const key = `${f}#${i}`
             const sha = v.files[b.file]
-            const was = shown.current.get(key)
             const keep =
-              !force && before[key] && sha && (was === sha || edits.current!.own.has(sha))
+              !force && !assetsChanged && before[key] && sha && shown.current.get(key) === sha
             after[key] = keep ? before[key]! : pageUrl(v, b.file)
             if (before[key] && after[key] !== before[key]) reloaded.add(key)
           })
+        }
         setSrcs(after)
-        if (reloaded.size) setSelection((all) => all.filter((s) => !reloaded.has(s.board)))
+        if (reloaded.size) {
+          setSelection((all) => all.filter((s) => !reloaded.has(s.board)))
+          // Their elements are numbered anew: where they were moved by hand is read again.
+          moved.current.clear()
+        }
         for (const [f, v] of loaded)
           for (const [file, sha] of Object.entries(v.files)) edits.current!.seen(f, file, sha)
         const primary = next[folder]

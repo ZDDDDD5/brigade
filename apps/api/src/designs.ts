@@ -4,7 +4,7 @@
 // under a short-lived signed address, as a sandboxed document.
 import { mayWrite } from './account-sharing.js'
 import type { Role } from './scope.js'
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import {
   DESIGN_ENTRY,
   DESIGN_KNOBS,
@@ -268,6 +268,24 @@ const designRows = (db: ScopedDb, folder: string) =>
   })
 
 /**
+ * What the pages of a design load besides themselves (styles, scripts, images), as one digest:
+ * it changes when one of those does, so a canvas showing the design loads its pages again.
+ */
+export function designAssets(
+  folder: string,
+  rows: { path: string; sha256: string; contentType: string }[],
+) {
+  const own = new Set(
+    [DESIGN_MANIFEST, DESIGN_KNOBS, DESIGN_THUMBNAIL].map((n) => `${folder}/${n}`),
+  )
+  const lines = rows
+    .filter((r) => r.contentType !== 'text/html' && !own.has(r.path))
+    .map((r) => `${r.path}\n${r.sha256}`)
+    .sort()
+  return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 32)
+}
+
+/**
  * A design's address on the sandbox origin, what it says about itself, and
  * where comments go: the thread that saved it last, when this member may see
  * it. `path` is the folder or a file in it.
@@ -314,6 +332,7 @@ export async function openDesignView(
         .filter((r) => r.contentType === 'text/html')
         .map((r) => [r.path.slice(folder.length + 1), r.sha256]),
     ),
+    assets: designAssets(folder, rows),
     thread: session
       ? {
           id: session.id,

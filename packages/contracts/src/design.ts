@@ -386,6 +386,12 @@ export const DesignView = z.object({
   entryId: z.string(),
   /** Its pages, by their path in the folder, to their sha256: what the canvas edits. */
   files: z.record(z.string(), z.string()),
+  /**
+   * A digest of the other files its pages may load (styles, scripts, images, fonts): not its
+   * pages, `design.json`, `knobs.json` or its picture. Another one: the pages show something
+   * new, though their own files did not change. Absent from an API before it.
+   */
+  assets: z.string().optional(),
   /** The thread that saved it last, if it is still there; comments go to it. */
   thread: z
     .object({
