@@ -126,7 +126,7 @@ export async function windowsProcesses() {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $([int64]((Get-Date) - $_.CreationDate).TotalSeconds)" }',
+        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $([int64]((Get-Date) - $_.CreationDate).TotalSeconds) $($_.Name)" }',
       ],
       { maxBuffer: 16 * 1024 * 1024, windowsHide: true },
       (error, out) => (error ? fail(error) : done(out)),
@@ -135,13 +135,19 @@ export async function windowsProcesses() {
   return parseWindowsList(stdout)
 }
 
-/** Lines of "pid ppid seconds-running". */
+/** Lines of "pid ppid seconds-running name". */
 export function parseWindowsList(text: string) {
-  const procs: { pid: number; ppid: number; seconds: number }[] = []
+  const procs: { pid: number; ppid: number; seconds: number; name?: string }[] = []
   for (const line of text.split(/\r?\n/)) {
-    const [pid, ppid, seconds] = line.trim().split(/\s+/).map(Number)
-    if (!Number.isInteger(pid) || !Number.isInteger(ppid) || !Number.isFinite(seconds)) continue
-    procs.push({ pid: pid!, ppid: ppid!, seconds: seconds! })
+    const [pid, ppid, seconds, ...name] = line.trim().split(/\s+/)
+    const [p, pp, sec] = [pid, ppid, seconds].map(Number)
+    if (!Number.isInteger(p) || !Number.isInteger(pp) || !Number.isFinite(sec)) continue
+    procs.push({
+      pid: p!,
+      ppid: pp!,
+      seconds: sec!,
+      ...(name.length ? { name: name.join(' ') } : {}),
+    })
   }
   return procs
 }
@@ -173,6 +179,49 @@ export async function windowsTree(
     ).then(parseMsysList),
   ])
   return treeOf(root, procs, msys)
+}
+
+/** The harnesses' CLIs, and the shells they run a command in. */
+const HARNESS_CLI = /^(codex|claude)\.exe$/i
+const COMMAND_SHELL = /^(powershell|pwsh|cmd|bash|sh)\.exe$/i
+
+/**
+ * The commands a harness runs now, under these process trees (a sandbox's): each shell a harness's
+ * CLI started (Codex's PowerShell, Claude Code's bash) with what it started, and none of the CLI's
+ * other children (its MCP servers, Codex's code-mode host), which its session keeps. Codex on
+ * Windows leaves a command running when its turn is interrupted: these are what to end then.
+ */
+export function commandsOf(
+  roots: number[],
+  procs: { pid: number; ppid: number; name?: string }[],
+  msys: { pgid: number; winpid: number }[],
+) {
+  const under = new Set<number>()
+  for (const root of roots) for (const pid of treeOf(root, procs, msys)) under.add(pid)
+  const clis = new Set(
+    procs.filter((p) => under.has(p.pid) && HARNESS_CLI.test(p.name ?? '')).map((p) => p.pid),
+  )
+  const found = new Set<number>()
+  for (const shell of procs)
+    if (clis.has(shell.ppid) && COMMAND_SHELL.test(shell.name ?? ''))
+      for (const pid of treeOf(shell.pid, procs, msys)) found.add(pid)
+  return [...found]
+}
+
+/** Windows: ends the commands harnesses run under these trees (commandsOf). */
+export async function stopCommands(
+  roots: number[],
+  ps = join(gitHome() ?? '', 'usr', 'bin', 'ps.exe'),
+) {
+  if (!WINDOWS || roots.length === 0) return
+  const [procs, msys] = await Promise.all([
+    windowsProcesses(),
+    new Promise<string>((done) =>
+      execFile(ps, ['-l'], { windowsHide: true }, (_error, out) => done(out ?? '')),
+    ).then(parseMsysList),
+  ])
+  const pids = commandsOf(roots, procs, msys)
+  if (pids.length) await kill(pids)
 }
 
 export function treeOf(

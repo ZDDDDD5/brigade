@@ -348,25 +348,45 @@ async function run(
 
 export class Accounts {
   private logins = new Map<string, Login>()
+  /**
+   * Sign-ins waiting for their CLI to install (Windows' first one): cancelled meanwhile, or given
+   * way to a newer one for the same account, they never start.
+   */
+  private installing = new Map<string, { account: AccountRef; cancelled: boolean }>()
 
   constructor(
     private readonly send: {
       prompt: (loginId: string, prompt: Prompt) => void
       done: (loginId: string, done: Done) => void
     },
+    /** The vendor CLI for a sign-in, installed if need be (vendor-cli.ts); tests give their own. */
+    private readonly cliFor: typeof vendorCli = vendorCli,
   ) {}
 
   async start(loginId: string, account: AccountRef) {
     const dir = accountDir(account)
     if (!dir) throw new Error("The machine's own login is managed on the machine")
     // A sign-in the API lost (it restarted) would otherwise time out later and delete this one's login.
-    for (const login of this.logins.values())
-      if (login.account.id === account.id) login.cancel('Replaced by a new sign-in', true)
-    await mkdir(dir, { recursive: true, mode: 0o700 })
-    // On Windows, the CLI may have to be installed first: a minute or two, once.
-    const cli = await vendorCli(account.provider === 'codex' ? 'codex' : 'claude', {
-      install: true,
-    })
+    const replace = () => {
+      for (const login of this.logins.values())
+        if (login.account.id === account.id) login.cancel('Replaced by a new sign-in', true)
+      for (const waiting of this.installing.values())
+        if (waiting.account.id === account.id) waiting.cancelled = true
+    }
+    replace()
+    const waiting = { account, cancelled: false }
+    this.installing.set(loginId, waiting)
+    let cli: [string, string[]] | undefined
+    try {
+      await mkdir(dir, { recursive: true, mode: 0o700 })
+      // On Windows, the CLI may have to be installed first: a minute or two, once.
+      cli = await this.cliFor(account.provider === 'codex' ? 'codex' : 'claude', { install: true })
+    } finally {
+      this.installing.delete(loginId)
+    }
+    // Cancelled while it waited: it never starts, and leaves the account's folder to the sign-in
+    // that replaced it, if any.
+    if (waiting.cancelled) return this.send.done(loginId, { ok: false, error: 'Cancelled' })
     if (!cli) throw new Error('Could not install the sign-in command')
     const login = new Login(
       account,
@@ -383,7 +403,7 @@ export class Accounts {
 
   /** A sign-in is in progress. */
   get busy() {
-    return this.logins.size > 0
+    return this.logins.size > 0 || this.installing.size > 0
   }
 
   submit(loginId: string, code: string) {
@@ -394,6 +414,8 @@ export class Accounts {
 
   cancel(loginId: string) {
     this.logins.get(loginId)?.cancel()
+    const waiting = this.installing.get(loginId)
+    if (waiting) waiting.cancelled = true
   }
 
   /** Sign out with the vendor's command, then delete the account's directory (and its token). */

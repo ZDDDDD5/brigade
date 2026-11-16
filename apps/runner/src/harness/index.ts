@@ -1997,6 +1997,7 @@ export class HarnessThread {
         if (mapper.lost) return lost(mapper.error)
         return { kind: 'done', result: { status: 'failed', error: mapper.error } }
       }
+      if (signal.aborted) await this.endCommands(live)
       this.completed(signal.aborted ? 'interrupted' : mapper.finishReason)
       await this.persist()
       return { kind: 'done', result: { status: 'idle' } }
@@ -2008,6 +2009,7 @@ export class HarnessThread {
       }
       if (frozenUnder()) return { kind: 'done', result: { status: 'waiting' } }
       if (signal.aborted) {
+        await this.endCommands(attached)
         this.completed('interrupted')
         return { kind: 'done', result: { status: 'idle' } }
       }
@@ -2122,6 +2124,21 @@ export class HarnessThread {
       ),
       where: 'windows',
     }
+  }
+
+  /**
+   * An interrupted turn's commands end with it. Codex on Windows ends the turn but not the
+   * command it runs (a write it was about to make would land after Stop, or in the next turn).
+   */
+  private async endCommands(live: Live | undefined) {
+    if (!WINDOWS || !live) return
+    await live.sandbox
+      .stopCommands()
+      .catch((error: unknown) =>
+        console.warn(
+          `${this.key}: could not end the interrupted turn's commands: ${errorMessage(error)}`,
+        ),
+      )
   }
 
   /** On a member's Mac: agent-desktop through Brigade Computer Use, beside the other computer tools. */

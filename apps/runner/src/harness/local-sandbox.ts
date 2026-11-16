@@ -11,7 +11,15 @@ import type { HarnessV1NetworkSandboxSession } from '@ai-sdk/harness'
 import { runnerCgroups, type TurnCgroup } from '../preview-cgroup.js'
 import { processGroups } from '../process-groups.js'
 import { asTeammate, threadNet, type ThreadNet } from '../thread-net.js'
-import { ownGroup, posixShell, stopTree, toMsys, toNative, WINDOWS } from '../windows.js'
+import {
+  ownGroup,
+  posixShell,
+  stopCommands,
+  stopTree,
+  toMsys,
+  toNative,
+  WINDOWS,
+} from '../windows.js'
 
 type SandboxSession = ReturnType<HarnessV1NetworkSandboxSession['restricted']>
 type ProcessOptions = Parameters<SandboxSession['spawn']>[0]
@@ -82,6 +90,7 @@ export function createLocalSandboxSession(options: {
 }): HarnessV1NetworkSandboxSession & {
   groups: () => number[]
   dropAdopted: () => boolean
+  stopCommands: () => Promise<void>
 } {
   const children = new Set<ChildProcess>()
   let adopted = options.adopt ?? []
@@ -416,6 +425,12 @@ export function createLocalSandboxSession(options: {
     stop,
     destroy,
     restricted: () => restricted,
+    /**
+     * Windows: ends the commands its harness runs now (windows.ts, stopCommands), which Codex
+     * there leaves running when its turn is interrupted. Its harness goes on.
+     */
+    stopCommands: () =>
+      stopCommands([...children].flatMap((c) => (c.pid && c.exitCode === null ? [c.pid] : []))),
     /** Its process groups running now (a harness's bridge), to hand over (hand-over.ts). */
     groups: () => [
       ...[...children].flatMap((c) => (c.pid && c.exitCode === null ? [c.pid] : [])),

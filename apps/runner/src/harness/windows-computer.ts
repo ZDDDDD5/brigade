@@ -16,7 +16,10 @@ const TIMEOUT_MS = 90_000
 /** agent-desktop run here, its text on stdin (never on its command line). */
 export function localDesktopExec(binary: (signal?: AbortSignal) => Promise<string>): DesktopExec {
   return async (args, options = {}) => {
+    // Stopped already, or while the binary was found: the action never starts.
+    if (options.signal?.aborted) throw new Error('aborted')
     const path = await binary(options.signal)
+    if (options.signal?.aborted) throw new Error('aborted')
     return new Promise<string>((resolve, reject) => {
       const child = spawn(path, args, {
         stdio: [options.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
