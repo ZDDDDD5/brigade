@@ -13,7 +13,7 @@ process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
 
 const { metaAds, listMetaAdAccounts, metricsOf, fromMinor, toMinor } =
   await import('../src/connectors/meta-ads.js')
-const { GRAPH, tokenRefused } = await import('../src/connectors/meta-oauth.js')
+const { GRAPH, tokenRefused, withMetaToken } = await import('../src/connectors/meta-oauth.js')
 const { appCatalog, connectors } = await import('../src/connectors/index.js')
 const { redact } = await import('../src/connectors/types.js')
 
@@ -353,4 +353,22 @@ test('listings carry the cursor too', async () => {
     next: string | null
   }
   assert.equal(result.next, 'n1')
+})
+
+test('a write carries the token in its form body, a read in a Bearer header', () => {
+  // Meta refuses a Bearer header on a POST (401, OAuthException 190) while reads take it.
+  const write = withMetaToken(
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ status: 'PAUSED' }),
+    },
+    'tok',
+  )
+  const body = write.body as URLSearchParams
+  assert.equal(body.get('access_token'), 'tok')
+  assert.equal(body.get('status'), 'PAUSED')
+  assert.equal((write.headers as Record<string, string>).authorization, undefined)
+  const read = withMetaToken({}, 'tok')
+  assert.equal((read.headers as Record<string, string>).authorization, 'Bearer tok')
 })

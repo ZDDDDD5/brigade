@@ -20,7 +20,7 @@ import {
   type GitHubCredential,
 } from './connectors/github-app.js'
 import { refreshGoogle, type GoogleCredential } from './connectors/google-oauth.js'
-import { tokenRefused, type MetaCredential } from './connectors/meta-oauth.js'
+import { tokenRefused, withMetaToken, type MetaCredential } from './connectors/meta-oauth.js'
 import { refreshMcp, type McpCredential } from './connectors/mcp.js'
 import { serverOf } from './mcp-servers.js'
 import { isMcp, mcpOperation } from './mcp-tools.js'
@@ -683,13 +683,7 @@ export async function authorisedFetch(
       throw new Error('The Meta sign-in expired; reconnect the account')
     }
     return async (url: string, init: RequestInit = {}) => {
-      const response = await fetch(url, {
-        ...init,
-        headers: {
-          ...(init.headers as Record<string, string>),
-          authorization: `Bearer ${credential.accessToken}`,
-        },
-      })
+      const response = await fetch(url, withMetaToken(init, credential.accessToken))
       if (response.status === 400 || response.status === 401) {
         const body = await response
           .clone()
