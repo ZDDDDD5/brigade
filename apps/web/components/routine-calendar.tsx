@@ -1,7 +1,9 @@
 'use client'
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   History,
   MessageSquare,
   Pause,
@@ -10,8 +12,8 @@ import {
   RotateCw,
 } from 'lucide-react'
 import Link from 'next/link'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { isAdmin, useDashboard } from '@/components/dashboard'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { isAdmin, TeammateAvatar, useDashboard } from '@/components/dashboard'
 import { describeCron, localTimezone, OUTCOME, zoneName } from '@/components/schedules'
 import { Button } from '@/components/ui/button'
 import {
@@ -21,32 +23,46 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { api, type Schedule } from '@/lib/api'
 import {
   addDays,
   dayIndex,
-  laneOut,
+  hoursShown,
   minuteOfDay,
+  missedRuns,
   movableOf,
   movedCron,
   runsBetween,
   slotCron,
+  stackOut,
   weekStart,
 } from '@/lib/routine-calendar'
 import { cn } from '@/lib/utils'
 
 /** Pixels an hour takes. */
 const HOUR = 56
+/** Pixels a run's row takes; runs closer than this stack in one card. */
+const ROW = 22
+const ROW_MINUTES = (ROW * 60) / HOUR
 /** Minutes a drag moves a routine by. */
 const SNAP = 15
-/** Minutes a block covers: blocks closer than this sit side by side. */
-const SPAN = 30
 const DAYS = 7
+/** Tooltips over runs show almost at once: the grid is read by pointing. */
+const TIP_DELAY = 120
 
 type Run = Schedule['recentRuns'][number]
 
-/** A run on the calendar: a past one (`run`), or one its cron plans. */
-type Block = { key: string; schedule: Schedule; at: Date; day: number; minute: number; run?: Run }
+/** A run on the calendar: one that ran, one its cron plans, or one that could not start. */
+type Block = {
+  key: string
+  schedule: Schedule
+  at: Date
+  day: number
+  minute: number
+  kind: 'run' | 'planned' | 'missed'
+  run?: Run
+}
 
 type Drag = {
   key: string
@@ -64,32 +80,30 @@ type Drag = {
 }
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
-const clock = (date: Date) =>
-  new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(date)
 /** Minutes since midnight as 09:30. */
 const hhmm = (minute: number) =>
   `${String(Math.floor(minute / 60)).padStart(2, '0')}:${String(minute % 60).padStart(2, '0')}`
 const zoneOf = (s: Schedule) => (s.timezone !== localTimezone() ? ` (${zoneName(s.timezone)})` : '')
-
-/** Where a block sits in the days' area. */
-const place = (day: number, minute: number, lane = 0, lanes = 1) => ({
-  left: `calc(${day} * 100% / ${DAYS} + ${lane} * 100% / ${DAYS * lanes} + 2px)`,
-  width: `calc(100% / ${DAYS * lanes} - 4px)`,
-  top: (minute * HOUR) / 60 + 1,
-  height: (SPAN * HOUR) / 60 - 2,
+const column = (day: number) => ({
+  left: `calc(${day} * 100% / ${DAYS} + 2px)`,
+  width: `calc(100% / ${DAYS} - 4px)`,
 })
 
 /**
- * Routines as a week: each run at its time, past ones with how they ended. Dragging a routine
- * you own moves all its runs (its cron); clicking an empty slot starts a new one there.
+ * Routines as a week: each run at its time, those that ran with how they ended, those that could
+ * not start dashed. Only the hours around them show; the rest fold away. Dragging a routine you
+ * own moves all its runs (its cron); clicking an empty slot starts a new one there.
  */
 export function RoutineCalendar({
   schedules,
+  toolbar,
   onEdit,
   onNew,
   onChanged,
 }: {
   schedules: Schedule[]
+  /** Shown first in the calendar's own bar, e.g. the page's view switch. */
+  toolbar?: React.ReactNode
   onEdit: (schedule: Schedule) => void
   /** A new routine, weekly at the slot clicked. */
   onNew: (cron: string) => void
@@ -107,8 +121,8 @@ export function RoutineCalendar({
   const [saved, setSaved] = useState<Record<string, string>>({})
   const [drag, setDrag] = useState<Drag | null>(null)
   const [menu, setMenu] = useState<string | null>(null)
+  const [allHours, setAllHours] = useState(false)
   const [note, setNote] = useState<{ text: string; error?: boolean; undo?: () => void }>()
-  const scroller = useRef<HTMLDivElement>(null)
   const days = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -120,12 +134,24 @@ export function RoutineCalendar({
     })
   }, [schedules])
 
+  const today = dayIndex(now, start)
+  const thisWeek = today >= 0 && today < DAYS
+
   const { blocks, often, paused } = useMemo(() => {
     const blocks: Block[] = []
     const often: Schedule[] = []
-    const block = (schedule: Schedule, at: Date, key: string, run?: Run) =>
-      blocks.push({ key, schedule, at, day: dayIndex(at, start), minute: minuteOfDay(at), run })
-    for (const s of schedules) {
+    const add = (schedule: Schedule, at: Date, key: string, kind: Block['kind'], run?: Run) =>
+      blocks.push({
+        key,
+        schedule,
+        at,
+        day: dayIndex(at, start),
+        minute: minuteOfDay(at),
+        kind,
+        run,
+      })
+    const until = new Date(Math.min(end.getTime(), now.getTime() - 60_000))
+    for (const s of [...schedules].sort((a, b) => a.title.localeCompare(b.title))) {
       const cron = saved[s.id] ?? s.cron
       const { runs, frequent } = runsBetween(cron, s.timezone, start, end)
       if (frequent) {
@@ -134,39 +160,45 @@ export function RoutineCalendar({
       }
       for (const run of s.recentRuns) {
         const at = new Date(run.createdAt)
-        if (at >= start && at < end) block(s, at, `run-${run.id}`, run)
+        if (at >= start && at < end) add(s, at, `run-${run.id}`, 'run', run)
       }
+      for (const at of missedRuns(s, start, until))
+        add(s, at, `missed-${s.id}-${at.getTime()}`, 'missed')
       if (s.pausedAt) continue
-      for (const at of runs) if (at > now) block(s, at, `${s.id}-${at.getTime()}`)
+      for (const at of runs) if (at > now) add(s, at, `${s.id}-${at.getTime()}`, 'planned')
     }
     return { blocks, often, paused: schedules.filter((s) => s.pausedAt).length }
   }, [schedules, saved, start, end, now])
 
-  // Open on the morning, or earlier when a routine runs before it.
-  const first = Math.min(7 * 60, ...blocks.map((b) => b.minute))
-  useLayoutEffect(() => {
-    if (scroller.current) scroller.current.scrollTop = Math.max(0, ((first - 30) * HOUR) / 60)
-    // Only when the week changes, not as runs move.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [start])
-
-  const shown = blocks
-    .map((b) =>
-      drag?.moved && !b.run && b.schedule.id === drag.schedule.id
-        ? { ...b, day: b.day + drag.days, minute: b.minute + drag.minutes }
-        : b,
-    )
-    .filter((b) => b.day >= 0 && b.day < DAYS && b.minute >= 0 && b.minute < 24 * 60)
-  const placed = Array.from({ length: DAYS }, (_, day) =>
-    laneOut(
-      shown.filter((b) => b.day === day),
-      SPAN,
-    ),
-  ).flat()
+  // The hours shown follow the runs where they are, not where a drag moves them.
+  const fitted = hoursShown([
+    ...blocks.map((b) => b.minute),
+    ...(thisWeek ? [minuteOfDay(now)] : []),
+  ])
+  const { from, to } = allHours ? { from: 0, to: 24 } : fitted
+  const folds = fitted.from > 0 || fitted.to < 24
+  const y = (minute: number) => ((minute - from * 60) * HOUR) / 60
 
   const owns = (s: Schedule) => s.ownerMemberId === me.memberId
   const manages = (s: Schedule) => owns(s) || isAdmin(me)
   const movable = (s: Schedule) => owns(s) && movableOf(saved[s.id] ?? s.cron) !== null
+  const moving = (b: Block) =>
+    drag?.moved && b.kind === 'planned' && b.schedule.id === drag.schedule.id
+
+  // Each day's runs in cards; while a routine is dragged, its runs stay put (faded) and copies
+  // follow the pointer, so the row holding the pointer is never taken out of the page.
+  const cards = Array.from({ length: DAYS }, (_, day) =>
+    stackOut(
+      blocks.filter((b) => b.day === day && b.minute >= from * 60 && b.minute < to * 60),
+      ROW_MINUTES,
+    ).map((card) => ({ ...card, day })),
+  ).flat()
+  const ghosts = drag?.moved
+    ? blocks
+        .filter(moving)
+        .map((b) => ({ ...b, day: b.day + drag.days, minute: b.minute + drag.minutes }))
+        .filter((b) => b.day >= 0 && b.day < DAYS)
+    : []
 
   async function act(s: Schedule, path: string) {
     setNote(undefined)
@@ -201,44 +233,62 @@ export function RoutineCalendar({
     const before = saved[s.id] ?? s.cron
     const rhythm = movableOf(before)
     if (!rhythm || (!d.minutes && !d.days)) return
-    const to = new Date(addDays(d.at, d.days).getTime() + d.minutes * 60_000)
-    const cron = movedCron(rhythm, to, s.timezone)
+    const at = new Date(addDays(d.at, d.days).getTime() + d.minutes * 60_000)
+    const cron = movedCron(rhythm, at, s.timezone)
     if (cron !== before) void write(s, cron, before)
   }
 
   function newAt(e: React.MouseEvent<HTMLDivElement>) {
+    // Only a click on the grid itself: one in a run's menu bubbles here through React too.
+    if (e.target !== e.currentTarget) return
     const box = e.currentTarget.getBoundingClientRect()
     const day = clamp(Math.floor(((e.clientX - box.left) / box.width) * DAYS), 0, DAYS - 1)
-    const minute = clamp(Math.floor((e.clientY - box.top) / (HOUR / 2)) * 30, 0, 23 * 60 + 30)
+    const minute = clamp(
+      from * 60 + Math.floor((e.clientY - box.top) / (HOUR / 2)) * 30,
+      0,
+      23 * 60 + 30,
+    )
     const at = addDays(start, day)
     at.setHours(Math.floor(minute / 60), minute % 60)
     onNew(slotCron(at))
   }
 
-  const today = dayIndex(now, start)
   const range = new Intl.DateTimeFormat('en-GB', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
   }).formatRange(start, addDays(start, DAYS - 1))
 
-  const menuFor = (b: Pick<Block, 'key' | 'schedule' | 'run'>) => {
+  /** What a run is, in its tooltip and at the top of its menu. */
+  const about = (b: Pick<Block, 'schedule' | 'kind' | 'run' | 'minute'>) => {
+    const s = b.schedule
+    return (
+      <>
+        <span className="block truncate font-semibold">{s.title}</span>
+        <span className="block text-xs text-muted-foreground">
+          {b.kind === 'run' && b.run
+            ? `${OUTCOME[b.run.outcome].label} · ${hhmm(b.minute)}`
+            : `${describeCron(saved[s.id] ?? s.cron)}${zoneOf(s)}`}
+        </span>
+        {b.kind === 'missed' && (
+          <span className="block text-xs text-destructive-text">
+            Couldn&apos;t start at {hhmm(b.minute)}: {s.lastError}
+          </span>
+        )}
+        <span className="block truncate text-xs text-muted-foreground">
+          {s.teammate.name}
+          {!owns(s) && ` · on ${s.owner.user.name}'s accounts`}
+        </span>
+      </>
+    )
+  }
+
+  const menuFor = (b: Pick<Block, 'schedule' | 'kind' | 'run' | 'minute'>) => {
     const s = b.schedule
     const active = !s.pausedAt
     return (
-      <DropdownMenuContent align="start" className="w-56">
-        <div className="flex flex-col gap-0.5 px-2 py-1.5">
-          <span className="truncate text-sm font-semibold">{s.title}</span>
-          <span className="text-xs text-muted-foreground">
-            {b.run
-              ? `${OUTCOME[b.run.outcome].label} · ${clock(new Date(b.run.createdAt))}`
-              : `${describeCron(saved[s.id] ?? s.cron)}${zoneOf(s)}`}
-          </span>
-          <span className="truncate text-xs text-muted-foreground">
-            {s.teammate.name}
-            {!owns(s) && ` · on ${s.owner.user.name}'s accounts`}
-          </span>
-        </div>
+      <DropdownMenuContent align="start" className="w-64">
+        <div className="px-2 py-1.5 text-sm">{about(b)}</div>
         <DropdownMenuSeparator />
         {b.run && (
           <DropdownMenuItem asChild>
@@ -278,9 +328,135 @@ export function RoutineCalendar({
 
   const open = (key: string) => (next: boolean) => setMenu(next ? key : null)
 
+  /** One run's row in a card: who does it and what; the time when its card holds several. */
+  const row = (b: Block, timed: boolean) => {
+    const s = b.schedule
+    const canMove = b.kind === 'planned' && movable(s)
+    return (
+      <DropdownMenu key={b.key} open={menu === b.key} onOpenChange={open(b.key)}>
+        <Tooltip delayDuration={TIP_DELAY}>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={`${s.title}, ${hhmm(b.minute)}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!canMove) setMenu(b.key)
+              }}
+              onKeyDown={(e) => {
+                if (canMove && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault()
+                  setMenu(b.key)
+                }
+              }}
+              onPointerDown={(e) => {
+                if (!canMove || e.button !== 0) return
+                e.currentTarget.setPointerCapture(e.pointerId)
+                setDrag({
+                  key: b.key,
+                  schedule: s,
+                  at: b.at,
+                  day: b.day,
+                  minute: b.minute,
+                  x: e.clientX,
+                  y: e.clientY,
+                  columnWidth: (days.current?.clientWidth ?? 700) / DAYS,
+                  moved: false,
+                  minutes: 0,
+                  days: 0,
+                })
+              }}
+              onPointerMove={(e) => {
+                if (drag?.key !== b.key) return
+                const dx = e.clientX - drag.x
+                const dy = e.clientY - drag.y
+                const moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 4
+                if (!moved) return
+                const weekly = movableOf(saved[s.id] ?? s.cron)?.kind === 'weekly'
+                setDrag({
+                  ...drag,
+                  moved,
+                  minutes: clamp(
+                    Math.round(dy / ((HOUR * SNAP) / 60)) * SNAP,
+                    from * 60 - drag.minute,
+                    to * 60 - SNAP - drag.minute,
+                  ),
+                  days: weekly
+                    ? clamp(Math.round(dx / drag.columnWidth), -drag.day, DAYS - 1 - drag.day)
+                    : 0,
+                })
+              }}
+              onPointerUp={() => {
+                if (drag?.key !== b.key) return
+                setDrag(null)
+                if (drag.moved) drop(drag)
+                else setMenu(b.key)
+              }}
+              onPointerCancel={() => setDrag(null)}
+              className={cn(
+                'relative flex w-full items-center gap-1 overflow-hidden rounded-[6px] px-1 text-left text-xs select-none',
+                b.kind === 'planned' && 'bg-primary/10 hover:bg-primary/15',
+                b.kind === 'run' && 'bg-secondary text-muted-foreground hover:bg-secondary/80',
+                b.kind === 'missed' &&
+                  'border border-dashed border-warning text-muted-foreground hover:bg-warning/10',
+                canMove && 'cursor-grab touch-none',
+                moving(b) && 'opacity-40',
+              )}
+              style={{ height: ROW - 2 }}
+            >
+              <TeammateAvatar teammate={s.teammate} className="size-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate font-semibold">{s.title}</span>
+              {timed && (
+                <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
+                  {hhmm(b.minute)}
+                </span>
+              )}
+              {b.run && (
+                <span
+                  aria-label={OUTCOME[b.run.outcome].label}
+                  className={cn('size-1.5 shrink-0 rounded-full', OUTCOME[b.run.outcome].dot)}
+                />
+              )}
+              <DropdownMenuTrigger asChild>
+                <span aria-hidden className="pointer-events-none absolute inset-0" />
+              </DropdownMenuTrigger>
+            </button>
+          </TooltipTrigger>
+          {!drag && menu !== b.key && (
+            <TooltipContent side="right" align="start" className="flex max-w-64 flex-col gap-0.5">
+              {about(b)}
+              {canMove && (
+                <span className="text-xs text-muted-foreground">Drag to move all its runs</span>
+              )}
+            </TooltipContent>
+          )}
+        </Tooltip>
+        {menuFor(b)}
+      </DropdownMenu>
+    )
+  }
+
+  const fold = (label: string, up: boolean) => (
+    <button
+      type="button"
+      onClick={() => setAllHours(true)}
+      className="grid w-full grid-cols-[48px_minmax(0,1fr)] items-center border-b bg-secondary/40 py-1 text-left text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+    >
+      <span className="flex justify-end pr-2">
+        {up ? (
+          <ChevronUp className="size-3.5" aria-hidden />
+        ) : (
+          <ChevronDown className="size-3.5" aria-hidden />
+        )}
+      </span>
+      <span>{label} · no routines</span>
+    </button>
+  )
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
+        {toolbar}
         <Button variant="outline" size="sm" onClick={() => setStart(weekStart(new Date()))}>
           Today
         </Button>
@@ -303,7 +479,16 @@ export function RoutineCalendar({
           </Button>
         </div>
         <span className="font-semibold">{range}</span>
-        <span className="ml-auto text-xs text-muted-foreground">
+        <span className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
+          {allHours && folds && (
+            <button
+              type="button"
+              onClick={() => setAllHours(false)}
+              className="hover:text-foreground hover:underline"
+            >
+              Hide empty hours
+            </button>
+          )}
           {zoneName(localTimezone())} time
         </span>
       </div>
@@ -320,7 +505,7 @@ export function RoutineCalendar({
                     key={day}
                     className={cn(
                       'py-2 text-center text-xs text-muted-foreground',
-                      day === today && 'font-semibold text-primary',
+                      day === today && 'bg-primary/[0.04] font-semibold text-primary',
                     )}
                   >
                     {new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(date)}{' '}
@@ -343,8 +528,9 @@ export function RoutineCalendar({
                       <DropdownMenuTrigger asChild>
                         <button
                           type="button"
-                          className="flex min-w-0 max-w-full items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-left text-xs hover:bg-primary/15"
+                          className="flex max-w-full min-w-0 items-center gap-1.5 rounded-[6px] bg-primary/10 px-1.5 py-0.5 text-left text-xs hover:bg-primary/15"
                         >
+                          <TeammateAvatar teammate={s.teammate} className="size-3.5 shrink-0" />
                           <span className="truncate font-semibold">{s.title}</span>
                           <span className="truncate text-muted-foreground">
                             {describeCron(s.cron)}
@@ -352,159 +538,101 @@ export function RoutineCalendar({
                           </span>
                         </button>
                       </DropdownMenuTrigger>
-                      {menuFor({ key: `often-${s.id}`, schedule: s })}
+                      {menuFor({ schedule: s, kind: 'planned', minute: 0 })}
                     </DropdownMenu>
                   ))}
                 </div>
               </div>
             )}
 
-            <div ref={scroller} className="h-[min(65dvh,640px)] overflow-y-auto">
-              <div className="grid grid-cols-[48px_minmax(0,1fr)]" style={{ height: 24 * HOUR }}>
-                <div className="relative">
-                  {Array.from({ length: 23 }, (_, i) => (
-                    <span
-                      key={i}
-                      className="absolute right-2 -translate-y-1/2 font-mono text-[10px] text-muted-foreground"
-                      style={{ top: (i + 1) * HOUR }}
+            {from > 0 && fold(`00:00 – ${hhmm(from * 60)}`, true)}
+
+            <div
+              className="grid grid-cols-[48px_minmax(0,1fr)]"
+              style={{ height: (to - from) * HOUR }}
+            >
+              <div className="relative">
+                {Array.from({ length: to - from - 1 }, (_, i) => (
+                  <span
+                    key={i}
+                    className="absolute right-2 -translate-y-1/2 text-[10px] text-muted-foreground tabular-nums"
+                    style={{ top: (i + 1) * HOUR }}
+                  >
+                    {hhmm((from + i + 1) * 60)}
+                  </span>
+                ))}
+              </div>
+              <div
+                ref={days}
+                role="presentation"
+                onClick={newAt}
+                className="relative cursor-cell border-l"
+                style={{
+                  backgroundImage: 'linear-gradient(var(--border) 1px, transparent 1px)',
+                  backgroundSize: `100% ${HOUR}px`,
+                }}
+              >
+                {thisWeek && (
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute inset-y-0 bg-primary/[0.04]"
+                    style={{
+                      left: `calc(${today} * 100% / ${DAYS})`,
+                      width: `calc(100% / ${DAYS})`,
+                    }}
+                  />
+                )}
+                {Array.from({ length: DAYS - 1 }, (_, i) => (
+                  <span
+                    key={i}
+                    aria-hidden
+                    className="pointer-events-none absolute inset-y-0 w-px bg-border"
+                    style={{ left: `calc(${i + 1} * 100% / ${DAYS})` }}
+                  />
+                ))}
+                {thisWeek && minuteOfDay(now) >= from * 60 && minuteOfDay(now) < to * 60 && (
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute z-20 h-0.5 bg-primary before:absolute before:-top-[3px] before:-left-1 before:size-2 before:rounded-full before:bg-primary"
+                    style={{
+                      left: `calc(${today} * 100% / ${DAYS})`,
+                      width: `calc(100% / ${DAYS})`,
+                      top: y(minuteOfDay(now)),
+                    }}
+                  />
+                )}
+                {cards.map((card) => {
+                  const timed = new Set(card.items.map((b) => b.minute)).size > 1
+                  return (
+                    <div
+                      key={card.items[0]!.key}
+                      className="absolute z-10 flex flex-col gap-0.5"
+                      style={{ ...column(card.day), top: y(card.minute) + 1 }}
                     >
-                      {String(i + 1).padStart(2, '0')}:00
+                      {card.items.map((b) => row(b, timed))}
+                    </div>
+                  )
+                })}
+                {ghosts.map((b) => (
+                  <div
+                    key={`ghost-${b.key}`}
+                    aria-hidden
+                    className="pointer-events-none absolute z-30 flex items-center gap-1 overflow-hidden rounded-[6px] bg-primary/25 px-1 text-xs shadow-md"
+                    style={{ ...column(b.day), top: y(b.minute) + 1, height: ROW - 2 }}
+                  >
+                    <TeammateAvatar teammate={b.schedule.teammate} className="size-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate font-semibold">
+                      {b.schedule.title}
                     </span>
-                  ))}
-                </div>
-                <div
-                  ref={days}
-                  role="presentation"
-                  onClick={newAt}
-                  className="relative cursor-cell border-l"
-                  style={{
-                    backgroundImage: 'linear-gradient(var(--border) 1px, transparent 1px)',
-                    backgroundSize: `100% ${HOUR}px`,
-                  }}
-                >
-                  {Array.from({ length: DAYS - 1 }, (_, i) => (
-                    <span
-                      key={i}
-                      aria-hidden
-                      className="pointer-events-none absolute inset-y-0 w-px bg-border"
-                      style={{ left: `calc(${i + 1} * 100% / ${DAYS})` }}
-                    />
-                  ))}
-                  {today >= 0 && today < DAYS && (
-                    <span
-                      aria-hidden
-                      className="pointer-events-none absolute z-20 h-0.5 bg-primary before:absolute before:-top-[3px] before:-left-1 before:size-2 before:rounded-full before:bg-primary"
-                      style={{
-                        left: `calc(${today} * 100% / ${DAYS})`,
-                        width: `calc(100% / ${DAYS})`,
-                        top: (minuteOfDay(now) * HOUR) / 60,
-                      }}
-                    />
-                  )}
-                  {placed.map((b) => {
-                    const s = b.schedule
-                    const canMove = !b.run && movable(s)
-                    const dragging = drag?.moved && drag.schedule.id === s.id && !b.run
-                    return (
-                      <DropdownMenu key={b.key} open={menu === b.key} onOpenChange={open(b.key)}>
-                        <button
-                          type="button"
-                          title={
-                            canMove
-                              ? `${s.title} · drag to move all its runs`
-                              : `${s.title}${b.run ? ` · ${OUTCOME[b.run.outcome].label}` : ''}`
-                          }
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            if (!canMove) setMenu(b.key)
-                          }}
-                          onKeyDown={(e) => {
-                            if (canMove && (e.key === 'Enter' || e.key === ' ')) {
-                              e.preventDefault()
-                              setMenu(b.key)
-                            }
-                          }}
-                          onPointerDown={(e) => {
-                            if (!canMove || e.button !== 0) return
-                            e.currentTarget.setPointerCapture(e.pointerId)
-                            setDrag({
-                              key: b.key,
-                              schedule: s,
-                              at: b.at,
-                              day: b.day,
-                              minute: b.minute,
-                              x: e.clientX,
-                              y: e.clientY,
-                              columnWidth: (days.current?.clientWidth ?? 700) / DAYS,
-                              moved: false,
-                              minutes: 0,
-                              days: 0,
-                            })
-                          }}
-                          onPointerMove={(e) => {
-                            if (drag?.key !== b.key) return
-                            const dx = e.clientX - drag.x
-                            const dy = e.clientY - drag.y
-                            const moved = drag.moved || Math.abs(dx) + Math.abs(dy) > 4
-                            if (!moved) return
-                            const weekly = movableOf(saved[s.id] ?? s.cron)?.kind === 'weekly'
-                            setDrag({
-                              ...drag,
-                              moved,
-                              minutes: clamp(
-                                Math.round(dy / ((HOUR * SNAP) / 60)) * SNAP,
-                                -drag.minute,
-                                24 * 60 - SNAP - drag.minute,
-                              ),
-                              days: weekly
-                                ? clamp(
-                                    Math.round(dx / drag.columnWidth),
-                                    -drag.day,
-                                    DAYS - 1 - drag.day,
-                                  )
-                                : 0,
-                            })
-                          }}
-                          onPointerUp={() => {
-                            if (drag?.key !== b.key) return
-                            setDrag(null)
-                            if (drag.moved) drop(drag)
-                            else setMenu(b.key)
-                          }}
-                          onPointerCancel={() => setDrag(null)}
-                          className={cn(
-                            'absolute flex items-center gap-1 overflow-hidden rounded-[6px] px-1.5 text-left text-xs select-none',
-                            b.run
-                              ? 'bg-secondary text-muted-foreground hover:bg-secondary/80'
-                              : 'bg-primary/10 hover:bg-primary/15',
-                            canMove && 'cursor-grab touch-none',
-                            dragging && 'z-10 cursor-grabbing bg-primary/20 shadow-md',
-                          )}
-                          style={place(b.day, b.minute, b.lane, b.lanes)}
-                        >
-                          {b.run && (
-                            <span
-                              className={cn(
-                                'size-1.5 shrink-0 rounded-full',
-                                OUTCOME[b.run.outcome].dot,
-                              )}
-                            />
-                          )}
-                          <span className="min-w-0 truncate">
-                            <span className="font-semibold">{s.title}</span>{' '}
-                            <span className="text-muted-foreground">{hhmm(b.minute)}</span>
-                          </span>
-                          <DropdownMenuTrigger asChild>
-                            <span aria-hidden className="pointer-events-none absolute inset-0" />
-                          </DropdownMenuTrigger>
-                        </button>
-                        {menuFor(b)}
-                      </DropdownMenu>
-                    )
-                  })}
-                </div>
+                    <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">
+                      {hhmm(b.minute)}
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
+
+            {to < 24 && fold(`${hhmm(to * 60)} – 24:00`, false)}
           </div>
         </div>
       </div>

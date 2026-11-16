@@ -3,11 +3,13 @@ import { test } from 'node:test'
 import {
   addDays,
   dayIndex,
-  laneOut,
+  hoursShown,
+  missedRuns,
   movableOf,
   movedCron,
   runsBetween,
   slotCron,
+  stackOut,
   weekStart,
 } from '../lib/routine-calendar'
 
@@ -90,17 +92,57 @@ test('a new routine from a slot runs weekly at that time', () => {
   assert.equal(slotCron(new Date(2026, 10, 22, 0, 0)), '0 0 * * 0')
 })
 
-test('overlapping blocks share the width; others take it all', () => {
-  const placed = laneOut(
+test('runs close in time stack in one card, in time order', () => {
+  const cards = stackOut(
     [
-      { id: 'c', minute: 570 },
-      { id: 'a', minute: 540 },
-      { id: 'b', minute: 540 },
-      { id: 'e', minute: 590 },
-      { id: 'd', minute: 900 },
+      { id: 'morning', minute: 570 },
+      { id: 'watch', minute: 540 },
+      { id: 'reddit', minute: 540 },
+      { id: 'noon', minute: 720 },
     ],
-    45,
+    24,
   )
-  const by = Object.fromEntries(placed.map((p) => [p.id, [p.lane, p.lanes]]))
-  assert.deepEqual(by, { a: [0, 3], b: [1, 3], c: [2, 3], e: [0, 3], d: [0, 1] })
+  assert.deepEqual(
+    cards.map((c) => [c.minute, c.items.map((i) => i.id)]),
+    [
+      [540, ['watch', 'reddit', 'morning']],
+      [720, ['noon']],
+    ],
+  )
+  // A run just past the card's last row starts a card of its own.
+  assert.equal(stackOut([{ minute: 540 }, { minute: 564 }], 24).length, 2)
+})
+
+test('firings that could not start, since its last run started', () => {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const now = new Date(2026, 10, 19, 15, 0)
+  const daily = {
+    cron: '0 8 * * *',
+    timezone: tz,
+    lastError: "None of Ada's computers was online",
+    pausedAt: null,
+    createdAt: new Date(2026, 9, 1).toISOString(),
+    recentRuns: [{ createdAt: new Date(2026, 10, 17, 8, 0, 4).toISOString() }],
+  }
+  // Ran on Tuesday; Wednesday and Thursday at 8:00 did not start.
+  assert.deepEqual(missedRuns(daily, monday, now), [
+    new Date(2026, 10, 18, 8),
+    new Date(2026, 10, 19, 8),
+  ])
+  // Its last firing started: nothing is missed, whatever its runs.
+  assert.deepEqual(missedRuns({ ...daily, lastError: null }, monday, now), [])
+  assert.deepEqual(missedRuns({ ...daily, pausedAt: now.toISOString() }, monday, now), [])
+  // Never ran: from when it was made.
+  const made = new Date(2026, 10, 18, 12).toISOString()
+  assert.deepEqual(missedRuns({ ...daily, recentRuns: [], createdAt: made }, monday, now), [
+    new Date(2026, 10, 19, 8),
+  ])
+})
+
+test('the grid shows the hours around the runs and now, the rest folded', () => {
+  assert.deepEqual(hoursShown([8 * 60, 9 * 60 + 30, 15 * 60 + 15]), { from: 7, to: 17 })
+  assert.deepEqual(hoursShown([9 * 60]), { from: 8, to: 14 })
+  assert.deepEqual(hoursShown([30, 23 * 60 + 30]), { from: 0, to: 24 })
+  assert.deepEqual(hoursShown([23 * 60]), { from: 18, to: 24 })
+  assert.deepEqual(hoursShown([]), { from: 8, to: 18 })
 })

@@ -335,6 +335,33 @@ export function ScheduleList({
     />
   )
 
+  const viewSwitch = (
+    <div
+      role="radiogroup"
+      aria-label="Group routines"
+      className={cn(
+        'flex w-fit gap-0.5 rounded-full bg-secondary p-[3px]',
+        view !== 'calendar' && '-mb-2',
+      )}
+    >
+      {VIEWS.map((v) => (
+        <button
+          key={v.value}
+          type="button"
+          role="radio"
+          aria-checked={view === v.value}
+          onClick={() => setView(v.value)}
+          className={cn(
+            'flex h-7 items-center rounded-full px-3 text-[13px] font-medium text-muted-foreground',
+            view === v.value && 'bg-card font-semibold text-foreground shadow-xs',
+          )}
+        >
+          {v.label}
+        </button>
+      ))}
+    </div>
+  )
+
   return (
     <div className="flex flex-col gap-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
@@ -361,29 +388,7 @@ export function ScheduleList({
         </div>
       </header>
 
-      {list.length > 0 && (
-        <div
-          role="radiogroup"
-          aria-label="Group routines"
-          className="-mb-2 flex w-fit gap-0.5 rounded-full bg-secondary p-[3px]"
-        >
-          {VIEWS.map((v) => (
-            <button
-              key={v.value}
-              type="button"
-              role="radio"
-              aria-checked={view === v.value}
-              onClick={() => setView(v.value)}
-              className={cn(
-                'flex h-7 items-center rounded-full px-3 text-[13px] font-medium text-muted-foreground',
-                view === v.value && 'bg-card font-semibold text-foreground shadow-xs',
-              )}
-            >
-              {v.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {list.length > 0 && view !== 'calendar' && viewSwitch}
 
       {!schedules.data ? (
         <Skeleton className="h-24 w-full" />
@@ -395,6 +400,7 @@ export function ScheduleList({
       ) : view === 'calendar' ? (
         <RoutineCalendar
           schedules={list}
+          toolbar={viewSwitch}
           onEdit={setEditing}
           onNew={(cron) => {
             setNewCron(cron)
