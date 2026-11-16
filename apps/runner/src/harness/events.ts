@@ -680,7 +680,7 @@ export class EventMapper {
           type: 'tool.finished',
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          output: String(part.error?.message ?? part.error),
+          output: toolErrorText(part.error),
           isError: true,
         })
       case 'tool-output-denied':
@@ -771,6 +771,27 @@ function limits(
     utilization: w.utilization ?? 0,
     resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null,
   }))
+}
+
+/**
+ * What a failed tool call says: an Error's message, a string as is, or, as Pi reports its own tools'
+ * failures, the text of a tool result ({ content: [{ type: 'text', text }] }), never "[object
+ * Object]".
+ */
+export function toolErrorText(error: unknown): string {
+  if (error instanceof Error || typeof error === 'string') return errorMessage(error)
+  const value = error as { message?: unknown; content?: unknown } | null | undefined
+  if (typeof value?.message === 'string') return value.message
+  if (Array.isArray(value?.content)) {
+    const text = value.content
+      .map((part: { type?: string; text?: unknown }) =>
+        part?.type === 'text' && typeof part.text === 'string' ? part.text : '',
+      )
+      .filter(Boolean)
+      .join('\n')
+    if (text) return text
+  }
+  return error == null ? 'Failed' : errorMessage(error)
 }
 
 export function errorMessage(error: unknown): string {
