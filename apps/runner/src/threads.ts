@@ -12,6 +12,8 @@ import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import {
   ANSWER_MESSAGE_TOOL,
+  loginOf,
+  runModel,
   ASIDE_TOOLS,
   attachmentLines,
   bareToolName,
@@ -1214,6 +1216,9 @@ export class Threads {
           teammateId: spec.teammate.id,
           accountId: spec.account.id,
           turnId,
+          // What the harness benchmark compares turns by (docs/harnesses.md).
+          harness: spec.teammate.harness,
+          model: runModel(spec.teammate.harness, spec.teammate.model),
         })
         seat.turn = []
         seat.spec = spec
@@ -2206,7 +2211,7 @@ export class Threads {
         spec,
         ...this.memoryWorkDir(spec, 'title-runs'),
         prompt: titlePrompt(text),
-        model: TITLE_MODEL[spec.teammate.harness],
+        model: TITLE_MODEL[loginOf(spec.teammate.harness, spec.teammate.model)],
         purpose: 'title',
         usage: { kind: 'title', sessionId: spec.sessionId, teammateId: spec.teammate.id },
         signal: AbortSignal.timeout(TITLE_RUN_MS),

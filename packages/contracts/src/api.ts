@@ -6,7 +6,7 @@ import { LibraryAccess, LibraryPath } from './library.js'
 import { StartOnLines } from './lists.js'
 import { isHarnessModel } from './models.js'
 import { Logo } from './projects.js'
-import { CLIPBOARD_MAX, Effort, HarnessId } from './runner.js'
+import { CLIPBOARD_MAX, Effort, HarnessId, TeammateHarness } from './runner.js'
 import { TriggerInstructions } from './triggers.js'
 
 export const HealthResponse = z.object({
@@ -86,7 +86,8 @@ export const CreateTeammate = z
     name: z.string().trim().min(1).max(80),
     title: TeammateTitle.default(''),
     instructions: z.string().max(20_000).default(''),
-    harness: HarnessId.default('claude_code'),
+    /** Pi only with the pi_harness feature: the API refuses it to others. */
+    harness: TeammateHarness.default('claude_code'),
     model: TeammateModel.default(null),
   })
   .refine((t) => isHarnessModel(t.harness, t.model), {
@@ -111,7 +112,7 @@ export const UpdateTeammate = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   title: TeammateTitle.optional(),
   instructions: z.string().max(20_000).optional(),
-  harness: HarnessId.optional(),
+  harness: TeammateHarness.optional(),
   /** Checked against the teammate's harness by the API, which knows the stored one. */
   model: TeammateModel.optional(),
   permissionPolicy: PermissionPolicy.optional(),

@@ -1,5 +1,8 @@
 import {
   Effort,
+  isPiAccount,
+  loginOf,
+  PI_PROTOCOL,
   folderExceptions,
   libraryAccessFor,
   MCP_PROTOCOL,
@@ -109,6 +112,12 @@ export async function actingTeammate(
   return teammateId ? null : db.teammate.findFirst({ where: { id: session.teammateId } })
 }
 
+/** A teammate on Pi, and no account set aside for it (isPiAccount). */
+export const noPiAccount = (login: string) =>
+  new HTTPException(409, {
+    message: `Pi runs only on a ${login === 'codex' ? 'Codex' : 'Claude'} account whose name starts with "Pi" under Accounts, and none is ready on this computer. Add one (a secondary login) and name it "Pi".`,
+  })
+
 export const noAccount = (harness: string) =>
   new HTTPException(409, {
     message: `No ${harness === 'codex' ? 'Codex' : 'Claude'} account you can use on this computer is ready. Add or sign in to one under Accounts.`,
@@ -195,6 +204,26 @@ export async function usableGrants(
 }
 
 /**
+ * A teammate on Pi runs only where the pi_harness feature is open to the person the thread works
+ * for, and on a runner that knows Pi (PI_PROTOCOL): an older one could not read its spec.
+ */
+async function piAllowed(thread: LoadedThread) {
+  if (!(await featuresOfMember(thread.startedByMemberId, thread.workspaceId)).has('pi_harness'))
+    throw new HTTPException(409, {
+      message: 'Teammates on Pi are not open to this workspace. Switch it to Claude Code or Codex.',
+    })
+  const protocol = await hubs
+    .get(thread.workspaceId)
+    .runnerProtocol(thread.computer.id)
+    .catch(() => undefined)
+  if (protocol !== undefined && protocol < PI_PROTOCOL)
+    throw new HTTPException(409, {
+      message:
+        "This computer's Brigade is too old to run a teammate on Pi. It updates by itself after a quiet while; try again then.",
+    })
+}
+
+/**
  * The thread's spec, with the account it should run on next: its current
  * account if still usable, else the next one its starter may run on (src/account-sharing.ts).
  */
@@ -205,6 +234,9 @@ export async function specFor(
 ): Promise<ThreadSpec> {
   // The teammate whose turn it is; by default the one asked last.
   const teammate = options.teammate ?? currentTeammate(thread)
+  if (teammate.harness === 'pi') await piAllowed(thread)
+  // The login its turns run on: Pi's is its model's vendor's (loginOf).
+  const login = loginOf(teammate.harness, teammate.model)
   // Each a trip to the database, none waiting on another: asked together.
   const [
     [account, ...fallbacks],
@@ -222,8 +254,9 @@ export async function specFor(
     usableAccounts(db, {
       memberId: thread.startedByMemberId,
       computerId: thread.computerId,
-      provider: teammate.harness,
+      provider: login,
       preferredId: thread.accountId,
+      pi: teammate.harness === 'pi',
     }),
     // The connections this teammate is granted, as tool specs. Never a credential.
     teammateGrants(db, teammate.id),
@@ -233,7 +266,7 @@ export async function specFor(
     threadDesignSystems(db, teammate.id, thread.projectId),
     threadProject(db, thread.projectId),
     projectCatalog(db),
-    teammate.harness === 'codex'
+    login === 'codex'
       ? []
       : usableAccounts(db, {
           memberId: thread.startedByMemberId,
@@ -247,9 +280,11 @@ export async function specFor(
   const current =
     account ??
     (options.requireUsage === false && thread.accountId
-      ? await db.account.findFirst({ where: { id: thread.accountId, provider: teammate.harness } })
+      ? await db.account
+          .findFirst({ where: { id: thread.accountId, provider: login } })
+          .then((a) => (a && (teammate.harness !== 'pi' || isPiAccount(a.label)) ? a : null))
       : null)
-  if (!current) throw noAccount(teammate.harness)
+  if (!current) throw teammate.harness === 'pi' ? noPiAccount(login) : noAccount(login)
   // Chief's daily pass for a person (src/chief-pass.ts): it reads and answers by their rules, with
   // no App, repository or computer of anyone's to act on.
   const passing = !!thread.chiefPassId && teammate.kind === 'chief'
