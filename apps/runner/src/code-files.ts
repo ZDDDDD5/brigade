@@ -102,7 +102,7 @@ export function parseStatus(output: string, prefix: string): CodeChange[] {
     // A repository inside this one, not tracked: its own files show on their own.
     if (path.endsWith('/')) continue
     const status = changeStatus(entry.slice(0, 2))
-    if (status) changes.push({ path: normalize(join(prefix, path)), status })
+    if (status) changes.push({ path: slashes(normalize(join(prefix, path))), status })
   }
   return changes
 }
@@ -167,7 +167,7 @@ export function parseNameStatus(output: string, prefix: string): CodeChange[] {
     if (!letter || !path) continue
     // T (a file turned link, or back) and U (unmerged): changed.
     const status = letter === 'A' ? 'A' : letter === 'D' ? 'D' : 'M'
-    changes.push({ path: normalize(join(prefix, path)), status })
+    changes.push({ path: slashes(normalize(join(prefix, path))), status })
   }
   return changes
 }

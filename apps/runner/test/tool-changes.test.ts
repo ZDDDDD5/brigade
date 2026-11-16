@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, delimiter } from 'node:path'
 import { test } from 'node:test'
 import { HarnessAgent } from '@ai-sdk/harness/agent'
 import { createClaudeCode } from '@ai-sdk/harness-claude-code'
@@ -25,6 +25,7 @@ import {
   toolsOfUnknownAge,
 } from '../src/harness/tool-changes.js'
 import { fakeInstall as fakeClaudeInstall } from './fixtures/claude-bridge.js'
+import { toNative } from '../src/windows.js'
 import { fakeInstall as fakeCodexInstall } from './fixtures/codex-bridge.js'
 
 const OLD_ACT = 'Act on an element by its ref. Then take a new snapshot to check it worked.'
@@ -131,8 +132,10 @@ async function computer(harness: Harness) {
           workingDirectory: work,
           port: await freePort(),
           env: {
-            PATH: `${dirname(process.execPath)}:${process.env.PATH}`,
+            ...(process.platform === 'win32' ? (process.env as Record<string, string>) : {}),
+            PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH}`,
             HOME: home,
+            USERPROFILE: home,
             CODEX_HOME: join(home, '.codex'),
             FAKE_SDK_RECORD: record,
             FAKE_CODEX_RECORD: record,
@@ -144,7 +147,7 @@ async function computer(harness: Harness) {
         const run = sandbox.run
         const bootstrapRun: typeof run = async (input) => {
           if (input.command.startsWith('pnpm install')) {
-            const dir = resolve(work, input.workingDirectory ?? '.')
+            const dir = toNative(input.workingDirectory ?? '.', work)
             if (harness === 'codex') await fakeCodexInstall(dir)
             else await fakeClaudeInstall(dir, CLAUDE_SDK)
             return { exitCode: 0, stdout: '', stderr: '' }

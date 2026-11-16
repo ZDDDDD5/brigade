@@ -139,6 +139,8 @@ export function useWindowsTools(env: NodeJS.ProcessEnv = process.env) {
   const key = pathKey(env)
   env[key] = prependPath(env[key], [join(home, 'cmd'), join(home, 'usr', 'bin')])
   env.CLAUDE_CODE_GIT_BASH_PATH ??= join(home, 'bin', 'bash.exe')
+  // GNU tar takes C:\… for a remote host's file unless told it is local.
+  env.TAR_OPTIONS = [env.TAR_OPTIONS, '--force-local'].filter(Boolean).join(' ')
 }
 
 /** A Windows path as Git Bash writes it: C:\Users\a → /c/Users/a. Others as they are. */

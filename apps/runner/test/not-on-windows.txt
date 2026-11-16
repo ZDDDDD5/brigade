@@ -15,3 +15,6 @@ preview-sync-times.test.ts # a preview's files synced to a thread's own machine 
 shared-bridges.test.ts # bridges shared between teammate users on a cloud computer (CLOUD, /proc)
 thread-net.test.ts # a thread's own network namespace on a cloud computer (CLOUD)
 codex-usage.test.ts # a fake codex on the PATH; Windows runs the harness's own copy (vendor-cli.ts)
+member-folders.test.ts # a fake docker as a sh script on the PATH, which Windows runs no program from
+lazy-mcp.test.ts # the cloud computer's browser MCP server (runAs), checked with pgrep
+preview-handover.test.ts # previews handed over across an update, which Windows starts again instead (docs/windows.md)

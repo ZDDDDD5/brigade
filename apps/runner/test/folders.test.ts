@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, normalize } from 'node:path'
 import { test } from 'node:test'
 import { diskUsage, madeByOldPnpm, oldPnpmModules } from '../src/folders.js'
 
@@ -144,7 +144,8 @@ test("a checkout's old node_modules go, its workspace packages' too; the rest st
   t.after(() => rm(workDir, { recursive: true, force: true }))
   for (const repo of ['brigade', 'fresh', 'legacy']) gitInit(join(workDir, repo))
 
-  assert.deepEqual((await oldPnpmModules(workDir)).sort(), [
+  // Windows: GNU find writes C:\…/sub, the same folder.
+  assert.deepEqual((await oldPnpmModules(workDir)).map((p) => normalize(p)).sort(), [
     join(workDir, 'brigade/apps/web/node_modules'),
     join(workDir, 'brigade/node_modules'),
   ])

@@ -10,7 +10,8 @@ import { fileURLToPath } from 'node:url'
 
 const home = await mkdtemp(join(tmpdir(), 'brigade-hand-over-'))
 process.env.BRIGADE_HOME = home
-test.after(() => rm(home, { recursive: true, force: true }))
+// Windows: a process just stopped may still hold the folder a moment.
+test.after(() => rm(home, { recursive: true, force: true, maxRetries: 20 }))
 const { claimHandOver, noteHandOver, takeHandOver } = await import('../src/hand-over.js')
 const { closeTurn } = await import('../src/harness/closed-turn.js')
 
