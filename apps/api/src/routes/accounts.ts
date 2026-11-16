@@ -13,10 +13,11 @@ import {
   type WorkspaceScope,
 } from '../scope.js'
 
-type AccountRow = { id: string; provider: 'claude_code' | 'codex'; source: 'machine' | 'brigade' }
+/** An account row: its provider is a login's CLI, never another harness (Harness has those too). */
+type AccountRow = { id: string; provider: string; source: 'machine' | 'brigade' }
 export const accountRef = (a: AccountRow): AccountRef => ({
   id: a.id,
-  provider: a.provider,
+  provider: a.provider === 'codex' ? 'codex' : 'claude_code',
   source: a.source,
 })
 

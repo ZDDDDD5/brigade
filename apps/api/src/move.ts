@@ -12,7 +12,7 @@
 // keeps its folders: the checkouts still come back from their backups on GitHub.
 // Its steps run in the workspace's hub (src/hub/), which holds the computers' sockets.
 import { randomUUID } from 'node:crypto'
-import { MOVE_PROTOCOL, type ReplyTo, type ThreadAttachmentRef } from '@brigade/contracts'
+import { MOVE_PROTOCOL, type ReplyTo, type ThreadAttachmentRef, loginOf } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { attachToThread } from './attachments.js'
 import { audit } from './audit.js'
@@ -79,7 +79,7 @@ async function checkTarget(db: ScopedDb, thread: LoadedThread, computerId: strin
     throw new HTTPException(404, { message: 'Computer not found' })
   const harnesses = new Set(
     (thread.teammates.length ? thread.teammates.map((t) => t.teammate) : [thread.teammate]).map(
-      (t) => t.harness,
+      (t) => loginOf(t.harness, t.model),
     ),
   )
   for (const provider of harnesses) {

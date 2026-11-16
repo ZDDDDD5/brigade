@@ -19,6 +19,7 @@ import { computerStarting, desktopClipboard } from '../cloud.js'
 import type { ScopedDb } from '../db.js'
 import { COMPUTER_ASLEEP, watchDesktop } from '../desktop-proxy.js'
 import { refuseChiefName } from '../chief.js'
+import { featuresOfMember } from '../features.js'
 import { deleteTriggers, resync } from './triggers.js'
 import { usageToday } from '../caps.js'
 import { endRecording, holdRecording, recorder } from '../teaching.js'
@@ -177,6 +178,7 @@ export const teammates = new Hono<AppEnv>()
     requireRole(c.var.scope, 'owner', 'admin')
     const input = await parseBody(c.req.raw, CreateTeammate)
     refuseChiefName(input.name)
+    if (input.harness === 'pi') await refuseWithoutPi(c.var.scope)
     const row = await c.var.db.teammate.create({ data: input as never })
     await audit({
       ...c.var.scope,
@@ -259,6 +261,7 @@ export const teammates = new Hono<AppEnv>()
       })
       if (!current) throw new HTTPException(404, { message: 'Teammate not found' })
       const harness = input.harness ?? current.harness
+      if (harness === 'pi' && current.harness !== 'pi') await refuseWithoutPi(c.var.scope)
       const model = input.model === undefined ? current.model : input.model
       // A model saved before the list existed stays until someone changes it.
       const unchanged = harness === current.harness && model === current.model
@@ -362,6 +365,12 @@ export const teammates = new Hono<AppEnv>()
   })
 
 /** The teammate, and the workspace's cloud computer its threads run on. */
+/** Pi is a choice only where the pi_harness feature is open (docs/harnesses.md). */
+async function refuseWithoutPi(scope: { memberId: string; workspaceId: string }) {
+  if (!(await featuresOfMember(scope.memberId, scope.workspaceId)).has('pi_harness'))
+    throw new HTTPException(400, { message: 'Pi is not available in this workspace' })
+}
+
 async function teammateComputer(db: ScopedDb, id: string) {
   const teammate = await db.teammate.findFirst({ where: { id, archivedAt: null } })
   if (!teammate) throw new HTTPException(404, { message: 'Teammate not found' })
