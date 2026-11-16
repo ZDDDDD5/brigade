@@ -77,20 +77,26 @@ async function checkTarget(db: ScopedDb, thread: LoadedThread, computerId: strin
     (computer.kind === 'member_machine' && computer.memberId !== thread.startedByMemberId)
   )
     throw new HTTPException(404, { message: 'Computer not found' })
-  const harnesses = new Set(
+  // Each login its teammates run on; Pi's, only on accounts set aside for it (isPiAccount).
+  const needs = new Map(
     (thread.teammates.length ? thread.teammates.map((t) => t.teammate) : [thread.teammate]).map(
-      (t) => loginOf(t.harness, t.model),
+      (t) => {
+        const provider = loginOf(t.harness, t.model)
+        const pi = t.harness === 'pi'
+        return [`${provider}:${pi}`, { provider, pi }] as const
+      },
     ),
   )
-  for (const provider of harnesses) {
+  for (const { provider, pi } of needs.values()) {
     const [account] = await usableAccounts(db, {
       memberId: thread.startedByMemberId,
       computerId,
       provider,
+      pi,
     })
     if (!account)
       throw new HTTPException(409, {
-        message: `No ${provider === 'codex' ? 'Codex' : 'Claude'} account you can use on ${label(computer)} is ready. Add or sign in to one under Accounts.`,
+        message: `No ${provider === 'codex' ? 'Codex' : 'Claude'} account${pi ? ' named "Pi"' : ''} you can use on ${label(computer)} is ready. Add or sign in to one under Accounts.`,
       })
   }
   // A runner too old to take a thread in is no reason to refuse: the thread waits for its update (deliver).

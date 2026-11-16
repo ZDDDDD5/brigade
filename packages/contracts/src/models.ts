@@ -106,6 +106,13 @@ export const loginOf = (harness: TeammateHarness, model: string | null): Harness
   return CODEX_MODELS.some((m) => m.id === runModel(harness, model)) ? 'codex' : 'claude_code'
 }
 
+/**
+ * Pi runs only on accounts a member set aside for it, by naming them "Pi …" under Accounts (a
+ * secondary login, docs/harnesses.md): a provider may suspend a login Pi runs on, and the team's
+ * other teammates keep theirs.
+ */
+export const isPiAccount = (label: string) => /^pi\b/i.test(label.trim())
+
 /** A login's vendor, as people know it: Claude or Codex (ChatGPT). */
 export const loginName = (login: HarnessId) => (login === 'codex' ? 'Codex' : 'Claude')
 

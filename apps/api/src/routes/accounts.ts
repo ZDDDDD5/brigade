@@ -1,4 +1,10 @@
-import { AddAccount, SubmitLoginCode, UpdateAccount, type AccountRef } from '@brigade/contracts'
+import {
+  AddAccount,
+  isPiAccount,
+  SubmitLoginCode,
+  UpdateAccount,
+  type AccountRef,
+} from '@brigade/contracts'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { isShared, mayManage, usableBy } from '../account-sharing.js'
@@ -37,18 +43,22 @@ export async function usableAccounts(
     computerId: string
     provider: 'claude_code' | 'codex'
     preferredId?: string | null
+    /** For a teammate on Pi: only the accounts set aside for it (isPiAccount). */
+    pi?: boolean
   },
 ) {
   const now = new Date()
-  const rows = await db.account.findMany({
-    where: {
-      ...usableBy(input.memberId),
-      computerId: input.computerId,
-      provider: input.provider,
-      status: { in: ['ready', 'unverified'] },
-    },
-    orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
-  })
+  const rows = await db.account
+    .findMany({
+      where: {
+        ...usableBy(input.memberId),
+        computerId: input.computerId,
+        provider: input.provider,
+        status: { in: ['ready', 'unverified'] },
+      },
+      orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+    })
+    .then((found) => (input.pi ? found.filter((r) => isPiAccount(r.label)) : found))
   const exhausted = (r: (typeof rows)[number]) =>
     r.exhaustedUntil && r.exhaustedUntil > now ? 1 : 0
   // Stable: the default, then the oldest, within each group.
