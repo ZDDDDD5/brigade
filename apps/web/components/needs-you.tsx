@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Hint } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
+import { wakeLabel } from '@/lib/snooze'
 import {
   api,
   waitingItemKey,
@@ -289,6 +290,7 @@ function FailureCard({
  * dismissed without picking.
  */
 function ChoiceToMake({ choice, onAnswer }: { choice: ChoiceWaiting; onAnswer: Answer }) {
+  const { reloadThreads } = useThreadPanel()
   return (
     <div className="flex flex-col gap-1.5">
       <From teammate={choice.teammate} thread={choice} note="pick one" />
@@ -304,6 +306,14 @@ function ChoiceToMake({ choice, onAnswer }: { choice: ChoiceWaiting; onAnswer: A
           onAnswer('Dismissed', () =>
             api(`/threads/${choice.id}/choices/dismiss`, { body: { seq: choice.seq } }),
           )
+        }
+        // Its thread put away for this member, as the sidebar's Snooze does: out of Needs you
+        // and the sidebar until then, or until something new happens in it.
+        onSnooze={(until) =>
+          onAnswer(`Snoozed until ${wakeLabel(until)}`, async () => {
+            await api(`/threads/${choice.id}/later`, { body: { until: until.toISOString() } })
+            void reloadThreads()
+          })
         }
       />
     </div>

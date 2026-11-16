@@ -48,7 +48,8 @@ same question is `Projects/Brigade/investigations/agent-work-tracking-competitor
   person saw is not theirs to dismiss: refused, so a stale page never closes choices nobody
   read. Chosen over Mark done, which ends the thread: a person may come back to it.
 - **A snoozed thread is put away until a time.** Its ⋮ menu's Snooze (Later in the code and
-  the database) takes it out of the member's list and of what waits on them (Today, sidebar, app
+  the database), or the clock on a choice card in Today's Needs you (shown with its ✕ Dismiss as
+  the pointer is on the card), takes it out of the member's list and of what waits on them (Today, sidebar, app
   badge, notifications), for them only, like a pin, for 1 hour, 3 hours, until tomorrow or next
   Monday at 9:00 in their own time zone, or a month (`snoozeOptions` in `@brigade/contracts`; the
   API takes any time up to `SNOOZE_MAX_DAYS`). The sidebar filter's Snoozed lists them, with how
