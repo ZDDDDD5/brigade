@@ -82,6 +82,8 @@ export async function bridgeTurn(
       ...(WINDOWS ? (process.env as Record<string, string>) : {}),
       PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH}`,
       HOME: home,
+      // Node's homedir() on Windows.
+      USERPROFILE: home,
       FAKE_SDK_RECORD: record,
       ...options.env,
     },

@@ -87,6 +87,8 @@ export async function codexBridgeTurn(options: {
       ...(WINDOWS ? (process.env as Record<string, string>) : {}),
       PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH}`,
       HOME: home,
+      // Node's homedir() on Windows.
+      USERPROFILE: home,
       CODEX_HOME: join(home, '.codex'),
       FAKE_CODEX_RECORD: record,
       ...options.env,
