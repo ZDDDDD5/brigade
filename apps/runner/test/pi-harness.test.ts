@@ -293,6 +293,12 @@ test('a teammate on Pi calls an App and completes the thread with Brigade’s ow
   assert.ok(events.some((e) => e.type === 'message.done' && /42 signups/.test(e.text)))
   // Brigade's instructions are in the system prompt.
   assert.match(JSON.stringify(sent[0]!.body.system), /You are Riley/)
+  // Without Pi's own identity: the model is Brigade's teammate, not "a coding assistant inside pi".
+  for (const request of sent) {
+    const system = JSON.stringify(request.body.system)
+    assert.doesNotMatch(system, /coding agent harness|Pi documentation/)
+    assert.match(system, /<tools>/)
+  }
   // On the Claude login's own token, sent as Claude Code sends it.
   for (const request of sent) {
     assert.equal(

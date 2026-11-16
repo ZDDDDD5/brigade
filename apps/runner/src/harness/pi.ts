@@ -16,7 +16,7 @@
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { PiCredentialStore } from '@ai-sdk/harness-pi'
+import type { PiCredentialStore, PiHarnessExtensionFactory } from '@ai-sdk/harness-pi'
 import { type AccountRef, type Effort, type ThreadSkill, SKILL_ENTRY } from '@brigade/contracts'
 import { accountDir, accountToken } from '../accounts.js'
 import { refreshCodexLogin } from '../codex-usage.js'
@@ -192,6 +192,28 @@ export const piSkills = (workDir: string, skills: Pick<ThreadSkill, 'name' | 'de
       filePath: join(workDir, '.agents', 'skills', skill.name, SKILL_ENTRY),
     }))
 
+/** The opening line of Pi's own system prompt (pi-coding-agent's buildSystemPromptSections). */
+const PI_PREAMBLE =
+  'You are a coding assistant running inside pi, a coding agent harness. Help users inspect files, run commands, and modify code.'
+
+/**
+ * The system prompt Pi built, without what it says about itself: its opening line, which tells the
+ * model it runs "inside pi, a coding agent harness", and the section pointing at Pi's own docs.
+ * Brigade's instructions, which say who the teammate is, follow as Pi's addendum; the tools, rules,
+ * skills and working directory stay.
+ */
+export function withoutPiIdentity(prompt: string) {
+  return prompt
+    .replace(PI_PREAMBLE, '')
+    .replace(/<docs>\nPi documentation[\s\S]*?<\/docs>\n*/, '')
+    .replace(/^\s+/, '')
+}
+
+/** A Pi extension that gives each turn the system prompt without Pi's identity. */
+const brigadeIdentity: PiHarnessExtensionFactory = (pi) => {
+  pi.on('before_agent_start', (event) => ({ systemPrompt: withoutPiIdentity(event.systemPrompt) }))
+}
+
 /**
  * The Pi harness for a turn on `account`. Brigade's own tools reach it as the agent's tools, its MCP
  * servers (the teammate's browser) through Pi's own MCP client, which names their tools as Claude
@@ -218,6 +240,7 @@ export function createPiHarness(input: {
     credentials: input.credentials ?? loginCredentials(input.account),
     mcpServers: input.mcpServers,
     resources: { skills: input.skills },
+    extensionFactories: [brigadeIdentity],
     ...(input.effort ? { thinkingLevel: input.effort } : {}),
     ...(input.providers ? { providers: input.providers } : {}),
   })
