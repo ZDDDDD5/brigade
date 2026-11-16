@@ -965,6 +965,7 @@ function TeammatesRailMenu({ teammates, admin }: { teammates: Teammate[]; admin:
 function Inset({ children }: { children: ReactNode }) {
   const { expanded, computerPage } = useThreadPanel()
   const frame = useDesktopFrame()
+  const { state } = useSidebar()
   // The Inbox lays out its own columns, edge to edge, each the window's height.
   const inboxPage = usePathname().startsWith('/app/inbox')
   return (
@@ -973,6 +974,7 @@ function Inset({ children }: { children: ReactNode }) {
       {/* Brigade.app's window on macOS, without a title bar: the empty top of the page moves
           it, as a title bar would (lib/desktop-frame.ts). Controls over it still click. */}
       {frame && <div data-window-drag aria-hidden className="absolute inset-x-0 top-0 h-10" />}
+      {frame === 'mac' && state === 'collapsed' && <TrafficLightsPill />}
       <DemoBanner place="phone" />
       <DemoTour />
       <UpdatePill header={expanded} />
@@ -1000,6 +1002,22 @@ function Inset({ children }: { children: ReactNode }) {
         {!expanded && children}
       </div>
     </SidebarInset>
+  )
+}
+
+/**
+ * Brigade.app on macOS with the sidebar folded to its rail: the traffic lights (drawn by macOS
+ * at TRAFFIC_LIGHTS in apps/desktop/src/windows.ts, over the page) reach past the rail onto the
+ * page, whatever it shows there. A pill under them, the same surface as the thread's pills,
+ * gives them a ground of their own. It moves the window, as the title bar would.
+ */
+function TrafficLightsPill() {
+  return (
+    <div
+      data-window-drag
+      aria-hidden
+      className="fixed top-3 left-2 z-40 h-7 w-[4.25rem] rounded-full bg-card/90 shadow-sm backdrop-blur"
+    />
   )
 }
 
