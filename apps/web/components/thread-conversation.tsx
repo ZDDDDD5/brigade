@@ -23,6 +23,7 @@ import {
 } from 'lucide-react'
 import {
   defaultEffort,
+  loginOf,
   type Effort,
   formatPreviewElement,
   type TeammateHarness,
@@ -1008,13 +1009,14 @@ export function ThreadConversation({
 
   // Where the thread can continue: its starter moves it, it runs on their accounts. The cloud
   // computer or a machine of theirs, with an account for each of its teammates.
-  const harnesses = new Set(people.map((p) => p.harness))
+  // Each login its teammates run on (for Pi, its model's vendor's: loginOf).
+  const logins = new Set(people.map((p) => loginOf(p.harness as TeammateHarness, p.model)))
   const hasAccounts = (computerId: string) =>
-    [...harnesses].every((harness) =>
+    [...logins].every((login) =>
       (accounts.data ?? []).some(
         (a) =>
           a.computer.id === computerId &&
-          a.provider === harness &&
+          a.provider === login &&
           (a.status === 'ready' || a.status === 'unverified'),
       ),
     )
