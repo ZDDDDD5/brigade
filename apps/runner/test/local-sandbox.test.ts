@@ -30,7 +30,8 @@ after(async () => {
 
 const text = async (stream: ReadableStream<Uint8Array>) => new Response(stream).text()
 
-for (const runAs of [undefined, 'teammate']) {
+// A teammate of its own (sudo) is a cloud computer's: Linux only.
+for (const runAs of process.platform === 'win32' ? [undefined] : [undefined, 'teammate']) {
   describe(runAs ? 'as a teammate' : 'as the runner', () => {
     const sandbox = () =>
       createLocalSandboxSession({

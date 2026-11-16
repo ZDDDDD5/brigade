@@ -96,7 +96,8 @@ test('the local sandbox runs commands and reads and writes files', async () => {
     assert.ok(shown.startsWith('/'))
     const pwd = await sandbox.run({ command: 'pwd' })
     assert.equal(pwd.exitCode, 0)
-    assert.equal(pwd.stdout.trim(), shown)
+    // Git Bash may name the folder its own way (/tmp for the temporary folder): the same folder.
+    assert.equal(toNative(pwd.stdout.trim(), dir).toLowerCase(), dir.toLowerCase())
     const home = await sandbox.run({ command: 'printf "%s" "$HOME"' })
     assert.ok(home.stdout.startsWith('/'), home.stdout)
     // Files written by path, as the harness gives them, and by a command, meet.

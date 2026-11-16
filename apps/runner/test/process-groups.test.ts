@@ -89,8 +89,9 @@ test('the next runner stops the groups the one before left running', async () =>
     [
       '-e',
       `const { spawn } = require('node:child_process')
-       spawn('sleep', ['60'], { stdio: 'ignore' })
-       spawn('sleep', ['61'], { stdio: 'ignore', detached: true })
+       const wait = (s) => [process.execPath, ['-e', 'setTimeout(() => {}, ' + s + ')']]
+       spawn(...wait(60000), { stdio: 'ignore' })
+       spawn(...wait(61000), { stdio: 'ignore', detached: true })
        setInterval(() => {}, 1e6)`,
     ],
     { detached: true, stdio: 'ignore' },
