@@ -129,3 +129,27 @@ jobs:
       - name: Desktop
         if: ${{ !cancelled() }}
         run: node scripts/ci/test.mjs apps/desktop --import tsx
+
+  # The runner's bundle, as the API's deploy builds it (Workers Builds, scripts/deploy/workers.sh):
+  # the API serves it as a Worker asset, and Workers take none past 25 MiB, so a bigger one fails
+  # the deploy after the merge (#849, #888). bundle.sh fails past 24 MiB, here before the merge.
+  runner-bundle:
+    name: Runner bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Bundle, within a Worker asset's size
+        run: pnpm --filter @brigade/runner bundle
+
+      # Pi isn't in the bundle: runners install it from its lockfile on first use (pi-package.ts).
+      - name: Pi, installed as runners do
+        working-directory: apps/runner
+        run: PI_TEST_INSTALL_ROOT="$RUNNER_TEMP/pi" node --import tsx --test test/pi-harness.test.ts

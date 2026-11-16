@@ -20,7 +20,6 @@
     "@ai-sdk/harness": "1.0.176",
     "@ai-sdk/harness-claude-code": "1.0.180",
     "@ai-sdk/harness-codex": "1.0.178",
-    "@ai-sdk/harness-pi": "1.0.179",
     "@brigade/contracts": "workspace:*",
     "@playwright/mcp": "0.0.83",
     "@xterm/headless": "6.0.0",
@@ -33,6 +32,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@ai-sdk/harness-pi": "1.0.179",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@types/node": "24.19.2",
     "@types/ws": "8.18.2",
@@ -40,6 +40,7 @@
     "tsx": "4.23.15"
   },
   "files": [
-    "dist"
+    "dist",
+    "pi"
   ]
 }

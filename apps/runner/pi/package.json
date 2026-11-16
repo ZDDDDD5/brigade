@@ -1,0 +1,8 @@
+{
+  "name": "brigade-runner-pi",
+  "private": true,
+  "description": "Pi's dependencies, which runners install on first use (src/pi-package.ts) rather than carry in their bundle.",
+  "dependencies": {
+    "@ai-sdk/harness-pi": "1.0.179"
+  }
+}

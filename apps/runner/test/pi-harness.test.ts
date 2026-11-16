@@ -11,6 +11,7 @@ import type { AccountRef, AgentEvent, ConnectorGrant } from '@brigade/contracts'
 import { EventMapper } from '../src/harness/events.js'
 import { createLocalSandboxSession, freePort } from '../src/harness/local-sandbox.js'
 import { createPiHarness, loginCredentials, piModel } from '../src/harness/pi.js'
+import { loadPi } from '../src/pi-package.js'
 import {
   connectorTools,
   doneTools,
@@ -19,6 +20,14 @@ import {
   type ConnectorCaller,
   type ScheduleCaller,
 } from '../src/harness/tools.js'
+
+// The devDependency's Pi; with PI_TEST_INSTALL_ROOT, the runner's own install of it there, as a
+// runner from its bundle makes on first use (pi-package.ts).
+const pi = await loadPi(
+  process.env.PI_TEST_INSTALL_ROOT
+    ? { fromPackage: false, root: process.env.PI_TEST_INSTALL_ROOT }
+    : {},
+)
 
 // A teammate on Pi, as a turn runs it (createAgent): HarnessAgent over Pi, with Brigade's own
 // tools as the agent's tools, the teammate's browser as an MCP server, and the Claude login on the
@@ -195,6 +204,7 @@ async function piTurn(options: {
   }
   const agent = new HarnessAgent({
     harness: createPiHarness({
+      pi,
       account,
       effort: undefined,
       mcpServers: options.mcpServers ?? {},
