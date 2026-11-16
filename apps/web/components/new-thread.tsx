@@ -3,7 +3,7 @@ import { ArrowUp, Check, ChevronDown, CircleUser, FolderKanban, List, Plus, X } 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { defaultEffort, type Effort } from '@brigade/contracts'
+import { defaultEffort, loginName, loginOf, type Effort } from '@brigade/contracts'
 import {
   ComposerMenu,
   ComputerIcon,
@@ -54,7 +54,6 @@ import { Hint } from '@/components/ui/tooltip'
 import {
   api,
   computerName,
-  harnessLabel,
   preload,
   preloadSettled,
   teammateModelLabel,
@@ -498,12 +497,14 @@ export function NewThread({
   const [teaching, setTeaching] = useState(false)
   const phone = useIsMobile()
 
+  // The login the teammate runs on: its harness's own, or for Pi its model's vendor's (loginOf).
+  const login = loginOf(teammate.harness, teammate.model)
   const online = usableComputers(computers.data)
   const computer = online.find((c) => c.id === computerId) ?? online[0]
   const usable = (accounts.data ?? []).filter(
     (a) =>
       a.computer.id === computer?.id &&
-      a.provider === teammate.harness &&
+      a.provider === login &&
       (a.status === 'ready' || a.status === 'unverified') &&
       !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()),
   )
@@ -638,7 +639,7 @@ export function NewThread({
     : computer.kind !== 'cloud'
       ? 'Not yet on threads that run on a member’s machine'
       : !account
-        ? `No ${harnessLabel(teammate.harness)} account on the cloud computer`
+        ? `No ${loginName(login)} account on the cloud computer`
         : () => setTeaching(true)
 
   const link = 'font-medium text-primary hover:underline'
@@ -656,7 +657,7 @@ export function NewThread({
   else if (loaded && !account)
     notice = (
       <>
-        No {harnessLabel(teammate.harness)} account on {computerName(computer!)}.{' '}
+        No {loginName(login)} account on {computerName(computer!)}.{' '}
         <Link href="/app/accounts" className={link}>
           Add one
         </Link>
