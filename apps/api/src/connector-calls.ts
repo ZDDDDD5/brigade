@@ -704,8 +704,14 @@ export async function authorisedFetch(
             const about = await describeMetaToken(credential.accessToken)
             const where = `${method} ${new URL(url).pathname}`
             console.warn(`meta call refused (${connection.id}) ${where}: ${about}`)
-            const e = (body as { error?: { message?: string } } | null)?.error
-            if (e) e.message = `${e.message ?? 'Refused'} [${where}; token: ${about}]`
+            const e = (body as { error?: { message?: string; error_user_msg?: string } } | null)
+              ?.error
+            // graphJson shows Meta's message for people first: annotate both.
+            if (e) {
+              const note = ` [${where}; token: ${about}]`
+              e.message = `${e.message ?? 'Refused'}${note}`
+              if (e.error_user_msg) e.error_user_msg += note
+            }
             return new Response(JSON.stringify(body), {
               status: response.status,
               headers: { 'content-type': 'application/json' },
