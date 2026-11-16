@@ -1,5 +1,5 @@
 'use client'
-import { cronProblem, nextRuns } from '@brigade/contracts'
+import { cronProblem, nextRuns, type RunOutcome } from '@brigade/contracts'
 import cronstrue from 'cronstrue'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { TeammateAvatar, useDashboard } from '@/components/dashboard'
@@ -24,6 +24,17 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { api, teammateModelLabel, type Schedule } from '@/lib/api'
+
+/** How a routine's run ended, as a dot. */
+export const OUTCOME: Record<RunOutcome, { label: string; dot: string }> = {
+  running: { label: 'Running', dot: 'bg-primary animate-pulse' },
+  report: { label: 'Reported', dot: 'bg-success' },
+  nothing: { label: 'Nothing to do', dot: 'bg-success' },
+  ended: { label: 'Ended', dot: 'bg-success' },
+  needs_person: { label: 'Needs a person', dot: 'bg-warning' },
+  failed: { label: 'Failed', dot: 'bg-destructive-text' },
+  cancelled: { label: 'Cancelled', dot: 'bg-muted-foreground/40' },
+}
 
 /** The browser's timezone: a new schedule's default. */
 export const localTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -125,6 +136,7 @@ export function ScheduleDialog({
   schedule,
   onSaved,
   projectId: initialProject,
+  cron: initialCron,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -133,6 +145,8 @@ export function ScheduleDialog({
   onSaved: (schedule: Schedule) => void
   /** A new schedule's project, e.g. from a project page. */
   projectId?: string
+  /** A new schedule's time, e.g. from a slot clicked in the calendar. */
+  cron?: string
 }) {
   const { teammates, projects } = useDashboard()
   const [projectId, setProjectId] = useState('none')
@@ -150,11 +164,11 @@ export function ScheduleDialog({
     setTeammateId(schedule?.teammateId)
     setTitle(schedule?.title ?? '')
     setInstructions(schedule?.instructions ?? '')
-    setWhen(fromCron(schedule?.cron ?? '0 9 * * 1-5'))
+    setWhen(fromCron(schedule?.cron ?? initialCron ?? '0 9 * * 1-5'))
     setTimezone(schedule?.timezone ?? localTimezone())
     setProjectId(schedule ? (schedule.projectId ?? 'none') : (initialProject ?? 'none'))
     setError(undefined)
-  }, [open, schedule, initialProject])
+  }, [open, schedule, initialProject, initialCron])
 
   const teammate = teammateId ?? teammates[0]?.id
   const reports = schedule?.parentSession
