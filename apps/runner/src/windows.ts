@@ -78,25 +78,126 @@ export const ownGroup = (): Pick<SpawnOptions, 'detached' | 'windowsHide'> =>
 /**
  * Stop a process and all it started: the group it leads (SIGTERM by default), or on Windows its
  * process tree, at once (Windows has no signal a console program could take to end cleanly).
+ * Resolves once it is done (at once on macOS and Linux).
  */
-export function stopTree(pid: number, signal: NodeJS.Signals = 'SIGTERM') {
+export function stopTree(pid: number, signal: NodeJS.Signals = 'SIGTERM'): Promise<void> {
   if (WINDOWS) {
-    if (signal === ('SIGCONT' as NodeJS.Signals) || signal === ('SIGSTOP' as NodeJS.Signals)) return
-    taskkill(pid)
-    return
+    if (signal === ('SIGCONT' as NodeJS.Signals) || signal === ('SIGSTOP' as NodeJS.Signals))
+      return Promise.resolve()
+    return windowsTree(pid).then(
+      (pids) => kill(pids),
+      () => taskkill(pid),
+    )
   }
   try {
     process.kill(-pid, signal)
   } catch {
     // already gone
   }
+  return Promise.resolve()
 }
 
-/** Ends a process tree on Windows; resolves once taskkill is done. */
+/** Ends a process tree on Windows, as Windows sees it (taskkill /T); resolves once done. */
 export function taskkill(pid: number) {
   return new Promise<void>((done) => {
     execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => done())
   })
+}
+
+/** Ends processes on Windows, at once. */
+const kill = async (pids: number[]) => {
+  for (let i = 0; i < pids.length; i += 50)
+    await new Promise<void>((done) =>
+      execFile(
+        'taskkill',
+        ['/F', ...pids.slice(i, i + 50).flatMap((pid) => ['/PID', String(pid)])],
+        { windowsHide: true },
+        () => done(),
+      ),
+    )
+}
+
+/** Every process, as Windows lists them: pid, parent pid, seconds running. */
+export async function windowsProcesses() {
+  const stdout = await new Promise<string>((done, fail) =>
+    execFile(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $([int64]((Get-Date) - $_.CreationDate).TotalSeconds)" }',
+      ],
+      { maxBuffer: 16 * 1024 * 1024, windowsHide: true },
+      (error, out) => (error ? fail(error) : done(out)),
+    ),
+  )
+  return parseWindowsList(stdout)
+}
+
+/** Lines of "pid ppid seconds-running". */
+export function parseWindowsList(text: string) {
+  const procs: { pid: number; ppid: number; seconds: number }[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const [pid, ppid, seconds] = line.trim().split(/\s+/).map(Number)
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid) || !Number.isFinite(seconds)) continue
+    procs.push({ pid: pid!, ppid: ppid!, seconds: seconds! })
+  }
+  return procs
+}
+
+/** Git Bash's own processes (`ps -l`): its pid, process group and Windows pid. */
+export function parseMsysList(text: string) {
+  const procs: { pid: number; pgid: number; winpid: number }[] = []
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*[A-Z]?\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s/.exec(line)
+    if (match) procs.push({ pid: +match[1]!, pgid: +match[3]!, winpid: +match[4]! })
+  }
+  return procs
+}
+
+/**
+ * What a process started, on Windows. Windows' parent pids miss what Git Bash forks (a command
+ * run with &, a subshell): its parent there is a process Git Bash made and ended. So: the process,
+ * what Windows says it started, the Git Bash process groups of all those, what those groups hold,
+ * and what they started in turn, until nothing new comes.
+ */
+export async function windowsTree(
+  root: number,
+  ps = join(gitHome() ?? '', 'usr', 'bin', 'ps.exe'),
+) {
+  const [procs, msys] = await Promise.all([
+    windowsProcesses(),
+    new Promise<string>((done) =>
+      execFile(ps, ['-l'], { windowsHide: true }, (_error, out) => done(out ?? '')),
+    ).then(parseMsysList),
+  ])
+  return treeOf(root, procs, msys)
+}
+
+export function treeOf(
+  root: number,
+  procs: { pid: number; ppid: number }[],
+  msys: { pgid: number; winpid: number }[],
+) {
+  const found = new Set([root])
+  const groups = new Set<number>()
+  for (let grew = true; grew;) {
+    grew = false
+    for (const p of procs)
+      if (found.has(p.ppid) && !found.has(p.pid) && p.pid !== process.pid) {
+        found.add(p.pid)
+        grew = true
+      }
+    for (const m of msys) if (found.has(m.winpid)) groups.add(m.pgid)
+    for (const m of msys)
+      if (groups.has(m.pgid) && !found.has(m.winpid) && m.winpid !== process.pid) {
+        found.add(m.winpid)
+        grew = true
+      }
+  }
+  // The deepest first: none starts again what an ended parent left.
+  return [...found].reverse()
 }
 
 /**

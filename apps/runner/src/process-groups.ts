@@ -15,7 +15,7 @@ import { uptime } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { CLOUD, paths } from './config.js'
-import { groupAlive, WINDOWS } from './windows.js'
+import { groupAlive, windowsProcesses, WINDOWS } from './windows.js'
 
 /** A group the runner started: its leader's pid, when, and what for (for the log). */
 export type Group = { pgid: number; at: number; what: string }
@@ -155,34 +155,17 @@ export const processGroups = new ProcessGroups(join(paths.state, 'process-groups
 /** Every process, from ps (the same options on macOS and Linux); on Windows from its process
  * list, each its own group. */
 export async function processes(now = Date.now()): Promise<Proc[]> {
-  if (WINDOWS) {
-    const { stdout } = await execFileAsync(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-Command',
-        'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId) $([int64]((Get-Date) - $_.CreationDate).TotalSeconds)" }',
-      ],
-      { maxBuffer: 16 * 1024 * 1024, windowsHide: true },
-    )
-    return parseWindowsProcesses(stdout, now)
-  }
+  if (WINDOWS)
+    return (await windowsProcesses()).map((p) => ({
+      pid: p.pid,
+      ppid: p.ppid,
+      pgid: p.pid,
+      started: now - p.seconds * 1000,
+    }))
   const { stdout } = await execFileAsync('ps', ['-A', '-o', 'pid=,ppid=,pgid=,etime='], {
     maxBuffer: 16 * 1024 * 1024,
   })
   return parseProcesses(stdout, now)
-}
-
-/** Lines of "pid ppid seconds-running", as processes() asks Windows for them. */
-export function parseWindowsProcesses(text: string, now: number): Proc[] {
-  const procs: Proc[] = []
-  for (const line of text.split(/\r?\n/)) {
-    const [pid, ppid, seconds] = line.trim().split(/\s+/).map(Number)
-    if (!Number.isInteger(pid) || !Number.isInteger(ppid) || !Number.isFinite(seconds)) continue
-    procs.push({ pid: pid!, ppid: ppid!, pgid: pid!, started: now - seconds! * 1000 })
-  }
-  return procs
 }
 
 export function parseProcesses(text: string, now: number): Proc[] {

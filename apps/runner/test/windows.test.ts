@@ -7,10 +7,12 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { parseWindowsProcesses } from '../src/process-groups.js'
 import { createLocalSandboxSession, freePort } from '../src/harness/local-sandbox.js'
 import {
   groupAlive,
+  parseMsysList,
+  parseWindowsList,
+  treeOf,
   ownGroup,
   posixShell,
   prependPath,
@@ -47,39 +49,69 @@ test('a PATH with folders first, once each', () => {
   assert.equal(prependPath(undefined, ['x']), 'x')
 })
 
-test("Windows' process list, each process its own group", () => {
-  const now = 1_000_000
-  assert.deepEqual(parseWindowsProcesses('4 0 3600\r\n812 4 12\r\n\r\nbad line\r\n', now), [
-    { pid: 4, ppid: 0, pgid: 4, started: now - 3_600_000 },
-    { pid: 812, ppid: 4, pgid: 812, started: now - 12_000 },
+test("Windows' process list, and Git Bash's", () => {
+  assert.deepEqual(parseWindowsList('4 0 3600\r\n812 4 12\r\n\r\nbad line\r\n'), [
+    { pid: 4, ppid: 0, seconds: 3600 },
+    { pid: 812, ppid: 4, seconds: 12 },
+  ])
+  const ps = [
+    '      PID    PPID    PGID     WINPID   TTY         UID    STIME COMMAND',
+    '     1857       1    1857       4200  ?         197609 08:01:02 /usr/bin/bash',
+    'S    1858    1857    1857       1492  ?         197609 08:01:02 /usr/bin/sleep',
+  ].join('\r\n')
+  assert.deepEqual(parseMsysList(ps), [
+    { pid: 1857, pgid: 1857, winpid: 4200 },
+    { pid: 1858, pgid: 1857, winpid: 1492 },
   ])
 })
 
-test('a process tree stops as one', async () => {
-  // A shell that starts a child of its own and waits: stopping the shell's tree ends both.
-  const child = spawn(posixShell(), ['-c', 'sleep 60 & echo $!; wait'], {
-    stdio: ['ignore', 'pipe', 'ignore'],
-    ...ownGroup(),
-  })
+test('a tree holds what Git Bash forked, whose Windows parent is gone', () => {
+  // bin\bash.exe (2076) starts usr\bin\bash (4200), which forks sleep (1492) through a process
+  // it ended (8304); an unrelated process (900) stays out, and so does Git Bash's other group.
+  const procs = [
+    { pid: 2076, ppid: 3812 },
+    { pid: 4200, ppid: 2076 },
+    { pid: 1492, ppid: 8304 },
+    { pid: 1600, ppid: 1492 },
+    { pid: 900, ppid: 1 },
+    { pid: 950, ppid: 1 },
+  ]
+  const msys = [
+    { pgid: 1857, winpid: 4200 },
+    { pgid: 1857, winpid: 1492 },
+    { pgid: 2000, winpid: 950 },
+  ]
+  assert.deepEqual(treeOf(2076, procs, msys).sort(), [1492, 1600, 2076, 4200])
+})
+
+test('a process tree stops as one, what the shell ran in the background too', async () => {
+  // A shell with a child it ran in the background: stopping the shell's tree ends both. On
+  // Windows, Git Bash gives that child a Windows parent it ended (windows.ts, windowsTree).
+  const child = spawn(
+    posixShell(),
+    ['-c', `sleep 60 & ${WINDOWS ? 'cat /proc/$!/winpid' : 'echo $!'}; wait`],
+    { stdio: ['ignore', 'pipe', 'ignore'], ...ownGroup() },
+  )
   const inner = Number(
     await new Promise<string>((done) => child.stdout!.once('data', (d: Buffer) => done(String(d)))),
   )
+  assert.ok(inner > 0)
+  const closed = new Promise((done) => child.once('close', done))
   assert.ok(groupAlive(child.pid!))
-  stopTree(child.pid!)
-  for (let i = 0; i < 100 && groupAlive(child.pid!); i++) await sleep(100)
-  assert.ok(!groupAlive(child.pid!))
-  // On Windows the inner pid is Git Bash's own, not Windows': the shell's end is what is checked.
-  if (!WINDOWS) {
-    for (let i = 0; i < 50; i++) {
-      try {
-        process.kill(inner, 0)
-      } catch {
-        break
-      }
-      await sleep(100)
+  const started = Date.now()
+  await stopTree(child.pid!)
+  await closed
+  // Its output closed with it: nothing of it is left holding it.
+  assert.ok(Date.now() - started < 20_000, `closed after ${Date.now() - started} ms`)
+  for (let i = 0; i < 50; i++) {
+    try {
+      process.kill(inner, 0)
+    } catch {
+      break
     }
-    assert.throws(() => process.kill(inner, 0))
+    await sleep(100)
   }
+  assert.throws(() => process.kill(inner, 0))
 })
 
 test('the local sandbox runs commands and reads and writes files', async () => {
