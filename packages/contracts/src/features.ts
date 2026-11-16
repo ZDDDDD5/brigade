@@ -66,6 +66,15 @@ export const FEATURES = {
       'tried by the team first.',
     default: false,
   },
+  pi_harness: {
+    description:
+      'Teammates on Pi (docs/harnesses.md), beside Claude Code and Codex: Pi runs inside the runner ' +
+      'on the Claude or ChatGPT login already on the computer, for its model. It calls the ' +
+      'providers as Claude Code and Codex do, which their terms do not allow a third-party client ' +
+      'to, so a provider may suspend the login it runs on. Opened to Brigade’s own workspace only, ' +
+      'to benchmark Pi against Claude Code and Codex.',
+    default: false,
+  },
 } as const satisfies Record<string, { description: string; default: boolean }>
 
 export type Feature = keyof typeof FEATURES

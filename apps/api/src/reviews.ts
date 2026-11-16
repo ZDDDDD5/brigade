@@ -22,6 +22,10 @@ import {
   ReviewChoice,
   type ReviewPolicy,
   type ScheduleOperation,
+  loginOf,
+  loginName,
+  harnessName,
+  type TeammateHarness,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { parse as parseYaml } from 'yaml'
@@ -57,7 +61,13 @@ const CHANGED_PAGES = 3
 /** How long one request's claim to start a review holds before another may take it over. */
 export const REVIEW_CLAIM_MS = 5 * 60_000
 
-type Teammate = { id: string; name: string; harness: 'claude_code' | 'codex'; kind: string }
+type Teammate = {
+  id: string
+  name: string
+  harness: TeammateHarness
+  model: string | null
+  kind: string
+}
 
 /** Who asks for a review: a teammate in its thread, or a member on the pull request's page. */
 type Asker =
@@ -332,7 +342,8 @@ async function pickReviewer(
       await usableAccounts(db, {
         memberId: input.memberId,
         computerId: input.computerId,
-        provider: t.harness,
+        provider: loginOf(t.harness, t.model),
+        pi: t.harness === 'pi',
       })
     ).length > 0
   if (input.asked) {
@@ -348,7 +359,7 @@ async function pickReviewer(
       })
     if (!(await runs(asked)))
       throw new HTTPException(409, {
-        message: `${asked.name} runs on ${asked.harness === 'codex' ? 'Codex' : 'Claude Code'}, and the person has no account for it on this computer.`,
+        message: `${asked.name} runs on ${harnessName(asked.harness)}, and the person has no ${loginName(loginOf(asked.harness, asked.model))} account on this computer.`,
       })
     return asked
   }
@@ -533,7 +544,12 @@ async function startClaimed(
     teammate: reviewer,
     computer,
     memberId,
-    accountId: parent && reviewer.harness === parent.teammate.harness ? parent.accountId : null,
+    accountId:
+      parent &&
+      loginOf(reviewer.harness, reviewer.model) ===
+        loginOf(parent.teammate.harness, parent.teammate.model)
+        ? parent.accountId
+        : null,
     title: `Review #${p.number}: ${p.title}`,
     text: parent
       ? childPrompt({

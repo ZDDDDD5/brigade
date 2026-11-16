@@ -15,6 +15,7 @@ import type {
   UsageSource,
   UsageTotals,
 } from '@brigade/contracts'
+import { loginOf } from '@brigade/contracts'
 import { Prisma, prisma, scoped, type Scope } from './db.js'
 import type { PrismaClient } from './generated/prisma/client.js'
 
@@ -313,12 +314,13 @@ async function accountOwners(
       : [],
     db.teammate.findMany({
       where: { id: { in: [...new Set(teammateIds)] } },
-      select: { id: true, harness: true },
+      select: { id: true, harness: true, model: true },
     }),
   ])
   return {
     accounts: new Map(accounts.map((a) => [a.id, a])),
-    teammates: new Map(teammates.map((t) => [t.id, t.harness])),
+    // A login's provider: Pi's tokens are its model's vendor's (loginOf).
+    teammates: new Map(teammates.map((t) => [t.id, loginOf(t.harness, t.model)])),
   }
 }
 

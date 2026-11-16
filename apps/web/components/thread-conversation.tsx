@@ -25,7 +25,7 @@ import {
   defaultEffort,
   type Effort,
   formatPreviewElement,
-  type HarnessId,
+  type TeammateHarness,
   mentionsToText,
   type PreviewElement,
   type QueuedMessageAction,
@@ -923,7 +923,7 @@ export function ThreadConversation({
   const effort: EffortPick = {
     value: effortPicked ? effortPicked.value : t.effort,
     // The starting teammate's model: where Default sits.
-    fallback: defaultEffort(t.teammate.harness as HarnessId, t.teammate.model),
+    fallback: defaultEffort(t.teammate.harness as TeammateHarness, t.teammate.model),
     onPick: (value) => {
       setEffortPicked({ value })
       setEffortTurn(busy ? turnId : undefined)

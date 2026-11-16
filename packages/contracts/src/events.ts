@@ -685,11 +685,20 @@ export const AgentEvent = z.discriminatedUnion('type', [
     accountId: z.string(),
     /** Names this turn, so an interrupt stops it and not the one after it. */
     turnId: z.string().optional(),
+    /**
+     * What runs it, and on which model (none: the account's own), from PI_PROTOCOL on: the
+     * harness benchmark compares turns by them (docs/harnesses.md).
+     */
+    harness: z.string().optional(),
+    model: z.string().nullish(),
   }),
   z.object({
     ...base,
     type: z.literal('turn.completed'),
     finishReason: z.string(),
+    /** The turn's tool calls, and those that ended in an error, from PI_PROTOCOL on (benchmark). */
+    toolCalls: z.number().int().nonnegative().optional(),
+    toolErrors: z.number().int().nonnegative().optional(),
     /**
      * The teammate still waits on a person: a ticket or question it asked stays open after it
      * answered a message written instead of an answer (ASIDE_PROTOCOL).
