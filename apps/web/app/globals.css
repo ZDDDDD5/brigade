@@ -1609,6 +1609,14 @@ html[data-desktop-frame]
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
+/* A panel laid over the whole window (a preview's Expand) covers the sidebar's first row: its own
+ * first row starts after the traffic lights, as that row does, and its empty space moves the
+ * window. */
+html[data-desktop-frame='mac'] [data-over-window] > :first-child {
+  padding-left: 4.75rem;
+  -webkit-app-region: drag;
+  app-region: drag;
+}
 /* With the sidebar folded to its rail, the traffic lights reach past the rail, so the thread's
  * sidebar toggle steps aside from them. */
 html[data-desktop-frame='mac']

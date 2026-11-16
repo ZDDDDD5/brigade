@@ -29,7 +29,7 @@ import { ProjectIcon } from '@/components/projects'
 import { StatusDot } from '@/components/status-badge'
 import { useDesktopPreview } from '@/components/desktop-preview'
 import { DocumentsButton, useDocumentPanel } from '@/components/document-panel'
-import { useKeptPreviewShown } from '@/components/kept-previews'
+import { useKeptPanelShown } from '@/components/kept-previews'
 import {
   NewThread,
   TeammatePicker,
@@ -851,8 +851,8 @@ const center = (el: Element) => {
 function useSlideAcross<T extends HTMLElement>() {
   const ref = useRef<T>(null)
   const last = useRef<number>(undefined)
-  // A thread's preview opens or closes in a render of its own (components/kept-previews.tsx).
-  useKeptPreviewShown()
+  // A thread's preview or tool opens or closes in a render of its own (components/kept-previews.tsx).
+  useKeptPanelShown()
   // After each render: what opens a panel renders, and its room is taken in the same commit.
   useLayoutEffect(() => {
     const el = ref.current

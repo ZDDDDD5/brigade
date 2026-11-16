@@ -463,16 +463,22 @@ export function DocumentPanel() {
   if (!current) return null
   const target = current.target
   // A tool (its folder, as its mention names it, or its page) opens as the tool, not as its
-  // `index.html`; minimized, it is put away (its page reloads when it is back).
+  // `index.html`; minimized, it is kept hidden, its page as it was when it is back.
   const tool = target.kind === 'library' && path ? toolFolderOf(path) : undefined
   if (
     tool &&
     (path === tool || path === `${tool}/index.html`) &&
     (me.features?.includes('tools') ?? false)
   )
-    return shown ? (
-      <ToolPanel key={tool} folder={tool} onClose={() => remove(target)} inDocuments />
-    ) : null
+    return (
+      <ToolPanel
+        key={tool}
+        folder={tool}
+        onClose={() => remove(target)}
+        inDocuments
+        hidden={!shown}
+      />
+    )
   const view: FileView =
     target.kind === 'library' ? fileView(current.title, current, looked.file) : 'editor'
   const contentType = looked.file?.contentType ?? current.contentType

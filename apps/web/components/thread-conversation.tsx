@@ -32,6 +32,7 @@ import {
   type QueuedMessageAction,
   type ReplyTo,
   suggestionFor,
+  toolFolderOf,
 } from '@brigade/contracts'
 import Link from 'next/link'
 import {
@@ -72,7 +73,7 @@ import { TeachTask } from '@/components/teach-task'
 import { AskedDocument, DocumentsButton, useDocumentPanel } from '@/components/document-panel'
 import { FileLinksProvider } from '@/components/file-links'
 import { FilePanel } from '@/components/file-panel'
-import { dropKeptPreview, KeepPreview } from '@/components/kept-previews'
+import { dropKeptPreview, dropKeptTool, KeepPreview, KeepTool } from '@/components/kept-previews'
 import {
   PHASE,
   previewLive,
@@ -542,6 +543,21 @@ export function ThreadConversation({
   useEffect(() => {
     if (!previewing) dropKeptPreview(id)
   }, [id, previewing])
+  // A library tool beside it (its folder, as its mention names it, or its page): kept as the
+  // preview is, so back from another thread its page is as it was left, not loaded again.
+  const keptTool = useMemo(() => {
+    if (!file || !(me.features?.includes('tools') ?? false)) return undefined
+    const path = file.path.trim().replace(/\/+$/, '')
+    if (path.startsWith('/')) return undefined
+    const tool = toolFolderOf(path)
+    // Its folder is always the library's (components/file-panel.tsx); its page, unless a
+    // teammate's own copy is named.
+    if (!tool) return undefined
+    return path === tool || (path === `${tool}/index.html` && !file.teammateId) ? tool : undefined
+  }, [file, me.features])
+  useEffect(() => {
+    if (!keptTool) dropKeptTool(id)
+  }, [id, keptTool])
   useEffect(() => {
     rememberThreadSide(
       id,
@@ -1474,7 +1490,16 @@ export function ThreadConversation({
       />
       {/* Beside the thread, so only expanded: docked, opening one expands it first. Outside
           what scrolls: its fade would hide them. */}
-      {expanded && file && (
+      {/* Rendered by the dashboard, so its frame stays as it was while another thread shows. */}
+      {file && keptTool && (
+        <KeepTool
+          shown={expanded}
+          threadId={t.id}
+          folder={keptTool}
+          onClose={() => setFile(undefined)}
+        />
+      )}
+      {expanded && file && !keptTool && (
         <FilePanel
           key={`${file.teammateId ?? ''}:${file.path}`}
           threadId={t.id}
