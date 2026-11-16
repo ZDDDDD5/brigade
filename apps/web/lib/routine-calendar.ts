@@ -34,7 +34,15 @@ export const MAX_DRAWN_PER_DAY = 3
  * Its runs from `from` (included) to `to` (excluded), at most `limit`; `frequent` when some day
  * holds more than MAX_DRAWN_PER_DAY of them (an hourly routine goes in the band above the hours).
  */
-export function runsBetween(cron: string, timezone: string, from: Date, to: Date, limit = 100) {
+export function runsBetween(
+  cron: string,
+  timezone: string,
+  from: Date,
+  to: Date,
+  // A week of runs drawn at their times holds at most this many; one more says it is frequent.
+  // Computing runs is slow (about 0.15 ms each), so no more than that.
+  limit = MAX_DRAWN_PER_DAY * 7 + 1,
+) {
   let runs: Date[]
   try {
     runs = nextRuns(cron, timezone, limit, new Date(from.getTime() - 1000))
