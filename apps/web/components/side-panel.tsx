@@ -401,6 +401,8 @@ export function SidePanel({
         // The page makes room for it only while it shows (globals.css).
         data-desktop-panel={expanded || hidden ? undefined : ''}
         data-expanded={expanded || undefined}
+        // Over the whole window: on macOS its first row makes room for the traffic lights (globals.css).
+        data-over-window={(over && !besideSidebar) || undefined}
         className={cn(
           expanded
             ? 'relative flex h-svh min-w-0 flex-col overflow-hidden bg-background'
