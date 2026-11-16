@@ -27,6 +27,13 @@ NODE_VERSION="${NODE_VERSION}"
 NODE_DIST="\${BRIGADE_NODE_DIST:-https://nodejs.org/dist}"
 DIR="\${BRIGADE_INSTALL_DIR:-\${BRIGADE_HOME:-$HOME/.brigade}}"
 STEP="\${BRIGADE_INSTALL_STEP:-all}"
+# Each tool it needs, said by name: a bare "not found" halfway through tells the person nothing.
+for TOOL in curl tar; do
+  command -v "$TOOL" >/dev/null 2>&1 || {
+    echo "The Brigade runner needs $TOOL, which this computer does not have. Install it (on Debian or Ubuntu: sudo apt install $TOOL), then run the command again." >&2
+    exit 1
+  }
+done
 mkdir -p "$DIR/bin"
 
 # A Node.js at least as recent as NODE_VERSION.
@@ -44,14 +51,16 @@ else
   # Downloaded into node.new (the stage step of an update, while the runner works on its Node),
   # then put in place by any other step.
   if ! node_ok "$DIR/node.new/bin/node"; then
+    # The .tar.gz, never the .tar.xz: tar unpacks that one only with xz, which minimal Debian and
+    # Ubuntu installs leave out ("xz: Cannot exec"), and every tar unpacks gzip.
     case "$(uname -s)-$(uname -m)" in
-      Linux-x86_64) P=linux-x64; EXT=tar.xz ;;
-      Linux-aarch64) P=linux-arm64; EXT=tar.xz ;;
-      Darwin-arm64) P=darwin-arm64; EXT=tar.gz ;;
-      Darwin-x86_64) P=darwin-x64; EXT=tar.gz ;;
+      Linux-x86_64) P=linux-x64 ;;
+      Linux-aarch64) P=linux-arm64 ;;
+      Darwin-arm64) P=darwin-arm64 ;;
+      Darwin-x86_64) P=darwin-x64 ;;
       *) echo "Unsupported platform: $(uname -s) $(uname -m)" >&2; exit 1 ;;
     esac
-    F="node-$NODE_VERSION-$P.$EXT"
+    F="node-$NODE_VERSION-$P.tar.gz"
     T=$(mktemp -d)
     echo "Installing Node.js $NODE_VERSION"
     curl -fsSL "$NODE_DIST/$NODE_VERSION/$F" -o "$T/$F"

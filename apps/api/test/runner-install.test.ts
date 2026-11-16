@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { execFile, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -41,25 +41,49 @@ async function fakeNode(dir: string, recent: boolean) {
   await chmod(join(dir, 'bin', 'node'), 0o755)
 }
 
-/** NODE_VERSION's download, as nodejs.org/dist serves it for this platform. */
+/** NODE_VERSION's downloads, as nodejs.org/dist serves them for this platform: .tar.gz and .tar.xz. */
 const platform = `${process.platform === 'darwin' ? 'darwin' : 'linux'}-${process.arch}`
-const nodeFile = `node-${NODE_VERSION}-${platform}.${process.platform === 'darwin' ? 'tar.gz' : 'tar.xz'}`
-const nodeDist = await (async () => {
+const nodeFiles = new Map<string, Buffer>()
+const nodeSums = await (async () => {
   const dir = join(root, 'dist')
   await fakeNode(join(dir, `node-${NODE_VERSION}`), true)
   await writeFile(join(dir, `node-${NODE_VERSION}`, 'bin', 'marker'), NODE_VERSION)
-  const flag = process.platform === 'darwin' ? '-czf' : '-cJf'
-  spawnSync('tar', [flag, join(dir, nodeFile), '-C', dir, `node-${NODE_VERSION}`])
-  const bytes = readFileSync(join(dir, nodeFile))
-  const sums = `${createHash('sha256').update(bytes).digest('hex')}  ${nodeFile}\n`
-  return { bytes, sums }
+  let sums = ''
+  for (const [ext, flag] of [
+    ['tar.gz', '-czf'],
+    ['tar.xz', '-cJf'],
+  ]) {
+    const file = `node-${NODE_VERSION}-${platform}.${ext}`
+    spawnSync('tar', [flag, join(dir, file), '-C', dir, `node-${NODE_VERSION}`])
+    const bytes = readFileSync(join(dir, file))
+    nodeFiles.set(`/dist/${NODE_VERSION}/${file}`, bytes)
+    sums += `${createHash('sha256').update(bytes).digest('hex')}  ${file}\n`
+  }
+  return sums
 })()
+
+/**
+ * A PATH holding only the tools a minimal Debian or Ubuntu install has: no xz, and curl only
+ * when asked.
+ */
+async function minimalPath(name: string, { curl = true } = {}) {
+  const dir = join(root, name)
+  await mkdir(dir, { recursive: true })
+  const tools = ['sh', 'mkdir', 'tar', 'gzip', 'uname', 'mktemp', 'grep', 'cut', 'sed', 'tail']
+  tools.push('rm', 'mv', 'cat', 'chmod', 'sha256sum', 'shasum', 'dirname', 'env')
+  if (curl) tools.push('curl')
+  for (const tool of tools) {
+    const found = spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim()
+    if (found) await symlink(found, join(dir, tool))
+  }
+  return dir
+}
 
 let served = await bundle('one', 'one')
 const server = createServer((req, res) => {
-  if (req.url === `/dist/${NODE_VERSION}/${nodeFile}`) return res.writeHead(200).end(nodeDist.bytes)
-  if (req.url === `/dist/${NODE_VERSION}/SHASUMS256.txt`)
-    return res.writeHead(200).end(nodeDist.sums)
+  const node = nodeFiles.get(req.url ?? '')
+  if (node) return res.writeHead(200).end(node)
+  if (req.url === `/dist/${NODE_VERSION}/SHASUMS256.txt`) return res.writeHead(200).end(nodeSums)
   if (req.url !== '/runner/bundle.tgz') return res.writeHead(404).end()
   res.writeHead(200, { 'content-type': 'application/gzip', 'x-bundle-sha256': served.sha256 })
   res.end(served.bytes)
@@ -136,4 +160,27 @@ test('a Node.js older than NODE_VERSION is replaced, beside the runner while it 
   assert.ok(!existsSync(join(dir, 'node.new')))
   assert.ok(!existsSync(join(dir, 'node.old')))
   assert.match(readFileSync(join(dir, 'bin', 'brigade-runner'), 'utf8'), /\/node\/bin\/node"/)
+})
+
+test('a computer without xz gets Node.js all the same', async () => {
+  const dir = join(root, 'no-xz')
+  // A Debian or Ubuntu install without xz-utils, and no Node.js of its own.
+  await install(dir, undefined, await minimalPath('minimal-bin'))
+  assert.equal(readFileSync(join(dir, 'node', 'bin', 'marker'), 'utf8'), NODE_VERSION)
+  assert.ok(existsSync(join(dir, 'bin', 'brigade-runner')))
+})
+
+test('a computer without curl is told to install it', async () => {
+  const dir = join(root, 'no-curl')
+  const failed = await install(
+    dir,
+    undefined,
+    await minimalPath('no-curl-bin', { curl: false }),
+  ).then(
+    () => null,
+    (error: { stderr: string }) => error,
+  )
+  assert.ok(failed, 'the install should fail')
+  assert.match(failed.stderr, /needs curl.*sudo apt install curl/)
+  assert.ok(!existsSync(join(dir, 'bin', 'brigade-runner')))
 })
