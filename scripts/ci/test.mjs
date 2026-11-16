@@ -32,6 +32,12 @@ if (process.platform === 'win32' && existsSync(skipList))
     const name = line.replace(/#.*/, '').trim()
     if (name) notHere.add(name)
   }
+// On Windows, a package's test/windows-setup.ts runs first in each file: what its program does as
+// it starts there (the runner puts Git for Windows' tools on its PATH).
+const windowsSetup =
+  process.platform === 'win32' && existsSync(join(folder, 'test', 'windows-setup.ts'))
+    ? ['--import', './test/windows-setup.ts']
+    : []
 const files = readdirSync(join(folder, 'test'))
   .filter((name) => /\.test\.(ts|mjs|js)$/.test(name) && !notHere.has(name))
   .sort()
@@ -44,7 +50,7 @@ function run(file) {
     const started = Date.now()
     const child = spawn(
       process.execPath,
-      [...nodeOptions, '--test', '--test-reporter=spec', file],
+      [...nodeOptions, ...windowsSetup, '--test', '--test-reporter=spec', file],
       {
         cwd: folder,
         env: process.env,

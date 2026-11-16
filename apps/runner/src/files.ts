@@ -274,7 +274,7 @@ export function parseGrep(output: string, prefix: string): SourceMatch[] {
     .map((line) => line.split('\0'))
     .filter((parts) => parts.length >= 3 && /^\d+$/.test(parts[1]!))
     .map(([path, line, ...rest]) => ({
-      path: normalize(join(prefix, path!)),
+      path: slashes(normalize(join(prefix, path!))),
       line: Number(line),
       preview: rest.join(' ').trim().slice(0, 200),
     }))

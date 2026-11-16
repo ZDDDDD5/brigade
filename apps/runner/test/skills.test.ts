@@ -31,7 +31,9 @@ test('a skill file that starts with #! is written executable, the others are not
   await writeSkills(workDir, spec, [skill], async (sha256) => files[sha256]!)
 
   const dir = join(workDir, '.claude', 'skills', 'impeccable')
-  assert.equal((await stat(join(dir, 'scripts/impeccable'))).mode & 0o111, 0o111)
+  // Windows keeps no executable bit.
+  if (process.platform !== 'win32')
+    assert.equal((await stat(join(dir, 'scripts/impeccable'))).mode & 0o111, 0o111)
   assert.equal((await stat(join(dir, 'reference/polish.md'))).mode & 0o111, 0)
   assert.equal((await stat(join(dir, 'SKILL.md'))).mode & 0o111, 0)
   assert.equal(await readFile(join(dir, 'scripts/impeccable'), 'utf8'), '#!/bin/sh\necho ok\n')

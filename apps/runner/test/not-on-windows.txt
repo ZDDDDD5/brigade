@@ -14,3 +14,4 @@ preview-sync.test.ts # a preview's files synced to a thread's own machine (CLOUD
 preview-sync-times.test.ts # a preview's files synced to a thread's own machine (CLOUD)
 shared-bridges.test.ts # bridges shared between teammate users on a cloud computer (CLOUD, /proc)
 thread-net.test.ts # a thread's own network namespace on a cloud computer (CLOUD)
+codex-usage.test.ts # a fake codex on the PATH; Windows runs the harness's own copy (vendor-cli.ts)

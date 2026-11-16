@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { resolve } from 'node:path'
 import { test } from 'node:test'
 import { codexBridgeTurn } from './fixtures/codex-bridge.js'
 
@@ -13,7 +14,8 @@ test('a side reply forks the newest thread in its folder, unsaved, and its turn 
   const methods = requests.map((r) => r.method)
   assert.ok(!methods.includes('thread/start') && !methods.includes('thread/resume'))
   const list = requests.find((r) => r.method === 'thread/list')!
-  assert.equal(list.params.cwd, work)
+  // On Windows, Git Bash gives the bridge the folder with / (C:/Users/…): the same folder.
+  assert.equal(resolve(list.params.cwd), resolve(work))
   assert.equal(list.params.sortKey, 'updated_at')
   assert.equal(list.params.limit, 1)
   const fork = requests.find((r) => r.method === 'thread/fork')!
