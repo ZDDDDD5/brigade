@@ -77,7 +77,7 @@ export function measureGoal(
       timedOut = true
       try {
         if (WINDOWS) {
-          if (child.pid) stopTree(child.pid, 'SIGKILL')
+          if (child.pid) void stopTree(child.pid, 'SIGKILL')
         } else if (child.pid) process.kill(-child.pid, 'SIGKILL')
       } catch {
         child.kill('SIGKILL')

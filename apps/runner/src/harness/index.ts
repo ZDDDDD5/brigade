@@ -1544,7 +1544,7 @@ export class HarnessThread {
       this.steeredPending = !!handed.steered
       return handed.groups
     }
-    for (const pgid of handed.groups) stopGroup(pgid, this.runAs)
+    for (const pgid of handed.groups) void stopGroup(pgid, this.runAs)
     saved.resume = withoutBridge(saved.resume)
     return []
   }

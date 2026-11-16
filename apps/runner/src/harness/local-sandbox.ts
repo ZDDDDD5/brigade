@@ -30,14 +30,14 @@ const code = (error: unknown) => (error as NodeJS.ErrnoException | undefined)?.c
 
 /** Stop a process group (on Windows, a process tree). One a teammate's sudo started is killed
  * as that teammate, who owns it. */
-export function stopGroup(pid: number, runAs?: string) {
+export function stopGroup(pid: number, runAs?: string): Promise<void> {
   if (runAs) {
     spawnChild('sudo', ['-n', '-u', runAs, '--', 'kill', '-TERM', '--', `-${pid}`], {
       stdio: 'ignore',
     }).on('error', () => undefined)
-    return
+    return Promise.resolve()
   }
-  stopTree(pid)
+  return stopTree(pid)
 }
 
 /**
@@ -195,7 +195,7 @@ export function createLocalSandboxSession(options: {
     })
     const kill = async () => {
       if (child.exitCode !== null || child.pid === undefined) return
-      killGroup(child.pid)
+      void killGroup(child.pid)
     }
     abortSignal?.addEventListener('abort', () => void kill(), { once: true })
     // A process that exits before reading all its input closes the pipe: its exit code says why.
@@ -387,9 +387,12 @@ export function createLocalSandboxSession(options: {
   const endpoint = async (port: number, protocol: 'http' | 'https' | 'ws' = 'http') =>
     `${protocol === 'ws' ? 'ws' : 'http'}://${(await net)?.address ?? '127.0.0.1'}:${port}`
 
+  // Once what it ran is gone (on Windows, finding a tree takes a moment).
   const stop = async () => {
-    for (const child of children) if (child.pid) killGroup(child.pid)
-    for (const pid of adopted) killGroup(pid)
+    await Promise.all([
+      ...[...children].flatMap((child) => (child.pid ? [killGroup(child.pid)] : [])),
+      ...adopted.map(killGroup),
+    ])
   }
 
   // Its cgroup goes with it: what is left a few seconds after the stop is killed.
@@ -425,7 +428,7 @@ export function createLocalSandboxSession(options: {
      */
     dropAdopted: () => {
       if (adopted.length === 0 || children.size === 0) return false
-      for (const pid of adopted) killGroup(pid)
+      for (const pid of adopted) void killGroup(pid)
       adopted = []
       return true
     },

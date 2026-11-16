@@ -2731,7 +2731,7 @@ export class Previews {
       ).on('error', () => undefined)
       return
     }
-    stopTree(group, signal === 'TERM' ? 'SIGTERM' : 'SIGKILL')
+    void stopTree(group, signal === 'TERM' ? 'SIGTERM' : 'SIGKILL')
   }
 
   private append(preview: Preview, text: string) {
