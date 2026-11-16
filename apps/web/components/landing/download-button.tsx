@@ -107,9 +107,6 @@ export function DownloadButton() {
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       focusItem(i - 1)
-    } else if (e.key === 'Escape') {
-      setOpen(false)
-      toggle.current?.focus()
     } else if (e.key === 'Tab') {
       setOpen(false)
     }
@@ -118,7 +115,18 @@ export function DownloadButton() {
   const main = os ? MAIN[os] : undefined
 
   return (
-    <div className={c('dl')} ref={box}>
+    // Escape closes the menu wherever focus is in it, the toggle included (opened by a click or
+    // Enter, focus stays there), and puts focus back on the toggle.
+    <div
+      className={c('dl')}
+      ref={box}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape' && open) {
+          setOpen(false)
+          toggle.current?.focus()
+        }
+      }}
+    >
       <div className={c('split')}>
         <a className={c('split-main')} href={main?.url ?? RELEASES_URL}>
           {main?.mark ?? <Icon name="download" />}
