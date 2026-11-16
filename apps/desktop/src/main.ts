@@ -1,6 +1,7 @@
 // Brigade.app: lives in the menu bar (the system tray on Windows and Linux). It installs, links
 // and keeps running the Brigade runner (runner.ts), ships Brigade Computer Use.app for teammates
-// to use this Mac's apps (helper.ts), starts at login and updates itself. Its windows are the
+// to use this Mac's apps (helper.ts), serves computer use itself on Linux (linux/), starts at
+// login and updates itself. Its windows are the
 // dashboard (windows.ts), the new thread window (capture.ts) and the setup checklist (setup.ts).
 import { execFile } from 'node:child_process'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -10,7 +11,9 @@ import { app } from 'electron'
 import * as autostart from './autostart.js'
 import * as capture from './capture.js'
 import { ctx } from './context.js'
-import { Helper } from './helper.js'
+import { Helper, linuxExecutable } from './helper.js'
+import { LinuxComputerUse, serve } from './linux/computer-use.js'
+import { INDICATOR_FLAG, runIndicator } from './linux/indicator.js'
 import * as find from './find.js'
 import { registerBridge } from './ipc.js'
 import { handleQuit } from './lifecycle.js'
@@ -81,6 +84,7 @@ function start() {
   const helper = new Helper(Helper.find(process.resourcesPath))
   helper.restart()
   ctx.helper = helper
+  if (process.platform === 'linux') startLinuxComputerUse()
   ctx.quitting = false
   ctx.refreshMenu = refreshMenu
   ctx.supervisor = new Supervisor({
@@ -114,7 +118,23 @@ function start() {
   startUpdates()
 }
 
-if (!app.requestSingleInstanceLock()) {
+/** Linux: Brigade.app answers the runner's computer use requests itself, on the socket Brigade
+ * Computer Use.app listens on on a Mac. */
+function startLinuxComputerUse() {
+  try {
+    const computer = new LinuxComputerUse()
+    serve(computer, linuxExecutable())
+    ctx.linux = computer
+    app.on('will-quit', () => void computer.close())
+  } catch (error) {
+    console.error('computer use:', error)
+  }
+}
+
+if (process.argv.includes(INDICATOR_FLAG)) {
+  // The computer-use pill's own process (linux/indicator.ts): nothing else of the app.
+  runIndicator()
+} else if (!app.requestSingleInstanceLock()) {
   // A second launch (or a brigade:// link while running) goes to the first one.
   app.quit()
 } else {
@@ -132,6 +152,8 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', (_event, argv) => {
     const links = linksIn(argv)
     if (links.length) links.forEach(link)
+    // The runner starting Brigade for computer use (Linux): it runs already, nothing to show.
+    else if (argv.includes('--computer-use')) return
     // Opened again from Applications, the Start menu or a launcher: the dashboard.
     else if (ready) showDashboard()
   })

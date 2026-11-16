@@ -1,7 +1,7 @@
 # Development
 
 The [README](../README.md#run-it-locally) has the short version. This page has the details: running threads on your
-machine, Brigade.app and computer use on macOS, and the dashboard's theme.
+machine, Brigade.app and computer use on macOS and Linux, and the dashboard's theme.
 
 ## Set up
 
@@ -137,6 +137,32 @@ true` lets an action use the real keyboard and mouse where accessibility doesn't
 pnpm --filter @brigade/computer-use-macos install:app   # helper only, into ~/Applications (runner finds it there)
 pnpm --filter @brigade/desktop build:app                 # Brigade.app and its .dmg, with the helper inside
 ```
+
+### Computer use on Linux
+
+On a member's Linux desktop, **Brigade.app itself** answers the runner's computer-use requests
+(`apps/desktop/src/linux`), on the same socket, token and protocol as Brigade Computer Use.app (version 3), so the
+runner's tools are the same; it writes its executable to `~/.brigade/computer-use/app`, which the runner starts
+with `--computer-use` when nothing answers. The runner offers the tools there once Brigade.app has been opened, or
+when it runs in a desktop session (`DISPLAY` or `WAYLAND_DISPLAY`): a server linked with the command gets none.
+
+- **Pointer and keyboard**: XTEST on X11 (the `x11` package, pure JavaScript; a character the layout lacks goes on a
+  spare keycode for the time of the call, as xdotool does), and GNOME's own RemoteDesktop D-Bus API on Wayland
+  (`mutter.ts`, with one screen-cast stream per monitor to place the pointer). Mutter drops keysyms the layout lacks,
+  read from XWayland's keymap: those go through Ctrl+Shift+U and the code (GTK and IBus). Other Wayland desktops let
+  no app send input: those requests answer `not_supported`, and teammates use `computer_snapshot` and
+  `computer_act`.
+- **Screenshots**: Chromium's capturer on X11; the desktop portal on Wayland (asked once, then remembered), cropped
+  to the display and scaled to screen points. The pill is hidden while one is taken.
+- **The pill**: a window of a second Brigade process (`--brigade-indicator`) on X11, through XWayland on Wayland,
+  where a native window can neither place itself nor stay above others.
+- **Apps and their interface** (`apps`, `open_app`, `ui_tree`, `key` for a named app): agent-desktop, the runner's
+  copy, whose path comes with each request. `run` runs `bash -c` in the person's session, its process group stopped
+  on Stop, an interrupted turn or its timeout.
+
+`apps/desktop/test/e2e/linux-sessions.sh` runs the packaged app in a throwaway X11 session (Xvfb with Mutter) and
+GNOME on Wayland (headless gnome-shell), and checks each request's effect on GNOME Calculator and Text Editor; CI
+runs the X11 one (`.github/workflows/desktop.yml`).
 
 Both sign with the first "Developer ID Application" identity in the keychain (or `BRIGADE_SIGN_IDENTITY`), else ad
 hoc, in which case macOS asks for the helper's permissions again after each rebuild. To try Brigade.app without

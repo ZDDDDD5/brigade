@@ -38,6 +38,7 @@ import {
 } from '@/lib/api'
 import { authClient } from '@/lib/auth-client'
 import { detectDevice, type Device } from '@/lib/device'
+import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
 import { MAC_APP_URL } from '@/lib/mac-app'
 import { markSignedIn, markSignedOut } from '@/lib/signed-in'
 import { useLive } from '@/lib/use-live'
@@ -551,10 +552,10 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
   // Once they set up their own machine, Brigade Cloud steps back to one line.
   const cloudCompact = planNeeded && (!!link || !!machine)
 
-  // On Linux and Chromebooks the command is the way in: show it straight away.
+  // On Chromebooks the command is the way in: show it straight away.
   const linuxLink = useRef(false)
   useEffect(() => {
-    if ((device !== 'linux' && device !== 'chromeos') || !computers.data || machine) return
+    if (device !== 'chromeos' || !computers.data || machine) return
     if (linuxLink.current) return
     linuxLink.current = true
     void getLink()
@@ -748,23 +749,45 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
         )}
       </CardContent>
     </Card>
-  ) : device === 'mac' ? (
+  ) : device === 'mac' || device === 'linux' ? (
     <Card className={cn(!link && 'bg-transparent shadow-none')}>
       <CardContent className="flex flex-col gap-4">
         <CardHead
-          icon={<AppleLogo />}
-          title="Run them on this Mac"
-          meta="Uses the Claude or Codex login already on it. Your teammates work while your Mac is awake."
+          icon={device === 'mac' ? <AppleLogo /> : <Laptop />}
+          title={device === 'mac' ? 'Run them on this Mac' : 'Run them on this computer'}
+          meta={
+            device === 'mac'
+              ? 'Uses the Claude or Codex login already on it. Your teammates work while your Mac is awake.'
+              : 'Uses the Claude or Codex login already on it. Your teammates work while it is on.'
+          }
           aside={free}
         />
         {!link ? (
           <>
-            <Button variant="outline" size="lg" asChild>
-              <a href={MAC_APP_URL} onClick={() => void getLink()}>
-                <AppleLogo />
-                Download Brigade for Mac
-              </a>
-            </Button>
+            {device === 'mac' ? (
+              <Button variant="outline" size="lg" asChild>
+                <a href={MAC_APP_URL} onClick={() => void getLink()}>
+                  <AppleLogo />
+                  Download Brigade for Mac
+                </a>
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" size="lg" asChild>
+                  <a href={LINUX_DEB_URL} onClick={() => void getLink()}>
+                    <Laptop />
+                    Download Brigade for Linux (.deb)
+                  </a>
+                </Button>
+                <a
+                  href={LINUX_APPIMAGE_URL}
+                  onClick={() => void getLink()}
+                  className="text-center text-xs text-muted-foreground underline underline-offset-4"
+                >
+                  Not Ubuntu or Debian? Get the AppImage
+                </a>
+              </>
+            )}
             <button
               type="button"
               className="text-center text-xs text-muted-foreground"
@@ -781,9 +804,14 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
           </>
         ) : terminal || !link.appLink ? (
           <>
-            <p className="text-sm text-muted-foreground">Run this in a terminal on your Mac:</p>
+            <p className="text-sm text-muted-foreground">
+              Run this in a terminal on {device === 'mac' ? 'your Mac' : 'it'}:
+            </p>
             <Command command={link.command} />
-            {waitFor('Mac', 'code')}
+            {waitFor(device === 'mac' ? 'Mac' : 'machine', 'code')}
+            {device === 'linux' && slow && !expired && (
+              <TerminalHelp onNewCode={() => void getLink()} />
+            )}
           </>
         ) : (
           <>
@@ -793,9 +821,11 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
                   <Check aria-hidden className="size-3" />
                 </span>
                 <span className="flex flex-col gap-0.5">
-                  <span className="text-muted-foreground">Download Brigade for Mac</span>
+                  <span className="text-muted-foreground">
+                    Download Brigade for {device === 'mac' ? 'Mac' : 'Linux'}
+                  </span>
                   <a
-                    href={MAC_APP_URL}
+                    href={device === 'mac' ? MAC_APP_URL : LINUX_DEB_URL}
                     className="text-xs text-muted-foreground underline underline-offset-4"
                   >
                     Download again
@@ -822,7 +852,7 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
                 </span>
               </li>
             </ol>
-            {waitFor('Mac', 'link')}
+            {waitFor(device === 'mac' ? 'Mac' : 'computer', 'link')}
             <details className="text-xs text-muted-foreground">
               <summary className="cursor-pointer text-center">Or run it in a terminal</summary>
               <div className="mt-2.5">
@@ -830,29 +860,6 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
               </div>
             </details>
           </>
-        )}
-      </CardContent>
-    </Card>
-  ) : device === 'linux' ? (
-    <Card className={cn(!link && 'bg-transparent shadow-none')}>
-      <CardContent className="flex flex-col gap-4">
-        <CardHead
-          icon={<Terminal />}
-          title="Run them on this machine"
-          meta="Uses the claude or codex login already on it. Your teammates work while it is on."
-          aside={free}
-        />
-        {link ? (
-          <>
-            <p className="text-sm text-muted-foreground">Run this in a terminal on it:</p>
-            <Command command={link.command} />
-            {waitFor('machine', 'code')}
-            {slow && !expired && <TerminalHelp onNewCode={() => void getLink()} />}
-          </>
-        ) : (
-          <Button variant="outline" className="self-start" onClick={() => void getLink()}>
-            Get the install command
-          </Button>
         )}
       </CardContent>
     </Card>

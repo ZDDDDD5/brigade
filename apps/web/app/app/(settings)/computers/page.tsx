@@ -23,6 +23,8 @@ import { cn } from '@/lib/utils'
 import { Hint } from '@/components/ui/tooltip'
 import { api, useApi, type Computer, type ComputersResponse } from '@/lib/api'
 import { useLive } from '@/lib/use-live'
+import { detectDevice } from '@/lib/device'
+import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
 import { MAC_APP_URL } from '@/lib/mac-app'
 
 type LinkCode = { code: string; expiresAt: string; command: string; appLink?: string }
@@ -73,8 +75,10 @@ export default function Computers() {
   const [busy, setBusy] = useState(false)
   const [replacing, setReplacing] = useState(false)
 
-  // On a Mac, the app links this computer; elsewhere, the command in a terminal.
-  const [mac, setMac] = useState(false)
+  // On a Mac or Linux, the app links this computer; elsewhere, the command in a terminal.
+  const [device, setDevice] = useState<'mac' | 'linux' | 'other'>('other')
+  const mac = device === 'mac'
+  const app = device !== 'other'
 
   useLive((message) => {
     if (message.type === 'computer.updated') void computers.reload()
@@ -97,7 +101,8 @@ export default function Computers() {
     act(async () => setLink(await api<LinkCode>('/computers/link-code', { method: 'POST' })))
 
   useEffect(() => {
-    setMac(/Mac/.test(navigator.userAgent) && !/iPhone|iPad/.test(navigator.userAgent))
+    const detected = detectDevice(navigator.userAgent)
+    setDevice(detected === 'mac' || detected === 'linux' ? detected : 'other')
     // "Connect this computer…" in Brigade.app's menu opens ?desktop=1: the code is what it came for.
     if (new URLSearchParams(window.location.search).has('desktop')) void getLink()
     // Once, on load.
@@ -289,12 +294,14 @@ export default function Computers() {
               <Plus />
             </Tile>
             <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="font-semibold">{mac ? 'Link this Mac' : 'Link your machine'}</span>
+              <span className="font-semibold">
+                {mac ? 'Link this Mac' : app ? 'Link this computer' : 'Link your machine'}
+              </span>
               <span className="text-sm text-muted-foreground">
                 {link
                   ? `${
-                      mac && link.appLink
-                        ? 'Install Brigade for Mac, then open this link in it.'
+                      app && link.appLink
+                        ? `Install Brigade for ${mac ? 'Mac' : 'Linux'}, then open this link in it.`
                         : 'Run this in a terminal on your Mac or Linux machine.'
                     } The code works once and expires at ${new Date(link.expiresAt).toLocaleTimeString()}.`
                   : 'A teammate there acts as you and asks before each write or command'}
@@ -302,12 +309,23 @@ export default function Computers() {
             </span>
           </button>
           {link &&
-            (mac && link.appLink ? (
+            (app && link.appLink ? (
               <>
                 <div className="flex flex-wrap gap-2">
-                  <Button asChild variant="outline">
-                    <a href={MAC_APP_URL}>Download Brigade for Mac</a>
-                  </Button>
+                  {mac ? (
+                    <Button asChild variant="outline">
+                      <a href={MAC_APP_URL}>Download Brigade for Mac</a>
+                    </Button>
+                  ) : (
+                    <>
+                      <Button asChild variant="outline">
+                        <a href={LINUX_DEB_URL}>Download for Ubuntu or Debian (.deb)</a>
+                      </Button>
+                      <Button asChild variant="outline">
+                        <a href={LINUX_APPIMAGE_URL}>AppImage</a>
+                      </Button>
+                    </>
+                  )}
                   <Button asChild>
                     <a href={link.appLink}>Open in Brigade</a>
                   </Button>

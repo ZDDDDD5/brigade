@@ -126,6 +126,36 @@ export async function steps(): Promise<Step[]> {
     )
   }
 
+  if (process.platform === 'linux') {
+    const linux = ctx.linux
+    const status = await linux?.status().catch(() => undefined)
+    const unknown = linux ? 'Checking…' : 'This build of Brigade has no computer use.'
+    const wayland = status?.session === 'wayland'
+    steps.push(
+      step(
+        'screen',
+        'Screenshots',
+        status?.screenRecording
+          ? 'Teammates can see your screen when you ask them to use your apps.'
+          : status
+            ? 'Your desktop asks once whether Brigade may take screenshots: choose Allow.'
+            : unknown,
+        status ? status.screenRecording : null,
+        wayland && status && !status.screenRecording && ['screen', 'Allow…'],
+      ),
+      step(
+        'accessibility',
+        'Accessibility',
+        status?.accessibility
+          ? 'Teammates can read and use your apps when you ask them to.'
+          : status
+            ? "Your desktop's accessibility service (AT-SPI) is not running: turn on accessibility in its settings, or install at-spi2-core, then log in again."
+            : unknown,
+        status ? status.accessibility : null,
+      ),
+    )
+  }
+
   const login = autostart.isEnabled()
   steps.push(
     step(
@@ -173,6 +203,9 @@ async function act(id: string) {
     case 'logs':
       return showLogs()
     case 'screen':
+      // Linux: the desktop asks the person as Brigade takes its first screenshot.
+      if (ctx.linux) return void (await ctx.linux.askForScreenshots())
+    // falls through
     case 'accessibility':
       // The helper asks macOS for its permissions when it starts; the list is where they're
       // turned on.

@@ -65,6 +65,9 @@ operators hold the encryption key, as any hosted service does; if that matters t
   permissions. While a teammate acts, a pill on screen shows its name with a **Stop** button. A command that needs
   those permissions to work in your apps runs through the same helper, under the same pill, and nothing it started
   keeps running after it ends. Brigade.app itself never needs Accessibility.
+- **Computer use on Linux** is served by Brigade.app itself, on a socket only your user can open, with the same pill
+  and **Stop**. On Wayland, screenshots need your desktop's permission, asked once, and on GNOME the pointer and
+  keyboard go through GNOME's remote desktop, whose screen-sharing icon shows while a teammate acts.
 - **On a cloud computer**, each teammate runs as its own Linux user with a private home folder, and each thread has
   its own network, temporary files and processes. A teammate reads and uses the windows of its own browser only:
   its accessibility bus carries no other teammate's apps. Each teammate has its own Docker, without root. Teammates on one

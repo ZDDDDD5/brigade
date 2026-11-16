@@ -7,17 +7,17 @@ A teammate works on a computer: it runs the real Claude Code or Codex there, wit
 the previews of the apps it builds. The computer is linked to your workspace by a small program, the **runner**.
 You can use your own computer for free, Brigade's cloud computer, or both.
 
-|                                 | Your own computer                   | Brigade Cloud                                        |
-| ------------------------------- | ----------------------------------- | ---------------------------------------------------- |
-| **Price**                       | Free                                | $99 a month per workspace (€99 in the euro zone)     |
-| **When teammates work**         | While your computer is on and awake | All the time, even when your laptop is closed        |
-| **Routines and triggers**       | Only while your computer is on      | On time, even at 3 a.m.                              |
-| **AI usage**                    | Your Claude or ChatGPT plan         | Your Claude or ChatGPT plan                          |
-| **Systems**                     | macOS, Linux                        | Nothing to install                                   |
-| **Computer use**                | Any app on your Mac                 | Its own browser; you can take control of its desktop |
-| **Take control, Teach a task**  | Not yet                             | Yes                                                  |
-| **Website logins from Secrets** | Not yet                             | Yes                                                  |
-| **Turns at once**               | Up to 8 by default                  | Up to 8, shared by the workspace                     |
+|                                 | Your own computer                    | Brigade Cloud                                        |
+| ------------------------------- | ------------------------------------ | ---------------------------------------------------- |
+| **Price**                       | Free                                 | $99 a month per workspace (€99 in the euro zone)     |
+| **When teammates work**         | While your computer is on and awake  | All the time, even when your laptop is closed        |
+| **Routines and triggers**       | Only while your computer is on       | On time, even at 3 a.m.                              |
+| **AI usage**                    | Your Claude or ChatGPT plan          | Your Claude or ChatGPT plan                          |
+| **Systems**                     | macOS, Linux                         | Nothing to install                                   |
+| **Computer use**                | Any app on your Mac or Linux desktop | Its own browser; you can take control of its desktop |
+| **Take control, Teach a task**  | Not yet                              | Yes                                                  |
+| **Website logins from Secrets** | Not yet                              | Yes                                                  |
+| **Turns at once**               | Up to 8 by default                   | Up to 8, shared by the workspace                     |
 
 Teammates, threads and members are unlimited in both.
 
@@ -46,7 +46,28 @@ Accessibility to Brigade itself.
   sleeping.
 </Tip>
 
-### On Linux, or a Mac from the terminal
+### On a Linux desktop: Brigade.app
+
+1. In onboarding, or in **Settings → Computers** on that computer, choose **Download for Ubuntu or Debian (.deb)**,
+   or the **AppImage** for another distribution (x86-64).
+2. Install and open it, then choose **Open in Brigade** on the page. As on a Mac, it asks before it installs
+   anything, links the computer and keeps the runner going, from the system tray.
+3. Follow **Set up Brigade…** in its menu. On Wayland, your desktop asks once whether Brigade may take screenshots:
+   choose **Allow**.
+
+**Computer use** works as on a Mac: teammates read an app's interface through the desktop's accessibility (AT-SPI)
+and act on it without moving your pointer, take screenshots, click and type, and run commands in your desktop
+session, while a pill at the top of the screen shows their name and a **Stop** button.
+
+- On **X11** (any desktop) and **GNOME on Wayland** (Ubuntu's default), all of it works. On GNOME, Brigade sends the
+  pointer and keyboard through GNOME's remote desktop, so its screen-sharing icon shows in the top bar while a
+  teammate acts; stopping it there is the same as **Stop**.
+- On **other Wayland desktops** (KDE Plasma, Sway…), teammates read and use apps through accessibility and take
+  screenshots, but can't move the pointer or type: those desktops let no app do that.
+- Reading apps' interfaces needs Ubuntu 24.04 or a distribution as recent. Chrome and Chromium show theirs only
+  when started with `--force-renderer-accessibility`.
+
+### From the terminal (a Mac, Linux or a server)
 
 In **Settings → Computers**, choose **Link your machine** and run the command it shows. It looks like this:
 

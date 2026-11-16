@@ -44,7 +44,8 @@ import {
   touchBrowser,
 } from '../browsers.js'
 import { ensureAgentDesktop } from '../agent-desktop.js'
-import { ComputerUseError, computerUseClient } from '../computer-use.js'
+import { ComputerUseError, computerUseApp, computerUseClient } from '../computer-use.js'
+import { CLOUD } from '../config.js'
 import { teammateDesktopExec, teammateKeyboard } from '../desktop.js'
 import { ThreadCredentials, type CredentialRequester } from '../credentials.js'
 import {
@@ -2052,20 +2053,33 @@ export class HarnessThread {
   }
 
   /**
-   * On a member's Mac: the teammate sees and uses its apps through Brigade Computer Use. Not on
-   * the workspace computer (teammates there have a browser). The tools stay on a Mac without the
-   * helper, answering that it's missing: a thread that used them can't resume without them.
+   * On a member's Mac: the teammate sees and uses its apps through Brigade Computer Use. On a
+   * member's Linux computer, through Brigade.app, which serves the same requests: offered once
+   * Brigade.app is installed there or the runner runs in a desktop session, so that a server linked
+   * with the terminal command gets none. Not on the workspace computer (teammates there have a
+   * browser). The tools stay without the helper, answering that it's missing: a thread that used
+   * them can't resume without them.
    */
   private computerUse(): ComputerUse | undefined {
-    if (this.runAs || process.platform !== 'darwin') return
+    if (this.runAs || CLOUD) return
+    const linux = process.platform === 'linux'
+    if (!linux && process.platform !== 'darwin') return
+    if (linux && !computerUseApp() && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return
     const client = computerUseClient()
+    /** On Linux, the helper reads apps through the runner's agent-desktop: its path goes along. */
+    const withAgentDesktop = async (method: string, signal?: AbortSignal) => {
+      if (!linux || ['status', 'cancel', 'run', 'capture'].includes(method)) return {}
+      const binary = await ensureAgentDesktop(signal ? { signal } : {}).catch(() => undefined)
+      return binary ? { agentDesktop: binary.path } : {}
+    }
     return {
-      request: (method, params, signal, options) =>
+      request: async (method, params, signal, options) =>
         client
           ? client.request(
               method,
               {
                 ...params,
+                ...(await withAgentDesktop(method, signal)),
                 session: { id: `${this.key}:${this.prompts}`, label: this.spec.teammate.name },
               },
               signal,
@@ -2074,8 +2088,11 @@ export class HarnessThread {
           : Promise.reject(
               new ComputerUseError(
                 'not_installed',
-                'Brigade Computer Use is not installed on this Mac. Ask the person to install Brigade.app ' +
-                  '(it includes it), then try again.',
+                linux
+                  ? 'Brigade.app is not installed on this computer, or has never been opened. Ask the ' +
+                      'person to install Brigade.app for Linux and open it, then try again.'
+                  : 'Brigade Computer Use is not installed on this Mac. Ask the person to install Brigade.app ' +
+                      '(it includes it), then try again.',
               ),
             ),
       workDir: this.workDir,
