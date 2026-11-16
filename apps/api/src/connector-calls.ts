@@ -698,11 +698,14 @@ export async function authorisedFetch(
           // A write Meta refuses while reads with the same token work is not an expired
           // sign-in: say what Meta knows of the token (never the token) in the error the
           // teammate sees and in the logs, and keep the account connected.
-          if ((init.method ?? 'GET').toUpperCase() !== 'GET') {
+          const method = (init.method ?? 'GET').toUpperCase()
+          // A write first reads the object it changes: explain a refusal there too.
+          if (method !== 'GET' || !/\/(me|act_\d+)(\/|$|\?)/.test(new URL(url).pathname)) {
             const about = await describeMetaToken(credential.accessToken)
-            console.warn(`meta write refused (${connection.id}): ${about}`)
+            const where = `${method} ${new URL(url).pathname}`
+            console.warn(`meta call refused (${connection.id}) ${where}: ${about}`)
             const e = (body as { error?: { message?: string } } | null)?.error
-            if (e) e.message = `${e.message ?? 'Refused'} [token: ${about}]`
+            if (e) e.message = `${e.message ?? 'Refused'} [${where}; token: ${about}]`
             return new Response(JSON.stringify(body), {
               status: response.status,
               headers: { 'content-type': 'application/json' },
