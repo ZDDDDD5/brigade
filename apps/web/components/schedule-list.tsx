@@ -15,7 +15,14 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { isAdmin, timeAgo, useDashboard } from '@/components/dashboard'
 import { ProjectFilter } from '@/components/projects'
-import { describeCron, localTimezone, ScheduleDialog, zoneName } from '@/components/schedules'
+import { RoutineCalendar } from '@/components/routine-calendar'
+import {
+  describeCron,
+  localTimezone,
+  OUTCOME,
+  ScheduleDialog,
+  zoneName,
+} from '@/components/schedules'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -25,21 +32,10 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { RunOutcome } from '@brigade/contracts'
 import { api, projectQuery, useApi, type Schedule } from '@/lib/api'
 import { agendaOf, agendaTime, byThread, nextRunShort } from '@/lib/routine-agenda'
 import { cn } from '@/lib/utils'
 import { useLive } from '@/lib/use-live'
-
-const OUTCOME: Record<RunOutcome, { label: string; dot: string }> = {
-  running: { label: 'Running', dot: 'bg-primary animate-pulse' },
-  report: { label: 'Reported', dot: 'bg-success' },
-  nothing: { label: 'Nothing to do', dot: 'bg-success' },
-  ended: { label: 'Ended', dot: 'bg-success' },
-  needs_person: { label: 'Needs a person', dot: 'bg-warning' },
-  failed: { label: 'Failed', dot: 'bg-destructive-text' },
-  cancelled: { label: 'Cancelled', dot: 'bg-muted-foreground/40' },
-}
 
 /** Its latest runs as dots, oldest first: each opens its thread. */
 function RunDots({ runs, className }: { runs: Schedule['recentRuns']; className?: string }) {
@@ -255,11 +251,12 @@ function ScheduleRow({
   )
 }
 
-type RoutinesView = 'time' | 'thread'
+type RoutinesView = 'time' | 'thread' | 'calendar'
 
 const VIEWS: { value: RoutinesView; label: string }[] = [
   { value: 'time', label: 'By time' },
   { value: 'thread', label: 'By thread' },
+  { value: 'calendar', label: 'Calendar' },
 ]
 
 /** How this browser last showed the page. */
@@ -268,7 +265,8 @@ const VIEW_KEY = 'brigade:routines-view'
 function useRoutinesView() {
   const [view, setView] = useState<RoutinesView>('time')
   useEffect(() => {
-    if (localStorage.getItem(VIEW_KEY) === 'thread') setView('thread')
+    const saved = localStorage.getItem(VIEW_KEY)
+    if (saved === 'thread' || saved === 'calendar') setView(saved)
   }, [])
   return [
     view,
@@ -314,6 +312,8 @@ export function ScheduleList({
   const [filter, setFilter] = useState(initialFilter)
   const schedules = useApi<Schedule[]>(`/schedules${projectQuery(projectId ?? filter)}`)
   const [editing, setEditing] = useState<Schedule | 'new' | null>(null)
+  /** A new routine's cron, from a slot clicked in the calendar. */
+  const [newCron, setNewCron] = useState<string>()
   const reload = schedules.reload
   // A run's thread changing status changes the row's last run.
   useLive((message) => {
@@ -349,7 +349,12 @@ export function ScheduleList({
         )}
         <div className="ml-auto flex flex-wrap gap-2">
           {!projectId && <ProjectFilter value={filter} onChange={setFilter} />}
-          <Button onClick={() => setEditing('new')}>
+          <Button
+            onClick={() => {
+              setNewCron(undefined)
+              setEditing('new')
+            }}
+          >
             <Plus aria-hidden />
             New schedule
           </Button>
@@ -387,6 +392,16 @@ export function ScheduleList({
           No schedules yet. Try &ldquo;Every weekday at 9:00, summarize yesterday&rsquo;s new
           issues&rdquo;.
         </p>
+      ) : view === 'calendar' ? (
+        <RoutineCalendar
+          schedules={list}
+          onEdit={setEditing}
+          onNew={(cron) => {
+            setNewCron(cron)
+            setEditing('new')
+          }}
+          onChanged={() => void reload()}
+        />
       ) : view === 'thread' ? (
         byThread(list).map((group) => (
           <AgendaSection
@@ -443,6 +458,7 @@ export function ScheduleList({
         open={editing !== null}
         onOpenChange={(open) => !open && setEditing(null)}
         schedule={editing && editing !== 'new' ? editing : undefined}
+        cron={newCron}
         onSaved={() => void reload()}
         projectId={projectId ?? (filter && filter !== 'none' ? filter : undefined)}
       />
