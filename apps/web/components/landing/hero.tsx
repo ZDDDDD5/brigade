@@ -1,8 +1,9 @@
 import Link from 'next/link'
 import { BrigadeMark } from '@/components/brigade-mark'
+import { REPO_URL } from '@/lib/github-proof'
 import { AuthLink } from './auth-link'
 import { Dancers } from './dancers'
-import { c, SIGN_IN, SIGN_UP } from './parts'
+import { c, Icon, SIGN_IN, SIGN_UP } from './parts'
 import { SiteAnalytics } from './site-analytics'
 
 export function Header() {
@@ -21,6 +22,11 @@ export function Header() {
         <AuthLink className={c('btn pri')} href={SIGN_UP}>
           Sign up
         </AuthLink>
+        {/* No star count while it's small; on phones the icon alone keeps the bar on one line. */}
+        <a className={c('btn')} href={REPO_URL} aria-label="Star Brigade on GitHub">
+          <Icon name="github" />
+          <span className={c('hide-m')}>Star</span>
+        </a>
       </nav>
     </header>
   )
