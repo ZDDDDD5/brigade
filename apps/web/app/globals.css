@@ -437,19 +437,25 @@
   .text-shimmer-dim {
     background: linear-gradient(
         90deg,
-        var(--sidebar-foreground) 40%,
-        var(--muted-foreground) 50%,
-        var(--sidebar-foreground) 60%
+        var(--shimmer-text, var(--sidebar-foreground)) 40%,
+        var(--shimmer-band, var(--muted-foreground)) 50%,
+        var(--shimmer-text, var(--sidebar-foreground)) 60%
       )
       0 0 / 250% 100%;
     background-clip: text;
     color: transparent;
     animation: text-shimmer 3s linear infinite;
   }
+  /* On the current or hovered row, the row's own colours: its text is sidebar-accent-foreground
+   * there, which a theme with a dark sidebar-accent (Retro 95's navy) sets light. */
+  [data-sidebar='menu-button']:is([data-active='true'], :hover) .text-shimmer-dim {
+    --shimmer-text: var(--sidebar-accent-foreground);
+    --shimmer-band: color-mix(in oklab, var(--sidebar-accent-foreground) 55%, transparent);
+  }
   @media (prefers-reduced-motion: reduce) {
     .text-shimmer-dim {
       animation: none;
-      color: var(--sidebar-foreground);
+      color: var(--shimmer-text, var(--sidebar-foreground));
     }
   }
 
