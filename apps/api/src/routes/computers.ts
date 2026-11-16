@@ -176,7 +176,8 @@ export const computers = new Hono<AppEnv>()
 function osOfAgent(agent: string | undefined) {
   if (/iPhone|iPad|Android/.test(agent ?? '')) return 'mobile'
   if (/Mac/.test(agent ?? '')) return 'mac'
-  if (/Linux|X11|CrOS/.test(agent ?? '')) return 'linux'
+  if (/CrOS/.test(agent ?? '')) return 'chromeos'
+  if (/Linux|X11/.test(agent ?? '')) return 'linux'
   if (/Windows/.test(agent ?? '')) return 'windows'
   return 'other'
 }

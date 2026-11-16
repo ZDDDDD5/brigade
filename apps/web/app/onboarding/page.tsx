@@ -289,7 +289,10 @@ export default function Onboarding() {
   )
 }
 
-type LinkCode = { command: string; expiresAt: string; appLink?: string }
+type LinkCode = { command: string; expiresAt: string; appLink?: string; issuedAt: number }
+
+/** How long a machine may take to connect after its command before the page says what to look for. */
+const SLOW_LINK_MS = 90_000
 
 /** Apple's mark, in the text color, for the Mac download. */
 function AppleLogo({ className }: { className?: string }) {
@@ -349,6 +352,39 @@ function Waiting({ title, children }: { title: string; children: React.ReactNode
         {title}
       </p>
       <p className="text-xs text-muted-foreground">{children}</p>
+    </div>
+  )
+}
+
+/**
+ * What stops the install command, as the terminal shows it: the page cannot see that terminal,
+ * so it says what to look for once the machine is slow to connect.
+ */
+function TerminalHelp({ onNewCode }: { onNewCode: () => void }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border px-3.5 py-3 text-xs text-muted-foreground">
+      <p className="text-sm text-foreground">Still nothing? Look at the terminal:</p>
+      <ul className="flex list-disc flex-col gap-1.5 pl-4">
+        <li>
+          <code>curl: command not found</code>: install curl (on Debian or Ubuntu,{' '}
+          <code>sudo apt install curl</code>), then run the command again.
+        </li>
+        <li>
+          <code>Could not link</code>: each code links one machine, once, for 10 minutes.{' '}
+          <button
+            type="button"
+            className="text-foreground underline underline-offset-4"
+            onClick={onNewCode}
+          >
+            Get a new code
+          </button>{' '}
+          and run the new command.
+        </li>
+        <li>
+          <code>connected to</code> and nothing here: keep that terminal open, this page follows in
+          a few seconds.
+        </li>
+      </ul>
     </div>
   )
 }
@@ -482,8 +518,8 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
 
   const getLink = useCallback(() => {
     setError(undefined)
-    return api<LinkCode>('/computers/link-code', { method: 'POST' })
-      .then(setLink)
+    return api<Omit<LinkCode, 'issuedAt'>>('/computers/link-code', { method: 'POST' })
+      .then((issued) => setLink({ ...issued, issuedAt: Date.now() }))
       .catch((e: Error) => setError(e.message))
   }, [])
 
@@ -515,10 +551,11 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
   // Once they set up their own machine, Brigade Cloud steps back to one line.
   const cloudCompact = planNeeded && (!!link || !!machine)
 
-  // On Linux the command is the way in: show it straight away.
+  // On Linux and Chromebooks the command is the way in: show it straight away.
   const linuxLink = useRef(false)
   useEffect(() => {
-    if (device !== 'linux' || !computers.data || machine || linuxLink.current) return
+    if ((device !== 'linux' && device !== 'chromeos') || !computers.data || machine) return
+    if (linuxLink.current) return
     linuxLink.current = true
     void getLink()
   }, [device, computers.data, machine, getLink])
@@ -670,6 +707,7 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
   const free = <StatusBadge status="free" tone="success" />
   const until = link && new Date(link.expiresAt).toLocaleTimeString([], { timeStyle: 'short' })
   const expired = !!link && Date.parse(link.expiresAt) <= now
+  const slow = !!link && now - link.issuedAt >= SLOW_LINK_MS
   /** Waiting for the machine while its code works; a new code once it expired. */
   const waitFor = (what: string, code: 'code' | 'link') =>
     expired ? (
@@ -809,6 +847,40 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
             <p className="text-sm text-muted-foreground">Run this in a terminal on it:</p>
             <Command command={link.command} />
             {waitFor('machine', 'code')}
+            {slow && !expired && <TerminalHelp onNewCode={() => void getLink()} />}
+          </>
+        ) : (
+          <Button variant="outline" className="self-start" onClick={() => void getLink()}>
+            Get the install command
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  ) : device === 'chromeos' ? (
+    <Card className={cn(!link && 'bg-transparent shadow-none')}>
+      <CardContent className="flex flex-col gap-4">
+        <CardHead
+          icon={<Terminal />}
+          title="Run them on this Chromebook"
+          meta="In its Linux environment, on the claude or codex login there. Your teammates work while it is on."
+          aside={free}
+        />
+        {link ? (
+          <>
+            <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-muted-foreground">
+              <li>
+                Turn on Linux: Settings, About ChromeOS, Developers, Linux development environment,
+                Set up. Skip this if the Terminal app already lists <code>penguin</code>.
+              </li>
+              <li>
+                Open the Terminal app and pick <code>penguin</code>. Not Ctrl+Alt+T: that terminal,
+                crosh, can&apos;t run the command.
+              </li>
+              <li>Run this there:</li>
+            </ol>
+            <Command command={link.command} />
+            {waitFor('Chromebook', 'code')}
+            {slow && !expired && <TerminalHelp onNewCode={() => void getLink()} />}
           </>
         ) : (
           <Button variant="outline" className="self-start" onClick={() => void getLink()}>
@@ -839,6 +911,7 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
             <p className="text-sm text-muted-foreground">Run this in a terminal on it:</p>
             <Command command={link.command} />
             {waitFor('machine', 'code')}
+            {slow && !expired && <TerminalHelp onNewCode={() => void getLink()} />}
           </>
         ) : (
           <p className="text-sm text-muted-foreground">
