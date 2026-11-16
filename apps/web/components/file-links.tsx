@@ -55,11 +55,12 @@ export const looksLikeFile = (text: string) =>
 
 /** A relative link target (no scheme, not an anchor), resolved against `base`. */
 export function relativeFile(href: string | undefined, base?: string) {
-  if (!href || /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || href.startsWith('//'))
+  // A scheme has two letters or more: C:\… is a path on a Windows computer.
+  if (!href || /^[a-z][a-z0-9+.-]+:/i.test(href) || href.startsWith('#') || href.startsWith('//'))
     return undefined
   const path = decodeURI(href.split('#')[0]!.split('?')[0]!)
   if (!path) return undefined
-  if (path.startsWith('/') || !base) return path.replace(/^\.\//, '')
+  if (path.startsWith('/') || /^[a-z]:[\\/]/i.test(path) || !base) return path.replace(/^\.\//, '')
   const parts = [...base.split('/').filter(Boolean), ...path.split('/')]
   const out: string[] = []
   for (const part of parts) {

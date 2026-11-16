@@ -21,6 +21,7 @@ import { libraryDirFor } from './library.js'
 import { run as runAs } from './repos.js'
 import { teammateHome, teammateUser } from './teammates.js'
 import { asTeammate, threadNet } from './thread-net.js'
+import { slashes } from './windows.js'
 
 const run = promisify(execFile)
 export const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
@@ -131,7 +132,7 @@ export async function readThreadFile(request: Request): Promise<Result> {
           !isAbsolute(request.path) && inside(dir, path)
             ? request.path
             : own && inside(own, target)
-              ? relative(own, target)
+              ? slashes(relative(own, target))
               : target,
         teammateId,
         size,
@@ -273,7 +274,7 @@ export function parseGrep(output: string, prefix: string): SourceMatch[] {
     .map((line) => line.split('\0'))
     .filter((parts) => parts.length >= 3 && /^\d+$/.test(parts[1]!))
     .map(([path, line, ...rest]) => ({
-      path: normalize(join(prefix, path!)),
+      path: slashes(normalize(join(prefix, path!))),
       line: Number(line),
       preview: rest.join(' ').trim().slice(0, 200),
     }))
@@ -292,7 +293,7 @@ export async function findSource(request: FindRequest): Promise<FindResult> {
   const root = await real(resolve(dir, request.cwd || '.'), user)
   if (!own || !root || !inside(own, root))
     return { ...base, ok: false, error: "The preview's folder is not in the teammate's folder" }
-  const prefix = relative(own, root)
+  const prefix = slashes(relative(own, root))
   try {
     for (const fragment of fragments(request.text)) {
       const output = await runAs(

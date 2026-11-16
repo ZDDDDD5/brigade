@@ -39,6 +39,7 @@ import {
 import { authClient } from '@/lib/auth-client'
 import { detectDevice, type Device } from '@/lib/device'
 import { MAC_APP_URL } from '@/lib/mac-app'
+import { useWindowsAppReady, WINDOWS_APP_URL } from '@/lib/windows-app'
 import { markSignedIn, markSignedOut } from '@/lib/signed-in'
 import { useLive } from '@/lib/use-live'
 import { cn } from '@/lib/utils'
@@ -303,6 +304,15 @@ function AppleLogo({ className }: { className?: string }) {
   )
 }
 
+/** Windows' mark, in the text color, for the Windows download. */
+function WindowsLogo({ className }: { className?: string }) {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" fill="currentColor" className={cn('size-4', className)}>
+      <path d="M3 3h8.5v8.5H3zM12.5 3H21v8.5h-8.5zM3 12.5h8.5V21H3zM12.5 12.5H21V21h-8.5z" />
+    </svg>
+  )
+}
+
 /** A card's leading icon on a soft tile; violet for Brigade Cloud. */
 function Tile({ children, violet }: { children: React.ReactNode; violet?: boolean }) {
   return (
@@ -515,6 +525,8 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
   }, [reloadAccounts, reloadComputers, check])
 
   useEffect(() => setDevice(detectDevice(navigator.userAgent)), [])
+  // Windows gets Brigade.app's download once the latest release runs teammates there.
+  const windowsReady = useWindowsAppReady()
 
   const getLink = useCallback(() => {
     setError(undefined)
@@ -705,6 +717,29 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
   ) : null
 
   const free = <StatusBadge status="free" tone="success" />
+  /** Brigade.app's download and link, where it runs teammates: a Mac, or a Windows PC. */
+  const app =
+    device === 'mac'
+      ? {
+          os: 'Mac',
+          name: 'Mac',
+          icon: <AppleLogo />,
+          url: MAC_APP_URL,
+          meta: 'Uses the Claude or Codex login already on it. Your teammates work while your Mac is awake.',
+          asks: 'Brigade.app asks before it installs anything.',
+          terminal: true,
+        }
+      : device === 'windows' && windowsReady
+        ? {
+            os: 'Windows',
+            name: 'PC',
+            icon: <WindowsLogo />,
+            url: WINDOWS_APP_URL,
+            meta: 'You sign in to Claude or ChatGPT once it is linked. Your teammates work while your PC is on.',
+            asks: 'Brigade asks before it installs anything, then sets itself up in a few minutes.',
+            terminal: false,
+          }
+        : null
   const until = link && new Date(link.expiresAt).toLocaleTimeString([], { timeStyle: 'short' })
   const expired = !!link && Date.parse(link.expiresAt) <= now
   const slow = !!link && now - link.issuedAt >= SLOW_LINK_MS
@@ -748,36 +783,38 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
         )}
       </CardContent>
     </Card>
-  ) : device === 'mac' ? (
+  ) : app ? (
     <Card className={cn(!link && 'bg-transparent shadow-none')}>
       <CardContent className="flex flex-col gap-4">
         <CardHead
-          icon={<AppleLogo />}
-          title="Run them on this Mac"
-          meta="Uses the Claude or Codex login already on it. Your teammates work while your Mac is awake."
+          icon={app.icon}
+          title={`Run them on this ${app.name}`}
+          meta={app.meta}
           aside={free}
         />
         {!link ? (
           <>
             <Button variant="outline" size="lg" asChild>
-              <a href={MAC_APP_URL} onClick={() => void getLink()}>
-                <AppleLogo />
-                Download Brigade for Mac
+              <a href={app.url} onClick={() => void getLink()}>
+                {app.icon}
+                Download Brigade for {app.os}
               </a>
             </Button>
-            <button
-              type="button"
-              className="text-center text-xs text-muted-foreground"
-              onClick={() => {
-                setTerminal(true)
-                void getLink()
-              }}
-            >
-              Prefer a terminal?{' '}
-              <span className="text-foreground underline underline-offset-4">
-                Get the install command
-              </span>
-            </button>
+            {app.terminal && (
+              <button
+                type="button"
+                className="text-center text-xs text-muted-foreground"
+                onClick={() => {
+                  setTerminal(true)
+                  void getLink()
+                }}
+              >
+                Prefer a terminal?{' '}
+                <span className="text-foreground underline underline-offset-4">
+                  Get the install command
+                </span>
+              </button>
+            )}
           </>
         ) : terminal || !link.appLink ? (
           <>
@@ -793,9 +830,9 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
                   <Check aria-hidden className="size-3" />
                 </span>
                 <span className="flex flex-col gap-0.5">
-                  <span className="text-muted-foreground">Download Brigade for Mac</span>
+                  <span className="text-muted-foreground">Download Brigade for {app.os}</span>
                   <a
-                    href={MAC_APP_URL}
+                    href={app.url}
                     className="text-xs text-muted-foreground underline underline-offset-4"
                   >
                     Download again
@@ -808,9 +845,7 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
                 </span>
                 <span className="flex flex-col items-start gap-2">
                   <span className="font-semibold">Open it and link this workspace</span>
-                  <span className="text-xs text-muted-foreground">
-                    Brigade.app asks before it installs anything.
-                  </span>
+                  <span className="text-xs text-muted-foreground">{app.asks}</span>
                   {!expired && (
                     <Button asChild>
                       <a href={link.appLink}>
@@ -822,13 +857,15 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
                 </span>
               </li>
             </ol>
-            {waitFor('Mac', 'link')}
-            <details className="text-xs text-muted-foreground">
-              <summary className="cursor-pointer text-center">Or run it in a terminal</summary>
-              <div className="mt-2.5">
-                <Command command={link.command} />
-              </div>
-            </details>
+            {waitFor(app.name, 'link')}
+            {app.terminal && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer text-center">Or run it in a terminal</summary>
+                <div className="mt-2.5">
+                  <Command command={link.command} />
+                </div>
+              </details>
+            )}
           </>
         )}
       </CardContent>
@@ -889,7 +926,7 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
         )}
       </CardContent>
     </Card>
-  ) : device === 'other' || device === 'windows' ? (
+  ) : device === 'other' || (device === 'windows' && windowsReady === false) ? (
     <Card className="bg-transparent shadow-none">
       <CardContent className="flex flex-col gap-4">
         <CardHead

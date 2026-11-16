@@ -12,7 +12,8 @@ process.env.BRIGADE_HOME = home
 delete process.env.BRIGADE_CLOUD
 const { Previews } = await import('../src/previews.js')
 
-test.after(() => rm(home, { recursive: true, force: true }))
+// Windows: a process just stopped may still hold the folder a moment.
+test.after(() => rm(home, { recursive: true, force: true, maxRetries: 20 }))
 
 /** A port nothing listens on. */
 async function freePort() {

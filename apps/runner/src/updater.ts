@@ -6,10 +6,12 @@
 // would cut short (a terminal, a sign-in), and not for long. A runner started
 // from source (no install stamp) never updates itself.
 import { spawn, spawnSync } from 'node:child_process'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { paths } from './config.js'
+import { WINDOWS } from './windows.js'
 
 /** The installed runner: <install dir>/runner, holding dist/ and the installer's stamp. */
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
@@ -160,20 +162,46 @@ export class Updater {
   }
 
   /** The API's installer, into this runner's install directory: its download, or putting it in place. */
-  private runInstaller(step: 'stage' | 'swap') {
-    return new Promise<boolean>((resolve) => {
-      const child = spawn(
-        'sh',
-        ['-c', 'curl -fsSL "$1/runner/install.sh" | sh', 'sh', this.options.apiUrl],
-        {
-          cwd: INSTALL_DIR,
-          env: { ...process.env, BRIGADE_INSTALL_DIR: INSTALL_DIR, BRIGADE_INSTALL_STEP: step },
-          stdio: 'inherit',
-        },
-      )
+  private async runInstaller(step: 'stage' | 'swap') {
+    let command: [string, string[]] = [
+      'sh',
+      ['-c', 'curl -fsSL "$1/runner/install.sh" | sh', 'sh', this.options.apiUrl],
+    ]
+    let script: string | undefined
+    if (WINDOWS) {
+      // install.ps1, from a file: Windows PowerShell runs it (see apps/desktop's runner.ts).
+      try {
+        const response = await fetch(`${this.options.apiUrl}/runner/install.ps1`)
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        script = join(tmpdir(), `brigade-install-${process.pid}-${Date.now()}.ps1`)
+        writeFileSync(script, `\ufeff${await response.text()}`)
+      } catch (error) {
+        console.error(`could not download the installer: ${String(error)}`)
+        return false
+      }
+      command = [
+        join(
+          process.env.SystemRoot ?? 'C:\\Windows',
+          'System32',
+          'WindowsPowerShell',
+          'v1.0',
+          'powershell.exe',
+        ),
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+      ]
+    }
+    const ok = await new Promise<boolean>((resolve) => {
+      const child = spawn(command[0], command[1], {
+        cwd: INSTALL_DIR,
+        env: { ...process.env, BRIGADE_INSTALL_DIR: INSTALL_DIR, BRIGADE_INSTALL_STEP: step },
+        stdio: 'inherit',
+        windowsHide: true,
+      })
       child.on('error', () => resolve(false))
       child.on('close', (code) => resolve(code === 0))
     })
+    if (script) rmSync(script, { force: true })
+    return ok
   }
 
   /**
@@ -183,9 +211,15 @@ export class Updater {
    */
   private restart(): never {
     if (process.env.BRIGADE_SUPERVISED || process.env.INVOCATION_ID) process.exit(UPDATED_EXIT_CODE)
-    const result = spawnSync(join(INSTALL_DIR, 'bin', 'brigade-runner'), process.argv.slice(2), {
-      stdio: 'inherit',
-    })
+    const result = WINDOWS
+      ? spawnSync(
+          process.env.ComSpec ?? 'cmd.exe',
+          ['/d', '/c', join(INSTALL_DIR, 'bin', 'brigade-runner.cmd'), ...process.argv.slice(2)],
+          { stdio: 'inherit' },
+        )
+      : spawnSync(join(INSTALL_DIR, 'bin', 'brigade-runner'), process.argv.slice(2), {
+          stdio: 'inherit',
+        })
     process.exit(result.status ?? 1)
   }
 }

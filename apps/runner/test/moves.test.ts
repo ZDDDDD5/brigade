@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { copyFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, normalize } from 'node:path'
 import { test } from 'node:test'
 
 const home = await mkdtemp(join(tmpdir(), 'brigade-moves-'))
@@ -171,7 +171,10 @@ test("a checkout brought from another computer borrows from this one's cache", a
   await repairCaches(workDir, access, undefined, true)
   assert.equal(git(checkout, 'log', '--format=%s').toString().trim(), 'pushed')
   assert.equal(
-    (await readFile(join(checkout, '.git', 'objects', 'info', 'alternates'), 'utf8')).trim(),
+    // Windows: git takes C:\…/objects as it is written.
+    normalize(
+      (await readFile(join(checkout, '.git', 'objects', 'info', 'alternates'), 'utf8')).trim(),
+    ),
     join(home, 'repos', 'acme', 'web.git', 'objects'),
   )
 })

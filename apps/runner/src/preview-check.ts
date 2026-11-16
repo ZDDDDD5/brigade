@@ -9,6 +9,7 @@ import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { chromium, type Page } from 'playwright-core'
+import { WINDOWS_CHROMES } from './windows.js'
 
 type Input = {
   /** What a person opens: the preview's address, with its token when it needs one. */
@@ -44,6 +45,7 @@ const CHROMES = [
   '/usr/bin/chromium',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  ...WINDOWS_CHROMES,
 ]
 /** A first visit to a dev server compiles the page: wait that long for it. */
 const LOAD_MS = 90_000

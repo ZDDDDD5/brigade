@@ -111,3 +111,29 @@ index 038412507fee769dadbb0f26f0e549d37393b204..838b3dbfcb920ab1ec039c296fb12006
  	const markerPath = bootstrapMarkerPath({
  		recipe,
  		identity,
+diff --git a/dist/utils/index.js b/dist/utils/index.js
+index 225ab9817f3d30c057c4441eceda28b29ce094ac..3448374590c493f3a17de2a85a7db343974098cc 100644
+--- a/dist/utils/index.js
++++ b/dist/utils/index.js
+@@ -1018,7 +1018,9 @@ function isInstructionsMetadata(value) {
+ 	return candidate.version === INSTRUCTIONS_METADATA_VERSION && (candidate.originalContent === null || typeof candidate.originalContent === "string") && typeof candidate.instructions === "string" && typeof candidate.appliedContent === "string";
+ }
+ async function writeInstructionsMetadata({ sandbox, metadataPath, metadata, abortSignal }) {
+-	const temporaryPath = `${metadataPath}.tmp`;
++	// Brigade: a temporary file of its own, so two sessions writing at once (a turn and its
++	// title on one computer) never move each other's.
++	const temporaryPath = `${metadataPath}.${randomBytes(8).toString("hex")}.tmp`;
+ 	await sandbox.writeTextFile({
+ 		path: temporaryPath,
+ 		content: `${JSON.stringify(metadata, null, 2)}\n`,
+@@ -1260,7 +1262,9 @@ function isSkillsManifest(value) {
+ 	return true;
+ }
+ async function writeSkillsManifest({ sandbox, manifestPath, manifest, abortSignal }) {
+-	const temporaryPath = `${manifestPath}.tmp`;
++	// Brigade: a temporary file of its own, so two sessions writing at once (a turn and its
++	// title on one computer) never move each other's.
++	const temporaryPath = `${manifestPath}.${randomBytes(8).toString("hex")}.tmp`;
+ 	await sandbox.writeTextFile({
+ 		path: temporaryPath,
+ 		content: `${JSON.stringify(manifest, null, 2)}\n`,

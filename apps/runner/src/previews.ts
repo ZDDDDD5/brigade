@@ -109,6 +109,7 @@ import {
 } from './preview-proxy.js'
 import type { Candidate } from './memory-guard.js'
 import { processes, processGroups } from './process-groups.js'
+import { groupAlive, ownGroup, stopTree, WINDOWS } from './windows.js'
 import { runAsUser } from './run-as.js'
 import { asTeammate, threadNet, type ThreadNet } from './thread-net.js'
 import { composeProject, containerEnv, teammateHome } from './teammates.js'
@@ -1063,6 +1064,9 @@ export class Previews {
     const asleep = remote?.asleep === true
     if (!asleep && (!run?.following || remote?.waking)) return null
     if (!remote && !run?.pid) return null
+    // Windows: the app outlives the runner, but not the shell that leads it (windows.ts), so the
+    // next runner could not stop it as one: it is started again there instead.
+    if (!remote && WINDOWS) return null
     const { check, ...info } = preview.info
     return {
       seat: preview.seat,
@@ -1860,7 +1864,7 @@ export class Previews {
         cwd: '/',
         env: preview.env,
         stdio: ['ignore', out, out, ...(cgroup ? (['pipe'] as const) : [])],
-        detached: true,
+        ...ownGroup(),
       })
     } finally {
       closeSync(out)
@@ -2727,11 +2731,7 @@ export class Previews {
       ).on('error', () => undefined)
       return
     }
-    try {
-      process.kill(-group, signal === 'TERM' ? 'SIGTERM' : 'SIGKILL')
-    } catch {
-      // already gone
-    }
+    void stopTree(group, signal === 'TERM' ? 'SIGTERM' : 'SIGKILL')
   }
 
   private append(preview: Preview, text: string) {
@@ -2978,15 +2978,7 @@ function cut(file: string, size: number) {
 async function groupGone(pgid: number | undefined, ms = 10_000) {
   if (!pgid) return
   const until = Date.now() + ms
-  const left = () => {
-    try {
-      process.kill(-pgid, 0)
-      return true
-    } catch (error) {
-      return (error as NodeJS.ErrnoException).code === 'EPERM'
-    }
-  }
-  while (left() && Date.now() < until) await sleep(50)
+  while (groupAlive(pgid) && Date.now() < until) await sleep(50)
 }
 
 /** ps gives start times to the second, and a run is noted just after its leader started. */
@@ -3055,8 +3047,12 @@ async function resume([user, sessionId, ids]: Paused): Promise<string[]> {
   )
 }
 
-/** Its processes can be stopped and resumed with signals: the runner's own, on a member's machine. */
-const stoppable = (preview: Preview) => !CLOUD && !preview.seat.runAs && Boolean(preview.group)
+/**
+ * Its processes can be stopped and resumed with signals: the runner's own, on a member's machine.
+ * Not on Windows, which has no such signals: a preview there runs until stopped.
+ */
+const stoppable = (preview: Preview) =>
+  !CLOUD && !WINDOWS && !preview.seat.runAs && Boolean(preview.group)
 
 /** Stop or resume the preview's process group, where stoppable. */
 function signalGroup(preview: Preview, signal: 'SIGSTOP' | 'SIGCONT') {
@@ -3233,7 +3229,7 @@ async function keepEnvFiles(
   const dir = seat.runAs
     ? `${teammateHome(seat.runAs)}/.credentials/preview-${seat.sessionId}-${randomUUID()}`
     : join(HOME, 'credentials', `preview-${seat.sessionId}-${randomUUID()}`)
-  const copies = files.map((file, i) => join(dir, `${i}-${file.split('/').pop()}`))
+  const copies = files.map((file, i) => join(dir, `${i}-${basename(file)}`))
   await runAsUser(
     [
       'sh',

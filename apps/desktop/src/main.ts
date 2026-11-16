@@ -65,14 +65,21 @@ function start() {
   if (process.platform === 'win32') app.setAppUserModelId('ai.brigade.desktop')
 
   // Open at login, turned on once on the first launch; after that it is the person's choice.
-  // Windows runs no teammates: Brigade starts there when the person opens it.
   const settings = loadSettings()
   if (!settings.loginSet) {
     if (runnerSupported()) autostart.enable()
     updateSettings((s) => {
       s.loginSet = true
     })
+  } else if (process.platform === 'win32' && !settings.loginSetWindowsRunner) {
+    // Windows ran no teammates before, so Brigade did not open at login there: once, now that
+    // it does, as on a first launch.
+    autostart.enable()
   }
+  if (process.platform === 'win32' && !settings.loginSetWindowsRunner)
+    updateSettings((s) => {
+      s.loginSetWindowsRunner = true
+    })
   // An entry left on another copy (moved, renamed) follows this one, once it is installed.
   autostart.refresh(
     app.isPackaged && (process.platform !== 'darwin' || app.isInApplicationsFolder()),

@@ -18,6 +18,8 @@ export type Settings = {
   dashboardUrl?: string | null
   /** Open at login was turned on once, on the first launch; after that it is the person's choice. */
   loginSet?: boolean
+  /** Windows: open at login was turned on once, when Brigade started running teammates there. */
+  loginSetWindowsRunner?: boolean
   /** Keep screen awake, off until the person turns it on. */
   keepAwake?: boolean
   /** The screenshot shortcut picked in the menu; null for the default. */

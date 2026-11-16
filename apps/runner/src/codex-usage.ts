@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import type { AccountRef, AgentEvent } from '@brigade/contracts'
 import { accountEnv } from './accounts.js'
 import { harnessEnv } from './harness/env.js'
+import { vendorCli } from './vendor-cli.js'
 
 export type Limits = NonNullable<Extract<AgentEvent, { type: 'usage.updated' }>['limits']>
 
@@ -57,10 +58,23 @@ function ask(
   method = 'account/rateLimits/read',
   params?: Record<string, unknown>,
 ): Promise<unknown> {
+  return vendorCli('codex').then((cli) => {
+    if (!cli) throw new Error('Codex is not installed on this computer yet')
+    return askWith(cli, account, method, params)
+  })
+}
+
+function askWith(
+  cli: [string, string[]],
+  account: AccountRef,
+  method: string,
+  params?: Record<string, unknown>,
+): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const child = spawn('codex', ['app-server'], {
+    const child = spawn(cli[0], [...cli[1], 'app-server'], {
       env: harnessEnv(accountEnv(account)),
       stdio: ['pipe', 'pipe', 'ignore'],
+      windowsHide: true,
     })
     let settled = false
     const done = (error: Error | null, result?: unknown) => {

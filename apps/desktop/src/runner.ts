@@ -2,7 +2,12 @@
 // bundle and its wrapper, bin/brigade-runner, which starts the new runner when it updates
 // itself (exit code 75). Brigade.app installs it with that same script, links it with a code
 // from the dashboard, and keeps `brigade-runner start` running. The runner keeps updating
-// itself as before. macOS and Linux: the runner and its install script are POSIX only.
+// itself as before.
+//
+// Windows: the API's install.ps1 sets up the same ~/.brigade, with Node.js and Git for Windows
+// in folders of their own (bin\node-path.txt names Node). The app starts node itself rather than
+// the wrapper (bin\brigade-runner.cmd): with no signals on Windows, it asks the runner to stop
+// over the IPC channel between them, and starts it again when it exits 75 (an update).
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import {
   closeSync,
@@ -15,6 +20,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { home, logFile } from './settings.js'
@@ -33,7 +39,7 @@ export type Status =
   /** The runner stopped and will start again shortly. */
   | { kind: 'restarting'; reason: string }
   | { kind: 'stopped' }
-  /** Windows: no runner there yet. */
+  /** A platform the runner does not run on. */
   | { kind: 'unsupported' }
 
 export function label(status: Status) {
@@ -52,15 +58,44 @@ export function label(status: Status) {
     case 'stopped':
       return 'Stopped'
     case 'unsupported':
-      return 'Teammates run on macOS and Linux'
+      return 'Teammates run on macOS, Windows and Linux'
   }
 }
 
-/** Whether this computer can run teammates: the runner and its installer are POSIX only. */
+/** Whether this computer can run teammates. */
 export const runnerSupported = (platform = process.platform) =>
-  platform === 'darwin' || platform === 'linux'
+  platform === 'darwin' || platform === 'linux' || platform === 'win32'
+
+const WINDOWS = process.platform === 'win32'
+
+/** Exit code of a runner that updated itself: the new one starts at once. */
+export const UPDATED = 75
 
 const wrapper = () => join(home(), 'bin', 'brigade-runner')
+
+/** Windows: the Node.js the installer set up, as bin\node-path.txt names it. */
+function windowsNode() {
+  try {
+    return readFileSync(join(home(), 'bin', 'node-path.txt'), 'utf8')
+      .split(/\r?\n/)[0]!
+      .trim()
+  } catch {
+    return undefined
+  }
+}
+
+/** The runner's entry point, run by node on Windows. */
+const windowsEntry = () => join(home(), 'runner', 'dist', 'index.js')
+
+/** Whether the runner is installed. */
+const installed = () =>
+  WINDOWS ? Boolean(windowsNode() && existsSync(windowsEntry())) : existsSync(wrapper())
+
+/** What runs `brigade-runner <args>`: the wrapper, or on Windows node with the runner's entry. */
+export function runnerCommand(args: string[], platform = process.platform): [string, string[]] {
+  if (platform !== 'win32') return [wrapper(), args]
+  return [windowsNode() ?? 'node.exe', [windowsEntry(), ...args]]
+}
 
 /** The home of the workspace the runner runs for: its runner.json, runner.pid, state. */
 const workspaceHome = () => workspaces.homeOf(workspaces.active())
@@ -91,10 +126,27 @@ export function pathEnv(path = process.env.PATH) {
   return path ? `${base}:${path}` : base
 }
 
-/** A command whose output goes to the runner's log, in a process group of its own. */
-function start(program: string, args: string[], env: NodeJS.ProcessEnv = {}): ChildProcess {
+/**
+ * A command whose output goes to the runner's log, in a process group of its own. On Windows,
+ * without a window, and with an IPC channel when `ipc` (the runner itself: see terminate). The
+ * PATH stays as Windows gives it, under its own name (Path): the runner finds its own tools.
+ */
+function start(
+  program: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = {},
+  ipc = false,
+): ChildProcess {
   const log = openLog()
   try {
+    if (WINDOWS)
+      return spawn(program, args, {
+        env: { ...process.env, ...env },
+        stdio: ipc ? ['ignore', log, log, 'ipc'] : ['ignore', log, log],
+        // Not detached: a detached process gets no console, and each console program the runner
+        // starts would open a window of its own. The runner ends with the app (Node's job object).
+        windowsHide: true,
+      })
     return spawn(program, args, {
       env: { ...process.env, PATH: pathEnv(), ...env },
       stdio: ['ignore', log, log],
@@ -132,6 +184,12 @@ async function output(program: string, args: string[]) {
   }
 }
 
+/** Windows: whether a process runs, and is node (pids are given out again). */
+async function windowsNodeRuns(pid: number) {
+  const listed = await output('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'])
+  return /^"node\.exe"/im.test(listed)
+}
+
 /** A runner this app did not start, e.g. in a terminal: the one holding runner.pid (newer
  * runners), or one `pgrep` finds by its entry point (older ones). */
 async function runningElsewhere() {
@@ -140,6 +198,10 @@ async function runningElsewhere() {
     const holder = Number(readFileSync(join(workspaceHome(), 'runner.pid'), 'utf8').trim())
     if (Number.isInteger(holder) && holder > 0) pids.add(holder)
   } catch {}
+  if (WINDOWS) {
+    for (const pid of pids) if (alive(pid) && (await windowsNodeRuns(pid))) return true
+    return false
+  }
   for (const line of (await output('pgrep', ['-f', 'runner/dist/index.js start'])).split('\n')) {
     const pid = Number(line.trim())
     if (Number.isInteger(pid) && pid > 0) pids.add(pid)
@@ -178,7 +240,10 @@ async function stopOrphan() {
   } catch {
     return
   }
-  if (Number.isInteger(group) && group > 1) {
+  if (Number.isInteger(group) && group > 1 && WINDOWS) {
+    // The runner ends with the app that started it (see start): one left is ended with its tree.
+    if (alive(group) && (await windowsNodeRuns(group))) await taskkill(group)
+  } else if (Number.isInteger(group) && group > 1) {
     const command = await output('ps', ['-o', 'command=', '-p', String(group)])
     if (command.includes('brigade-runner')) {
       signalGroup(group, 'SIGTERM')
@@ -194,17 +259,46 @@ async function stopOrphan() {
 
 type Running = { process: ChildProcess; exited: Promise<number | null> }
 
+/** Windows: ends a process and all it started. */
+const taskkill = (pid: number) =>
+  new Promise<void>((resolve) =>
+    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true }, () => resolve()),
+  )
+
 /** SIGTERM to the whole group (the wrapper and node): the runner freezes a turn in progress and
- * carries on with it after the next start. Killed after a minute. */
+ * carries on with it after the next start. Killed after a minute. On Windows, which has no
+ * SIGTERM, the same ask goes over the IPC channel, and the end is its process tree's. */
 async function terminate(child: Running, graceMs: number) {
   const group = child.process.pid
   if (!group) return
-  signalGroup(group, 'SIGTERM')
+  if (WINDOWS) {
+    try {
+      if (child.process.connected) child.process.send('brigade:stop')
+    } catch {}
+  } else signalGroup(group, 'SIGTERM')
   const done = await Promise.race([child.exited.then(() => true), sleep(graceMs).then(() => false)])
   if (!done) {
-    signalGroup(group, 'SIGKILL')
+    if (WINDOWS) await taskkill(group)
+    else signalGroup(group, 'SIGKILL')
     await child.exited
   }
+}
+
+/**
+ * Windows: the API's install.ps1, downloaded, then run by Windows PowerShell (on every Windows 10
+ * and 11) from a file rather than piped in, which antivirus tools take for an attack.
+ */
+async function windowsInstaller(api: string): Promise<[string, string[]]> {
+  const response = await fetch(`${api}/runner/install.ps1`)
+  if (!response.ok) throw new Error(`Could not download the installer (${response.status})`)
+  const file = join(tmpdir(), `brigade-install-${process.pid}-${Date.now()}.ps1`)
+  // PowerShell 5.1 reads a file without a byte order mark as the system's code page.
+  writeFileSync(file, `\ufeff${await response.text()}`)
+  const system = process.env.SystemRoot ?? 'C:\\Windows'
+  return [
+    join(system, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file],
+  ]
 }
 
 export type SupervisorOptions = {
@@ -267,7 +361,7 @@ export class Supervisor {
     let backoff = this.options.backoffMs ?? 2_000
     const first = backoff
     while (this.current(generation)) {
-      const name = existsSync(wrapper()) ? workspace() : undefined
+      const name = installed() ? workspace() : undefined
       if (!name) return this.set({ kind: 'notConnected' })
       await stopOrphan()
       if (!this.current(generation)) return
@@ -280,10 +374,18 @@ export class Supervisor {
       if (!this.current(generation)) return
       let child: ChildProcess
       try {
-        child = start(wrapper(), ['start'], {
-          BRIGADE_HOME: workspaceHome(),
-          ...(this.options.helper && { BRIGADE_COMPUTER_USE_APP: this.options.helper }),
-        })
+        const [program, args] = runnerCommand(['start'])
+        child = start(
+          program,
+          args,
+          {
+            BRIGADE_HOME: workspaceHome(),
+            ...(this.options.helper && { BRIGADE_COMPUTER_USE_APP: this.options.helper }),
+            // The wrapper says so on macOS and Linux: an update exits 75, for a new start.
+            ...(WINDOWS && { BRIGADE_SUPERVISED: '1' }),
+          },
+          WINDOWS,
+        )
       } catch (error) {
         this.set({ kind: 'restarting', reason: (error as Error).message })
         await sleep(backoff)
@@ -310,6 +412,11 @@ export class Supervisor {
       rmSync(groupFile(), { force: true })
       if (!this.current(generation)) return
       if (code === ALREADY_RUNNING) return this.set({ kind: 'elsewhere' })
+      // Updated (Windows, where no wrapper runs it again): the new runner, at once.
+      if (code === UPDATED) {
+        backoff = first
+        continue
+      }
       // A runner that ran for a while gets a quick restart; one that keeps failing waits longer.
       backoff = Date.now() - started > 60_000 ? first : Math.min(backoff * 2, 60_000)
       const reason = failure ?? (code === null ? 'stopped' : `exited with code ${code}`)
@@ -342,18 +449,18 @@ export class Supervisor {
       this.set({ kind: 'installing' })
       const target = workspaces.homeOf(key)
       let error: string | undefined
+      let installer: string | undefined
       try {
-        const installed = await complete(
-          'sh',
-          ['-c', 'curl -fsSL "$1/runner/install.sh" | sh', 'sh', api],
-          { BRIGADE_INSTALL_DIR: home() },
-        )
-        if (installed !== 0) error = 'The runner could not be installed. See the logs.'
+        const [program, args] = WINDOWS
+          ? await windowsInstaller(api)
+          : ['sh', ['-c', 'curl -fsSL "$1/runner/install.sh" | sh', 'sh', api]]
+        if (WINDOWS) installer = args.at(-1)
+        const done = await complete(program, args, { BRIGADE_INSTALL_DIR: home() })
+        if (done !== 0) error = 'The runner could not be installed. See the logs.'
         else {
           mkdirSync(target, { recursive: true })
-          const linked = await complete(wrapper(), ['link', code, '--api', api], {
-            BRIGADE_HOME: target,
-          })
+          const [runner, linkArgs] = runnerCommand(['link', code, '--api', api])
+          const linked = await complete(runner, linkArgs, { BRIGADE_HOME: target })
           if (linked !== 0)
             error =
               'This link code did not work: it may have expired. Get a new one in the dashboard.'
@@ -361,6 +468,7 @@ export class Supervisor {
       } catch (failure) {
         error = (failure as Error).message
       }
+      if (installer) rmSync(installer, { force: true })
       if (!error) workspaces.setActive(key)
       // A home made for this link and never linked: nothing in it to keep.
       else if (created && !existsSync(join(target, 'runner.json')))

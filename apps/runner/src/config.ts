@@ -116,7 +116,14 @@ const PID_FILE = join(HOME, 'runner.pid')
 function liveRunner(pid: number) {
   try {
     process.kill(pid, 0)
-    const command = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
+    // Windows: its image name, from tasklist (it has no ps).
+    const command =
+      process.platform === 'win32'
+        ? execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], {
+            encoding: 'utf8',
+            windowsHide: true,
+          })
+        : execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' })
     return /node|tsx/.test(command)
   } catch {
     return false

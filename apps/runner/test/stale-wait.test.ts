@@ -320,7 +320,8 @@ test('a turn handed over while working is not ended for it', { timeout: 20_000 }
 
 test(
   'an update hands the wait over with the turn, and leaves ending it to the next runner',
-  { timeout: 20_000 },
+  // Windows hands no turn over (docs/windows.md).
+  { skip: process.platform === 'win32', timeout: 20_000 },
   async () => {
     const stop = new AbortController()
     const t = await stuckTurn([waitingWord(true)], { signal: stop.signal })
@@ -520,7 +521,8 @@ test(
 // HAND_OVER_MS; the turn was stopped and started again, and the command's id went with the call.
 test(
   'an update during a wait on the machine ends the wait with the command, and hands the turn over',
-  { timeout: 30_000 },
+  // Windows hands no turn over (docs/windows.md).
+  { skip: process.platform === 'win32', timeout: 30_000 },
   async () => {
     const stop = new AbortController()
     const t = await stuckTurn([waitingWord(true)], { signal: stop.signal })

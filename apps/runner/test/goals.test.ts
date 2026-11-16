@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { test } from 'node:test'
+
+const WIN = process.platform === 'win32'
 import { commandPrompt, GOAL_ASK, ScheduleOperation } from '@brigade/contracts'
 import { measureGoal } from '../src/goal-measure.js'
 import { THREAD_TOOLS } from '../src/harness/thread-tools.js'
@@ -108,12 +110,16 @@ test('a command measurement: its exit code and the end of its output, stopped at
       timeoutSeconds: 10,
     }
     const failing = await measureGoal(
-      { ...base, command: 'pwd; echo "3 failing" >&2; exit 2' },
+      // pwd -W: Git Bash's folder as Windows names it.
+      { ...base, command: `pwd${WIN ? ' -W' : ''}; echo "3 failing" >&2; exit 2` },
       { dir, user: undefined },
     )
     assert.equal(failing.exitCode, 2)
     assert.match(failing.output, /3 failing/)
-    assert.ok(failing.output.includes(dir), 'run in the thread’s working folder')
+    assert.ok(
+      failing.output.includes(WIN ? basename(dir) : dir),
+      'run in the thread’s working folder',
+    )
     const passing = await measureGoal({ ...base, command: 'true' }, { dir, user: undefined })
     assert.equal(passing.exitCode, 0)
     const started = Date.now()

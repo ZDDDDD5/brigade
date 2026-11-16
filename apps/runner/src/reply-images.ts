@@ -37,7 +37,8 @@ const TYPES: { ext: string; type: string; is: (b: Buffer) => boolean }[] = [
  * base): undefined for an address, an anchor or anything but an image.
  */
 export function imagePath(href: string) {
-  if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('#') || href.startsWith('//'))
+  // A scheme has two letters or more: C:\… is a Windows path.
+  if (/^[a-z][a-z0-9+.-]+:/i.test(href) || href.startsWith('#') || href.startsWith('//'))
     return undefined
   let path: string
   try {

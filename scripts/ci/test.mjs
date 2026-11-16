@@ -10,8 +10,10 @@
 //
 // REQUIRE_DATABASE=1: a suite skipped because no database answers fails the run, rather than
 // passing with its tests left out. TEST_CONCURRENCY: files run at once (one fewer than the CPUs).
+// On Windows, the files test/not-on-windows.txt lists (one per line, `# why` after it) are left
+// out: what the runner does only on Linux or macOS. Every other file runs there too.
 import { spawn } from 'node:child_process'
-import { appendFileSync, readdirSync } from 'node:fs'
+import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs'
 import { availableParallelism } from 'node:os'
 import { join } from 'node:path'
 
@@ -23,10 +25,24 @@ if (!folder) {
 /** A file still running after this long is stopped and fails: one that hangs never holds the job. */
 const FILE_TIMEOUT_MS = 5 * 60_000
 const concurrency = Number(process.env.TEST_CONCURRENCY) || Math.max(1, availableParallelism() - 1)
+const notHere = new Set()
+const skipList = join(folder, 'test', 'not-on-windows.txt')
+if (process.platform === 'win32' && existsSync(skipList))
+  for (const line of readFileSync(skipList, 'utf8').split(/\r?\n/)) {
+    const name = line.replace(/#.*/, '').trim()
+    if (name) notHere.add(name)
+  }
+// On Windows, a package's test/windows-setup.ts runs first in each file: what its program does as
+// it starts there (the runner puts Git for Windows' tools on its PATH).
+const windowsSetup =
+  process.platform === 'win32' && existsSync(join(folder, 'test', 'windows-setup.ts'))
+    ? ['--import', './test/windows-setup.ts']
+    : []
 const files = readdirSync(join(folder, 'test'))
-  .filter((name) => /\.test\.(ts|mjs|js)$/.test(name))
+  .filter((name) => /\.test\.(ts|mjs|js)$/.test(name) && !notHere.has(name))
   .sort()
   .map((name) => `test/${name}`)
+if (notHere.size) console.log(`not on Windows (${skipList}): ${notHere.size} file(s)`)
 
 /** One run of a test file: whether it passed, and what it printed. */
 function run(file) {
@@ -34,7 +50,7 @@ function run(file) {
     const started = Date.now()
     const child = spawn(
       process.execPath,
-      [...nodeOptions, '--test', '--test-reporter=spec', file],
+      [...nodeOptions, ...windowsSetup, '--test', '--test-reporter=spec', file],
       {
         cwd: folder,
         env: process.env,
@@ -135,6 +151,11 @@ const again = await pool(failed, 1, (file) => report(file, 1))
 const broken = again.filter((r) => !r.ok)
 const flaky = again.filter((r) => r.ok)
 
+// GitHub shows 10 errors a step: the whole list first, as a notice of its own.
+if (broken.length)
+  console.log(
+    `::notice title=${property(`${folder}: ${broken.length} test file(s) failed`)}::${data(broken.map((r) => r.file).join('\n'))}`,
+  )
 for (const result of broken) {
   console.log(`::group::${join(folder, result.file)} failed twice`)
   console.log(result.output)

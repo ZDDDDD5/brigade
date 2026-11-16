@@ -111,6 +111,7 @@ import {
   ticketResult,
 } from './events.js'
 import { createLocalSandboxSession, freePort, stopGroup } from './local-sandbox.js'
+import { toNative, WINDOWS } from '../windows.js'
 import { SIDE_REPLY_ENV } from './side-reply-env.js'
 import { claimHandOver, type HandedOver } from '../hand-over.js'
 import { asTeammate, bridgeBrowser, threadNet } from '../thread-net.js'
@@ -164,6 +165,7 @@ import {
   widgetGuideTool,
 } from './tools.js'
 import { desktopTools, macAppInput, macDesktopExec, type Desktop } from './desktop-tools.js'
+import { localDesktopExec, windowsComputer } from './windows-computer.js'
 
 export type {
   ConnectorCaller,
@@ -529,7 +531,11 @@ function createAgent(
           : {}),
         ...(makeImage ? imageTools(makeImage) : {}),
         ...(computer
-          ? computerUseTools(computer, desktop?.where === 'mac' ? macAppInput(desktop) : undefined)
+          ? computerUseTools(
+              computer,
+              desktop && desktop.where !== 'cloud' ? macAppInput(desktop) : undefined,
+              desktop?.where === 'windows' ? 'windows' : 'mac',
+            )
           : {}),
         // Apps read and used by accessibility refs: on a Mac beside the tools above, on a cloud
         // computer in the teammate's own browser window.
@@ -1488,7 +1494,9 @@ export class HarnessThread {
     this.handingOver = false
     // Pi runs in this runner, and stops with it: nothing goes on for the next runner to attach
     // to. Its conversation so far is kept, and the next runner continues the turn (recover).
-    const inRunner = this.spec.teammate.harness === 'pi'
+    // So on Windows, where a harness's processes cannot be followed across a restart (no
+    // process groups, and the shell that leads them ends with the runner: windows.ts).
+    const inRunner = this.spec.teammate.harness === 'pi' || WINDOWS
     if (!resume || groups.length === 0 || inRunner) {
       this.handOverFailed = true
       this.saved = { ...this.saved!, ...(inRunner && resume ? { resume } : {}), inTurn: true }
@@ -1541,7 +1549,7 @@ export class HarnessThread {
       this.steeredPending = !!handed.steered
       return handed.groups
     }
-    for (const pgid of handed.groups) stopGroup(pgid, this.runAs)
+    for (const pgid of handed.groups) void stopGroup(pgid, this.runAs)
     saved.resume = withoutBridge(saved.resume)
     return []
   }
@@ -1989,6 +1997,7 @@ export class HarnessThread {
         if (mapper.lost) return lost(mapper.error)
         return { kind: 'done', result: { status: 'failed', error: mapper.error } }
       }
+      if (signal.aborted) await this.endCommands(live)
       this.completed(signal.aborted ? 'interrupted' : mapper.finishReason)
       await this.persist()
       return { kind: 'done', result: { status: 'idle' } }
@@ -2000,6 +2009,7 @@ export class HarnessThread {
       }
       if (frozenUnder()) return { kind: 'done', result: { status: 'waiting' } }
       if (signal.aborted) {
+        await this.endCommands(attached)
         this.completed('interrupted')
         return { kind: 'done', result: { status: 'idle' } }
       }
@@ -2057,7 +2067,9 @@ export class HarnessThread {
    * helper, answering that it's missing: a thread that used them can't resume without them.
    */
   private computerUse(): ComputerUse | undefined {
-    if (this.runAs || process.platform !== 'darwin') return
+    if (this.runAs) return
+    if (WINDOWS) return windowsComputer(this.windowsDesktop().exec, this.computerBase())
+    if (process.platform !== 'darwin') return
     const client = computerUseClient()
     return {
       request: (method, params, signal, options) =>
@@ -2078,6 +2090,13 @@ export class HarnessThread {
                   '(it includes it), then try again.',
               ),
             ),
+      ...this.computerBase(),
+    }
+  }
+
+  /** What computer use on a member's computer needs beside its requests. */
+  private computerBase(): Omit<ComputerUse, 'request'> {
+    return {
       workDir: this.workDir,
       env: () => harnessEnv(),
       screenshotPath: () => {
@@ -2092,6 +2111,34 @@ export class HarnessThread {
           prompt: 'Screenshot of the screen',
         }),
     }
+  }
+
+  /**
+   * On a member's Windows PC: agent-desktop run by the runner, which runs in the person's session
+   * (windows-computer.ts), beside the screen tools.
+   */
+  private windowsDesktop(): Desktop {
+    return {
+      exec: localDesktopExec(
+        async (signal) => (await ensureAgentDesktop(signal ? { signal } : {})).path,
+      ),
+      where: 'windows',
+    }
+  }
+
+  /**
+   * An interrupted turn's commands end with it. Codex on Windows ends the turn but not the
+   * command it runs (a write it was about to make would land after Stop, or in the next turn).
+   */
+  private async endCommands(live: Live | undefined) {
+    if (!WINDOWS || !live) return
+    await live.sandbox
+      .stopCommands()
+      .catch((error: unknown) =>
+        console.warn(
+          `${this.key}: could not end the interrupted turn's commands: ${errorMessage(error)}`,
+        ),
+      )
   }
 
   /** On a member's Mac: agent-desktop through Brigade Computer Use, beside the other computer tools. */
@@ -2468,7 +2515,11 @@ export class HarnessThread {
       this.context.preview,
       this.spec.imageAccount ? (input, signal) => this.makeImage(input, signal) : undefined,
       computer,
-      computer ? this.macDesktop(computer) : this.cloudDesktop(),
+      computer
+        ? WINDOWS
+          ? this.windowsDesktop()
+          : this.macDesktop(computer)
+        : this.cloudDesktop(),
       this.context.machine,
       this.arrivals,
       onPi
@@ -2822,7 +2873,7 @@ async function renderDesign(
   runAs: string | undefined,
   options: { viewports?: string[]; shots?: boolean; thumbnail?: boolean },
 ): Promise<ShotResult> {
-  const dir = folder.replace(/\/+$/, '')
+  const dir = folder.replace(WINDOWS ? /[\\/]+$/ : /\/+$/, '')
   const input = JSON.stringify({
     folder: dir,
     out: join(dirname(dir), '.design-shots', basename(dir)),
@@ -2843,7 +2894,7 @@ async function renderDesign(
 
 /** The files under a folder, as the teammate on a cloud computer: paths relative to it. */
 async function listAs(folder: string, runAs?: string): Promise<string[]> {
-  const dir = folder.replace(/\/+$/, '')
+  const dir = folder.replace(WINDOWS ? /[\\/]+$/ : /\/+$/, '')
   const args = [dir, '-type', 'f', '-print0']
   const { stdout } = await execFileAsync(
     runAs ? 'sudo' : 'find',
@@ -2859,8 +2910,9 @@ async function listAs(folder: string, runAs?: string): Promise<string[]> {
     .sort()
 }
 
+/** A path a teammate names, from its folder. On Windows, C:\…, Git Bash's /c/… or relative. */
 const resolvePath = (workDir: string, file: string) =>
-  file.startsWith('/') ? file : join(workDir, file)
+  WINDOWS ? toNative(file, workDir) : file.startsWith('/') ? file : join(workDir, file)
 
 /**
  * One short harness run outside any thread, with no tools: a prompt in, its

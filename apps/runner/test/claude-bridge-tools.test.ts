@@ -12,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { jsonSchema, tool, type ToolSet } from 'ai'
 import { bridgeTurn } from './fixtures/claude-bridge.js'
 
@@ -306,7 +306,7 @@ test('schemas no turn used for 30 days, and old files of other bridge versions, 
     assert.ok(after.recent)
     assert.deepEqual(
       (await readdir(schemasDir(home))).sort(),
-      ['1111111111111111.json', file.split('/').pop()].sort(),
+      ['1111111111111111.json', basename(file)].sort(),
     )
   })
 })
