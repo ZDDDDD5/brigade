@@ -6,7 +6,7 @@
 // placed in.
 import { Bus, DBusError, variant } from './dbus.js'
 import { buttonNumber, charKeysym, modifierKeysym, parseCombo } from './keys.js'
-import { monitorAt, type Input, type Monitor, type Point } from './input.js'
+import { monitorAt, type Check, type Input, type Monitor, type Point } from './input.js'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -278,7 +278,7 @@ export class MutterInput implements Input {
     await sleep(20)
   }
 
-  async click(p: Point, button: string, count: number, modifiers: string[]) {
+  async click(p: Point, button: string, count: number, modifiers: string[], check?: Check) {
     const number = buttonNumber(button)
     const held = modifiers.map(modifierKeysym)
     await this.place(p)
@@ -286,6 +286,7 @@ export class MutterInput implements Input {
     for (const keysym of held) await this.keysym(keysym, true)
     try {
       for (let i = 0; i < Math.max(1, Math.min(count, 3)); i++) {
+        check?.()
         await this.button(number, true)
         await this.button(number, false)
         await sleep(50)
@@ -295,13 +296,15 @@ export class MutterInput implements Input {
     }
   }
 
-  async drag(from: Point, to: Point) {
+  async drag(from: Point, to: Point, check?: Check) {
     await this.place(from)
+    check?.()
     await this.button(1, true)
     try {
       await sleep(50)
       const steps = 12
       for (let step = 1; step <= steps; step++) {
+        check?.()
         const t = step / steps
         await this.place({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t })
         await sleep(15)
@@ -329,10 +332,11 @@ export class MutterInput implements Input {
    * ("wörld" came out "wrld"): those go in through the toolkit's Unicode entry, Ctrl+Shift+U, the
    * code and Space, which GTK and IBus (so Chromium, Electron and Qt on GNOME) take.
    */
-  async type(text: string) {
+  async type(text: string, check?: Check) {
     // Read each time: the person may have switched layouts since.
     const has = await this.readLayout()
     for (const char of text) {
+      check?.()
       const keysym = charKeysym(char)
       // Return, Tab and the like are in every layout.
       const typable = has

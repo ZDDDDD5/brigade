@@ -4,7 +4,7 @@
 // pixels with the desktop's scale.
 import x11 from 'x11'
 import { buttonNumber, charKeysym, modifierKeysym, parseCombo } from './keys.js'
-import type { Input, Point } from './input.js'
+import type { Check, Input, Point } from './input.js'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -123,40 +123,50 @@ export class X11Input implements Input {
     await sleep(20)
   }
 
-  async click(p: Point, button: string, count: number, modifiers: string[]) {
+  async click(p: Point, button: string, count: number, modifiers: string[], check?: Check) {
     const number = buttonNumber(button)
     const held = await this.keycodes(modifiers.map(modifierKeysym))
     await this.move(p)
+    check?.()
     for (const code of held) this.fake(this.xtest.KeyPress, code)
-    for (let i = 0; i < Math.max(1, Math.min(count, 3)); i++) {
-      this.fake(this.xtest.ButtonPress, number)
-      this.fake(this.xtest.ButtonRelease, number)
-      await this.sync()
-      await sleep(50)
+    try {
+      for (let i = 0; i < Math.max(1, Math.min(count, 3)); i++) {
+        if (i > 0) check?.()
+        this.fake(this.xtest.ButtonPress, number)
+        this.fake(this.xtest.ButtonRelease, number)
+        await this.sync()
+        await sleep(50)
+      }
+    } finally {
+      for (const code of [...held].reverse()) this.fake(this.xtest.KeyRelease, code)
+      await this.sync().catch(() => undefined)
     }
-    for (const code of [...held].reverse()) this.fake(this.xtest.KeyRelease, code)
-    await this.sync()
   }
 
-  async drag(from: Point, to: Point) {
+  async drag(from: Point, to: Point, check?: Check) {
     await this.move(from)
+    check?.()
     this.fake(this.xtest.ButtonPress, 1)
-    await this.sync()
-    await sleep(50)
-    const steps = 12
-    for (let step = 1; step <= steps; step++) {
-      const t = step / steps
-      const { x, y } = this.pixel({
-        x: from.x + (to.x - from.x) * t,
-        y: from.y + (to.y - from.y) * t,
-      })
-      this.fake(this.xtest.MotionNotify, 0, x, y)
+    try {
       await this.sync()
-      await sleep(15)
+      await sleep(50)
+      const steps = 12
+      for (let step = 1; step <= steps; step++) {
+        check?.()
+        const t = step / steps
+        const { x, y } = this.pixel({
+          x: from.x + (to.x - from.x) * t,
+          y: from.y + (to.y - from.y) * t,
+        })
+        this.fake(this.xtest.MotionNotify, 0, x, y)
+        await this.sync()
+        await sleep(15)
+      }
+    } finally {
+      this.fake(this.xtest.ButtonRelease, 1)
+      await this.sync().catch(() => undefined)
+      await sleep(20)
     }
-    this.fake(this.xtest.ButtonRelease, 1)
-    await this.sync()
-    await sleep(20)
   }
 
   async scroll(p: Point, direction: string, amount: number) {
@@ -209,7 +219,7 @@ export class X11Input implements Input {
     })
   }
 
-  async type(text: string) {
+  async type(text: string, check?: Check) {
     const chars = [...text]
     const keysyms = chars.map(charKeysym)
     const plan = await this.plan(keysyms)
@@ -223,6 +233,7 @@ export class X11Input implements Input {
     }
     try {
       for (const keysym of keysyms) {
+        check?.()
         let target = plan.found.get(keysym)
         if (!target) {
           let code = borrowed.get(keysym)

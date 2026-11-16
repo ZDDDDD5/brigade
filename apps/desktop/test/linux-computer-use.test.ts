@@ -10,7 +10,9 @@ import {
 import { cropOf, monitorAt } from '../src/linux/input.js'
 import { charKeysym, keyKeysym, parseCombo } from '../src/linux/keys.js'
 import { mutterMonitors } from '../src/linux/mutter.js'
+import { InputLine } from '../src/linux/input-line.js'
 import { Sessions } from '../src/linux/sessions.js'
+import { X11Input } from '../src/linux/x11-input.js'
 
 test('D-Bus signatures split into complete types', () => {
   assert.deepEqual(splitSignature('sa{sv}ii'), ['s', 'a{sv}', 'i', 'i'])
@@ -160,4 +162,98 @@ test('one teammate turn at a time, until the person presses Stop', () => {
   sessions.begin({ id: 't3' })
   sessions.cancel('t3')
   assert.equal(sessions.hold('t3'), false)
+})
+
+/** XTEST through a stand-in X connection: what was sent, in order. */
+function fakeX11(onKey?: (count: number) => void) {
+  let keys = 0
+  let cursor: { x: number; y: number } | undefined
+  const clicked: { x: number; y: number }[] = []
+  const pressed = new Set<number>()
+  const client = {
+    GetKeyboardMapping: (_s: number, _c: number, cb: (e: null, rows: number[][]) => void) =>
+      cb(null, [
+        [0x61, 0x41],
+        [0xffe1, 0],
+        [0xffe3, 0],
+        [0, 0],
+      ]),
+    GetInputFocus: (cb: (e: null) => void) => setImmediate(() => cb(null)),
+    ChangeKeyboardMapping: () => undefined,
+  }
+  const xtest = {
+    KeyPress: 2,
+    KeyRelease: 3,
+    ButtonPress: 4,
+    ButtonRelease: 5,
+    MotionNotify: 6,
+    FakeInput: (type: number, code: number, _t: number, _w: number, x: number, y: number) => {
+      if (type === 6) cursor = { x, y }
+      if (type === 4) {
+        clicked.push(cursor!)
+        pressed.add(-code)
+      }
+      if (type === 5) pressed.delete(-code)
+      if (type === 2) pressed.add(code)
+      if (type === 3) pressed.delete(code)
+      if (type === 2 && code === 8) onKey?.(++keys)
+    },
+  }
+  // The constructor is private: the stand-in goes in as connect() would put it.
+  const input = new (X11Input as unknown as new (...args: unknown[]) => X11Input)(
+    client,
+    xtest,
+    1,
+    8,
+    11,
+    () => 1,
+  )
+  return { input, clicked, pressed, keys: () => keys }
+}
+
+test('Stop while typing sends no more keys, and releases what it held', async () => {
+  const sessions = new Sessions({ show: () => undefined, hide: () => undefined })
+  const x = fakeX11((count) => count === 5 && sessions.stop())
+  const line = new InputLine(sessions, async () => x.input)
+  const id = sessions.begin({ id: 'typing' })
+  await assert.rejects(
+    line.run(id, (input, check) => input.type('a'.repeat(100), check)),
+    /pressed Stop/,
+  )
+  assert.equal(x.keys(), 5)
+  assert.equal(x.pressed.size, 0)
+  // And the next action of that turn sends nothing.
+  await assert.rejects(
+    line.run(id, (input) => input.key('a')),
+    /pressed Stop/,
+  )
+  assert.equal(x.keys(), 5)
+})
+
+test('two clicks sent at once each land on their own point', async () => {
+  const sessions = new Sessions({ show: () => undefined, hide: () => undefined })
+  const x = fakeX11()
+  const line = new InputLine(sessions, async () => x.input)
+  const id = sessions.begin({ id: 'clicks' })
+  await Promise.all([
+    line.run(id, (input, check) => input.click({ x: 10, y: 10 }, 'left', 1, [], check)),
+    line.run(id, (input, check) => input.click({ x: 200, y: 200 }, 'left', 1, [], check)),
+  ])
+  assert.deepEqual(x.clicked, [
+    { x: 10, y: 10 },
+    { x: 200, y: 200 },
+  ])
+})
+
+test('a drag stopped midway lets go of the button', async () => {
+  const sessions = new Sessions({ show: () => undefined, hide: () => undefined })
+  const x = fakeX11()
+  const line = new InputLine(sessions, async () => x.input)
+  const id = sessions.begin({ id: 'drag' })
+  setTimeout(() => sessions.stop(), 80)
+  await assert.rejects(
+    line.run(id, (input, check) => input.drag({ x: 0, y: 0 }, { x: 100, y: 100 }, check)),
+    /pressed Stop/,
+  )
+  assert.equal(x.pressed.size, 0)
 })

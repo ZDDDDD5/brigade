@@ -22,6 +22,7 @@ import { cropOf, monitorAt, sessionType, type Input, type Monitor } from './inpu
 import { hasMutterRemoteDesktop, MutterInput, readMutterMonitors } from './mutter.js'
 import { portalScreenshot, PortalError } from './portal.js'
 import { environment, runCommand, shutdown as stopCommand } from './run.js'
+import { InputLine } from './input-line.js'
 import { HelperError, Sessions } from './sessions.js'
 import { layoutKeysyms, X11Input } from './x11-input.js'
 
@@ -62,11 +63,14 @@ export class LinuxComputerUse {
   readonly indicator: Indicator
   private bus: Promise<Bus> | undefined
   private input: Promise<Input> | undefined
+  /** The mouse and keyboard, one action at a time (input-line.ts). */
+  private readonly line: InputLine
   private screenshotsAllowed = false
 
   constructor() {
     this.indicator = new Indicator(() => this.sessions.stop())
     this.sessions = new Sessions(this.indicator)
+    this.line = new InputLine(this.sessions, () => this.inputs())
   }
 
   readonly session = sessionType()
@@ -388,55 +392,61 @@ export class LinuxComputerUse {
         }
       }
       case 'move':
-        await (await this.inputs()).move(point(params))
+        await this.line.run(id, (input) => input.move(point(params)))
         return { ok: true }
       case 'click':
-        await (
-          await this.inputs()
-        ).click(
-          point(params),
-          typeof params.button === 'string' ? params.button : 'left',
-          number(params.count) ?? 1,
-          Array.isArray(params.modifiers) ? params.modifiers.map(String) : [],
+        await this.line.run(id, (input, check) =>
+          input.click(
+            point(params),
+            typeof params.button === 'string' ? params.button : 'left',
+            number(params.count) ?? 1,
+            Array.isArray(params.modifiers) ? params.modifiers.map(String) : [],
+            check,
+          ),
         )
         return { ok: true }
       case 'drag':
-        await (
-          await this.inputs()
-        ).drag(point(params, 'fromX', 'fromY'), point(params, 'toX', 'toY'))
-        return { ok: true }
-      case 'scroll':
-        await (
-          await this.inputs()
-        ).scroll(
-          point(params),
-          typeof params.direction === 'string' ? params.direction : 'down',
-          number(params.amount) ?? 5,
+        await this.line.run(id, (input, check) =>
+          input.drag(point(params, 'fromX', 'fromY'), point(params, 'toX', 'toY'), check),
         )
         return { ok: true }
-      case 'type':
-        if (typeof params.text !== 'string')
-          throw new HelperError('invalid_argument', 'text is required')
-        await (await this.inputs()).type(params.text)
+      case 'scroll':
+        await this.line.run(id, (input) =>
+          input.scroll(
+            point(params),
+            typeof params.direction === 'string' ? params.direction : 'down',
+            number(params.amount) ?? 5,
+          ),
+        )
         return { ok: true }
+      case 'type': {
+        const text = params.text
+        if (typeof text !== 'string') throw new HelperError('invalid_argument', 'text is required')
+        await this.line.run(id, (input, check) => input.type(text, check))
+        return { ok: true }
+      }
       case 'key': {
-        if (typeof params.key !== 'string')
-          throw new HelperError('invalid_argument', 'key is required')
-        const input = await this.inputs()
-        // For a named app: sent only if it is in front at this moment.
-        if (typeof params.app === 'string' && params.app) {
-          const wanted = params.app.toLowerCase().replace(/\.desktop$/, '')
+        const key = params.key
+        if (typeof key !== 'string') throw new HelperError('invalid_argument', 'key is required')
+        // For a named app: sent only if it is in front at this moment, checked and sent with no
+        // other input in between.
+        const app = typeof params.app === 'string' && params.app ? params.app : undefined
+        return this.line.run(id, async (input, check) => {
+          if (!app) {
+            await input.key(key)
+            return { ok: true }
+          }
+          const wanted = app.toLowerCase().replace(/\.desktop$/, '')
           const front = await this.front(params)
           if (!front || ![front.name, front.bundleId].some((n) => n.toLowerCase() === wanted))
             throw new HelperError(
               'not_front',
-              `${params.app} is not in front (${front?.name ?? 'another app'} is), so nothing was sent`,
+              `${app} is not in front (${front?.name ?? 'another app'} is), so nothing was sent`,
             )
-          await input.key(params.key)
+          check()
+          await input.key(key)
           return { ok: true, to: front.name }
-        }
-        await input.key(params.key)
-        return { ok: true }
+        })
       }
       case 'apps':
         return this.apps(params)

@@ -15,13 +15,20 @@ export type Monitor = {
   primary: boolean
 }
 
+/**
+ * Between the steps of a long action (each character typed, each move of a drag, each click):
+ * throws once the person pressed Stop or the turn was cancelled, after which what the action
+ * holds (a button, modifiers, borrowed keys) is released and nothing more is sent.
+ */
+export type Check = () => void
+
 /** The mouse and keyboard. */
 export interface Input {
   move(p: Point): Promise<void>
-  click(p: Point, button: string, count: number, modifiers: string[]): Promise<void>
-  drag(from: Point, to: Point): Promise<void>
+  click(p: Point, button: string, count: number, modifiers: string[], check?: Check): Promise<void>
+  drag(from: Point, to: Point, check?: Check): Promise<void>
   scroll(p: Point, direction: string, amount: number): Promise<void>
-  type(text: string): Promise<void>
+  type(text: string, check?: Check): Promise<void>
   key(combo: string): Promise<void>
   close(): void | Promise<void>
 }
