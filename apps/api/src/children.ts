@@ -696,7 +696,9 @@ export async function noteChildEvents(
     /** Chief's thread deciding a question (#724): no report, nothing wakes its parent. */
     chiefDecisionId?: string | null
   },
-  events: { event: { type: string; at: string; message?: string; retrying?: boolean } }[],
+  events: {
+    event: { type: string; at: string; message?: string; retrying?: boolean; waiting?: boolean }
+  }[],
   /**
    * A turn's end played again (settleStrandedChildren): each write holds only while the child is
    * as it was read (fence), and one still held tells nobody. Its followers are left to theirs
@@ -783,6 +785,13 @@ export async function noteChildEvents(
         // It and its parent show it as in a conversation, with a way to send it now.
         await parentChanged(scope, session.id)
         await parentChanged(scope, session.parentId)
+        continue
+      }
+      // Over, its turn still waits on a person's answer to its ticket or question: a Codex
+      // teammate's asks hold no turn (codex-asks.ts in apps/runner). It is not done: the turn
+      // their answer brings reports, as a turn paused on an ask would once it went on.
+      if (!reportOf(row.report) && event.type === 'turn.completed' && event.waiting) {
+        if (!fence) await parentChanged(scope, session.parentId)
         continue
       }
       if (!reportOf(row.report)) {
@@ -897,7 +906,13 @@ function strandedWhere(now: Date) {
   } satisfies Prisma.SessionWhereInput
 }
 
-type StoredEvent = { type: string; at: string; message?: string; retrying?: boolean }
+type StoredEvent = {
+  type: string
+  at: string
+  message?: string
+  retrying?: boolean
+  waiting?: boolean
+}
 
 /**
  * Each stranded child's turn end, played again as it came (noteChildEvents): its last message

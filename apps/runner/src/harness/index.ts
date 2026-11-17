@@ -713,6 +713,9 @@ function frozenMidRun(resume: unknown) {
   return !waits('pendingToolApprovals') && !waits('pendingToolResults')
 }
 
+/** How long Codex's ask waits to be kept before the thread shows it anyway (codex-asks.ts). */
+const ASK_KEPT_MS = 10_000
+
 /** How long a harness may take to let go of its turn when the runner hands it over. */
 const HAND_OVER_MS = 20_000
 
@@ -1146,12 +1149,54 @@ export class HarnessThread {
    * ends must still find it.
    */
   private async openAsk(call: WaitingCall) {
-    this.saved ??= { accountId: this.current.id, transcript: [] }
-    this.saved.later = [
-      ...(this.saved.later ?? []).filter((c) => c.toolCallId !== call.toolCallId),
-      call,
-    ]
-    await this.persist()
+    try {
+      this.saved ??= { accountId: this.current.id, transcript: [] }
+      this.saved.later = [
+        ...(this.saved.later ?? []).filter((c) => c.toolCallId !== call.toolCallId),
+        call,
+      ]
+      await this.persist()
+    } finally {
+      this.askKept(call.toolCallId).kept()
+    }
+  }
+
+  /**
+   * Codex's ask as the thread is to see it (ticket.opened, question.asked): settles once
+   * openAsk kept it, which its call does at about the same time, before or after this. Past
+   * ASK_KEPT_MS without it (a turn stopped before the call ran), it shows all the same.
+   * Undefined for any other event.
+   */
+  private codexAsk(event: AgentEvent): Promise<void> | undefined {
+    if (this.spec.teammate.harness !== 'codex') return undefined
+    const id =
+      event.type === 'ticket.opened'
+        ? event.requestId
+        : event.type === 'question.asked'
+          ? event.questionId
+          : undefined
+    if (id === undefined) return undefined
+    const { saved } = this.askKept(id)
+    let timer: NodeJS.Timeout | undefined
+    const late = new Promise<void>((resolve) => (timer = setTimeout(resolve, ASK_KEPT_MS)))
+    return Promise.race([saved, late]).finally(() => {
+      clearTimeout(timer)
+      this.asksKept.delete(id)
+    })
+  }
+
+  /** Codex's asks being kept, by call: whichever of openAsk and codexAsk comes first makes it. */
+  private asksKept = new Map<string, { saved: Promise<void>; kept: () => void }>()
+
+  private askKept(id: string) {
+    let entry = this.asksKept.get(id)
+    if (!entry) {
+      let kept!: () => void
+      const saved = new Promise<void>((resolve) => (kept = resolve))
+      entry = { saved, kept }
+      this.asksKept.set(id, entry)
+    }
+    return entry
   }
 
   private waitsOnPerson() {
@@ -1752,6 +1797,13 @@ export class HarnessThread {
         if (event.type === 'message.done' && hasVisibleText(event.text)) this.steeredPending = false
         this.noteBackground(event)
         if (backgroundWait(event) !== undefined || backgroundTasks(event)) watchWait()
+        // A ticket or question Codex opened without waiting (codex-asks.ts) shows once it is kept:
+        // answered at once, or after the runner stopped, the answer finds the ask it is to.
+        const ask = this.codexAsk(event)
+        if (ask) {
+          this.outbox.hold(ask.then(() => [event]))
+          return
+        }
         // A turn's usage says whose account spent it: the stream's own, which after running out
         // of usage (switchTo) is the next account's, not the one the turn started on.
         this.outbox.send(

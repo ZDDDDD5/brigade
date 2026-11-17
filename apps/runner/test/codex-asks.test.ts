@@ -128,7 +128,7 @@ async function codexThread(call: { tool: string; arguments: unknown }, waits = f
     for (const sandbox of sandboxes) await Promise.resolve(sandbox.destroy()).catch(() => undefined)
     await rm(home, { recursive: true, force: true })
   }
-  return { thread, run, events, recorded, done }
+  return { thread, run, events, recorded, done, home }
 }
 
 /** The text of each turn Codex was given, in order. */
@@ -233,6 +233,64 @@ test(
       const ended = t.events.filter((e) => e.type === 'turn.completed').at(-1)
       assert.equal(ended?.type === 'turn.completed' && ended.waiting, undefined)
     } finally {
+      await t.done()
+    }
+  },
+)
+
+test(
+  'Codex: a ticket shows, and Codex hears it opened, only once the runner kept it',
+  { timeout: 60_000 },
+  async () => {
+    const t = await codexThread({ tool: 'open_ticket', arguments: TICKET })
+    // The thread's state write that keeps the ask, held until released: a runner stopped there
+    // must not leave a ticket the person sees, and may answer, that its state does not know.
+    const inner = t.thread as unknown as {
+      persist: () => Promise<void>
+      saved?: { later?: unknown[] }
+    }
+    const persist = inner.persist.bind(t.thread)
+    let reached!: () => void
+    const held = new Promise<void>((resolve) => (reached = resolve))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    let once = false
+    inner.persist = async () => {
+      if (!once && inner.saved?.later?.length) {
+        once = true
+        reached()
+        await gate
+      }
+      return persist()
+    }
+    const running = t.run({ kind: 'prompt', text: 'Reply to Jaimy on X' })
+    try {
+      await held
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      assert.equal(
+        t.events.some((e) => e.type === 'ticket.opened'),
+        false,
+        'not shown before it is kept',
+      )
+      assert.equal(
+        (await t.recorded()).some((r) => r.method === 'tool/answered'),
+        false,
+        'Codex does not hear it opened before it is kept',
+      )
+      release()
+      assert.deepEqual(await running, { status: 'idle' })
+      assert.ok(t.events.some((e) => e.type === 'ticket.opened'))
+      const state = JSON.parse(await readFile(join(t.home, 'codex-asks.json'), 'utf8')) as {
+        later?: { toolCallId: string; input: unknown }[]
+      }
+      assert.deepEqual(
+        state.later?.map((c) => c.toolCallId),
+        ['call-1'],
+      )
+      assert.deepEqual(state.later?.[0]?.input, TICKET)
+    } finally {
+      release()
+      await running.catch(() => undefined)
       await t.done()
     }
   },

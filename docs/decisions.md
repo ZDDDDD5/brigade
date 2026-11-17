@@ -572,7 +572,12 @@ choices made where it is silent. The code and the other pages in [docs/](.) are 
   (`later` in the thread's state, below), the turn ends with `turn.completed` `waiting` (the thread shows Needs you),
   and the answer comes as a message of its own (`answerLater`) in the same Codex thread. As for an ask set aside,
   no turn waits on it: a new message, or a hand back after a takeover, runs at once. Codex could always go on after
-  a ticket; now the thread sees what it does. Claude Code keeps its pausing tools, on which it does wait.
+  a ticket; now the thread sees what it does. Claude Code keeps its pausing tools, on which it does wait. The ask
+  is kept in the thread's state before anything learns of it: Codex hears it opened, and the thread shows it, only
+  once that state is written (or after 10 seconds without it), so an answer given at once, or after the runner
+  stopped, always finds the ask it is to. Over with an ask still open (`turn.completed` `waiting`), a sub-thread has
+  not ended its work: it reports from the turn the answer brings (`noteChildEvents`), and a playbook dry run's
+  event waits as one paused on an ask would (`noteDryRunEvents`).
 - **Writing instead of answering.** A person may write to a teammate whose turn waits on its own ticket or
   question, to ask about it without declining it (`apps/runner/src/harness/aside.ts`, runners from
   `ASIDE_PROTOCOL`). The message goes in at once as the waiting call's result, which says the ask is still open;
