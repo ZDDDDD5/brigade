@@ -7,6 +7,7 @@ import type { BillingResponse } from '@brigade/contracts'
 import { Check, Cloud, Gauge, Laptop } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { isAdmin, useDashboard } from '@/components/dashboard'
+import { ActivityIndicator } from '@/components/ui/activity-indicator'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -173,7 +174,10 @@ export default function BillingPage() {
   const { me } = useDashboard()
   const admin = isAdmin(me)
   const billing = useApi<BillingResponse>('/billing')
-  const [busy, setBusy] = useState(false)
+  // The Stripe page being opened, by the button that asked for it: its spinner, and every
+  // button off meanwhile.
+  const [opening, setOpening] = useState<string | null>(null)
+  const busy = opening !== null
   const [error, setError] = useState<string>()
   const [welcome, setWelcome] = useState(false)
   const [upgradedNow, setUpgradedNow] = useState(false)
@@ -189,8 +193,8 @@ export default function BillingPage() {
     if (upgraded) setUpgradedNow(true)
   }, [upgraded])
 
-  async function go(open: () => Promise<void>) {
-    setBusy(true)
+  async function go(key: string, open: () => Promise<void>) {
+    setOpening(key)
     setError(undefined)
     try {
       await open()
@@ -198,12 +202,12 @@ export default function BillingPage() {
       setError((e as Error).message)
     } finally {
       // Opened in a new tab (a preview's frame), this page stays.
-      setBusy(false)
+      setOpening(null)
     }
   }
 
   const manage = () =>
-    go(() =>
+    go('manage', () =>
       openStripe(
         async () => (await api<{ url: string }>('/billing/portal', { method: 'POST' })).url,
       ),
@@ -250,12 +254,14 @@ export default function BillingPage() {
           {admin && !plan.complimentary && (
             <div className="flex flex-wrap gap-2">
               {tier === 'starter' && (
-                <Button disabled={busy} onClick={() => void go(() => upgradeToCloud())}>
+                <Button disabled={busy} onClick={() => void go('upgrade', () => upgradeToCloud())}>
                   Upgrade to Max · $99
+                  {opening === 'upgrade' && <ActivityIndicator label="Opening Stripe" />}
                 </Button>
               )}
               <Button variant="outline" disabled={busy} onClick={() => void manage()}>
                 Manage billing
+                {opening === 'manage' && <ActivityIndicator label="Opening Stripe" />}
               </Button>
             </div>
           )}
@@ -337,10 +343,11 @@ export default function BillingPage() {
                         variant={featured ? 'default' : 'outline'}
                         disabled={busy}
                         onClick={() =>
-                          void go(() => subscribeToCloud('billing', offer.key as Tier))
+                          void go(offer.key, () => subscribeToCloud('billing', offer.key as Tier))
                         }
                       >
                         Get {offer.name}
+                        {opening === offer.key && <ActivityIndicator label="Opening Stripe" />}
                       </Button>
                     )
                   )}
