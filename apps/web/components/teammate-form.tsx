@@ -12,6 +12,7 @@ import { Fragment, useState, type ReactNode } from 'react'
 import { useDashboard } from '@/components/dashboard'
 import { HarnessLogo } from '@/components/harness-logo'
 import { Button } from '@/components/ui/button'
+import { ActivityIndicator } from '@/components/ui/activity-indicator'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -85,6 +86,7 @@ export function TeammateForm({
   }
 
   async function submit(form: FormData) {
+    if (busy) return
     setBusy(true)
     setError(undefined)
     try {
@@ -103,7 +105,15 @@ export function TeammateForm({
   }
 
   return (
-    <form action={submit} className="flex w-full max-w-2xl flex-col gap-6">
+    <form
+      // React form actions reset uncontrolled fields (including Radix's native select)
+      // after success. Settings must keep the values the member just saved.
+      onSubmit={(event) => {
+        event.preventDefault()
+        void submit(new FormData(event.currentTarget))
+      }}
+      className="flex w-full max-w-2xl flex-col gap-6"
+    >
       <div className="flex flex-col gap-2">
         <Label htmlFor="name">Name</Label>
         <Input
@@ -195,7 +205,8 @@ export function TeammateForm({
       <div className="flex items-center justify-end gap-3 border-t pt-5">
         {footer}
         <span className="flex-1" />
-        <Button type="submit" disabled={busy}>
+        <Button type="submit" disabled={busy} aria-busy={busy}>
+          {busy && <ActivityIndicator label="Saving" />}
           {submitLabel}
         </Button>
       </div>
