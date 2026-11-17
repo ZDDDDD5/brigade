@@ -985,12 +985,14 @@ type Credentials = {
   env: (
     credentialId: string,
     call: Call,
+    /** Why the teammate needs it: shown to the person asked to allow it. */
+    purpose?: string,
   ) => Promise<{
     file: string
     variables: string[]
     credential: { name: string; details: unknown }
   }>
-  fill: (credentialId: string, submit: boolean, call: Call) => Promise<unknown>
+  fill: (credentialId: string, submit: boolean, call: Call, purpose?: string) => Promise<unknown>
   save: (input: SaveInput, call: Call) => Promise<unknown>
 }
 type SaveInput =
@@ -1009,6 +1011,17 @@ const MENTIONS =
   'One not shared with you needs its creator or an admin to allow it. ' +
   'For one the vault lacks, open a ticket with an access ask of kind credential: the person saves it from the ticket.'
 
+/** Why the teammate needs a credential: shown to the person asked to allow it. */
+const PURPOSE = {
+  type: 'string',
+  description:
+    'Why you need it now, in a few words a person reads before allowing it, e.g. "To count sign-ups in the production database"',
+} as const
+
+/** A purpose as the API takes it: trimmed, at most 300 characters, none when empty. */
+export const purposeOf = (purpose: unknown) =>
+  typeof purpose === 'string' && purpose.trim() ? purpose.trim().slice(0, 300) : undefined
+
 /** The vault's credentials, as tools. Their secrets never appear in a tool result. */
 export function credentialTools(credentials: Credentials): Record<string, Tool> {
   const tools: Record<string, Tool> = {
@@ -1024,17 +1037,17 @@ export function credentialTools(credentials: Credentials): Record<string, Tool> 
         `Returns the file and its variable names (e.g. DATABASE_URL, PGPASSWORD, API_KEY), not the values. ` +
         `Load it only in the command that needs it, e.g. \`set -a; . <file>; set +a; psql "$DATABASE_URL"\`. ` +
         `Never print, copy or commit the file or its values. ${MENTIONS}`,
-      inputSchema: jsonSchema<{ credentialId: string }>({
+      inputSchema: jsonSchema<{ credentialId: string; purpose?: string }>({
         type: 'object',
-        properties: { credentialId: { type: 'string' } },
+        properties: { credentialId: { type: 'string' }, purpose: PURPOSE },
         required: ['credentialId'],
       }),
       execute: async (input, { toolCallId }) => {
-        const result = await credentials.env(input.credentialId, {
-          toolCallId,
-          toolName: 'use_credential',
-          input,
-        })
+        const result = await credentials.env(
+          input.credentialId,
+          { toolCallId, toolName: 'use_credential', input },
+          purposeOf(input.purpose),
+        )
         return {
           credential: result.credential.name,
           details: result.credential.details,
@@ -1154,20 +1167,22 @@ export function credentialTools(credentials: Credentials): Record<string, Tool> 
         `(which must be on the credential's own domain) and presses Enter, so you never see the password. ` +
         `Open the sign-in page in your browser first. On a two-step sign-in, call it again on the password page. ` +
         `Never read the password back from the page. ${MENTIONS}`,
-      inputSchema: jsonSchema<{ credentialId: string; submit?: boolean }>({
+      inputSchema: jsonSchema<{ credentialId: string; submit?: boolean; purpose?: string }>({
         type: 'object',
         properties: {
           credentialId: { type: 'string' },
           submit: { type: 'boolean', description: 'Press Enter after filling (default true)' },
+          purpose: PURPOSE,
         },
         required: ['credentialId'],
       }),
       execute: (input, { toolCallId }) =>
-        credentials.fill(input.credentialId, input.submit ?? true, {
-          toolCallId,
-          toolName: 'fill_credential',
-          input,
-        }),
+        credentials.fill(
+          input.credentialId,
+          input.submit ?? true,
+          { toolCallId, toolName: 'fill_credential', input },
+          purposeOf(input.purpose),
+        ),
     })
   return tools
 }

@@ -111,6 +111,8 @@ import {
   type BrigadeNote,
 } from '@/components/brigade-notes'
 import { MarkWrong } from '@/components/mark-wrong'
+import { CredentialAskPreview } from '@/components/credential-ask'
+import { credentialAsked } from '@/lib/credential-ask'
 import {
   EditableEmailPreview,
   isEmailSend,
@@ -275,6 +277,7 @@ export type Item =
       /** A credential: may also be allowed for good. */
       always?: boolean
       resolved?: { approved: boolean }
+      teammateId?: string
     }
   | {
       kind: 'question'
@@ -676,6 +679,7 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1, gaps: Eve
             input: e.input,
             ...(e.reason ? { reason: e.reason } : {}),
             ...(e.always ? { always: true } : {}),
+            ...(e.teammateId ? { teammateId: e.teammateId } : {}),
           })
           break
         case 'approval.resolved': {
@@ -3181,6 +3185,7 @@ export function ThreadItems({
           <ApprovalCard
             key={item.key}
             item={item}
+            teammateName={(item.teammateId && byId.get(item.teammateId)?.name) || teammate?.name}
             // A trigger lets outside events start work: only an owner or admin allows one.
             mayAnswer={bareToolName(item.toolName) === 'create_trigger' ? admin : canApprove}
             canApprove={canApprove}
@@ -3869,11 +3874,14 @@ const answerBadge = (answer: QuestionAnswer | TicketAnswer) =>
  */
 function ApprovalCard({
   item,
+  teammateName,
   mayAnswer,
   canApprove,
   onApproval,
 }: {
   item: Extract<Item, { kind: 'approval' }>
+  /** The teammate asking, when known: a credential's ask names it. */
+  teammateName?: string | undefined
   /** This person may answer this one (a trigger: an owner or admin). */
   mayAnswer: boolean
   /** This person answers the thread's approvals: an email may be changed before it goes. */
@@ -3884,6 +3892,8 @@ function ApprovalCard({
   const [error, setError] = useState<string>()
   const resolved = item.resolved ?? sending
   const adminsOnly = bareToolName(item.toolName) === 'create_trigger'
+  // A vault credential reads as the credential itself, not its id.
+  const credential = credentialAsked(item.toolName, item.input)
 
   async function answer(approved: boolean, always?: boolean, edited?: EditedEmail) {
     if (resolved) return
@@ -3902,12 +3912,14 @@ function ApprovalCard({
       <div className="flex items-start gap-2">
         <ShieldAlert aria-hidden className="mt-0.5 size-4 flex-none text-warning" />
         <div className="min-w-0 flex-1 font-semibold">
-          {approvalAsk(item.toolName) ?? (
-            <>
-              Allow <code className="font-mono text-sm">{item.toolName}</code>{' '}
-              {toolSummary(item.toolName, item.input)}?
-            </>
-          )}
+          {credential
+            ? `${teammateName ?? 'Your teammate'} wants to use`
+            : (approvalAsk(item.toolName) ?? (
+                <>
+                  Allow <code className="font-mono text-sm">{item.toolName}</code>{' '}
+                  {toolSummary(item.toolName, item.input)}?
+                </>
+              ))}
         </div>
         {resolved && (
           <StatusBadge
@@ -3916,9 +3928,18 @@ function ApprovalCard({
           />
         )}
       </div>
-      {item.reason && <p className="text-sm text-muted-foreground">{item.reason}</p>}
+      {item.reason && !credential && <p className="text-sm text-muted-foreground">{item.reason}</p>}
+      {/* Not shared with the teammate yet: who may allow it is worth a line. */}
+      {credential && item.reason?.includes('which is not shared with it') && (
+        <p className="text-sm text-muted-foreground">
+          Not shared with {teammateName ?? 'this teammate'} yet: only its creator or an admin can
+          allow it.
+        </p>
+      )}
       {/* An email may be changed before it is allowed. */}
-      {!resolved && canApprove && isEmailSend(item.toolName) ? (
+      {credential ? (
+        <CredentialAskPreview {...credential} input={item.input} />
+      ) : !resolved && canApprove && isEmailSend(item.toolName) ? (
         <EditableEmailPreview
           input={item.input}
           onAllow={(edited) => void answer(true, false, edited)}
