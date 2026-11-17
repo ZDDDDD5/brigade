@@ -82,7 +82,7 @@ const OFFERS: Offer[] = [
     amount: 15,
     audience: 'Always-on teammates at the lowest price',
     includes: 'Free',
-    headline: 'A cloud computer about 3 hours a day (100 hours a month)',
+    headline: 'A cloud computer for 100 hours a month (about 3 a day)',
     features: [
       'Teammates keep working with your laptop closed',
       'Schedules and triggers run on time, even at 3 a.m.',
@@ -98,7 +98,7 @@ const OFFERS: Offer[] = [
     amount: 99,
     audience: 'For a team that works around the clock',
     includes: 'Starter',
-    headline: 'No limit of cloud computer hours: 24/7, every day',
+    headline: 'A cloud computer with no hour limit, 24/7',
     features: [],
   },
 ]
