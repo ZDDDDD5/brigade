@@ -4,7 +4,7 @@
 // number of hours a month. Owners and admins subscribe through Stripe Checkout, move from
 // Starter to Cloud in Stripe's portal, and manage the subscription (card, invoices, cancel) there.
 import type { BillingResponse } from '@brigade/contracts'
-import { Check, Cloud, Gauge } from 'lucide-react'
+import { Check, Cloud, Gauge, Laptop } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { isAdmin, useDashboard } from '@/components/dashboard'
 import { Button } from '@/components/ui/button'
@@ -16,28 +16,72 @@ import { cn } from '@/lib/utils'
 
 type Tier = 'cloud' | 'starter'
 
-/** Each plan as the page offers it. Starter's hours are the API's (PLANS in src/billing.ts). */
-const PLANS: Record<Tier, { name: string; price: string; features: string[] }> = {
-  starter: {
-    name: 'Brigade Cloud Starter',
-    price: '$15 a month per workspace, or €15 in the euro zone',
-    features: [
-      '100 hours of cloud computer a month: teammates keep working when your computer is off',
-      'An email address for each teammate, and the Inbox to follow their mail',
-      'Still on your own Claude or ChatGPT plan: no charge for AI usage',
-    ],
-  },
-  cloud: {
-    name: 'Brigade Cloud',
-    price: '$99 a month per workspace, or €99 in the euro zone',
-    features: [
-      'Teammates keep working when your Mac is asleep, closed or you don’t have one',
-      'Brigade’s cloud computer, shared by the workspace, up to 4 threads at once, with no limit of hours',
-      'An email address for each teammate, the Inbox to follow their mail, and dictation',
-      'Still on your own Claude or ChatGPT plan: no charge for AI usage',
-    ],
-  },
+/** Each plan's name, where the page names the workspace's own plan. */
+const PLANS: Record<Tier, { name: string }> = {
+  starter: { name: 'Brigade Cloud Starter' },
+  cloud: { name: 'Brigade Cloud' },
 }
+
+/** Where Checkout charges in euros (Stripe picks by the customer's country): the euro zone. */
+const EURO_REGIONS = new Set(
+  'AT BE CY DE EE ES FI FR GR HR IE IT LT LU LV MT NL PT SI SK'.split(' '),
+)
+
+/** The currency sign this browser's region pays in: € in the euro zone, else $. */
+function useCurrency() {
+  const [sign, setSign] = useState('$')
+  useEffect(() => {
+    const region = navigator.languages
+      .map((language) => language.split('-')[1]?.toUpperCase())
+      .find(Boolean)
+    if (region && EURO_REGIONS.has(region)) setSign('€')
+  }, [])
+  return sign
+}
+
+type Offer = {
+  key: 'free' | Tier
+  name: string
+  icon: ReactNode
+  /** The price a month, in the page's currency; 0 for Free. */
+  amount: number
+  /** Who it is for, in a line. */
+  audience: string
+  /** What sets it apart, first and in bold. */
+  headline: string
+  features: string[]
+}
+
+/** The three plans side by side: Free, where every workspace starts, then the two Cloud plans. */
+const OFFERS: Offer[] = [
+  {
+    key: 'free',
+    name: 'Free',
+    icon: <Laptop />,
+    amount: 0,
+    audience: 'Teammates run on your own computer',
+    headline: 'While your computer is on',
+    features: ['They stop when it sleeps or is off'],
+  },
+  {
+    key: 'starter',
+    name: 'Starter',
+    icon: <Gauge />,
+    amount: 15,
+    audience: 'To try teammates in the cloud',
+    headline: '100 cloud hours a month',
+    features: ['An email address for each teammate'],
+  },
+  {
+    key: 'cloud',
+    name: 'Cloud',
+    icon: <Cloud />,
+    amount: 99,
+    audience: 'For work that runs around the clock',
+    headline: 'Unlimited cloud hours',
+    features: ['Everything in Starter', 'Dictation'],
+  },
+]
 
 const day = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })
@@ -79,19 +123,6 @@ function PlanHead({ tier, line, dot }: { tier: Tier; line: ReactNode; dot?: bool
         </span>
       </div>
     </div>
-  )
-}
-
-function Features({ tier }: { tier: Tier }) {
-  return (
-    <ul className="flex flex-col gap-2 text-sm">
-      {PLANS[tier].features.map((feature) => (
-        <li key={feature} className="flex gap-2">
-          <Check aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
-          {feature}
-        </li>
-      ))}
-    </ul>
   )
 }
 
@@ -162,14 +193,15 @@ export default function BillingPage() {
   const plan = data?.plan
   const active = !!plan?.active
   const tier: Tier = plan?.tier ?? 'cloud'
+  const currency = useCurrency()
 
   return (
     <div className="flex flex-col gap-7">
       <header className="flex flex-col gap-2">
         <h1 className="text-2xl font-extrabold tracking-tight">Billing</h1>
         <p className="max-w-prose text-muted-foreground">
-          Brigade is free on your own machines. Brigade Cloud adds the cloud computer and email
-          addresses, for this workspace. {!admin && 'Only owners and admins can change the plan.'}
+          Your teammates run free on your own computer. Add a cloud computer so they keep working
+          when it’s off. {!admin && 'Only owners and admins can change the plan.'}
         </p>
       </header>
 
@@ -226,24 +258,75 @@ export default function BillingPage() {
               )}
             </p>
           )}
-          <div className="grid max-w-3xl gap-4 md:grid-cols-2">
-            {(['starter', 'cloud'] as const).map((offer) => (
-              <Card key={offer} className="gap-5 px-6 py-5">
-                <PlanHead tier={offer} line={PLANS[offer].price} />
-                <Features tier={offer} />
-                {admin && (
-                  <Button
-                    className="mt-auto self-start"
-                    variant={offer === 'cloud' ? 'default' : 'outline'}
-                    disabled={busy}
-                    onClick={() => void go(() => subscribeToCloud('billing', offer))}
-                  >
-                    {offer === 'starter' ? 'Start with Starter' : 'Get Brigade Cloud'}
-                  </Button>
-                )}
-              </Card>
-            ))}
+          <div className="grid max-w-4xl gap-4 md:grid-cols-3">
+            {OFFERS.map((offer) => {
+              const current = offer.key === 'free'
+              const featured = offer.key === 'cloud'
+              return (
+                <Card
+                  key={offer.key}
+                  className={cn('gap-4 px-5 py-5', featured && 'border-primary/60')}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      aria-hidden
+                      className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/15 text-primary [&_svg]:size-4"
+                    >
+                      {offer.icon}
+                    </span>
+                    <span className="font-semibold">{offer.name}</span>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <p className="flex items-baseline gap-1">
+                      <span className="text-3xl font-extrabold tracking-tight">
+                        {currency}
+                        {offer.amount}
+                      </span>
+                      {offer.amount > 0 && (
+                        <span className="text-sm text-muted-foreground">/ month</span>
+                      )}
+                    </p>
+                    <p className="text-sm text-muted-foreground">{offer.audience}</p>
+                  </div>
+                  <ul className="flex flex-col gap-2 text-sm">
+                    <li className="flex gap-2 font-semibold">
+                      <Check aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
+                      {offer.headline}
+                    </li>
+                    {offer.features.map((feature) => (
+                      <li key={feature} className="flex gap-2">
+                        <Check aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
+                        {feature}
+                      </li>
+                    ))}
+                  </ul>
+                  {current ? (
+                    <Button variant="outline" className="mt-auto" disabled>
+                      Current plan
+                    </Button>
+                  ) : (
+                    admin && (
+                      <Button
+                        className="mt-auto"
+                        variant={featured ? 'default' : 'outline'}
+                        disabled={busy}
+                        onClick={() =>
+                          void go(() => subscribeToCloud('billing', offer.key as Tier))
+                        }
+                      >
+                        Choose {offer.name}
+                      </Button>
+                    )
+                  )}
+                </Card>
+              )
+            })}
           </div>
+          <p className="max-w-4xl text-[0.8125rem] leading-snug text-muted-foreground">
+            Both cloud plans run on your own Claude or ChatGPT plan: no AI bill from us. Switch or
+            cancel anytime. An hour counts while the cloud computer is on; it sleeps 30 minutes
+            after teammates finish.
+          </p>
         </div>
       )}
 
