@@ -332,7 +332,7 @@ export default function BillingPage() {
                           void go(() => subscribeToCloud('billing', offer.key as Tier))
                         }
                       >
-                        Choose {offer.name}
+                        Get {offer.name}
                       </Button>
                     )
                   )}
