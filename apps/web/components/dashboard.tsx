@@ -3,6 +3,7 @@ import {
   BookOpenCheck,
   CalendarClock,
   ChevronDown,
+  ChevronRight,
   GitPullRequest,
   Inbox,
   Keyboard,
@@ -18,6 +19,7 @@ import {
   Search,
   Settings,
   Sun,
+  UserRoundCheck,
   UsersRound,
   FolderKanban,
   SquareKanban,
@@ -689,12 +691,32 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent side="top" align="start" className="min-w-60">
-                      <DropdownMenuLabel className="grid leading-tight">
-                        <span className="truncate">{data.user.name}</span>
-                        <span className="text-muted-foreground truncate text-xs font-normal">
-                          {organization?.name}
-                        </span>
-                      </DropdownMenuLabel>
+                      {data.guest ? (
+                        // A guest (docs/guests.md): the menu says they are not signed in, and
+                        // saving the account is the way to be.
+                        <>
+                          <DropdownMenuItem onSelect={() => setSaving('save')}>
+                            <span className="grid min-w-0 flex-1 leading-tight">
+                              <span className="truncate font-semibold">{data.user.name}</span>
+                              <span className="text-muted-foreground truncate text-xs">
+                                Not signed in
+                              </span>
+                            </span>
+                            <ChevronRight className="text-muted-foreground" />
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => setSaving('save')}>
+                            <UserRoundCheck /> Save your account
+                          </DropdownMenuItem>
+                        </>
+                      ) : (
+                        <DropdownMenuLabel className="grid leading-tight">
+                          <span className="truncate">{data.user.name}</span>
+                          <span className="text-muted-foreground truncate text-xs font-normal">
+                            {organization?.name}
+                          </span>
+                        </DropdownMenuLabel>
+                      )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={() => openSettings()}>
                         <Settings /> Settings
@@ -752,7 +774,8 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         </span>
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => void signOut()}>
-                        <LogOut /> Sign out
+                        {/* A guest has nothing to sign out of: what they want is another account. */}
+                        <LogOut /> {data.guest ? 'Sign in to another account' : 'Sign out'}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>

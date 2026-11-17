@@ -47,8 +47,10 @@ Linux, where its runner runs teammates. The website's sign-up is unchanged.
 
 ## Saving the account
 
-The sidebar's foot shows **No account yet** with **Save my account**, and Sign out offers it
-first (a guest signed out loses the workspace). The dialog (`components/save-account.tsx`):
+The sidebar's foot shows **No account yet** with **Save my account**. The account menu says so
+too: the guest's name over **Not signed in** (both open the dialog), and **Save your account**.
+Its last item is **Sign in to another account** rather than Sign out (a guest has nothing to
+sign out of), which offers saving first: signed in elsewhere, the guest loses the workspace. The dialog (`components/save-account.tsx`):
 
 1. `POST /api/auth/guest/save/code` with the email: a 6-digit code mailed as a sign-in code is.
    Refused for an address with an account already (409). One code at a time; a guest mails 5 at

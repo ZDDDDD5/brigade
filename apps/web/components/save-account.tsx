@@ -68,7 +68,7 @@ export function SaveAccountDialog({
           <DialogTitle>{leaving ? 'Save your account first?' : 'Save your account'}</DialogTitle>
           <DialogDescription>
             {leaving
-              ? 'You started without an account: signed out, you could not come back to this workspace. Save it with your email to sign in again later.'
+              ? "This workspace has no account yet: once you sign in to another one, you can't come back to it. Save it with your email first to keep it."
               : 'Add your email to keep your workspace, sign in on your other devices and invite people.'}
           </DialogDescription>
         </DialogHeader>
@@ -147,7 +147,7 @@ export function SaveAccountDialog({
             onClick={onLeave}
             className="self-center text-sm text-destructive-text underline-offset-4 hover:underline"
           >
-            Sign out and lose this workspace
+            Continue and lose this workspace
           </button>
         )}
       </DialogContent>
