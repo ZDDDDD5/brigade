@@ -17,6 +17,7 @@
 // until the provider says it stopped. The provider's work is done outside the lock, the row held.
 import type { ApiToRunner, PreviewMachineUp, RunnerToApi } from '@brigade/contracts'
 import { machinesFromEnv, type ComputerRef, type MachineProvider } from '@brigade/providers'
+import { planOf } from './billing.js'
 import { Prisma, prisma } from './db.js'
 import { featuresOfMember } from './features.js'
 import type { PreviewMachine, Runner } from './generated/prisma/client.js'
@@ -119,7 +120,9 @@ async function make(machines: MachineProvider, row: PreviewMachine) {
 
 /**
  * Whether the thread's preview runs on a machine of its own: its starter has the feature and
- * turned it on (Member.previewMachines). Theirs to choose, as the threads are theirs.
+ * turned it on (Member.previewMachines). Theirs to choose, as the threads are theirs. Not on
+ * Brigade Cloud Starter (src/billing.ts), whose plan has none: its previews stay on the cloud
+ * computer.
  */
 export async function wantsMachine(session: { startedByMemberId: string; workspaceId: string }) {
   const member = await prisma.member.findUnique({
@@ -128,7 +131,8 @@ export async function wantsMachine(session: { startedByMemberId: string; workspa
   })
   if (!member?.previewMachines) return false
   const features = await featuresOfMember(session.startedByMemberId, session.workspaceId)
-  return features.has('preview_machines')
+  if (!features.has('preview_machines')) return false
+  return (await planOf(session.workspaceId)).tier !== 'starter'
 }
 
 type Session = { id: string; organizationId: string; workspaceId: string }
@@ -394,7 +398,12 @@ async function claim(tx: Tx, row: PreviewMachine, status: 'stopping' | 'destroyi
   return count === 0 ? null : tx.previewMachine.findUniqueOrThrow({ where: { id: row.id } })
 }
 
-/** `touch`: the preview is in use; the provider's own stop is pushed back now and then. */
+/**
+ * `touch`: the preview is in use; the provider's own stop is pushed back now and then. Not once
+ * its workspace moved to Starter, whose plan has no machines (wantsMachine): the machine is put
+ * to sleep instead, and the runner's next `up` runs the preview on the computer. One nobody
+ * touches stops by the sweep (UNUSED_STOP_MS).
+ */
 export async function machineTouch(
   machines: MachineProvider | null,
   runner: Pick<Runner, 'computerId'>,
@@ -403,6 +412,8 @@ export async function machineTouch(
 ) {
   const session = machines && (await threadOf(runner, sessionId))
   if (!machines || !session) return
+  if ((await planOf(session.workspaceId)).tier === 'starter')
+    return machineSleep(machines, runner, sessionId)
   // Under the lock: a sweep judging this machine idle sees the touch, or comes before it.
   const touched = await underLock(session.workspaceId, async (tx) => {
     const row = await tx.previewMachine.findUnique({ where: { sessionId } })

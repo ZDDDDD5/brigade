@@ -238,6 +238,7 @@ export const BillingSubscriptionScalarFieldEnum = {
   id: 'id',
   workspaceId: 'workspaceId',
   plan: 'plan',
+  tier: 'tier',
   stripeCustomerId: 'stripeCustomerId',
   stripeSubscriptionId: 'stripeSubscriptionId',
   status: 'status',
@@ -409,6 +410,7 @@ export const ComputerScalarFieldEnum = {
   machineId: 'machineId',
   status: 'status',
   disk: 'disk',
+  hoursHeldAt: 'hoursHeldAt',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
