@@ -295,3 +295,104 @@ test(
     }
   },
 )
+
+/** The thread's state write that keeps the ask (the first with `later`), handled by `hold`. */
+function holdKeep(thread: HarnessThread, hold: () => Promise<void>) {
+  const inner = thread as unknown as {
+    persist: () => Promise<void>
+    saved?: { later?: unknown[] }
+  }
+  const persist = inner.persist.bind(thread)
+  let once = false
+  inner.persist = async () => {
+    if (!once && inner.saved?.later?.length) {
+      once = true
+      await hold()
+    }
+    return persist()
+  }
+}
+
+test(
+  'Codex: a ticket whose keeping outlasts the wait shows once kept, never before',
+  { timeout: 60_000 },
+  async () => {
+    process.env.BRIGADE_ASK_KEPT_MS = '200'
+    const t = await codexThread({ tool: 'open_ticket', arguments: TICKET })
+    let reached!: () => void
+    const held = new Promise<void>((resolve) => (reached = resolve))
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    holdKeep(t.thread, async () => {
+      reached()
+      await gate
+    })
+    const running = t.run({ kind: 'prompt', text: 'Reply to Jaimy on X' })
+    try {
+      await held
+      // Well past the wait: the thread's other events go on, and still no ticket.
+      await new Promise((resolve) => setTimeout(resolve, 1_000))
+      assert.equal(
+        t.events.some((e) => e.type === 'ticket.opened'),
+        false,
+        'not shown before it is kept, however long that takes',
+      )
+      assert.equal(
+        (await t.recorded()).some((r) => r.method === 'tool/answered'),
+        false,
+      )
+      release()
+      assert.deepEqual(await running, { status: 'idle' })
+      assert.equal(
+        t.events.filter((e) => e.type === 'ticket.opened').length,
+        1,
+        'shown once, once kept',
+      )
+      const state = JSON.parse(await readFile(join(t.home, 'codex-asks.json'), 'utf8')) as {
+        later?: { toolCallId: string }[]
+      }
+      assert.deepEqual(
+        state.later?.map((c) => c.toolCallId),
+        ['call-1'],
+      )
+    } finally {
+      delete process.env.BRIGADE_ASK_KEPT_MS
+      release()
+      await running.catch(() => undefined)
+      await t.done()
+    }
+  },
+)
+
+test(
+  'Codex: a ticket that could not be kept never shows, and Codex hears it failed',
+  { timeout: 60_000 },
+  async () => {
+    const t = await codexThread({ tool: 'open_ticket', arguments: TICKET })
+    holdKeep(t.thread, async () => {
+      throw new Error('ENOSPC: no space left on device')
+    })
+    try {
+      assert.deepEqual(await t.run({ kind: 'prompt', text: 'Reply to Jaimy on X' }), {
+        status: 'idle',
+      })
+      assert.equal(
+        t.events.some((e) => e.type === 'ticket.opened'),
+        false,
+      )
+      const answered = (await t.recorded()).find((r) => r.method === 'tool/answered')
+      assert.equal(answered?.params.success, false)
+      assert.match(answered?.params.contentItems[0].text ?? '', /could not be opened/)
+      assert.match(answered?.params.contentItems[0].text ?? '', /no space left/)
+      // Nothing waits on it: the turn ends without waiting, and the state has no ask.
+      const ended = t.events.filter((e) => e.type === 'turn.completed').at(-1)
+      assert.equal(ended?.type === 'turn.completed' && ended.waiting, undefined)
+      const state = JSON.parse(await readFile(join(t.home, 'codex-asks.json'), 'utf8')) as {
+        later?: unknown[]
+      }
+      assert.equal(state.later?.length ?? 0, 0)
+    } finally {
+      await t.done()
+    }
+  },
+)

@@ -562,22 +562,23 @@ choices made where it is silent. The code and the other pages in [docs/](.) are 
   result (`ticket.answered`). From the Tickets page it can only be declined. Invalid input is returned to the
   teammate as a tool error instead of pausing the turn.
 - **Asks on Codex open without waiting** (`apps/runner/src/harness/codex-asks.ts`). Codex calls Brigade's tools from
-  the scripts it runs (code mode's `exec`), which go on in the background after a second or so; the model then
-  writes its reply and ends its turn, whatever a call still waits on. A ticket that paused the turn as on Claude Code
-  left Brigade waiting on a call Codex had given up. On Nov 17 a GPT-6.2 turn sat 76 minutes after its X sign-in
-  ticket was answered, until the member wrote again, and what the teammate wrote after that ticket and a second one
-  (a whole investigation) never reached the thread, since a paused turn reads nothing more. So on Codex,
-  `open_ticket` and `ask_user` open their ask and return at once, telling the teammate to end its turn and not to do
-  what it asked about until the answer comes. The ask stays open for the person as one set aside for a message
-  (`later` in the thread's state, below), the turn ends with `turn.completed` `waiting` (the thread shows Needs you),
-  and the answer comes as a message of its own (`answerLater`) in the same Codex thread. As for an ask set aside,
-  no turn waits on it: a new message, or a hand back after a takeover, runs at once. Codex could always go on after
-  a ticket; now the thread sees what it does. Claude Code keeps its pausing tools, on which it does wait. The ask
-  is kept in the thread's state before anything learns of it: Codex hears it opened, and the thread shows it, only
-  once that state is written (or after 10 seconds without it), so an answer given at once, or after the runner
-  stopped, always finds the ask it is to. Over with an ask still open (`turn.completed` `waiting`), a sub-thread has
-  not ended its work: it reports from the turn the answer brings (`noteChildEvents`), and a playbook dry run's
-  event waits as one paused on an ask would (`noteDryRunEvents`).
+  the scripts it runs (code mode's `exec`), which go on in the background after a second or so; the model then writes
+  its reply and ends its turn, whatever a call still waits on. A ticket that paused the turn as on Claude Code left
+  Brigade waiting on a call Codex had given up. On Nov 17 a GPT-6.2 turn sat 76 minutes after its X sign-in ticket was
+  answered, until the member wrote again, and what the teammate wrote after that ticket and a second one (a whole
+  investigation) never reached the thread, since a paused turn reads nothing more. So on Codex, `open_ticket` and
+  `ask_user` open their ask and return at once, telling the teammate to end its turn and not to do what it asked about
+  until the answer comes. The ask stays open for the person as one set aside for a message (`later` in the thread's
+  state, below), the turn ends with `turn.completed` `waiting` (the thread shows Needs you), and the answer comes as a
+  message of its own (`answerLater`) in the same Codex thread. As for an ask set aside, no turn waits on it: a new
+  message, or a hand back after a takeover, runs at once. Codex could always go on after a ticket; now the thread sees
+  what it does. Claude Code keeps its pausing tools, on which it does wait. The ask is kept in the thread's state
+  before anything learns of it: Codex hears it opened, and the thread shows it, only once that state is written, so an
+  answer given at once, or after the runner stopped, always finds the ask it is to. A write slower than 10 seconds no
+  longer holds the thread's other events: the ask shows once it is written, after them. One that could not be written
+  (a full disk) never shows, and Codex is told it could not be opened. Over with an ask still open (`turn.completed`
+  `waiting`), a sub-thread has not ended its work: it reports from the turn the answer brings (`noteChildEvents`), and
+  a playbook dry run's event waits as one paused on an ask would (`noteDryRunEvents`).
 - **Writing instead of answering.** A person may write to a teammate whose turn waits on its own ticket or
   question, to ask about it without declining it (`apps/runner/src/harness/aside.ts`, runners from
   `ASIDE_PROTOCOL`). The message goes in at once as the waiting call's result, which says the ask is still open;

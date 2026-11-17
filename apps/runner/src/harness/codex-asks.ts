@@ -20,6 +20,19 @@ const STILL_OPEN =
 const INVALID_QUESTIONS =
   'Invalid questions: give 1 to 4, each with an id and a question (and options, if any, each with an id and a label).'
 
+/** Open the ask; one that could not be kept is not open, and the teammate is told so. */
+async function opened(open: (call: WaitingCall) => Promise<void>, call: WaitingCall) {
+  try {
+    await open(call)
+  } catch (error) {
+    throw new Error(
+      `It could not be opened (${error instanceof Error ? error.message : String(error)}): nobody sees it. ` +
+        'Say in your reply what you needed from the person instead.',
+      { cause: error },
+    )
+  }
+}
+
 /** A tool's description, its first sentence (that it waits) replaced. */
 function described(base: Pick<Tool, 'description'>, waits: string, instead: string) {
   const description = typeof base.description === 'string' ? base.description : ''
@@ -29,8 +42,8 @@ function described(base: Pick<Tool, 'description'>, waits: string, instead: stri
 
 /**
  * Brigade's ticket and question tools for Codex: each opens its ask and returns at once.
- * `open` keeps the call, whose answer then comes as a message; it is called before the result
- * goes back, so an answer given at once finds it.
+ * `open` keeps the call, whose answer then comes as a message: the result goes back once it is
+ * kept, so Codex hears it opened only then.
  */
 export function asksWithoutWaiting(
   open: (call: WaitingCall) => Promise<void>,
@@ -46,7 +59,7 @@ export function asksWithoutWaiting(
       execute: async (input, { toolCallId }) => {
         const ticket = ticketAsks(input)
         if (!ticket) throw new Error(INVALID_TICKET)
-        await open({ toolCallId, toolName: OPEN_TICKET_TOOL, input })
+        await opened(open, { toolCallId, toolName: OPEN_TICKET_TOOL, input })
         return { opened: true, note: `Your ticket "${ticket.title}" is open. ${STILL_OPEN}` }
       },
     }),
@@ -59,7 +72,7 @@ export function asksWithoutWaiting(
       ),
       execute: async (input, { toolCallId }) => {
         if (!askUserQuestions(input)) throw new Error(INVALID_QUESTIONS)
-        await open({ toolCallId, toolName: ASK_USER_TOOL, input })
+        await opened(open, { toolCallId, toolName: ASK_USER_TOOL, input })
         return { asked: true, note: `Your question is open. ${STILL_OPEN}` }
       },
     }),
