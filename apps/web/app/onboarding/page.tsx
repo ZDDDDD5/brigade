@@ -696,7 +696,7 @@ function ConnectAI({
           </li>
         </ul>
         <Button size="lg" disabled={busy} onClick={() => subscribe()}>
-          Get Brigade Cloud
+          Get Max
         </Button>
         <p className="text-center text-xs text-muted-foreground">
           Ready in a few minutes. Cancel anytime. Or{' '}

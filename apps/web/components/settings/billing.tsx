@@ -1,8 +1,8 @@
 'use client'
-// Billing: the workspace's plan. Brigade is free on members' own machines; Brigade Cloud,
-// per workspace, adds the cloud computer, and Brigade Cloud Starter the same computer for a
-// number of hours a month. Owners and admins subscribe through Stripe Checkout, move from
-// Starter to Cloud in Stripe's portal, and manage the subscription (card, invoices, cancel) there.
+// Billing: the workspace's plan. Brigade is free on members' own machines (Free); Brigade Cloud,
+// per workspace, adds the cloud computer: Max without a limit of hours, Starter for a number of
+// hours a month. Owners and admins subscribe through Stripe Checkout, move from Starter to Max
+// in Stripe's portal, and manage the subscription (card, invoices, cancel) there.
 import type { BillingResponse } from '@brigade/contracts'
 import { Check, Cloud, Gauge, Laptop } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -18,8 +18,9 @@ type Tier = 'cloud' | 'starter'
 
 /** Each plan's name, where the page names the workspace's own plan. */
 const PLANS: Record<Tier, { name: string }> = {
-  starter: { name: 'Brigade Cloud Starter' },
-  cloud: { name: 'Brigade Cloud' },
+  starter: { name: 'Starter' },
+  // The tier's code name stays `cloud` (src/billing.ts PLANS): people see Max.
+  cloud: { name: 'Max' },
 }
 
 /** Where Checkout charges in euros (Stripe picks by the customer's country): the euro zone. */
@@ -74,7 +75,7 @@ const OFFERS: Offer[] = [
   },
   {
     key: 'cloud',
-    name: 'Cloud',
+    name: 'Max',
     icon: <Cloud />,
     amount: 99,
     audience: 'For work that runs around the clock',
@@ -213,7 +214,7 @@ export default function BillingPage() {
       )}
       {upgradedNow && active && tier === 'cloud' && (
         <p role="status" className="rounded-lg bg-accent p-4 text-sm text-accent-foreground">
-          You’re on Brigade Cloud now: the cloud computer has no limit of hours.
+          You’re on Max now: the cloud computer has no limit of hours.
         </p>
       )}
 
@@ -231,7 +232,7 @@ export default function BillingPage() {
             <div className="flex flex-wrap gap-2">
               {tier === 'starter' && (
                 <Button disabled={busy} onClick={() => void go(() => upgradeToCloud())}>
-                  Upgrade to Brigade Cloud · $99
+                  Upgrade to Max · $99
                 </Button>
               )}
               <Button variant="outline" disabled={busy} onClick={() => void manage()}>

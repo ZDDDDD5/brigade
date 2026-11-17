@@ -1,10 +1,10 @@
 # Billing
 
-Brigade is free on members' own machines. **Brigade Cloud**, $99 a month per workspace
-(€99 in the euro zone), adds the workspace's cloud computer and Brigade's own email
-addresses (see Email below). **Brigade Cloud Starter**, $15 a month (€15), is the same with
-100 hours of cloud computer a billing period, and without dictation or threads' own machines
-(see Starter below). One subscription per
+Brigade is free on members' own machines (the Free plan). **Brigade Cloud** adds the
+workspace's cloud computer and Brigade's own email addresses (see Email below), in two plans:
+**Max**, $99 a month per workspace (€99 in the euro zone), and **Starter**, $15 a month (€15),
+the same with 100 hours of cloud computer a billing period, and without dictation or threads'
+own machines (see Starter below). In code, rows and events, Max's tier is still `cloud`. One subscription per
 workspace, paid by the owner or admin who subscribes. All of it is in
 `apps/api/src/billing.ts`.
 
@@ -66,7 +66,7 @@ workspace, paid by the owner or admin who subscribes. All of it is in
 
 ## Starter
 
-Brigade Cloud Starter is a tier of the same plan: a `BillingSubscription` row of plan `cloud`
+Starter is a tier of the same plan: a `BillingSubscription` row of plan `cloud`
 whose `tier` is `starter`. The tier follows the subscription's price (`tierOfPrice`, by its
 lookup key `brigade_cloud_starter_monthly`), so a switch of price in Stripe's portal changes it
 on the same row, at the next reconcile.
@@ -82,21 +82,22 @@ on the same row, at the next reconcile.
   sent to it waits in the hub until the period renews or the plan goes up. Its disk stays.
   Computers says so, and a new thread points to Settings › Billing.
 - **The plan still stands:** email addresses and the Inbox work (`planEntitled`), whatever the
-  hours. Dictation comes only with Brigade Cloud (`dictationStatus`), and threads' own machines
+  hours. Dictation comes only with Max (`dictationStatus`), and threads' own machines
   (`wantsMachine`, preview_machines) never with Starter.
 - **Upgrade:** Settings › Billing's Upgrade opens Stripe's portal at the confirmation of
-  Brigade Cloud's price for the same subscription (`startUpgrade`, a `subscription_update_confirm`
+  Max's price for the same subscription (`startUpgrade`, a `subscription_update_confirm`
   flow), which charges the difference for the rest of the period at once. Brigade's portal
   settings allow moving between the two prices (`subscription_update`, set by `stripe:setup`).
-- Checkout takes `tier: 'starter'` (`BillingCheckout`); Settings › Billing offers both plans, and
-  onboarding offers Starter in a line under Brigade Cloud. `GET /api/billing` gives the plan's
+- Checkout takes `tier: 'starter'` (`BillingCheckout`); Settings › Billing shows Free, Starter
+  and Max side by side, and onboarding offers Starter in a line under Max. `GET /api/billing` gives the plan's
   `tier` and, on Starter, its `hours` (used, included, when they start over).
 
 ## Setting up an account
 
 `pnpm --filter @brigade/api stripe:setup` with `STRIPE_SECRET_KEY` set makes, once:
-the product `brigade_cloud`, its price `brigade_cloud_monthly`, the product
-`brigade_cloud_starter` and its price `brigade_cloud_starter_monthly` ($15, €15), and
+the product `brigade_cloud` (named Brigade Max), its price `brigade_cloud_monthly`, the product
+`brigade_cloud_starter` (Brigade Starter) and its price `brigade_cloud_starter_monthly` ($15,
+€15), renaming products made under another name, and
 Brigade's own customer portal settings (metadata `brigade=portal`, which the API uses rather
 than the account's default), with moving between the two prices allowed; portal settings made
 before Starter get that added. A live key needs `--live`. A preview whose `STRIPE_SECRET_KEY`

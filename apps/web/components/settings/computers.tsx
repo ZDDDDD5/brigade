@@ -144,7 +144,7 @@ export default function Computers() {
   const menuItems: { label: string; onSelect: () => void; danger?: boolean }[] = []
   // With billing on, the cloud computer comes with the workspace's Cloud plan.
   const planNeeded = !!computers.data?.billing && !computers.data.cloudEntitled
-  // On Brigade Cloud Starter, with this period's hours used up: asleep until it renews.
+  // On Starter, with this period's hours used up: asleep until it renews.
   const hoursUsedUp = computers.data?.cloudHoursUsedUp
   if (cloud?.status === 'stopped' && !planNeeded)
     menuItems.push({

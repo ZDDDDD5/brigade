@@ -37,7 +37,7 @@ export const DICTATION_PLAN_REQUIRED =
   'Dictation comes with Brigade Cloud: an owner or admin subscribes in Settings › Billing'
 
 export const DICTATION_STARTER =
-  'Dictation comes with Brigade Cloud, not Starter: an owner or admin upgrades in Settings › Billing'
+  'Dictation comes with Max, not Starter: an owner or admin upgrades in Settings › Billing'
 
 /**
  * The kinds of audio browsers record (MediaRecorder: WebM/Opus in Chrome and Firefox, MP4/AAC
@@ -68,7 +68,7 @@ export function audioName(type: string) {
 /** Whether the workspace's composers show a working microphone. */
 export async function dictationStatus(workspaceId: string): Promise<DictationStatus> {
   if (!transcriber()) return { available: false, reason: 'off' }
-  // The provider charges for each second heard: Brigade Cloud only, not Starter.
+  // The provider charges for each second heard: Max only, not Starter.
   const plan = await planOf(workspaceId)
   if (!plan.entitled || plan.tier !== 'cloud') return { available: false, reason: 'plan' }
   return { available: true }

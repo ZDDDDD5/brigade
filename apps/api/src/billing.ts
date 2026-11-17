@@ -1,5 +1,5 @@
-// Billing: a Cloud plan, subscribed per workspace, which gives the workspace its cloud computer:
-// Brigade Cloud ($99), or Brigade Cloud Starter ($15, with a monthly allowance of cloud computer
+// Billing: a Brigade Cloud plan, subscribed per workspace, which gives the workspace its cloud
+// computer: Max ($99, tier `cloud`), or Starter ($15, with a monthly allowance of cloud computer
 // hours). Brigade itself stays free on members' own machines. Stripe holds the subscription;
 // BillingSubscription rows follow it. Without STRIPE_SECRET_KEY billing is off and every
 // workspace has the cloud computer, as on a self-hosted Brigade.
@@ -46,16 +46,17 @@ export const CLOUD_PLAN = { name: 'cloud', lookupKey: 'brigade_cloud_monthly' }
  * The Cloud plans, by tier, each a Stripe price found by its lookup key (scripts/stripe-setup.mjs).
  * Both are rows of plan "cloud": the tier follows the subscription's price, so a switch in
  * Stripe's portal changes it on the same row.
- * - cloud: Brigade Cloud, $99 / €99 a month, the cloud computer without a limit of hours.
- * - starter: Brigade Cloud Starter, $15 / €15 a month: the same cloud computer for `hours` hours
+ * - cloud: Max, $99 / €99 a month, the cloud computer without a limit of hours. Its code name
+ *   stays `cloud` (rows, events, the lookup key): only people see "Max".
+ * - starter: Starter, $15 / €15 a month: the same cloud computer for `hours` hours
  *   a billing period (its VM's running time, src/vm-costs.ts), without dictation or threads'
  *   own machines. Past them, the computer sleeps until the period renews or the plan goes up.
  */
 export const PLANS = {
-  cloud: { lookupKey: CLOUD_PLAN.lookupKey, name: 'Brigade Cloud' },
+  cloud: { lookupKey: CLOUD_PLAN.lookupKey, name: 'Max' },
   starter: {
     lookupKey: 'brigade_cloud_starter_monthly',
-    name: 'Brigade Cloud Starter',
+    name: 'Starter',
     hours: 100,
   },
 } as const
@@ -180,7 +181,7 @@ const day = (date: Date) =>
 
 /** Why the cloud computer may not run: Starter's hours are used up until `resetsAt`. */
 export const hoursUsedUp = (resetsAt: Date) =>
-  `This month's ${PLANS.starter.hours} cloud computer hours of Brigade Cloud Starter are used up: the cloud computer sleeps until ${day(resetsAt)}, or upgrade to Brigade Cloud in Settings › Billing`
+  `This month's ${PLANS.starter.hours} cloud computer hours of Starter are used up: the cloud computer sleeps until ${day(resetsAt)}, or upgrade to Max in Settings › Billing`
 
 export type CloudAccess =
   | { ok: true }
@@ -599,7 +600,7 @@ export async function startCheckout(input: {
   /** Where Checkout comes back to: Settings › Billing or onboarding. */
   from: 'billing' | 'onboarding'
   cancelUrl: string
-  /** Which plan: Brigade Cloud by default. */
+  /** Which plan: Max by default. */
   tier?: Tier
 }) {
   const stripe = stripeClient!
@@ -693,7 +694,7 @@ export async function startCheckout(input: {
 }
 
 /**
- * Stripe's portal, at the confirmation of the move from Brigade Cloud Starter to Brigade Cloud:
+ * Stripe's portal, at the confirmation of the move from Starter to Max:
  * its address. The portal shows what is paid now for the rest of the period and takes the card's
  * confirmation; the subscription's price changes there, and the plan's tier follows it (savePlan),
  * by the webhook or the Billing page's next read.
@@ -702,10 +703,9 @@ export async function startUpgrade(workspaceId: string, returnUrl: string) {
   const stripe = stripeClient!
   const { plan, tier } = await planOf(workspaceId)
   if (!plan?.stripeSubscriptionId || tier !== 'starter')
-    throw new HTTPException(409, { message: 'Only Brigade Cloud Starter can be upgraded' })
+    throw new HTTPException(409, { message: 'Only Starter can be upgraded to Max' })
   const customer = await workspaceCustomerId(workspaceId)
-  if (!customer)
-    throw new HTTPException(409, { message: 'Only Brigade Cloud Starter can be upgraded' })
+  if (!customer) throw new HTTPException(409, { message: 'Only Starter can be upgraded to Max' })
   const subscription = await stripe.subscriptions.retrieve(plan.stripeSubscriptionId)
   const item = subscription.items.data[0]
   const [price] = (

@@ -266,7 +266,7 @@ test("Starter's computer runs while its period's hours last", { skip }, async ()
   await assert.rejects(billing.requireCloudPlan(workspaceId), (error: unknown) => {
     assert.ok(error instanceof HTTPException)
     assert.equal(error.status, 402)
-    assert.match(error.message, /100 cloud computer hours of Brigade Cloud Starter are used up/)
+    assert.match(error.message, /100 cloud computer hours of Starter are used up/)
     return true
   })
   // Its plan still stands: email keeps working.

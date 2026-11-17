@@ -1,7 +1,8 @@
 // What billing (src/billing.ts) needs in a Stripe account, made once, safe to run again: the
-// Brigade Cloud product and its monthly price ($99, with €99 for euro customers) found by the
-// lookup key brigade_cloud_monthly; the Brigade Cloud Starter product and its monthly price
-// ($15 / €15, lookup key brigade_cloud_starter_monthly); and Brigade's own customer portal
+// Brigade Max product and its monthly price ($99, with €99 for euro customers) found by the
+// lookup key brigade_cloud_monthly; the Brigade Starter product and its monthly price
+// ($15 / €15, lookup key brigade_cloud_starter_monthly), each product named as people see the
+// plan (renamed if it was made under another name); and Brigade's own customer portal
 // settings, where a subscription moves between the two. With STRIPE_SECRET_KEY; a live key
 // only with --live. `pnpm --filter @brigade/api stripe:setup`.
 // The webhook is not made here: see STRIPE_WEBHOOK_SECRET in src/config.ts.
@@ -23,23 +24,23 @@ const web = (process.env.WEB_URL ?? 'http://localhost:3000').split(',')[0].trim(
 const PLANS = [
   {
     product: 'brigade_cloud',
-    name: 'Brigade Cloud',
+    name: 'Brigade Max',
     description:
-      'Brigade’s cloud computer for one workspace: teammates keep working when your Mac is asleep, up to 4 threads at once.',
+      'Brigade’s cloud computer for one workspace, with no limit of hours: teammates keep working when your computer is off.',
     tier: 'cloud',
     lookupKey: 'brigade_cloud_monthly',
     amount: 9900,
-    nickname: 'Brigade Cloud monthly ($99 / €99)',
+    nickname: 'Brigade Max monthly ($99 / €99)',
   },
   {
     product: 'brigade_cloud_starter',
-    name: 'Brigade Cloud Starter',
+    name: 'Brigade Starter',
     description:
       'Brigade’s cloud computer for one workspace, 100 hours a month: teammates keep working when your computer is off.',
     tier: 'starter',
     lookupKey: 'brigade_cloud_starter_monthly',
     amount: 1500,
-    nickname: 'Brigade Cloud Starter monthly ($15 / €15)',
+    nickname: 'Brigade Starter monthly ($15 / €15)',
   },
 ]
 
@@ -71,10 +72,15 @@ for (const plan of PLANS) {
     })
     await stripe.products.update(product.id, { default_price: price.id })
   }
+  // Checkout and invoices show the product's name: the plan's, as people see it.
+  if (product.name !== plan.name || product.description !== plan.description) {
+    console.log(`Naming the product ${plan.product} ${plan.name}`)
+    await stripe.products.update(product.id, { name: plan.name, description: plan.description })
+  }
   prices.push({ product: product.id, price: price.id, lookupKey: plan.lookupKey })
 }
 
-// Moving between Starter and Cloud: the portal changes the subscription's price, charging the
+// Moving between Starter and Max: the portal changes the subscription's price, charging the
 // difference for the rest of the period at once (src/billing.ts startUpgrade).
 const subscriptionUpdate = {
   enabled: true,
@@ -106,7 +112,7 @@ if (!portal) {
     !portal.features.subscription_update?.enabled ||
     prices.some(({ price }) => !has.has(price))
   ) {
-    console.log('Letting Brigade’s customer portal move between Starter and Cloud')
+    console.log('Letting Brigade’s customer portal move between Starter and Max')
     await stripe.billingPortal.configurations.update(portal.id, {
       features: { subscription_update: subscriptionUpdate },
     })

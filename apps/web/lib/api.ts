@@ -809,7 +809,7 @@ export type ComputersResponse = {
    * left this period), or billing is off.
    */
   cloudEntitled: boolean
-  /** Brigade Cloud Starter's hours are used up: the cloud computer sleeps until then (ISO). */
+  /** Starter's hours are used up: the cloud computer sleeps until then (ISO). */
   cloudHoursUsedUp?: string | null
   computers: Computer[]
 }
@@ -856,7 +856,7 @@ export function subscribeToCloud(
   )
 }
 
-/** From Brigade Cloud Starter to Brigade Cloud, confirmed in Stripe's portal. Call it on a click. */
+/** From Starter to Max, confirmed in Stripe's portal. Call it on a click. */
 export function upgradeToCloud() {
   return openStripe(
     async () => (await api<{ url: string }>('/billing/upgrade', { method: 'POST' })).url,

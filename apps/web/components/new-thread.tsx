@@ -656,7 +656,7 @@ export function NewThread({
           onClick={(e) => clickSettings(e, '/app/billing')}
           className={link}
         >
-          Upgrade to Brigade Cloud
+          Upgrade to Max
         </Link>{' '}
         to keep going.
       </>

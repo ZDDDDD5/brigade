@@ -81,7 +81,7 @@ export const billing = new Hono<AppEnv>()
   })
 
   /**
-   * From Brigade Cloud Starter to Brigade Cloud: Stripe's portal at the confirmation of the new
+   * From Starter to Max: Stripe's portal at the confirmation of the new
    * price, for the workspace's own subscription. Its address, to open.
    */
   .post('/upgrade', async (c) => {

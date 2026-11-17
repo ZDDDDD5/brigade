@@ -46,7 +46,7 @@ export const computers = new Hono<AppEnv>()
       // With billing on, the cloud computer comes with the workspace's Cloud plan.
       billing: billingEnabled(),
       cloudEntitled: access.ok,
-      // Brigade Cloud Starter's hours are used up: the cloud computer sleeps until then.
+      // Starter's hours are used up: the cloud computer sleeps until then.
       cloudHoursUsedUp:
         !access.ok && access.reason === 'hours' ? access.resetsAt.toISOString() : null,
       computers: await Promise.all(
