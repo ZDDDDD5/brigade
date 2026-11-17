@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { messageRuns, type RunEntry } from '../lib/message-runs'
+import { messageRuns, runPlace, type RunEntry } from '../lib/message-runs'
 
 const riley = { author: 'riley' }
 const sam = { author: 'sam' }
@@ -34,4 +34,12 @@ test('the first message of each run shown names its author, whatever a fold hide
   assert.deepEqual([...messageRuns(entries).starts], [1, 4])
   // Within a run, only its first; another teammate starts a run of its own.
   assert.deepEqual([...messageRuns([riley, 'step', riley, sam, riley]).starts], [0, 3, 4])
+})
+
+test('data-run says where a reply sits among those drawn close together', () => {
+  // Three close in a row, a step, then one alone.
+  const runs = messageRuns([riley, riley, riley, 'step', riley])
+  const place = (at: number) =>
+    runPlace({ close: runs.close.has(at), followed: runs.close.has(at + 1) })
+  assert.deepEqual([0, 1, 2, 4].map(place), ['first', 'middle', 'last', 'single'])
 })

@@ -28,3 +28,11 @@ export function messageRuns(entries: RunEntry[]) {
   })
   return { starts, follows, close }
 }
+
+/**
+ * Where a message sits among those drawn close together (`close`, and `followed` when the next
+ * one is close under it), as its `data-run` tells themes that group bubbles.
+ */
+export function runPlace(run: { close: boolean; followed: boolean }) {
+  return run.close ? (run.followed ? 'middle' : 'last') : run.followed ? 'first' : 'single'
+}

@@ -500,6 +500,10 @@ export const THEME_HOOKS = [
   { selector: '[data-look="person-message"]', what: "a person's message bubble", always: true },
   { selector: '[data-look="teammate-message"]', what: "a teammate's reply", always: true },
   {
+    selector: '[data-look="teammate-message"][data-run]',
+    what: 'a reply drawn close to others of the same teammate: data-run is "first", "middle" or "last" of the group, or "single" when alone. Use it to group bubbles (tight spacing, smaller corners where they meet)',
+  },
+  {
     selector: '[data-look="message-actions"]',
     what: "a reply's Copy and Reply buttons, inside the reply",
   },
