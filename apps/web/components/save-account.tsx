@@ -68,8 +68,8 @@ export function SaveAccountDialog({
           <DialogTitle>{leaving ? 'Save your account first?' : 'Save your account'}</DialogTitle>
           <DialogDescription>
             {leaving
-              ? 'You started without an account: signed out, you could not come back to this project. Save it with your email to sign in again later.'
-              : 'Add your email to keep your project, sign in on your other devices and invite people.'}
+              ? 'You started without an account: signed out, you could not come back to this workspace. Save it with your email to sign in again later.'
+              : 'Add your email to keep your workspace, sign in on your other devices and invite people.'}
           </DialogDescription>
         </DialogHeader>
         {!sent ? (
@@ -147,7 +147,7 @@ export function SaveAccountDialog({
             onClick={onLeave}
             className="self-center text-sm text-destructive-text underline-offset-4 hover:underline"
           >
-            Sign out and lose this project
+            Sign out and lose this workspace
           </button>
         )}
       </DialogContent>
@@ -162,7 +162,7 @@ export function GuestBanner({ onSave }: { onSave: () => void }) {
       <div className="bg-card rounded-lg border p-3 text-sm group-data-[collapsible=icon]:hidden">
         <p className="font-semibold">No account yet</p>
         <p className="text-muted-foreground mt-1 text-[0.8125rem] leading-snug">
-          Save it with your email to keep this project and use Brigade on your phone.
+          Save it with your email to keep this workspace and use Brigade on your phone.
         </p>
         <Button size="sm" className="mt-2.5 w-full rounded-full" onClick={onSave}>
           Save my account

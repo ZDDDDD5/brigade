@@ -1,7 +1,7 @@
 # Guests
 
 Brigade.app starts without a sign-in. The first time its window opens, the person is a guest at
-once, greeted by their computer's own name: they get a project of their own, link this computer,
+once, greeted by their computer's own name: they get a workspace of their own, link this computer,
 and their teammates run on the Claude or ChatGPT login already on it. They save the account with
 an email whenever they like.
 
@@ -31,7 +31,7 @@ Linux, where its runner runs teammates. The website's sign-up is unchanged.
   again, and better-auth's refresh would cut a session to a week. Five a visitor an hour
   (`limitOf` in `src/auth.ts`). Its sign-up is recorded as any other, with `method: guest`
   (`signed_up`, docs/analytics.md).
-- **Their project** is made by the page as onboarding makes one, named `My project`, then
+- **Their workspace** is made by the page as onboarding makes one, named `My Workspace`, then
   onboarding goes on from its computer step. There, in Brigade.app, the computer is this one:
   **Link this Mac** asks for a link code and opens its `brigade://link`, which the app takes
   itself after asking (apps/desktop/src/links.ts). A guest's link starts on its own, once. A
@@ -41,14 +41,14 @@ Linux, where its runner runs teammates. The website's sign-up is unchanged.
   (`POST /api/billing/checkout`). What costs Brigade comes with Brigade Cloud only, which a guest
   cannot buy: the cloud computer, Brigade's email addresses, dictation. Nothing a guest does
   runs on Brigade's money: teammates run on their computer and subscription.
-- **Room**: once a guest's project has stored 50 MB of its threads' work (`WorkspaceEventDay`,
+- **Room**: once a guest's workspace has stored 50 MB of its threads' work (`WorkspaceEventDay`,
   as stored), starting a thread or writing in one answers 402 until they save the account
   (`requireGuestRoom`).
 
 ## Saving the account
 
 The sidebar's foot shows **No account yet** with **Save my account**, and Sign out offers it
-first (a guest signed out loses the project). The dialog (`components/save-account.tsx`):
+first (a guest signed out loses the workspace). The dialog (`components/save-account.tsx`):
 
 1. `POST /api/auth/guest/save/code` with the email: a 6-digit code mailed as a sign-in code is.
    Refused for an address with an account already (409). One code at a time; a guest mails 5 at
@@ -62,13 +62,13 @@ From then on, they sign in with that email anywhere, like anyone.
 ## Sweeping
 
 Hourly (`guest-sweep` in `src/jobs.ts`, `sweepIdleGuests`), a guest made more than 14 days ago,
-none of whose project's threads moved and whose runner (which Brigade.app keeps running)
-answered in the last 14 days, is deleted with their project, as deleting an account deletes it
+none of whose workspace's threads moved and whose runner (which Brigade.app keeps running)
+answered in the last 14 days, is deleted with their workspace, as deleting an account deletes it
 (`src/account-delete.ts`). 10 a run; one still at work is refused there and left for later.
 
 ## Not yet
 
 - Windows: the button stays off until teammates run on Windows (`desktopPlatform()`).
-- Saving with Google, and moving a guest's project into an account that exists already.
+- Saving with Google, and moving a guest's workspace into an account that exists already.
 - Brigade.app's setup window still says to connect from the dashboard; the main window's guest
   path links the computer without it.

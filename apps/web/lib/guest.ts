@@ -1,6 +1,6 @@
 'use client'
 // Guests (docs/guests.md): Brigade.app's window can start without a sign-in. The API makes a
-// guest and signs this window in as them (src/guests.ts there); their project is made here as
+// guest and signs this window in as them (src/guests.ts there); their workspace is made here as
 // onboarding makes one, and onboarding goes on from its next step. Later, the guest saves the
 // account with an email and a code mailed to it.
 import { api, type Me } from '@/lib/api'
@@ -10,8 +10,8 @@ import { desktopBridge } from '@/lib/desktop-bridge'
 import { markSignedIn } from '@/lib/signed-in'
 import { signupSourceHere } from '@/lib/signup-source'
 
-/** A guest's first project, renamed whenever they like. */
-const FIRST_PROJECT = 'My project'
+/** A guest's first workspace (and its organization), renamed whenever they like. */
+const FIRST_WORKSPACE = 'My Workspace'
 
 /**
  * Whether this window may offer to start without an account: Brigade.app's main window, on a
@@ -23,9 +23,9 @@ export async function guestOffered() {
   return !!data?.available
 }
 
-const slug = () => `my-project-${Math.random().toString(36).slice(2, 8)}`
+const slug = () => `my-workspace-${Math.random().toString(36).slice(2, 8)}`
 
-/** Become a guest, with a first project, ready for onboarding's next step. */
+/** Become a guest, with a first workspace, ready for onboarding's next step. */
 export async function startAsGuest() {
   const source = signupSourceHere()
   // Greeted by the computer's own account's name, as the app reads it; else Guest.
@@ -36,11 +36,11 @@ export async function startAsGuest() {
   })
   if (started.error) throw new Error(started.error.message ?? 'Could not start Brigade')
   markSignedIn()
-  const made = await authClient.organization.create({ name: FIRST_PROJECT, slug: slug() })
-  if (made.error) throw new Error(made.error.message ?? 'Could not make your project')
+  const made = await authClient.organization.create({ name: FIRST_WORKSPACE, slug: slug() })
+  if (made.error) throw new Error(made.error.message ?? 'Could not make your workspace')
   // Reading /me makes the new organization the session's.
   await api<Me>('/me')
-  await api('/workspaces', { body: { name: FIRST_PROJECT } })
+  await api('/workspaces', { body: { name: FIRST_WORKSPACE } })
 }
 
 /** Mail a code to the address the guest saves their account with. */
