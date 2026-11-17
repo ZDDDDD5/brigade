@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { hoursCard } from '../components/cloud-hours-banner'
+import { hoursCard, hoursTone } from '../components/cloud-hours-banner'
 
 // The sidebar's card for Starter's hours (components/cloud-hours-banner.tsx): nothing below 80%
 // of the period's hours, how many are used from there, and that they are used up at 100%.
@@ -24,4 +24,10 @@ test('at 100 hours, used up until they start over', () => {
   assert.equal(card.title, 'Cloud hours used up')
   assert.match(card.line, /^Back on .*waits until then\.$/)
   assert.equal(card.percent, 100)
+})
+
+test('the bar turns orange from 80 hours and red once used up', () => {
+  assert.equal(hoursTone(50, 100), null)
+  assert.equal(hoursTone(80, 100)?.fill, 'bg-warning')
+  assert.equal(hoursTone(100, 100)?.fill, 'bg-destructive')
 })

@@ -21,12 +21,23 @@ const EVERY_MS = 5 * 60_000
 const day = (iso: string) =>
   new Date(iso).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })
 
+/**
+ * The bar's colours for a share of the hours: orange from SHOW_FROM, red once used up, the
+ * account cards' tones (account-card.tsx). The app's own colour below.
+ */
+export function hoursTone(used: number, included: number) {
+  if (used >= included) return { track: 'bg-destructive/20', fill: 'bg-destructive' }
+  if (used >= included * SHOW_FROM) return { track: 'bg-warning/20', fill: 'bg-warning' }
+  return null
+}
+
 /** What the card says for these hours, or null below SHOW_FROM. */
 export function hoursCard(hours: { used: number; included: number; resetsAt: string }) {
   if (hours.used < hours.included * SHOW_FROM) return null
   const usedUp = hours.used >= hours.included
   return {
     usedUp,
+    tone: hoursTone(hours.used, hours.included)!,
     percent: Math.min(100, (hours.used / hours.included) * 100),
     title: usedUp
       ? 'Cloud hours used up'
@@ -68,7 +79,12 @@ export function CloudHoursBanner({ admin }: { admin: boolean }) {
     <div className="mx-2 group-data-[collapsible=icon]:mx-0">
       <div className="bg-card flex flex-col gap-2 rounded-lg border p-3 text-sm group-data-[collapsible=icon]:hidden">
         <p className="font-semibold">{card.title}</p>
-        <Progress value={card.percent} aria-label="Cloud computer hours used" />
+        <Progress
+          value={card.percent}
+          aria-label="Cloud computer hours used"
+          className={card.tone.track}
+          indicatorClassName={card.tone.fill}
+        />
         <p className="text-muted-foreground text-[0.8125rem] leading-snug">
           {card.line}
           {!admin && ' Ask an owner or admin to upgrade.'}

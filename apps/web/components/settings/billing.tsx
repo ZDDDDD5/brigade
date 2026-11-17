@@ -10,6 +10,7 @@ import { isAdmin, useDashboard } from '@/components/dashboard'
 import { ActivityIndicator } from '@/components/ui/activity-indicator'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
+import { hoursTone } from '@/components/cloud-hours-banner'
 import { Progress } from '@/components/ui/progress'
 import { api, openStripe, subscribeToCloud, upgradeToCloud, useApi } from '@/lib/api'
 import { useSettingsParams } from '@/lib/settings-dialog'
@@ -151,6 +152,7 @@ function PlanHead({ tier, line, dot }: { tier: Tier; line: ReactNode; dot?: bool
 function Hours({ hours }: { hours: NonNullable<NonNullable<BillingResponse['plan']>['hours']> }) {
   const left = hours.used < hours.included
   const used = Math.min(hours.used, hours.included)
+  const tone = hoursTone(hours.used, hours.included)
   return (
     <div className="flex flex-col gap-2 rounded-lg bg-muted/60 px-4 py-3.5">
       <div className="flex items-baseline justify-between gap-3 text-sm">
@@ -160,7 +162,12 @@ function Hours({ hours }: { hours: NonNullable<NonNullable<BillingResponse['plan
         </span>
         <span className="text-muted-foreground">Starts over on {day(hours.resetsAt)}</span>
       </div>
-      <Progress value={(used / hours.included) * 100} aria-label="Cloud computer hours used" />
+      <Progress
+        value={(used / hours.included) * 100}
+        aria-label="Cloud computer hours used"
+        className={tone?.track}
+        indicatorClassName={tone?.fill}
+      />
       <p className="text-[0.8125rem] leading-snug text-muted-foreground">
         {left
           ? 'Hours count while the cloud computer is on. It goes to sleep 30 minutes after teammates finish, and wakes when they have work.'
