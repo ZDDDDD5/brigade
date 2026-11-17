@@ -81,12 +81,17 @@ for (const plan of PLANS) {
 }
 
 // Moving between Starter and Max: the portal changes the subscription's price, charging the
-// difference for the rest of the period at once (src/billing.ts startUpgrade).
+// difference for the rest of the period at once (src/billing.ts startUpgrade). One plan per
+// workspace: its quantity stays 1 (Stripe lets customers change it unless told not to).
 const subscriptionUpdate = {
   enabled: true,
   default_allowed_updates: ['price'],
   proration_behavior: 'always_invoice',
-  products: prices.map(({ product, price }) => ({ product, prices: [price] })),
+  products: prices.map(({ product, price }) => ({
+    product,
+    prices: [price],
+    adjustable_quantity: { enabled: false },
+  })),
 }
 
 const portals = await stripe.billingPortal.configurations.list({ active: true, limit: 100 })
@@ -107,10 +112,12 @@ if (!portal) {
     metadata: { brigade: 'portal' },
   })
 } else {
-  const has = new Set(portal.features.subscription_update?.products?.flatMap((p) => p.prices))
+  const products = portal.features.subscription_update?.products ?? []
+  const has = new Set(products.flatMap((p) => p.prices))
   if (
     !portal.features.subscription_update?.enabled ||
-    prices.some(({ price }) => !has.has(price))
+    prices.some(({ price }) => !has.has(price)) ||
+    products.some((p) => p.adjustable_quantity?.enabled)
   ) {
     console.log('Letting Brigade’s customer portal move between Starter and Max')
     await stripe.billingPortal.configurations.update(portal.id, {
