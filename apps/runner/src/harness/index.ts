@@ -87,6 +87,7 @@ import {
   type WaitingApproval,
   type WaitingCall,
 } from './closed-turn.js'
+import { asksWithoutWaiting } from './codex-asks.js'
 import { lostWhy } from './codex-restart.js'
 import {
   changedTools,
@@ -412,6 +413,8 @@ function createAgent(
   desktop: Desktop | undefined,
   machine: MachineRunTools | undefined,
   arrivals: Arrivals,
+  /** Keeps a ticket or question Codex opened without waiting (codex-asks.ts). */
+  openAsk: (call: WaitingCall) => Promise<void>,
   pi?: PiSetup,
 ) {
   // auth {}: the adapter adds no credential of its own. The vendor CLI uses the
@@ -562,6 +565,9 @@ function createAgent(
         // Claude Code asks with its own question tool; Codex's and Pi's adapters have none.
         ...(codex || onPi ? { [ASK_USER_TOOL]: askUserTool } : {}),
         [OPEN_TICKET_TOOL]: openTicketTool,
+        // Codex ends its turn whatever a call waits on: its asks open, return at once and are
+        // answered by a message (codex-asks.ts).
+        ...(codex ? asksWithoutWaiting(openAsk) : {}),
         [SHOW_WIDGET_TOOL]: showWidgetTool,
         [WIDGET_GUIDE_TOOL]: widgetGuideTool,
         // A person's message given to the running turn, answered at once (steeredText in threads.ts).
@@ -1132,6 +1138,20 @@ export class HarnessThread {
   async awaitingPerson() {
     if (!this.live) await this.load()
     return this.waitsOnPerson()
+  }
+
+  /**
+   * A ticket or question Codex opened without waiting (codex-asks.ts): open for the person, its
+   * answer comes as a message (laterAnswer). Saved at once: a runner that stops before the turn
+   * ends must still find it.
+   */
+  private async openAsk(call: WaitingCall) {
+    this.saved ??= { accountId: this.current.id, transcript: [] }
+    this.saved.later = [
+      ...(this.saved.later ?? []).filter((c) => c.toolCallId !== call.toolCallId),
+      call,
+    ]
+    await this.persist()
   }
 
   private waitsOnPerson() {
@@ -2561,6 +2581,7 @@ export class HarnessThread {
         : this.cloudDesktop(),
       this.context.machine,
       this.arrivals,
+      (call) => this.openAsk(call),
       onPi
         ? { instructions: text, skills: piSkills(this.workDir, skills), pi: await loadPi() }
         : undefined,

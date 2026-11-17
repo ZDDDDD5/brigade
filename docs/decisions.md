@@ -548,12 +548,12 @@ choices made where it is silent. The code and the other pages in [docs/](.) are 
   signs in to stays in that teammate's profile only.
 - **Questions.** When the harness asks a person something, the thread waits and a `question` ticket opens; the
   answer goes back as the tool's result. Claude Code uses its built-in question tool. Codex's adapter has none, so
-  Codex threads get Brigade's `ask_user` tool, which has no `execute`: `HarnessAgent` pauses the turn on it and the
-  answer continues it, with option labels rather than ids. A question asking for a secret takes options, a
+  Codex threads get Brigade's `ask_user` tool, which opens the question without waiting: its answer comes as a
+  message, with option labels rather than ids (see Asks on Codex, below). A question asking for a secret takes options, a
   credential picked from the vault (sent as its mention, never its value) or a decline. A site that signed the
   teammate out shows up this way, as the teammate asking a person to sign it in again.
-- **Tickets from teammates.** Both harnesses get Brigade's `open_ticket` tool (no `execute`, so the turn pauses on
-  it). A ticket holds 1–6 asks, each with a type: `approval` (sign-off on a draft or plan: Approve, or Request
+- **Tickets from teammates.** Both harnesses get Brigade's `open_ticket` tool. On Claude Code it has no `execute`,
+  so the turn pauses on it; on Codex it opens the ticket and returns at once (Asks on Codex, below). A ticket holds 1–6 asks, each with a type: `approval` (sign-off on a draft or plan: Approve, or Request
   changes with a note, sent back to the asking teammate or another one, who gets the draft and the note as a
   message), `decision` (one button per option, or Approve / Decline), `access` (a connection or credential: open
   Connections or the Vault, then Mark granted), `action` (something only a person can do, with an optional
@@ -561,6 +561,18 @@ choices made where it is silent. The code and the other pages in [docs/](.) are 
   opens a `request` ticket (`ticket.opened`); the answer, sent once every ask has one, goes back as the tool's
   result (`ticket.answered`). From the Tickets page it can only be declined. Invalid input is returned to the
   teammate as a tool error instead of pausing the turn.
+- **Asks on Codex open without waiting** (`apps/runner/src/harness/codex-asks.ts`). Codex calls Brigade's tools from
+  the scripts it runs (code mode's `exec`), which go on in the background after a second or so; the model then
+  writes its reply and ends its turn, whatever a call still waits on. A ticket that paused the turn as on Claude Code
+  left Brigade waiting on a call Codex had given up. On Nov 17 a GPT-6.2 turn sat 76 minutes after its X sign-in
+  ticket was answered, until the member wrote again, and what the teammate wrote after that ticket and a second one
+  (a whole investigation) never reached the thread, since a paused turn reads nothing more. So on Codex,
+  `open_ticket` and `ask_user` open their ask and return at once, telling the teammate to end its turn and not to do
+  what it asked about until the answer comes. The ask stays open for the person as one set aside for a message
+  (`later` in the thread's state, below), the turn ends with `turn.completed` `waiting` (the thread shows Needs you),
+  and the answer comes as a message of its own (`answerLater`) in the same Codex thread. As for an ask set aside,
+  no turn waits on it: a new message, or a hand back after a takeover, runs at once. Codex could always go on after
+  a ticket; now the thread sees what it does. Claude Code keeps its pausing tools, on which it does wait.
 - **Writing instead of answering.** A person may write to a teammate whose turn waits on its own ticket or
   question, to ask about it without declining it (`apps/runner/src/harness/aside.ts`, runners from
   `ASIDE_PROTOCOL`). The message goes in at once as the waiting call's result, which says the ask is still open;

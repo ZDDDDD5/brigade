@@ -38,7 +38,7 @@ export const asideAfterRestart = (calls: WaitingCall[], message: string) =>
   `Your session restarted while you waited on the person, which cut off ${calls.map(asked).join(' and ')} above: ` +
   `it shows as interrupted, but it is still open for them, unanswered. A message came in meanwhile:\n\n${message}\n\n${STILL_OPEN}`
 
-/** A person's answer to a call set aside earlier, as a message. */
+/** A person's answer to a call set aside earlier, or opened without waiting (codex-asks.ts), as a message. */
 export const answerLater = (call: Pick<WaitingCall, 'toolName' | 'input'>, answer: unknown) =>
-  `The person answered ${asked(call)}, which stayed open while you answered a message. Their answer:\n\n` +
+  `The person answered ${asked(call)}, which stayed open for them. Their answer:\n\n` +
   `${JSON.stringify(answer)}\n\nCarry on from there, without asking again.`
