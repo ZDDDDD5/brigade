@@ -29,7 +29,8 @@ import { authorisedFetch } from './connector-calls.js'
 import { attachmentLink } from './connectors/email.js'
 import { gmailFile } from './connectors/gmail.js'
 import { addressOf, bareAddress } from './mail/names.js'
-import { domainOf, mutableDomain, mutedSender, type Noise } from './mail/noise.js'
+import { domainOf, mutableDomain, mutedSender, noiseOf, type Noise } from './mail/noise.js'
+import { bounceOf, bulkHeaders } from './mail/text.js'
 import { holdGmail } from './mail/gmail-outbound.js'
 import { readReceived, unread } from './mail/inbound.js'
 import { whenToReply } from './mail/guidance.js'
@@ -1032,24 +1033,10 @@ export async function muteSender(
 export async function unmuteSender(db: ScopedDb, scope: WorkspaceScope, itemId: string) {
   const m = await load(db, scope, itemId)
   const address = bareAddress(m.fromAddress)
+  const removed: { kind: 'address' | 'domain'; value: string }[] = []
   for (let muted = await mutedSender(db, address); muted; muted = await mutedSender(db, address)) {
     await db.mailMute.deleteMany({ where: { kind: muted.kind, value: muted.value } })
-    // Sorted again as they came: a sign-up's and a machine's still wait for nobody.
-    const where = (more: Prisma.MailMessageWhereInput): Prisma.MailMessageWhereInput => ({
-      direction: 'in',
-      noise: 'muted',
-      doneAt: null,
-      AND: [fromWhere(muted.kind, muted.value), more],
-    })
-    await db.mailMessage.updateMany({
-      where: where({ aliasId: { not: null } }),
-      data: { noise: 'sign_up' },
-    })
-    await db.mailMessage.updateMany({
-      where: where({ automatic: true }),
-      data: { noise: 'automatic' },
-    })
-    await db.mailMessage.updateMany({ where: where({}), data: { noise: null } })
+    removed.push(muted)
     await audit({
       ...scope,
       actor: { type: 'member', id: scope.memberId },
@@ -1057,6 +1044,29 @@ export async function unmuteSender(db: ScopedDb, scope: WorkspaceScope, itemId: 
       target: { type: 'mail_message', id: m.id },
       data: { kind: muted.kind, value: muted.value },
     })
+  }
+  if (!removed.length) return
+  // What these mutes held, sorted again as it came: another mute that still holds a sender (its
+  // own address, a domain above), a sign-up's, a list's or a machine's still wait for nobody.
+  const held = await db.mailMessage.findMany({
+    where: {
+      direction: 'in',
+      noise: 'muted',
+      doneAt: null,
+      OR: removed.map((r) => fromWhere(r.kind, r.value)),
+    },
+    select: { id: true, fromAddress: true, aliasId: true, automatic: true, headers: true },
+  })
+  for (const row of held) {
+    const headers = (row.headers ?? {}) as Record<string, string>
+    const noise = await noiseOf(db, {
+      fromAddress: row.fromAddress,
+      aliasId: row.aliasId,
+      bulk: row.automatic || bulkHeaders(headers),
+      bounce: bounceOf(row.fromAddress, headers),
+    })
+    if (noise !== 'muted')
+      await db.mailMessage.updateMany({ where: { id: row.id, noise: 'muted' }, data: { noise } })
   }
 }
 

@@ -732,6 +732,84 @@ describe('the Inbox', { skip }, () => {
     assert.equal(await mutedSender(db, `other-${id}@gmail.com`), null)
   })
 
+  test('unmute sorts again: another mute still holds, a newsletter stays in Other', async () => {
+    const db = scoped(scope)
+    const domain = `corp-${id}.test`
+    const alice = await mail(agent, { fromAddress: `alice@${domain}` })
+    const bob = await mail(agent, { fromAddress: `bob@${domain}` })
+    // A newsletter by its List-Unsubscribe alone: not a machine's.
+    const letter = await mail(agent, {
+      fromAddress: `news@${domain}`,
+      headers: { 'list-unsubscribe': '<https://corp.test/u>' },
+    })
+    await inbox.muteSender(db, as(0), `mail:${alice.id}`, 'address')
+    await inbox.muteSender(db, as(0), `mail:${bob.id}`, 'domain')
+    const row = (m: { id: string }) => prisma.mailMessage.findUniqueOrThrow({ where: { id: m.id } })
+    assert.equal((await row(letter)).noise, 'muted')
+
+    await inbox.unmuteSender(db, as(0), `mail:${bob.id}`)
+    assert.equal((await row(bob)).noise, null)
+    // Alice's own mute still holds.
+    assert.equal((await row(alice)).noise, 'muted')
+    assert.equal((await inbox.readItem(db, as(0), `mail:${alice.id}`)).muted?.kind, 'address')
+    // Still a list's mail: Other, not To do.
+    assert.equal((await row(letter)).noise, 'automatic')
+  })
+
+  test('Gmail: a delivery failure nobody waited on stays To do; a newsletter goes to Other', async () => {
+    const { keepGmail } = await import('../src/mail/gmail-inbox.js')
+    const connection = await prisma.connection.findUniqueOrThrow({ where: { id: gmailShared } })
+    const email = (
+      n: string,
+      from: string,
+      headers: Record<string, string>,
+      automatic: boolean,
+    ) => ({
+      id: `g-${n}-${id}`,
+      threadId: `gt-${n}-${id}`,
+      from,
+      to: connection.externalAccount ?? '',
+      subject: n,
+      date: new Date().toUTCString(),
+      snippet: n,
+      labels: ['INBOX'],
+      cc: undefined,
+      body: n,
+      attachments: [],
+      automatic,
+      headers,
+    })
+    await keepGmail(
+      connection,
+      email(
+        'bounce',
+        'Mail Delivery Subsystem <mailer-daemon@googlemail.com>',
+        { 'auto-submitted': 'auto-replied' },
+        true,
+      ),
+      { route: 'box' },
+    )
+    await keepGmail(
+      connection,
+      email(
+        'letter',
+        `Digest <digest-${id}@news.test>`,
+        { 'list-unsubscribe': '<https://news.test/u>' },
+        false,
+      ),
+      { route: 'box' },
+    )
+    const kept = (n: string) =>
+      prisma.mailMessage.findFirstOrThrow({ where: { sourceId: `g-${n}-${id}` } })
+    assert.equal((await kept('bounce')).noise, null)
+    const letter = await kept('letter')
+    assert.equal(letter.noise, 'automatic')
+    assert.equal(
+      (letter.headers as Record<string, string>)['list-unsubscribe'],
+      '<https://news.test/u>',
+    )
+  })
+
   test('hand to a teammate: only one given the mailbox; the conversation stays with its thread', async () => {
     const db = scoped(scope)
     const m = await mail(support, { messageId: `<hand-${id}@x.test>` })

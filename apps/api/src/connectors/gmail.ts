@@ -201,23 +201,25 @@ export function automatic(headers: { name: string; value: string }[] | undefined
 }
 
 /**
- * Whether an email went to a list (a newsletter, a campaign) or was sent by a machine: kept out of
- * the Inbox's To do when nothing took it (src/mail/noise.ts), never a reason to skip it.
+ * The few headers the Inbox keeps with a mail (lower-cased, short), as for Brigade's own
+ * addresses: whether it went to a list or was sent by a machine (src/mail/noise.ts).
  */
-export function bulk(headers: { name: string; value: string }[] | undefined) {
-  const has = (name: string) => !!headers?.some((h) => h.name.toLowerCase() === name)
-  const precedence = headers
-    ?.find((h) => h.name.toLowerCase() === 'precedence')
-    ?.value.trim()
-    .toLowerCase()
-  return (
-    automatic(headers) ||
-    has('list-unsubscribe') ||
-    has('list-id') ||
-    precedence === 'bulk' ||
-    precedence === 'list'
-  )
+export function keptHeaders(headers: { name: string; value: string }[] | undefined) {
+  const kept: Record<string, string> = {}
+  for (const h of headers ?? []) {
+    const name = h.name.toLowerCase()
+    if (BULK_HEADERS.has(name) && kept[name] === undefined) kept[name] = h.value.slice(0, 1000)
+  }
+  return kept
 }
+const BULK_HEADERS = new Set([
+  'auto-submitted',
+  'precedence',
+  'x-autoreply',
+  'x-autorespond',
+  'list-id',
+  'list-unsubscribe',
+])
 
 export const full = (m: Message) => ({
   ...summary(m),
@@ -225,7 +227,7 @@ export const full = (m: Message) => ({
   body: textOf(m.payload).slice(0, 50_000),
   attachments: attachmentsOf(m),
   automatic: automatic(m.payload?.headers),
-  bulk: bulk(m.payload?.headers),
+  headers: keptHeaders(m.payload?.headers),
 })
 
 const Compose = z.object({
