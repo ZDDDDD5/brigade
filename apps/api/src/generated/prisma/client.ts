@@ -687,8 +687,14 @@ export type MailDomain = Prisma.MailDomainModel
  */
 export type Contact = Prisma.ContactModel
 /**
- * Model ContactHandle
+ * Model MailMute
  * One way to reach a contact: an email address today, a chat account later.
+ * A sender a person muted in the Inbox: its mail nobody takes goes to Other, not To do.
+ */
+export type MailMute = Prisma.MailMuteModel
+/**
+ * Model ContactHandle
+ * 
  */
 export type ContactHandle = Prisma.ContactHandleModel
 /**

@@ -113,6 +113,46 @@ export const KEPT_HEADERS = [
   'x-brigade-test',
 ]
 
+/**
+ * The List-* headers, as Resend gives them: not under their own names but folded into one `list`
+ * header, a JSON object ({"unsubscribe":{"url","mail"},"id":{"id","name"},…}), as mailparser
+ * parses them. Back under their names (list-unsubscribe, list-id…), as the mail wrote them.
+ */
+export function listHeadersOf(headers: Record<string, string | string[]> | null | undefined) {
+  const raw = headerOf(headers, 'list') as unknown
+  let list: unknown = raw
+  if (typeof raw === 'string') {
+    try {
+      list = JSON.parse(raw)
+    } catch {
+      return {}
+    }
+  }
+  if (!list || typeof list !== 'object' || Array.isArray(list)) return {}
+  const found: Record<string, string> = {}
+  for (const [key, value] of Object.entries(list as Record<string, unknown>)) {
+    if (value === null || value === undefined) continue
+    const part = value as { url?: unknown; mail?: unknown; id?: unknown; name?: unknown }
+    const text =
+      typeof value === 'string'
+        ? value
+        : typeof value !== 'object'
+          ? String(value)
+          : typeof part.url === 'string' || typeof part.mail === 'string'
+            ? [
+                typeof part.url === 'string' ? `<${part.url}>` : '',
+                typeof part.mail === 'string' ? `<mailto:${part.mail}>` : '',
+              ]
+                .filter(Boolean)
+                .join(', ')
+            : typeof part.id === 'string'
+              ? `${typeof part.name === 'string' && part.name ? `${part.name} ` : ''}<${part.id}>`
+              : JSON.stringify(value)
+    if (text) found[`list-${key.toLowerCase()}`] = text
+  }
+  return found
+}
+
 /** Sent by a machine (an out-of-office, a notification), by its headers, as Gmail's trigger tells. */
 export function automaticHeaders(headers: Record<string, string>) {
   const submitted = headers['auto-submitted']?.trim().toLowerCase()
@@ -127,6 +167,14 @@ export function automaticHeaders(headers: Record<string, string>) {
     headers['list-id'] !== undefined
   )
 }
+
+/**
+ * Mail nobody writes by hand: sent by a machine, or to a list (a newsletter, a campaign, which
+ * says how to unsubscribe). Keeps it out of the Inbox's To do when nobody took it; never decides
+ * where it goes (automaticHeaders does).
+ */
+export const bulkHeaders = (headers: Record<string, string>) =>
+  automaticHeaders(headers) || headers['list-unsubscribe'] !== undefined
 
 /** A delivery status notification: a mail server saying an email could not be delivered. */
 export function bounceOf(from: string, headers: Record<string, string>) {

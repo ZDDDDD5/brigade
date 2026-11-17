@@ -14,7 +14,7 @@ import type * as Prisma from "../internal/prismaNamespace.js"
 
 /**
  * Model ContactHandle
- * One way to reach a contact: an email address today, a chat account later.
+ * 
  */
 export type ContactHandleModel = runtime.Types.Result.DefaultSelection<Prisma.$ContactHandlePayload>
 

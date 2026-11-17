@@ -175,6 +175,28 @@ describe('text', () => {
     )
     assert.equal(text.bounceOf('a@b.test', {}), false)
   })
+  test('Resend’s List-* headers, folded into one list header, are read back under their names', () => {
+    // As Resend's API gives a Medium newsletter's (mailparser's parsed headers).
+    const lists = text.listHeadersOf({
+      from: '"Medium Daily Digest" <noreply@medium.com>',
+      list: JSON.stringify({
+        unsubscribe: { url: 'https://medium.test/unsubscribe?token=x', mail: 'leave@medium.test' },
+        id: { id: 'digest.medium.test', name: 'Daily Digest' },
+      }),
+    })
+    assert.equal(
+      lists['list-unsubscribe'],
+      '<https://medium.test/unsubscribe?token=x>, <mailto:leave@medium.test>',
+    )
+    assert.equal(lists['list-id'], 'Daily Digest <digest.medium.test>')
+    assert.deepEqual(text.listHeadersOf({ list: 'not json' }), {})
+    assert.deepEqual(text.listHeadersOf({ from: 'a@b.test' }), {})
+    // A newsletter is bulk mail, not a machine's: only the Inbox's To do tells them apart.
+    assert.equal(text.automaticHeaders({ 'list-unsubscribe': '<https://x.test>' }), false)
+    assert.equal(text.bulkHeaders({ 'list-unsubscribe': '<https://x.test>' }), true)
+    assert.equal(text.bulkHeaders({ precedence: 'bulk' }), true)
+    assert.equal(text.bulkHeaders({}), false)
+  })
   test('Gmail’s DKIM counts only when it signed for the From domain', () => {
     assert.equal(
       gmailAuthentication(
@@ -892,6 +914,96 @@ describe('receiving', { skip }, () => {
     )
     assert.equal(row!.conversationId, 'conv-loop')
     assert.equal(row!.route, 'loop')
+  })
+})
+
+describe('mail that waits for nobody: the Inbox’s Other', { skip }, () => {
+  const to = (local: string) => `${local}@mails.brigade.test`
+
+  test('a person’s mail waits To do; a newsletter, a machine’s mail and a muted sender’s do not', async () => {
+    const [person] = await arrive(
+      mail({ to: [to(base())], from: `jane-${id}@client.test`, subject: 'A question' }),
+    )
+    assert.equal(person!.route, 'box')
+    assert.equal(person!.noise, null)
+
+    // Resend folds List-Unsubscribe into its list header: it is read, and kept under its name.
+    const [newsletter] = await arrive(
+      mail({
+        to: [to(base())],
+        from: `digest-${id}@news.test`,
+        subject: 'Your daily brief',
+        headers: { list: JSON.stringify({ unsubscribe: { url: 'https://news.test/u' } }) },
+      }),
+    )
+    assert.equal(newsletter!.route, 'box')
+    assert.equal(newsletter!.noise, 'automatic')
+    assert.equal(
+      (newsletter!.headers as Record<string, string>)['list-unsubscribe'],
+      '<https://news.test/u>',
+    )
+    // Bulk, not a machine's: a thread waiting on a reply from this sender would still get it.
+    assert.equal(newsletter!.automatic, false)
+
+    const [machine] = await arrive(
+      mail({
+        to: [to(base())],
+        from: `bot-${id}@tools.test`,
+        headers: { precedence: 'bulk' },
+      }),
+    )
+    assert.equal(machine!.noise, 'automatic')
+
+    // A mail server saying a mail could not be delivered stays To do.
+    const [bounce] = await arrive(
+      mail({
+        to: [to(base())],
+        from: 'MAILER-DAEMON@mx.test',
+        headers: { 'auto-submitted': 'auto-replied' },
+      }),
+    )
+    assert.equal(bounce!.route, 'box')
+    assert.equal(bounce!.noise, null)
+
+    const db = scoped(a)
+    await db.mailMute.create({ data: { kind: 'domain', value: `spam-${id}.test` } as never })
+    const [muted] = await arrive(
+      mail({ to: [to(base())], from: `seo@mail.spam-${id}.test`, subject: 'Backlinks' }),
+    )
+    assert.equal(muted!.noise, 'muted')
+  })
+
+  test('a sign-up address after its thread stopped waiting: Other, and the site is no contact', async () => {
+    const db = scoped(a)
+    const session = await thread('member', { projectId })
+    const address = await db.mailAddress.findFirstOrThrow({ where: { teammateId: riley.id } })
+    const alias = await addresses.newAlias(db, {
+      address,
+      projectId,
+      sessionId: session.id,
+      teammateId: riley.id,
+      purpose: 'Directory sign-up',
+      waitMinutes: 60,
+    })
+    const site = `hello-${id}@directory.test`
+    const [code] = await arrive(
+      mail({ to: [to(alias.local)], from: site, subject: 'Your code', text: 'Code 551234' }),
+    )
+    assert.equal(code!.route, 'awaited')
+    // Its code went to the thread: the site is not a contact for that.
+    assert.equal(code!.contactId, null)
+    assert.equal(await db.contactHandle.count({ where: { value: site } }), 0)
+
+    await prisma.mailAlias.update({
+      where: { id: alias.id },
+      data: { waitUntil: new Date(Date.now() - 60_000) },
+    })
+    const [news] = await arrive(
+      mail({ to: [to(alias.local)], from: site, subject: 'Get featured on our homepage' }),
+    )
+    assert.equal(news!.route, 'box')
+    assert.equal(news!.noise, 'sign_up')
+    assert.equal(news!.sender, 'unknown')
   })
 })
 

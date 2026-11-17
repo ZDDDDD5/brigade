@@ -58,6 +58,7 @@ export type MailMessageMinAggregateOutputType = {
   subject: string | null
   text: string | null
   automatic: boolean | null
+  noise: string | null
   sender: $Enums.MailSender | null
   memberId: string | null
   contactId: string | null
@@ -106,6 +107,7 @@ export type MailMessageMaxAggregateOutputType = {
   subject: string | null
   text: string | null
   automatic: boolean | null
+  noise: string | null
   sender: $Enums.MailSender | null
   memberId: string | null
   contactId: string | null
@@ -160,6 +162,7 @@ export type MailMessageCountAggregateOutputType = {
   headers: number
   authentication: number
   automatic: number
+  noise: number
   sender: number
   memberId: number
   contactId: number
@@ -219,6 +222,7 @@ export type MailMessageMinAggregateInputType = {
   subject?: true
   text?: true
   automatic?: true
+  noise?: true
   sender?: true
   memberId?: true
   contactId?: true
@@ -267,6 +271,7 @@ export type MailMessageMaxAggregateInputType = {
   subject?: true
   text?: true
   automatic?: true
+  noise?: true
   sender?: true
   memberId?: true
   contactId?: true
@@ -321,6 +326,7 @@ export type MailMessageCountAggregateInputType = {
   headers?: true
   authentication?: true
   automatic?: true
+  noise?: true
   sender?: true
   memberId?: true
   contactId?: true
@@ -463,6 +469,7 @@ export type MailMessageGroupByOutputType = {
   headers: runtime.JsonValue
   authentication: runtime.JsonValue | null
   automatic: boolean
+  noise: string | null
   sender: $Enums.MailSender | null
   memberId: string | null
   contactId: string | null
@@ -541,6 +548,7 @@ export type MailMessageWhereInput = {
   headers?: Prisma.JsonFilter<"MailMessage">
   authentication?: Prisma.JsonNullableFilter<"MailMessage">
   automatic?: Prisma.BoolFilter<"MailMessage"> | boolean
+  noise?: Prisma.StringNullableFilter<"MailMessage"> | string | null
   sender?: Prisma.EnumMailSenderNullableFilter<"MailMessage"> | $Enums.MailSender | null
   memberId?: Prisma.StringNullableFilter<"MailMessage"> | string | null
   contactId?: Prisma.StringNullableFilter<"MailMessage"> | string | null
@@ -603,6 +611,7 @@ export type MailMessageOrderByWithRelationInput = {
   headers?: Prisma.SortOrder
   authentication?: Prisma.SortOrderInput | Prisma.SortOrder
   automatic?: Prisma.SortOrder
+  noise?: Prisma.SortOrderInput | Prisma.SortOrder
   sender?: Prisma.SortOrderInput | Prisma.SortOrder
   memberId?: Prisma.SortOrderInput | Prisma.SortOrder
   contactId?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -670,6 +679,7 @@ export type MailMessageWhereUniqueInput = Prisma.AtLeast<{
   headers?: Prisma.JsonFilter<"MailMessage">
   authentication?: Prisma.JsonNullableFilter<"MailMessage">
   automatic?: Prisma.BoolFilter<"MailMessage"> | boolean
+  noise?: Prisma.StringNullableFilter<"MailMessage"> | string | null
   sender?: Prisma.EnumMailSenderNullableFilter<"MailMessage"> | $Enums.MailSender | null
   memberId?: Prisma.StringNullableFilter<"MailMessage"> | string | null
   contactId?: Prisma.StringNullableFilter<"MailMessage"> | string | null
@@ -732,6 +742,7 @@ export type MailMessageOrderByWithAggregationInput = {
   headers?: Prisma.SortOrder
   authentication?: Prisma.SortOrderInput | Prisma.SortOrder
   automatic?: Prisma.SortOrder
+  noise?: Prisma.SortOrderInput | Prisma.SortOrder
   sender?: Prisma.SortOrderInput | Prisma.SortOrder
   memberId?: Prisma.SortOrderInput | Prisma.SortOrder
   contactId?: Prisma.SortOrderInput | Prisma.SortOrder
@@ -795,6 +806,7 @@ export type MailMessageScalarWhereWithAggregatesInput = {
   headers?: Prisma.JsonWithAggregatesFilter<"MailMessage">
   authentication?: Prisma.JsonNullableWithAggregatesFilter<"MailMessage">
   automatic?: Prisma.BoolWithAggregatesFilter<"MailMessage"> | boolean
+  noise?: Prisma.StringNullableWithAggregatesFilter<"MailMessage"> | string | null
   sender?: Prisma.EnumMailSenderNullableWithAggregatesFilter<"MailMessage"> | $Enums.MailSender | null
   memberId?: Prisma.StringNullableWithAggregatesFilter<"MailMessage"> | string | null
   contactId?: Prisma.StringNullableWithAggregatesFilter<"MailMessage"> | string | null
@@ -846,6 +858,7 @@ export type MailMessageCreateInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -906,6 +919,7 @@ export type MailMessageUncheckedCreateInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -958,6 +972,7 @@ export type MailMessageUpdateInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -1018,6 +1033,7 @@ export type MailMessageUncheckedUpdateInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1074,6 +1090,7 @@ export type MailMessageCreateManyInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -1125,6 +1142,7 @@ export type MailMessageUpdateManyMutationInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -1178,6 +1196,7 @@ export type MailMessageUncheckedUpdateManyInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -1253,6 +1272,7 @@ export type MailMessageCountOrderByAggregateInput = {
   headers?: Prisma.SortOrder
   authentication?: Prisma.SortOrder
   automatic?: Prisma.SortOrder
+  noise?: Prisma.SortOrder
   sender?: Prisma.SortOrder
   memberId?: Prisma.SortOrder
   contactId?: Prisma.SortOrder
@@ -1306,6 +1326,7 @@ export type MailMessageMaxOrderByAggregateInput = {
   subject?: Prisma.SortOrder
   text?: Prisma.SortOrder
   automatic?: Prisma.SortOrder
+  noise?: Prisma.SortOrder
   sender?: Prisma.SortOrder
   memberId?: Prisma.SortOrder
   contactId?: Prisma.SortOrder
@@ -1354,6 +1375,7 @@ export type MailMessageMinOrderByAggregateInput = {
   subject?: Prisma.SortOrder
   text?: Prisma.SortOrder
   automatic?: Prisma.SortOrder
+  noise?: Prisma.SortOrder
   sender?: Prisma.SortOrder
   memberId?: Prisma.SortOrder
   contactId?: Prisma.SortOrder
@@ -1727,6 +1749,7 @@ export type MailMessageCreateWithoutWorkspaceInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -1785,6 +1808,7 @@ export type MailMessageUncheckedCreateWithoutWorkspaceInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -1870,6 +1894,7 @@ export type MailMessageScalarWhereInput = {
   headers?: Prisma.JsonFilter<"MailMessage">
   authentication?: Prisma.JsonNullableFilter<"MailMessage">
   automatic?: Prisma.BoolFilter<"MailMessage"> | boolean
+  noise?: Prisma.StringNullableFilter<"MailMessage"> | string | null
   sender?: Prisma.EnumMailSenderNullableFilter<"MailMessage"> | $Enums.MailSender | null
   memberId?: Prisma.StringNullableFilter<"MailMessage"> | string | null
   contactId?: Prisma.StringNullableFilter<"MailMessage"> | string | null
@@ -1921,6 +1946,7 @@ export type MailMessageCreateWithoutSessionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -1980,6 +2006,7 @@ export type MailMessageUncheckedCreateWithoutSessionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -2057,6 +2084,7 @@ export type MailMessageCreateWithoutConnectionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -2115,6 +2143,7 @@ export type MailMessageUncheckedCreateWithoutConnectionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -2193,6 +2222,7 @@ export type MailMessageCreateWithoutAddressInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -2251,6 +2281,7 @@ export type MailMessageUncheckedCreateWithoutAddressInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -2329,6 +2360,7 @@ export type MailMessageCreateWithoutAliasInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -2387,6 +2419,7 @@ export type MailMessageUncheckedCreateWithoutAliasInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -2465,6 +2498,7 @@ export type MailMessageCreateWithoutHtmlBodyInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -2524,6 +2558,7 @@ export type MailMessageUncheckedCreateWithoutHtmlBodyInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -2591,6 +2626,7 @@ export type MailMessageUpdateWithoutHtmlBodyInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -2650,6 +2686,7 @@ export type MailMessageUncheckedUpdateWithoutHtmlBodyInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -2701,6 +2738,7 @@ export type MailMessageCreateWithoutContactInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -2760,6 +2798,7 @@ export type MailMessageUncheckedCreateWithoutContactInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -2840,6 +2879,7 @@ export type MailMessageCreateManyWorkspaceInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -2891,6 +2931,7 @@ export type MailMessageUpdateWithoutWorkspaceInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -2949,6 +2990,7 @@ export type MailMessageUncheckedUpdateWithoutWorkspaceInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3004,6 +3046,7 @@ export type MailMessageUncheckedUpdateManyWithoutWorkspaceInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3059,6 +3102,7 @@ export type MailMessageCreateManySessionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -3109,6 +3153,7 @@ export type MailMessageUpdateWithoutSessionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -3168,6 +3213,7 @@ export type MailMessageUncheckedUpdateWithoutSessionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3223,6 +3269,7 @@ export type MailMessageUncheckedUpdateManyWithoutSessionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3276,6 +3323,7 @@ export type MailMessageCreateManyConnectionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -3327,6 +3375,7 @@ export type MailMessageUpdateWithoutConnectionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -3385,6 +3434,7 @@ export type MailMessageUncheckedUpdateWithoutConnectionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3440,6 +3490,7 @@ export type MailMessageUncheckedUpdateManyWithoutConnectionInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3494,6 +3545,7 @@ export type MailMessageCreateManyAddressInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -3545,6 +3597,7 @@ export type MailMessageUpdateWithoutAddressInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -3603,6 +3656,7 @@ export type MailMessageUncheckedUpdateWithoutAddressInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3658,6 +3712,7 @@ export type MailMessageUncheckedUpdateManyWithoutAddressInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3712,6 +3767,7 @@ export type MailMessageCreateManyAliasInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   contactId?: string | null
@@ -3763,6 +3819,7 @@ export type MailMessageUpdateWithoutAliasInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -3821,6 +3878,7 @@ export type MailMessageUncheckedUpdateWithoutAliasInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3876,6 +3934,7 @@ export type MailMessageUncheckedUpdateManyWithoutAliasInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   contactId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
@@ -3931,6 +3990,7 @@ export type MailMessageCreateManyContactInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: boolean
+  noise?: string | null
   sender?: $Enums.MailSender | null
   memberId?: string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -3981,6 +4041,7 @@ export type MailMessageUpdateWithoutContactInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -4040,6 +4101,7 @@ export type MailMessageUncheckedUpdateWithoutContactInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -4095,6 +4157,7 @@ export type MailMessageUncheckedUpdateManyWithoutContactInput = {
   headers?: Prisma.JsonNullValueInput | runtime.InputJsonValue
   authentication?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
   automatic?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  noise?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   sender?: Prisma.NullableEnumMailSenderFieldUpdateOperationsInput | $Enums.MailSender | null
   memberId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   attachments?: Prisma.JsonNullValueInput | runtime.InputJsonValue
@@ -4151,6 +4214,7 @@ export type MailMessageSelect<ExtArgs extends runtime.Types.Extensions.InternalA
   headers?: boolean
   authentication?: boolean
   automatic?: boolean
+  noise?: boolean
   sender?: boolean
   memberId?: boolean
   contactId?: boolean
@@ -4213,6 +4277,7 @@ export type MailMessageSelectCreateManyAndReturn<ExtArgs extends runtime.Types.E
   headers?: boolean
   authentication?: boolean
   automatic?: boolean
+  noise?: boolean
   sender?: boolean
   memberId?: boolean
   contactId?: boolean
@@ -4274,6 +4339,7 @@ export type MailMessageSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.E
   headers?: boolean
   authentication?: boolean
   automatic?: boolean
+  noise?: boolean
   sender?: boolean
   memberId?: boolean
   contactId?: boolean
@@ -4335,6 +4401,7 @@ export type MailMessageSelectScalar = {
   headers?: boolean
   authentication?: boolean
   automatic?: boolean
+  noise?: boolean
   sender?: boolean
   memberId?: boolean
   contactId?: boolean
@@ -4363,7 +4430,7 @@ export type MailMessageSelectScalar = {
   updatedAt?: boolean
 }
 
-export type MailMessageOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "organizationId" | "workspaceId" | "addressId" | "connectionId" | "sourceId" | "projectId" | "box" | "aliasId" | "direction" | "status" | "resendId" | "messageId" | "inReplyTo" | "references" | "conversationId" | "fromAddress" | "fromName" | "to" | "cc" | "replyTo" | "subject" | "text" | "headers" | "authentication" | "automatic" | "sender" | "memberId" | "contactId" | "attachments" | "route" | "routeNote" | "sessionId" | "triggerId" | "teammateId" | "approvedByMemberId" | "sendAt" | "doneAt" | "doneByMemberId" | "handedByMemberId" | "handedAt" | "outcome" | "outcomeNote" | "outcomeAt" | "outcomeAskedAt" | "sentByMemberId" | "error" | "attempts" | "receivedAt" | "expiresAt" | "createdAt" | "updatedAt", ExtArgs["result"]["mailMessage"]>
+export type MailMessageOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "organizationId" | "workspaceId" | "addressId" | "connectionId" | "sourceId" | "projectId" | "box" | "aliasId" | "direction" | "status" | "resendId" | "messageId" | "inReplyTo" | "references" | "conversationId" | "fromAddress" | "fromName" | "to" | "cc" | "replyTo" | "subject" | "text" | "headers" | "authentication" | "automatic" | "noise" | "sender" | "memberId" | "contactId" | "attachments" | "route" | "routeNote" | "sessionId" | "triggerId" | "teammateId" | "approvedByMemberId" | "sendAt" | "doneAt" | "doneByMemberId" | "handedByMemberId" | "handedAt" | "outcome" | "outcomeNote" | "outcomeAt" | "outcomeAskedAt" | "sentByMemberId" | "error" | "attempts" | "receivedAt" | "expiresAt" | "createdAt" | "updatedAt", ExtArgs["result"]["mailMessage"]>
 export type MailMessageInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   address?: boolean | Prisma.MailMessage$addressArgs<ExtArgs>
@@ -4471,6 +4538,13 @@ export type $MailMessagePayload<ExtArgs extends runtime.Types.Extensions.Interna
      * Sent by a machine (an out-of-office, a notification).
      */
     automatic: boolean
+    /**
+     * in, left in its box (nobody took it): why it is kept out of the Inbox's To do, in Other.
+     * sign_up (to a sign-up address whose thread no longer waits), automatic (sent by a machine or
+     * to a list), muted (a sender a person muted). Null: a person's mail, To do. A person moving it
+     * back to To do clears it.
+     */
+    noise: string | null
     sender: $Enums.MailSender | null
     memberId: string | null
     contactId: string | null
@@ -5003,6 +5077,7 @@ export interface MailMessageFieldRefs {
   readonly headers: Prisma.FieldRef<"MailMessage", 'Json'>
   readonly authentication: Prisma.FieldRef<"MailMessage", 'Json'>
   readonly automatic: Prisma.FieldRef<"MailMessage", 'Boolean'>
+  readonly noise: Prisma.FieldRef<"MailMessage", 'String'>
   readonly sender: Prisma.FieldRef<"MailMessage", 'MailSender'>
   readonly memberId: Prisma.FieldRef<"MailMessage", 'String'>
   readonly contactId: Prisma.FieldRef<"MailMessage", 'String'>

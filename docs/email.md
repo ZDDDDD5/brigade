@@ -223,7 +223,16 @@ has to keep its messages there.
   later (sent, `scheduled`, past the 30 seconds to cancel any mail).
 - **Tabs**: To do (`waiting`: nobody took it, its thread chose not to reply, or a reply waits for
   this member's approval: they started its thread, or are an admin, as `decide.ts` says), In progress (`handled`, but those),
-  Scheduled (a reply set for later), Done, All. The sidebar counts the To do, last 30 days.
+  Scheduled (a reply set for later), Done, Other (`other`), All. The sidebar counts the To do, last 30 days.
+- **Other** (`MailMessage.noise`, src/mail/noise.ts): mail nobody took that waits for nobody, kept out
+  of To do and its count. Decided once, as a mail is left in its box: `muted` (a sender in
+  `MailMute`, by address or by a domain or one above it; never a public provider's domain),
+  `sign_up` (to a sign-up address whose thread no longer waits), `automatic` (Auto-Submitted,
+  Precedence bulk or list, List-Id or List-Unsubscribe). A mail server's bounce stays To do. Gmail's mail keeps the same few headers (`keptHeaders`). It never
+  changes where a mail goes. Resend gives the List-* headers folded into one `list` header (a JSON
+  object), read back under their names (`listHeadersOf`). Move to To do clears it for the
+  conversation; muting moves what waits from that sender; unmuting sorts each of its mails again (another mute that still holds, a sign-up's, a list's). Mail to a sign-up
+  address makes no contact of its sender.
 - **Filters**: source, agent, project, words; a conversation shows when any of its mails matches
   (words: its senders, or the words of its mails received or sent).
   Pages of 50, newest first.

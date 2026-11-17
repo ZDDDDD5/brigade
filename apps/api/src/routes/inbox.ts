@@ -3,6 +3,7 @@
 import {
   HandInboxItem,
   InboxQuery,
+  MuteInboxSender,
   ReplyInboxItem,
   SetInboxDone,
   type InboxPlan,
@@ -16,12 +17,15 @@ import { attachmentKey, directUploads, presignGet, streamObject } from '../bucke
 import {
   askedToReply,
   handItem,
+  keepInTodo,
   listInbox,
+  muteSender,
   openFile,
   parseCursor,
   readItem,
   replyItem,
   setDone,
+  unmuteSender,
   waitingCount,
 } from '../inbox.js'
 import { listMailboxes, readMailbox } from '../mailboxes.js'
@@ -31,7 +35,7 @@ import { parseBody, requireUser, requireWorkspace, type AppEnv } from '../scope.
 export const inbox = new Hono<AppEnv>()
   .use(requireUser, requireWorkspace)
 
-  /** ?source=&teammate=&project=&status=waiting|handled|done|all&q=&before= */
+  /** ?source=&teammate=&project=&status=waiting|handled|other|scheduled|done|all&q=&before= */
   .get('/', async (c) => {
     const query = InboxQuery.safeParse(c.req.query())
     if (!query.success) throw new HTTPException(400, { message: 'Bad filters' })
@@ -116,6 +120,22 @@ export const inbox = new Hono<AppEnv>()
   .post('/items/:id/done', async (c) => {
     const { done } = await parseBody(c.req.raw, SetInboxDone)
     await setDone(c.var.db, c.var.scope, c.req.param('id'), done)
+    return c.json({ ok: true })
+  })
+
+  /** Out of Other, back To do: it waits for a person after all. */
+  .post('/items/:id/todo', async (c) => {
+    await keepInTodo(c.var.db, c.var.scope, c.req.param('id'))
+    return c.json({ ok: true })
+  })
+
+  /** Its sender's mail nobody takes goes to Other from now on, for the whole workspace. */
+  .post('/items/:id/mute', async (c) => {
+    const { kind } = await parseBody(c.req.raw, MuteInboxSender)
+    return c.json(await muteSender(c.var.db, c.var.scope, c.req.param('id'), kind))
+  })
+  .delete('/items/:id/mute', async (c) => {
+    await unmuteSender(c.var.db, c.var.scope, c.req.param('id'))
     return c.json({ ok: true })
   })
 

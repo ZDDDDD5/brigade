@@ -9,7 +9,8 @@ import type { ReceivedEmail } from '../connectors/gmail.js'
 import { scoped, type Scope } from '../db.js'
 import { BOX_DAYS } from './inbound.js'
 import { bareAddress } from './names.js'
-import { addressesIn, keptHtml } from './text.js'
+import { noiseOf } from './noise.js'
+import { addressesIn, bounceOf, bulkHeaders, keptHtml } from './text.js'
 
 /**
  * Whether the Inbox shows this account's mail: Gmail, shared with the workspace, and put in the
@@ -48,11 +49,20 @@ export async function keepGmail(
     workspaceId: connection.workspaceId,
   }
   const db = scoped(scope)
+  const headers = email.headers ?? {}
   const html = keptHtml(body.html)
   const from = mailbox(email.from ?? '')
   const at = Date.parse(email.date ?? '')
   const data = {
     route: outcome.route,
+    // Left in the Inbox with nothing on it: To do, or Other when it waits for nobody.
+    noise: taken
+      ? null
+      : await noiseOf(db, {
+          fromAddress: from.address,
+          bulk: email.automatic || bulkHeaders(headers),
+          bounce: bounceOf(from.address, headers),
+        }),
     sessionId: outcome.sessionId ?? null,
     triggerId: outcome.triggerId ?? null,
     expiresAt: outcome.sessionId ? null : new Date(Date.now() + BOX_DAYS * 86_400_000),
@@ -74,6 +84,7 @@ export async function keepGmail(
         subject: (email.subject ?? '').slice(0, 1000),
         text: (email.body ?? '').slice(0, 100_000),
         automatic: email.automatic,
+        headers,
         attachments: (email.attachments ?? []).map((a) => ({
           id: a.partId,
           filename: a.filename,

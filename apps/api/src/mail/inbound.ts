@@ -26,17 +26,20 @@ import { dispatch } from '../triggers.js'
 import { firedInARow, fireNow } from '../wakeups.js'
 import { boxKey, boxOf, directBoxOf, type Box } from './addresses.js'
 import { contactFor, historyOf, senderOf, type Sender } from './identity.js'
+import { noiseOf, type Noise } from './noise.js'
 import { bareAddress, localOn } from './names.js'
 import { receivedEmail, type ResendAttachment } from './resend.js'
 import {
   addressesIn,
   automaticHeaders,
   bounceOf,
+  bulkHeaders,
   contentIdOf,
   headerOf,
   htmlToText,
   keptHtml,
   KEPT_HEADERS,
+  listHeadersOf,
   messageIds,
 } from './text.js'
 
@@ -225,15 +228,18 @@ export const processMail = (id: string) =>
           status: 'done',
           route: outcome.route,
           routeNote: outcome.note?.slice(0, 500) ?? null,
+          noise: outcome.noise ?? null,
           sessionId: outcome.sessionId ?? null,
           triggerId: outcome.triggerId ?? null,
           error: null,
           expiresAt: outcome.sessionId ? null : new Date(Date.now() + BOX_DAYS * 86_400_000),
         },
       })
-      // Someone whose mail went to a thread is a contact from now on.
+      // Someone whose mail went to a thread is a contact from now on. Not a site a sign-up
+      // address was made for: its code went to the thread, its newsletters are not a contact's.
       if (
         outcome.sessionId &&
+        !read.aliasId &&
         read.sender !== 'member' &&
         read.sender !== 'brigade' &&
         !read.contactId
@@ -266,9 +272,10 @@ export const processMail = (id: string) =>
 async function readMail(db: ScopedDb, scope: Scope, row: Row): Promise<Row> {
   const email = await receivedEmail(row.resendId!)
   const headers: Record<string, string> = {}
+  const lists = listHeadersOf(email.headers)
   for (const name of KEPT_HEADERS) {
-    const value = headerOf(email.headers, name)
-    if (value !== undefined) headers[name] = value.slice(0, 1000)
+    const value = headerOf(email.headers, name) ?? lists[name]
+    if (typeof value === 'string') headers[name] = value.slice(0, 1000)
   }
   // Who it was written to, as its headers say: Resend's to is where it was delivered, a box's
   // hidden address when support@ of the product's own domain forwarded it there.
@@ -402,6 +409,8 @@ type Outcome = {
   sessionId?: string
   triggerId?: string
   note?: string
+  /** Left in its box, it waits for nobody: the Inbox's Other, not To do (src/mail/noise.ts). */
+  noise?: Noise | null
 }
 
 /** Where a read mail goes: one place, in the order at the top of this file. */
@@ -569,8 +578,17 @@ async function deliverMail(db: ScopedDb, scope: Scope, row: Row): Promise<Outcom
     if (delivered.failed) throw new Error('A rule could not start its thread yet')
   }
 
-  // 5. Its box.
-  return { route: 'box' }
+  // 5. Its box: To do for a person, or Other when it waits for nobody.
+  const headers = row.headers as Record<string, string>
+  return {
+    route: 'box',
+    noise: await noiseOf(db, {
+      fromAddress: row.fromAddress,
+      aliasId: row.aliasId,
+      bulk: bulkHeaders(headers),
+      bounce,
+    }),
+  }
 }
 
 /** The email as a trigger, a card and a teammate see it: Gmail's shape, plus who sent it. */

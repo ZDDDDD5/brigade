@@ -154,6 +154,7 @@ export const ModelName = {
   MailHtml: 'MailHtml',
   MailDomain: 'MailDomain',
   Contact: 'Contact',
+  MailMute: 'MailMute',
   ContactHandle: 'ContactHandle',
   OpsAlert: 'OpsAlert',
   HeldCall: 'HeldCall',
@@ -1935,6 +1936,7 @@ export const MailMessageScalarFieldEnum = {
   headers: 'headers',
   authentication: 'authentication',
   automatic: 'automatic',
+  noise: 'noise',
   sender: 'sender',
   memberId: 'memberId',
   contactId: 'contactId',
@@ -2005,6 +2007,19 @@ export const ContactScalarFieldEnum = {
 } as const
 
 export type ContactScalarFieldEnum = (typeof ContactScalarFieldEnum)[keyof typeof ContactScalarFieldEnum]
+
+
+export const MailMuteScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  kind: 'kind',
+  value: 'value',
+  createdByMemberId: 'createdByMemberId',
+  createdAt: 'createdAt'
+} as const
+
+export type MailMuteScalarFieldEnum = (typeof MailMuteScalarFieldEnum)[keyof typeof MailMuteScalarFieldEnum]
 
 
 export const ContactHandleScalarFieldEnum = {

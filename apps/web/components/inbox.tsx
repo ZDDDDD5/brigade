@@ -11,6 +11,7 @@ import {
   type InboxDraft,
   type InboxItem,
   type InboxMessage,
+  type InboxNoise,
   type InboxPlan,
   type InboxSourceView,
   type InboxStatus,
@@ -97,14 +98,24 @@ const STATUSES: { value: StatusFilter; label: string }[] = [
   { value: 'handled', label: 'In progress' },
   { value: 'scheduled', label: 'Scheduled' },
   { value: 'done', label: 'Done' },
+  { value: 'other', label: 'Other' },
   { value: 'all', label: 'All' },
 ]
+
+/** Why a mail waits for nobody: in Other, not To do. */
+const NOISE: Record<InboxNoise, string> = {
+  sign_up: 'Sign-up address',
+  automatic: 'Sent by a machine',
+  muted: 'Muted sender',
+}
 
 const EMPTY: Record<StatusFilter, string> = {
   waiting: 'Nothing to do. Every email has a teammate, and no reply waits for you.',
   handled: 'No conversation with a teammate right now.',
   scheduled: 'No reply set to leave later.',
   done: 'Nothing done yet.',
+  other:
+    'Nothing here. Newsletters, mail sent by machines and muted senders land here, out of To do.',
   all: 'No email here.',
 }
 
@@ -838,6 +849,8 @@ function NextStep({ item }: { item: InboxItem }) {
       ) : (
         <span>Done</span>
       )
+    ) : item.status === 'other' && item.noise ? (
+      <span>{NOISE[item.noise]}</span>
     ) : item.next?.kind === 'scheduled' ? (
       <span className="inline-flex items-center gap-1">
         <Clock aria-hidden className="size-3" />
@@ -988,7 +1001,12 @@ function Reader({
   const last = d.messages.at(-1)?.id
   const unowned = d.status === 'waiting' && !d.thread
   const trouble = d.route === 'cap' || d.route === 'loop' || d.route === 'bounce'
-  const state = d.reason ? 'No teammate is on it' : destination(d)
+  const other = d.status === 'other' && !d.thread
+  const state = d.reason
+    ? 'No teammate is on it'
+    : other && d.noise
+      ? `${NOISE[d.noise]}, kept out of To do`
+      : destination(d)
   // Gmail's mail came to the account, not to the mailbox of the teammate who took it.
   const mailboxName =
     d.source.kind === 'gmail' ? `Gmail ${d.to}` : d.teammate && `${d.teammate.name}’s mailbox`
@@ -1034,6 +1052,18 @@ function Reader({
   const outcomeAtEnd = !!d.outcome && !!d.thread && (!done || d.outcome.kind === 'handled')
   const reload = async () => {
     await Promise.all([detail.reload(), onChanged()])
+  }
+  async function moveToTodo() {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await api(`${itemPath(id)}/todo`, { body: {} })
+      await reload()
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -1084,6 +1114,7 @@ function Reader({
                   Add a rule
                 </Button>
               )}
+              <MuteMenu detail={d} onChanged={reload} onError={setError} ghost />
             </div>
           </div>
         ) : outcomeAtEnd ? null : (
@@ -1109,7 +1140,22 @@ function Reader({
               </Hint>
             )}
             {about && <span>· {about}</span>}
-            {!d.hidden && handOver && <span className="ml-auto">{handButton(false)}</span>}
+            {other ? (
+              <span className="ml-auto flex items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 bg-card px-2"
+                  disabled={busy}
+                  onClick={() => void moveToTodo()}
+                >
+                  Move to To do
+                </Button>
+                <MuteMenu detail={d} onChanged={reload} onError={setError} />
+              </span>
+            ) : (
+              !d.hidden && handOver && <span className="ml-auto">{handButton(false)}</span>
+            )}
           </div>
         )}
         {/* Once a thread has it, the note stays under the row, which links to the thread. */}
@@ -1154,6 +1200,77 @@ function Reader({
         )}
       </ol>
     </article>
+  )
+}
+
+/**
+ * Mute a conversation's sender for the workspace (its address, or everyone at its domain unless
+ * it is a public mail provider's): their mail nobody takes goes to Other. Unmute when it is.
+ */
+function MuteMenu({
+  detail: d,
+  onChanged,
+  onError,
+  ghost = false,
+}: {
+  detail: InboxDetail
+  onChanged: () => Promise<void>
+  onError: (error: string | undefined) => void
+  /** In To do's banner, beside its other actions; else an outlined button. */
+  ghost?: boolean
+}) {
+  const [busy, setBusy] = useState(false)
+  async function run(call: () => Promise<unknown>) {
+    setBusy(true)
+    onError(undefined)
+    try {
+      await call()
+      await onChanged()
+    } catch (e) {
+      onError(message(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const look = ghost
+    ? ({ variant: 'ghost', className: 'text-muted-foreground' } as const)
+    : ({ variant: 'outline', className: 'h-7 gap-1 bg-card px-2' } as const)
+  if (d.hidden) return null
+  if (d.muted)
+    return (
+      <Button
+        size="sm"
+        {...look}
+        disabled={busy}
+        onClick={() => void run(() => api(`${itemPath(d.id)}/mute`, { method: 'DELETE' }))}
+      >
+        {d.muted.kind === 'domain' ? `Unmute ${d.muted.value}` : 'Unmute sender'}
+      </Button>
+    )
+  const mute = (kind: 'address' | 'domain') =>
+    void run(() => api(`${itemPath(d.id)}/mute`, { body: { kind } }))
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" {...look} disabled={busy}>
+          Mute sender
+          <ChevronDown aria-hidden className="size-3.5 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="max-w-72">
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+          Their mail nobody takes goes to Other
+        </DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => mute('address')}>
+          <span className="truncate">Mute {d.from}</span>
+        </DropdownMenuItem>
+        {d.muteDomain && (
+          <DropdownMenuItem onSelect={() => mute('domain')}>
+            <span className="truncate">Mute all of {d.muteDomain}</span>
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 

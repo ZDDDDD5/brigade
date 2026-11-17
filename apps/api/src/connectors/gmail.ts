@@ -200,12 +200,34 @@ export function automatic(headers: { name: string; value: string }[] | undefined
   )
 }
 
+/**
+ * The few headers the Inbox keeps with a mail (lower-cased, short), as for Brigade's own
+ * addresses: whether it went to a list or was sent by a machine (src/mail/noise.ts).
+ */
+export function keptHeaders(headers: { name: string; value: string }[] | undefined) {
+  const kept: Record<string, string> = {}
+  for (const h of headers ?? []) {
+    const name = h.name.toLowerCase()
+    if (BULK_HEADERS.has(name) && kept[name] === undefined) kept[name] = h.value.slice(0, 1000)
+  }
+  return kept
+}
+const BULK_HEADERS = new Set([
+  'auto-submitted',
+  'precedence',
+  'x-autoreply',
+  'x-autorespond',
+  'list-id',
+  'list-unsubscribe',
+])
+
 export const full = (m: Message) => ({
   ...summary(m),
   cc: header(m, 'Cc'),
   body: textOf(m.payload).slice(0, 50_000),
   attachments: attachmentsOf(m),
   automatic: automatic(m.payload?.headers),
+  headers: keptHeaders(m.payload?.headers),
 })
 
 const Compose = z.object({
