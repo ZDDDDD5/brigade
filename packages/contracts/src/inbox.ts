@@ -4,8 +4,17 @@
 import { z } from 'zod'
 import type { MailRoute } from './email.js'
 
-/** waiting: nobody took it and no person marked it done. handled: a thread has it. */
-export type InboxStatus = 'waiting' | 'handled' | 'done'
+/**
+ * waiting: nobody took it and no person marked it done. handled: a thread has it. other: nobody
+ * took it, and it waits for nobody (noise says why).
+ */
+export type InboxStatus = 'waiting' | 'handled' | 'other' | 'done'
+
+/**
+ * Why a mail nobody took is in Other, not To do: sent to a sign-up address whose thread no longer
+ * waits (a site's newsletter), sent by a machine or to a list, or from a sender a person muted.
+ */
+export type InboxNoise = 'sign_up' | 'automatic' | 'muted'
 
 /**
  * What comes next in a conversation, shown on its row: a teammate's reply waiting for this
@@ -45,6 +54,8 @@ export type InboxItem = {
   snippet: string
   at: string
   status: InboxStatus
+  /** In Other: why. Null otherwise. */
+  noise: InboxNoise | null
   /** Brigade's addresses: where it went. */
   route: MailRoute | null
   thread: { id: string; title: string } | null
@@ -118,6 +129,10 @@ export type InboxMessage = {
 export type InboxDetail = InboxItem & {
   messages: InboxMessage[]
   routeNote: string | null
+  /** Its sender is muted for the workspace: by its address, or by its domain (value). */
+  muted: { kind: 'address' | 'domain'; value: string } | null
+  /** The domain its sender can be muted by: null for a public mail provider's (gmail.com…). */
+  muteDomain: string | null
   /** Why nobody took it, in plain words, while it is unassigned. */
   reason: string | null
   /**
@@ -163,15 +178,19 @@ export const InboxQuery = z.object({
   project: z.string().max(100).optional(),
   /**
    * waiting: to do (nobody took it, or a reply waits for this member's approval); handled: with
-   * a teammate; scheduled: a reply set to leave later; done; all.
+   * a teammate; other: nobody took it and it waits for nobody; scheduled: a reply set to leave
+   * later; done; all.
    */
-  status: z.enum(['waiting', 'handled', 'scheduled', 'done', 'all']).optional(),
+  status: z.enum(['waiting', 'handled', 'other', 'scheduled', 'done', 'all']).optional(),
   q: z.string().max(200).optional(),
   /** The previous page's next. */
   before: z.string().max(200).optional(),
 })
 
 export const SetInboxDone = z.object({ done: z.boolean() })
+
+/** Mute a conversation's sender for the workspace: its address, or everyone at its domain. */
+export const MuteInboxSender = z.object({ kind: z.enum(['address', 'domain']) })
 
 /** A person's own reply, from the Inbox: to the conversation's people, from its mailbox. */
 export const ReplyInboxItem = z.object({ text: z.string().trim().min(1).max(100_000) })

@@ -399,6 +399,7 @@ model Workspace {
   mailDomains           MailDomain[]
   contacts              Contact[]
   contactHandles        ContactHandle[]
+  mailMutes             MailMute[]
 
   listItems       ListItem[]
   listItemThreads ListItemThread[]
@@ -3428,6 +3429,11 @@ model MailMessage {
   authentication     Json?
   /// Sent by a machine (an out-of-office, a notification).
   automatic          Boolean       @default(false)
+  /// in, left in its box (nobody took it): why it is kept out of the Inbox's To do, in Other.
+  /// sign_up (to a sign-up address whose thread no longer waits), automatic (sent by a machine or
+  /// to a list), muted (a sender a person muted). Null: a person's mail, To do. A person moving it
+  /// back to To do clears it.
+  noise              String?
   sender             MailSender?
   memberId           String?
   contactId          String?
@@ -3544,6 +3550,22 @@ model Contact {
 }
 
 /// One way to reach a contact: an email address today, a chat account later.
+/// A sender a person muted in the Inbox: its mail nobody takes goes to Other, not To do.
+model MailMute {
+  id                String    @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// address (one sender) or domain (everyone at it, never a public mail provider's).
+  kind              String
+  /// Lower-cased: the bare address, or the domain.
+  value             String
+  createdByMemberId String?
+  createdAt         DateTime  @default(now())
+
+  @@unique([workspaceId, kind, value])
+}
+
 model ContactHandle {
   id             String    @id @default(cuid())
   organizationId String

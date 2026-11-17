@@ -290,6 +290,7 @@ export type WorkspaceWhereInput = {
   mailDomains?: Prisma.MailDomainListRelationFilter
   contacts?: Prisma.ContactListRelationFilter
   contactHandles?: Prisma.ContactHandleListRelationFilter
+  mailMutes?: Prisma.MailMuteListRelationFilter
   listItems?: Prisma.ListItemListRelationFilter
   listItemThreads?: Prisma.ListItemThreadListRelationFilter
   listItemPulls?: Prisma.ListItemPullListRelationFilter
@@ -384,6 +385,7 @@ export type WorkspaceOrderByWithRelationInput = {
   mailDomains?: Prisma.MailDomainOrderByRelationAggregateInput
   contacts?: Prisma.ContactOrderByRelationAggregateInput
   contactHandles?: Prisma.ContactHandleOrderByRelationAggregateInput
+  mailMutes?: Prisma.MailMuteOrderByRelationAggregateInput
   listItems?: Prisma.ListItemOrderByRelationAggregateInput
   listItemThreads?: Prisma.ListItemThreadOrderByRelationAggregateInput
   listItemPulls?: Prisma.ListItemPullOrderByRelationAggregateInput
@@ -481,6 +483,7 @@ export type WorkspaceWhereUniqueInput = Prisma.AtLeast<{
   mailDomains?: Prisma.MailDomainListRelationFilter
   contacts?: Prisma.ContactListRelationFilter
   contactHandles?: Prisma.ContactHandleListRelationFilter
+  mailMutes?: Prisma.MailMuteListRelationFilter
   listItems?: Prisma.ListItemListRelationFilter
   listItemThreads?: Prisma.ListItemThreadListRelationFilter
   listItemPulls?: Prisma.ListItemPullListRelationFilter
@@ -606,6 +609,7 @@ export type WorkspaceCreateInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -699,6 +703,7 @@ export type WorkspaceUncheckedCreateInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -792,6 +797,7 @@ export type WorkspaceUpdateInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -885,6 +891,7 @@ export type WorkspaceUncheckedUpdateInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -2028,6 +2035,20 @@ export type WorkspaceUpdateOneRequiredWithoutContactsNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.WorkspaceUpdateToOneWithWhereWithoutContactsInput, Prisma.WorkspaceUpdateWithoutContactsInput>, Prisma.WorkspaceUncheckedUpdateWithoutContactsInput>
 }
 
+export type WorkspaceCreateNestedOneWithoutMailMutesInput = {
+  create?: Prisma.XOR<Prisma.WorkspaceCreateWithoutMailMutesInput, Prisma.WorkspaceUncheckedCreateWithoutMailMutesInput>
+  connectOrCreate?: Prisma.WorkspaceCreateOrConnectWithoutMailMutesInput
+  connect?: Prisma.WorkspaceWhereUniqueInput
+}
+
+export type WorkspaceUpdateOneRequiredWithoutMailMutesNestedInput = {
+  create?: Prisma.XOR<Prisma.WorkspaceCreateWithoutMailMutesInput, Prisma.WorkspaceUncheckedCreateWithoutMailMutesInput>
+  connectOrCreate?: Prisma.WorkspaceCreateOrConnectWithoutMailMutesInput
+  upsert?: Prisma.WorkspaceUpsertWithoutMailMutesInput
+  connect?: Prisma.WorkspaceWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.WorkspaceUpdateToOneWithWhereWithoutMailMutesInput, Prisma.WorkspaceUpdateWithoutMailMutesInput>, Prisma.WorkspaceUncheckedUpdateWithoutMailMutesInput>
+}
+
 export type WorkspaceCreateNestedOneWithoutContactHandlesInput = {
   create?: Prisma.XOR<Prisma.WorkspaceCreateWithoutContactHandlesInput, Prisma.WorkspaceUncheckedCreateWithoutContactHandlesInput>
   connectOrCreate?: Prisma.WorkspaceCreateOrConnectWithoutContactHandlesInput
@@ -2249,6 +2270,7 @@ export type WorkspaceCreateWithoutBillingSubscriptionsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -2341,6 +2363,7 @@ export type WorkspaceUncheckedCreateWithoutBillingSubscriptionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -2449,6 +2472,7 @@ export type WorkspaceUpdateWithoutBillingSubscriptionsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -2541,6 +2565,7 @@ export type WorkspaceUncheckedUpdateWithoutBillingSubscriptionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -2633,6 +2658,7 @@ export type WorkspaceCreateWithoutOrganizationInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -2725,6 +2751,7 @@ export type WorkspaceUncheckedCreateWithoutOrganizationInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -2859,6 +2886,7 @@ export type WorkspaceCreateWithoutComputersInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -2951,6 +2979,7 @@ export type WorkspaceUncheckedCreateWithoutComputersInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -3059,6 +3088,7 @@ export type WorkspaceUpdateWithoutComputersInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -3151,6 +3181,7 @@ export type WorkspaceUncheckedUpdateWithoutComputersInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -3243,6 +3274,7 @@ export type WorkspaceCreateWithoutRunnersInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -3335,6 +3367,7 @@ export type WorkspaceUncheckedCreateWithoutRunnersInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -3443,6 +3476,7 @@ export type WorkspaceUpdateWithoutRunnersInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -3535,6 +3569,7 @@ export type WorkspaceUncheckedUpdateWithoutRunnersInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -3627,6 +3662,7 @@ export type WorkspaceCreateWithoutTeammatesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -3719,6 +3755,7 @@ export type WorkspaceUncheckedCreateWithoutTeammatesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -3827,6 +3864,7 @@ export type WorkspaceUpdateWithoutTeammatesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -3919,6 +3957,7 @@ export type WorkspaceUncheckedUpdateWithoutTeammatesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -4011,6 +4050,7 @@ export type WorkspaceCreateWithoutThreadReadsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -4103,6 +4143,7 @@ export type WorkspaceUncheckedCreateWithoutThreadReadsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -4211,6 +4252,7 @@ export type WorkspaceUpdateWithoutThreadReadsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -4303,6 +4345,7 @@ export type WorkspaceUncheckedUpdateWithoutThreadReadsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -4395,6 +4438,7 @@ export type WorkspaceCreateWithoutThreadPinsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -4487,6 +4531,7 @@ export type WorkspaceUncheckedCreateWithoutThreadPinsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -4595,6 +4640,7 @@ export type WorkspaceUpdateWithoutThreadPinsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -4687,6 +4733,7 @@ export type WorkspaceUncheckedUpdateWithoutThreadPinsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -4779,6 +4826,7 @@ export type WorkspaceCreateWithoutSidebarOrdersInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -4871,6 +4919,7 @@ export type WorkspaceUncheckedCreateWithoutSidebarOrdersInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -4979,6 +5028,7 @@ export type WorkspaceUpdateWithoutSidebarOrdersInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -5071,6 +5121,7 @@ export type WorkspaceUncheckedUpdateWithoutSidebarOrdersInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -5163,6 +5214,7 @@ export type WorkspaceCreateWithoutThreadLatersInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -5255,6 +5307,7 @@ export type WorkspaceUncheckedCreateWithoutThreadLatersInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -5363,6 +5416,7 @@ export type WorkspaceUpdateWithoutThreadLatersInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -5455,6 +5509,7 @@ export type WorkspaceUncheckedUpdateWithoutThreadLatersInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -5547,6 +5602,7 @@ export type WorkspaceCreateWithoutHomeDismissalsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -5639,6 +5695,7 @@ export type WorkspaceUncheckedCreateWithoutHomeDismissalsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -5747,6 +5804,7 @@ export type WorkspaceUpdateWithoutHomeDismissalsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -5839,6 +5897,7 @@ export type WorkspaceUncheckedUpdateWithoutHomeDismissalsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -5931,6 +5990,7 @@ export type WorkspaceCreateWithoutSessionsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -6023,6 +6083,7 @@ export type WorkspaceUncheckedCreateWithoutSessionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -6131,6 +6192,7 @@ export type WorkspaceUpdateWithoutSessionsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -6223,6 +6285,7 @@ export type WorkspaceUncheckedUpdateWithoutSessionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -6315,6 +6378,7 @@ export type WorkspaceCreateWithoutTasksInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -6407,6 +6471,7 @@ export type WorkspaceUncheckedCreateWithoutTasksInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -6515,6 +6580,7 @@ export type WorkspaceUpdateWithoutTasksInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -6607,6 +6673,7 @@ export type WorkspaceUncheckedUpdateWithoutTasksInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -6699,6 +6766,7 @@ export type WorkspaceCreateWithoutSchedulesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -6791,6 +6859,7 @@ export type WorkspaceUncheckedCreateWithoutSchedulesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -6899,6 +6968,7 @@ export type WorkspaceUpdateWithoutSchedulesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -6991,6 +7061,7 @@ export type WorkspaceUncheckedUpdateWithoutSchedulesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -7083,6 +7154,7 @@ export type WorkspaceCreateWithoutChiefDecisionsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -7175,6 +7247,7 @@ export type WorkspaceUncheckedCreateWithoutChiefDecisionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -7283,6 +7356,7 @@ export type WorkspaceUpdateWithoutChiefDecisionsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -7375,6 +7449,7 @@ export type WorkspaceUncheckedUpdateWithoutChiefDecisionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -7467,6 +7542,7 @@ export type WorkspaceCreateWithoutChiefPassesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -7559,6 +7635,7 @@ export type WorkspaceUncheckedCreateWithoutChiefPassesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -7667,6 +7744,7 @@ export type WorkspaceUpdateWithoutChiefPassesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -7759,6 +7837,7 @@ export type WorkspaceUncheckedUpdateWithoutChiefPassesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -7851,6 +7930,7 @@ export type WorkspaceCreateWithoutGoalsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -7943,6 +8023,7 @@ export type WorkspaceUncheckedCreateWithoutGoalsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -8051,6 +8132,7 @@ export type WorkspaceUpdateWithoutGoalsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -8143,6 +8225,7 @@ export type WorkspaceUncheckedUpdateWithoutGoalsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -8235,6 +8318,7 @@ export type WorkspaceCreateWithoutWakeupsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -8327,6 +8411,7 @@ export type WorkspaceUncheckedCreateWithoutWakeupsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -8435,6 +8520,7 @@ export type WorkspaceUpdateWithoutWakeupsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -8527,6 +8613,7 @@ export type WorkspaceUncheckedUpdateWithoutWakeupsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -8619,6 +8706,7 @@ export type WorkspaceCreateWithoutReplyWatchesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -8711,6 +8799,7 @@ export type WorkspaceUncheckedCreateWithoutReplyWatchesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -8819,6 +8908,7 @@ export type WorkspaceUpdateWithoutReplyWatchesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -8911,6 +9001,7 @@ export type WorkspaceUncheckedUpdateWithoutReplyWatchesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -9003,6 +9094,7 @@ export type WorkspaceCreateWithoutThreadSeatsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -9095,6 +9187,7 @@ export type WorkspaceUncheckedCreateWithoutThreadSeatsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -9203,6 +9296,7 @@ export type WorkspaceUpdateWithoutThreadSeatsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -9295,6 +9389,7 @@ export type WorkspaceUncheckedUpdateWithoutThreadSeatsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -9387,6 +9482,7 @@ export type WorkspaceCreateWithoutSessionEventsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -9479,6 +9575,7 @@ export type WorkspaceUncheckedCreateWithoutSessionEventsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -9587,6 +9684,7 @@ export type WorkspaceUpdateWithoutSessionEventsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -9679,6 +9777,7 @@ export type WorkspaceUncheckedUpdateWithoutSessionEventsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -9771,6 +9870,7 @@ export type WorkspaceCreateWithoutEventDaysInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -9863,6 +9963,7 @@ export type WorkspaceUncheckedCreateWithoutEventDaysInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -9971,6 +10072,7 @@ export type WorkspaceUpdateWithoutEventDaysInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -10063,6 +10165,7 @@ export type WorkspaceUncheckedUpdateWithoutEventDaysInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -10155,6 +10258,7 @@ export type WorkspaceCreateWithoutTokenUsageInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -10247,6 +10351,7 @@ export type WorkspaceUncheckedCreateWithoutTokenUsageInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -10355,6 +10460,7 @@ export type WorkspaceUpdateWithoutTokenUsageInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -10447,6 +10553,7 @@ export type WorkspaceUncheckedUpdateWithoutTokenUsageInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -10539,6 +10646,7 @@ export type WorkspaceCreateWithoutAccountsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -10631,6 +10739,7 @@ export type WorkspaceUncheckedCreateWithoutAccountsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -10739,6 +10848,7 @@ export type WorkspaceUpdateWithoutAccountsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -10831,6 +10941,7 @@ export type WorkspaceUncheckedUpdateWithoutAccountsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -10923,6 +11034,7 @@ export type WorkspaceCreateWithoutPullRequestsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -11015,6 +11127,7 @@ export type WorkspaceUncheckedCreateWithoutPullRequestsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -11123,6 +11236,7 @@ export type WorkspaceUpdateWithoutPullRequestsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -11215,6 +11329,7 @@ export type WorkspaceUncheckedUpdateWithoutPullRequestsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -11307,6 +11422,7 @@ export type WorkspaceCreateWithoutPullRequestReviewsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -11399,6 +11515,7 @@ export type WorkspaceUncheckedCreateWithoutPullRequestReviewsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -11507,6 +11624,7 @@ export type WorkspaceUpdateWithoutPullRequestReviewsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -11599,6 +11717,7 @@ export type WorkspaceUncheckedUpdateWithoutPullRequestReviewsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -11691,6 +11810,7 @@ export type WorkspaceCreateWithoutCommentsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -11783,6 +11903,7 @@ export type WorkspaceUncheckedCreateWithoutCommentsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -11891,6 +12012,7 @@ export type WorkspaceUpdateWithoutCommentsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -11983,6 +12105,7 @@ export type WorkspaceUncheckedUpdateWithoutCommentsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -12075,6 +12198,7 @@ export type WorkspaceCreateWithoutAppsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -12167,6 +12291,7 @@ export type WorkspaceUncheckedCreateWithoutAppsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -12275,6 +12400,7 @@ export type WorkspaceUpdateWithoutAppsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -12367,6 +12493,7 @@ export type WorkspaceUncheckedUpdateWithoutAppsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -12459,6 +12586,7 @@ export type WorkspaceCreateWithoutConnectionsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -12551,6 +12679,7 @@ export type WorkspaceUncheckedCreateWithoutConnectionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -12659,6 +12788,7 @@ export type WorkspaceUpdateWithoutConnectionsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -12751,6 +12881,7 @@ export type WorkspaceUncheckedUpdateWithoutConnectionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -12843,6 +12974,7 @@ export type WorkspaceCreateWithoutVaultSecretsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -12935,6 +13067,7 @@ export type WorkspaceUncheckedCreateWithoutVaultSecretsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -13043,6 +13176,7 @@ export type WorkspaceUpdateWithoutVaultSecretsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -13135,6 +13269,7 @@ export type WorkspaceUncheckedUpdateWithoutVaultSecretsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -13227,6 +13362,7 @@ export type WorkspaceCreateWithoutCredentialsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -13319,6 +13455,7 @@ export type WorkspaceUncheckedCreateWithoutCredentialsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -13427,6 +13564,7 @@ export type WorkspaceUpdateWithoutCredentialsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -13519,6 +13657,7 @@ export type WorkspaceUncheckedUpdateWithoutCredentialsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -13611,6 +13750,7 @@ export type WorkspaceCreateWithoutCredentialGrantsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -13703,6 +13843,7 @@ export type WorkspaceUncheckedCreateWithoutCredentialGrantsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -13811,6 +13952,7 @@ export type WorkspaceUpdateWithoutCredentialGrantsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -13903,6 +14045,7 @@ export type WorkspaceUncheckedUpdateWithoutCredentialGrantsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -13995,6 +14138,7 @@ export type WorkspaceCreateWithoutGrantsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -14087,6 +14231,7 @@ export type WorkspaceUncheckedCreateWithoutGrantsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -14195,6 +14340,7 @@ export type WorkspaceUpdateWithoutGrantsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -14287,6 +14433,7 @@ export type WorkspaceUncheckedUpdateWithoutGrantsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -14379,6 +14526,7 @@ export type WorkspaceCreateWithoutConnectionCallsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -14471,6 +14619,7 @@ export type WorkspaceUncheckedCreateWithoutConnectionCallsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -14579,6 +14728,7 @@ export type WorkspaceUpdateWithoutConnectionCallsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -14671,6 +14821,7 @@ export type WorkspaceUncheckedUpdateWithoutConnectionCallsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -14763,6 +14914,7 @@ export type WorkspaceCreateWithoutTriggersInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -14855,6 +15007,7 @@ export type WorkspaceUncheckedCreateWithoutTriggersInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -14963,6 +15116,7 @@ export type WorkspaceUpdateWithoutTriggersInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -15055,6 +15209,7 @@ export type WorkspaceUncheckedUpdateWithoutTriggersInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -15147,6 +15302,7 @@ export type WorkspaceCreateWithoutSubscriptionsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -15239,6 +15395,7 @@ export type WorkspaceUncheckedCreateWithoutSubscriptionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -15347,6 +15504,7 @@ export type WorkspaceUpdateWithoutSubscriptionsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -15439,6 +15597,7 @@ export type WorkspaceUncheckedUpdateWithoutSubscriptionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -15531,6 +15690,7 @@ export type WorkspaceCreateWithoutTicketsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -15623,6 +15783,7 @@ export type WorkspaceUncheckedCreateWithoutTicketsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -15731,6 +15892,7 @@ export type WorkspaceUpdateWithoutTicketsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -15823,6 +15985,7 @@ export type WorkspaceUncheckedUpdateWithoutTicketsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -15915,6 +16078,7 @@ export type WorkspaceCreateWithoutDocumentsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -16007,6 +16171,7 @@ export type WorkspaceUncheckedCreateWithoutDocumentsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -16115,6 +16280,7 @@ export type WorkspaceUpdateWithoutDocumentsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -16207,6 +16373,7 @@ export type WorkspaceUncheckedUpdateWithoutDocumentsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -16300,6 +16467,7 @@ export type WorkspaceCreateWithoutListItemsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
   specPulls?: Prisma.SpecPullCreateNestedManyWithoutWorkspaceInput
@@ -16392,6 +16560,7 @@ export type WorkspaceUncheckedCreateWithoutListItemsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
   specPulls?: Prisma.SpecPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -16500,6 +16669,7 @@ export type WorkspaceUpdateWithoutListItemsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
   specPulls?: Prisma.SpecPullUpdateManyWithoutWorkspaceNestedInput
@@ -16592,6 +16762,7 @@ export type WorkspaceUncheckedUpdateWithoutListItemsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
   specPulls?: Prisma.SpecPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -16684,6 +16855,7 @@ export type WorkspaceCreateWithoutListItemThreadsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
   specPulls?: Prisma.SpecPullCreateNestedManyWithoutWorkspaceInput
@@ -16776,6 +16948,7 @@ export type WorkspaceUncheckedCreateWithoutListItemThreadsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
   specPulls?: Prisma.SpecPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -16884,6 +17057,7 @@ export type WorkspaceUpdateWithoutListItemThreadsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
   specPulls?: Prisma.SpecPullUpdateManyWithoutWorkspaceNestedInput
@@ -16976,6 +17150,7 @@ export type WorkspaceUncheckedUpdateWithoutListItemThreadsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
   specPulls?: Prisma.SpecPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -17068,6 +17243,7 @@ export type WorkspaceCreateWithoutListItemPullsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   specPulls?: Prisma.SpecPullCreateNestedManyWithoutWorkspaceInput
@@ -17160,6 +17336,7 @@ export type WorkspaceUncheckedCreateWithoutListItemPullsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   specPulls?: Prisma.SpecPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -17268,6 +17445,7 @@ export type WorkspaceUpdateWithoutListItemPullsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   specPulls?: Prisma.SpecPullUpdateManyWithoutWorkspaceNestedInput
@@ -17360,6 +17538,7 @@ export type WorkspaceUncheckedUpdateWithoutListItemPullsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   specPulls?: Prisma.SpecPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -17451,6 +17630,7 @@ export type WorkspaceCreateWithoutListPinsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -17543,6 +17723,7 @@ export type WorkspaceUncheckedCreateWithoutListPinsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -17651,6 +17832,7 @@ export type WorkspaceUpdateWithoutListPinsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -17743,6 +17925,7 @@ export type WorkspaceUncheckedUpdateWithoutListPinsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -17835,6 +18018,7 @@ export type WorkspaceCreateWithoutDocumentPinsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -17927,6 +18111,7 @@ export type WorkspaceUncheckedCreateWithoutDocumentPinsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -18035,6 +18220,7 @@ export type WorkspaceUpdateWithoutDocumentPinsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -18127,6 +18313,7 @@ export type WorkspaceUncheckedUpdateWithoutDocumentPinsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -18219,6 +18406,7 @@ export type WorkspaceCreateWithoutLibraryFoldersInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -18311,6 +18499,7 @@ export type WorkspaceUncheckedCreateWithoutLibraryFoldersInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -18419,6 +18608,7 @@ export type WorkspaceUpdateWithoutLibraryFoldersInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -18511,6 +18701,7 @@ export type WorkspaceUncheckedUpdateWithoutLibraryFoldersInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -18603,6 +18794,7 @@ export type WorkspaceCreateWithoutLibraryFolderGrantsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -18695,6 +18887,7 @@ export type WorkspaceUncheckedCreateWithoutLibraryFolderGrantsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -18803,6 +18996,7 @@ export type WorkspaceUpdateWithoutLibraryFolderGrantsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -18895,6 +19089,7 @@ export type WorkspaceUncheckedUpdateWithoutLibraryFolderGrantsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -18987,6 +19182,7 @@ export type WorkspaceCreateWithoutLibrarySharesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -19079,6 +19275,7 @@ export type WorkspaceUncheckedCreateWithoutLibrarySharesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -19187,6 +19384,7 @@ export type WorkspaceUpdateWithoutLibrarySharesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -19279,6 +19477,7 @@ export type WorkspaceUncheckedUpdateWithoutLibrarySharesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -19371,6 +19570,7 @@ export type WorkspaceCreateWithoutToolStatesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -19463,6 +19663,7 @@ export type WorkspaceUncheckedCreateWithoutToolStatesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -19571,6 +19772,7 @@ export type WorkspaceUpdateWithoutToolStatesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -19663,6 +19865,7 @@ export type WorkspaceUncheckedUpdateWithoutToolStatesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -19755,6 +19958,7 @@ export type WorkspaceCreateWithoutThemesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -19847,6 +20051,7 @@ export type WorkspaceUncheckedCreateWithoutThemesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -19955,6 +20160,7 @@ export type WorkspaceUpdateWithoutThemesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -20047,6 +20253,7 @@ export type WorkspaceUncheckedUpdateWithoutThemesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -20139,6 +20346,7 @@ export type WorkspaceCreateWithoutThemeChangesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -20231,6 +20439,7 @@ export type WorkspaceUncheckedCreateWithoutThemeChangesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -20339,6 +20548,7 @@ export type WorkspaceUpdateWithoutThemeChangesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -20431,6 +20641,7 @@ export type WorkspaceUncheckedUpdateWithoutThemeChangesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -20523,6 +20734,7 @@ export type WorkspaceCreateWithoutToolAccountsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -20615,6 +20827,7 @@ export type WorkspaceUncheckedCreateWithoutToolAccountsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -20723,6 +20936,7 @@ export type WorkspaceUpdateWithoutToolAccountsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -20815,6 +21029,7 @@ export type WorkspaceUncheckedUpdateWithoutToolAccountsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -20907,6 +21122,7 @@ export type WorkspaceCreateWithoutAuditEntriesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -20999,6 +21215,7 @@ export type WorkspaceUncheckedCreateWithoutAuditEntriesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -21107,6 +21324,7 @@ export type WorkspaceUpdateWithoutAuditEntriesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -21199,6 +21417,7 @@ export type WorkspaceUncheckedUpdateWithoutAuditEntriesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -21291,6 +21510,7 @@ export type WorkspaceCreateWithoutAttachmentsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -21383,6 +21603,7 @@ export type WorkspaceUncheckedCreateWithoutAttachmentsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -21491,6 +21712,7 @@ export type WorkspaceUpdateWithoutAttachmentsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -21583,6 +21805,7 @@ export type WorkspaceUncheckedUpdateWithoutAttachmentsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -21675,6 +21898,7 @@ export type WorkspaceCreateWithoutThreadAttachmentsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -21767,6 +21991,7 @@ export type WorkspaceUncheckedCreateWithoutThreadAttachmentsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -21875,6 +22100,7 @@ export type WorkspaceUpdateWithoutThreadAttachmentsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -21967,6 +22193,7 @@ export type WorkspaceUncheckedUpdateWithoutThreadAttachmentsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -22059,6 +22286,7 @@ export type WorkspaceCreateWithoutDesignSystemsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -22151,6 +22379,7 @@ export type WorkspaceUncheckedCreateWithoutDesignSystemsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -22259,6 +22488,7 @@ export type WorkspaceUpdateWithoutDesignSystemsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -22351,6 +22581,7 @@ export type WorkspaceUncheckedUpdateWithoutDesignSystemsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -22443,6 +22674,7 @@ export type WorkspaceCreateWithoutSkillsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -22535,6 +22767,7 @@ export type WorkspaceUncheckedCreateWithoutSkillsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -22643,6 +22876,7 @@ export type WorkspaceUpdateWithoutSkillsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -22735,6 +22969,7 @@ export type WorkspaceUncheckedUpdateWithoutSkillsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -22827,6 +23062,7 @@ export type WorkspaceCreateWithoutSkillPacksInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -22919,6 +23155,7 @@ export type WorkspaceUncheckedCreateWithoutSkillPacksInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -23027,6 +23264,7 @@ export type WorkspaceUpdateWithoutSkillPacksInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -23119,6 +23357,7 @@ export type WorkspaceUncheckedUpdateWithoutSkillPacksInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -23211,6 +23450,7 @@ export type WorkspaceCreateWithoutPreviewRecipesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -23303,6 +23543,7 @@ export type WorkspaceUncheckedCreateWithoutPreviewRecipesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -23411,6 +23652,7 @@ export type WorkspaceUpdateWithoutPreviewRecipesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -23503,6 +23745,7 @@ export type WorkspaceUncheckedUpdateWithoutPreviewRecipesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -23596,6 +23839,7 @@ export type WorkspaceCreateWithoutVmRunsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -23688,6 +23932,7 @@ export type WorkspaceUncheckedCreateWithoutVmRunsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -23796,6 +24041,7 @@ export type WorkspaceUpdateWithoutVmRunsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -23888,6 +24134,7 @@ export type WorkspaceUncheckedUpdateWithoutVmRunsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -23979,6 +24226,7 @@ export type WorkspaceCreateWithoutPreviewVariablesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -24071,6 +24319,7 @@ export type WorkspaceUncheckedCreateWithoutPreviewVariablesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -24179,6 +24428,7 @@ export type WorkspaceUpdateWithoutPreviewVariablesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -24271,6 +24521,7 @@ export type WorkspaceUncheckedUpdateWithoutPreviewVariablesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -24363,6 +24614,7 @@ export type WorkspaceCreateWithoutProjectsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -24455,6 +24707,7 @@ export type WorkspaceUncheckedCreateWithoutProjectsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -24563,6 +24816,7 @@ export type WorkspaceUpdateWithoutProjectsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -24655,6 +24909,7 @@ export type WorkspaceUncheckedUpdateWithoutProjectsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -24747,6 +25002,7 @@ export type WorkspaceCreateWithoutProjectRepositoriesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -24839,6 +25095,7 @@ export type WorkspaceUncheckedCreateWithoutProjectRepositoriesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -24947,6 +25204,7 @@ export type WorkspaceUpdateWithoutProjectRepositoriesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -25039,6 +25297,7 @@ export type WorkspaceUncheckedUpdateWithoutProjectRepositoriesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -25131,6 +25390,7 @@ export type WorkspaceCreateWithoutPushNoticesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -25223,6 +25483,7 @@ export type WorkspaceUncheckedCreateWithoutPushNoticesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -25331,6 +25592,7 @@ export type WorkspaceUpdateWithoutPushNoticesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -25423,6 +25685,7 @@ export type WorkspaceUncheckedUpdateWithoutPushNoticesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -25515,6 +25778,7 @@ export type WorkspaceCreateWithoutPlaybookInstallationsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -25607,6 +25871,7 @@ export type WorkspaceUncheckedCreateWithoutPlaybookInstallationsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -25715,6 +25980,7 @@ export type WorkspaceUpdateWithoutPlaybookInstallationsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -25807,6 +26073,7 @@ export type WorkspaceUncheckedUpdateWithoutPlaybookInstallationsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -25899,6 +26166,7 @@ export type WorkspaceCreateWithoutPlaybookActionsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -25991,6 +26259,7 @@ export type WorkspaceUncheckedCreateWithoutPlaybookActionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -26099,6 +26368,7 @@ export type WorkspaceUpdateWithoutPlaybookActionsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -26191,6 +26461,7 @@ export type WorkspaceUncheckedUpdateWithoutPlaybookActionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -26283,6 +26554,7 @@ export type WorkspaceCreateWithoutPlaybookRunsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -26375,6 +26647,7 @@ export type WorkspaceUncheckedCreateWithoutPlaybookRunsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -26483,6 +26756,7 @@ export type WorkspaceUpdateWithoutPlaybookRunsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -26575,6 +26849,7 @@ export type WorkspaceUncheckedUpdateWithoutPlaybookRunsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -26667,6 +26942,7 @@ export type WorkspaceCreateWithoutPlaybookDryRunsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -26759,6 +27035,7 @@ export type WorkspaceUncheckedCreateWithoutPlaybookDryRunsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -26867,6 +27144,7 @@ export type WorkspaceUpdateWithoutPlaybookDryRunsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -26959,6 +27237,7 @@ export type WorkspaceUncheckedUpdateWithoutPlaybookDryRunsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -27051,6 +27330,7 @@ export type WorkspaceCreateWithoutThreadFollowsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -27143,6 +27423,7 @@ export type WorkspaceUncheckedCreateWithoutThreadFollowsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -27251,6 +27532,7 @@ export type WorkspaceUpdateWithoutThreadFollowsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -27343,6 +27625,7 @@ export type WorkspaceUncheckedUpdateWithoutThreadFollowsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -27435,6 +27718,7 @@ export type WorkspaceCreateWithoutMailProjectsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -27527,6 +27811,7 @@ export type WorkspaceUncheckedCreateWithoutMailProjectsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -27635,6 +27920,7 @@ export type WorkspaceUpdateWithoutMailProjectsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -27727,6 +28013,7 @@ export type WorkspaceUncheckedUpdateWithoutMailProjectsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -27819,6 +28106,7 @@ export type WorkspaceCreateWithoutMailAliasesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -27911,6 +28199,7 @@ export type WorkspaceUncheckedCreateWithoutMailAliasesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -28019,6 +28308,7 @@ export type WorkspaceUpdateWithoutMailAliasesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -28111,6 +28401,7 @@ export type WorkspaceUncheckedUpdateWithoutMailAliasesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -28203,6 +28494,7 @@ export type WorkspaceCreateWithoutMailMessagesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -28295,6 +28587,7 @@ export type WorkspaceUncheckedCreateWithoutMailMessagesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -28403,6 +28696,7 @@ export type WorkspaceUpdateWithoutMailMessagesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -28495,6 +28789,7 @@ export type WorkspaceUncheckedUpdateWithoutMailMessagesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -28587,6 +28882,7 @@ export type WorkspaceCreateWithoutMailDomainsInput = {
   mailMessages?: Prisma.MailMessageCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -28679,6 +28975,7 @@ export type WorkspaceUncheckedCreateWithoutMailDomainsInput = {
   mailMessages?: Prisma.MailMessageUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -28787,6 +29084,7 @@ export type WorkspaceUpdateWithoutMailDomainsInput = {
   mailMessages?: Prisma.MailMessageUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -28879,6 +29177,7 @@ export type WorkspaceUncheckedUpdateWithoutMailDomainsInput = {
   mailMessages?: Prisma.MailMessageUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -28971,6 +29270,7 @@ export type WorkspaceCreateWithoutContactsInput = {
   mailMessages?: Prisma.MailMessageCreateNestedManyWithoutWorkspaceInput
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -29063,6 +29363,7 @@ export type WorkspaceUncheckedCreateWithoutContactsInput = {
   mailMessages?: Prisma.MailMessageUncheckedCreateNestedManyWithoutWorkspaceInput
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -29171,6 +29472,7 @@ export type WorkspaceUpdateWithoutContactsInput = {
   mailMessages?: Prisma.MailMessageUpdateManyWithoutWorkspaceNestedInput
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -29262,6 +29564,395 @@ export type WorkspaceUncheckedUpdateWithoutContactsInput = {
   mailAliases?: Prisma.MailAliasUncheckedUpdateManyWithoutWorkspaceNestedInput
   mailMessages?: Prisma.MailMessageUncheckedUpdateManyWithoutWorkspaceNestedInput
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
+  contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
+  listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
+  listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
+  listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
+  specPulls?: Prisma.SpecPullUncheckedUpdateManyWithoutWorkspaceNestedInput
+  vmRuns?: Prisma.VmRunUncheckedUpdateManyWithoutWorkspaceNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutWorkspaceNestedInput
+  initiativeActions?: Prisma.InitiativeActionUncheckedUpdateManyWithoutWorkspaceNestedInput
+  initiativeOutputs?: Prisma.InitiativeOutputUncheckedUpdateManyWithoutWorkspaceNestedInput
+  initiativeValues?: Prisma.InitiativeValueUncheckedUpdateManyWithoutWorkspaceNestedInput
+}
+
+export type WorkspaceCreateWithoutMailMutesInput = {
+  id?: string
+  name: string
+  logo?: string | null
+  stripeCustomerId?: string | null
+  hubMode?: $Enums.HubMode
+  deletingAt?: Date | string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  builtinSkillsOff?: Prisma.WorkspaceCreatebuiltinSkillsOffInput | string[]
+  organization: Prisma.OrganizationCreateNestedOneWithoutWorkspacesInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutWorkspaceInput
+  runners?: Prisma.RunnerCreateNestedManyWithoutWorkspaceInput
+  teammates?: Prisma.TeammateCreateNestedManyWithoutWorkspaceInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutWorkspaceInput
+  sessionEvents?: Prisma.SessionEventCreateNestedManyWithoutWorkspaceInput
+  tokenUsage?: Prisma.TokenUsageCreateNestedManyWithoutWorkspaceInput
+  threadSeats?: Prisma.ThreadTeammateCreateNestedManyWithoutWorkspaceInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutWorkspaceInput
+  comments?: Prisma.CommentCreateNestedManyWithoutWorkspaceInput
+  connections?: Prisma.ConnectionCreateNestedManyWithoutWorkspaceInput
+  apps?: Prisma.AppCreateNestedManyWithoutWorkspaceInput
+  vaultSecrets?: Prisma.VaultSecretCreateNestedManyWithoutWorkspaceInput
+  credentials?: Prisma.CredentialCreateNestedManyWithoutWorkspaceInput
+  credentialGrants?: Prisma.CredentialGrantCreateNestedManyWithoutWorkspaceInput
+  grants?: Prisma.GrantCreateNestedManyWithoutWorkspaceInput
+  connectionCalls?: Prisma.ConnectionCallCreateNestedManyWithoutWorkspaceInput
+  triggers?: Prisma.TriggerCreateNestedManyWithoutWorkspaceInput
+  subscriptions?: Prisma.SubscriptionCreateNestedManyWithoutWorkspaceInput
+  tickets?: Prisma.TicketCreateNestedManyWithoutWorkspaceInput
+  documents?: Prisma.DocumentCreateNestedManyWithoutWorkspaceInput
+  libraryFolders?: Prisma.LibraryFolderCreateNestedManyWithoutWorkspaceInput
+  libraryFolderGrants?: Prisma.LibraryFolderGrantCreateNestedManyWithoutWorkspaceInput
+  attachments?: Prisma.AttachmentCreateNestedManyWithoutWorkspaceInput
+  threadAttachments?: Prisma.ThreadAttachmentCreateNestedManyWithoutWorkspaceInput
+  pullRequests?: Prisma.PullRequestCreateNestedManyWithoutWorkspaceInput
+  pullRequestReviews?: Prisma.PullRequestReviewCreateNestedManyWithoutWorkspaceInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutWorkspaceInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutWorkspaceInput
+  wakeups?: Prisma.WakeupCreateNestedManyWithoutWorkspaceInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutWorkspaceInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutWorkspaceInput
+  goals?: Prisma.GoalCreateNestedManyWithoutWorkspaceInput
+  replyWatches?: Prisma.ReplyWatchCreateNestedManyWithoutWorkspaceInput
+  heldCalls?: Prisma.HeldCallCreateNestedManyWithoutWorkspaceInput
+  runnerCommands?: Prisma.RunnerCommandCreateNestedManyWithoutWorkspaceInput
+  specParts?: Prisma.SpecPartCreateNestedManyWithoutWorkspaceInput
+  eventDays?: Prisma.WorkspaceEventDayCreateNestedManyWithoutWorkspaceInput
+  triggerDeliveries?: Prisma.TriggerDeliveryCreateNestedManyWithoutWorkspaceInput
+  projects?: Prisma.ProjectCreateNestedManyWithoutWorkspaceInput
+  projectRepositories?: Prisma.ProjectRepositoryCreateNestedManyWithoutWorkspaceInput
+  auditEntries?: Prisma.AuditEntryCreateNestedManyWithoutWorkspaceInput
+  designSystems?: Prisma.DesignSystemCreateNestedManyWithoutWorkspaceInput
+  skills?: Prisma.SkillCreateNestedManyWithoutWorkspaceInput
+  skillPacks?: Prisma.SkillPackCreateNestedManyWithoutWorkspaceInput
+  previewRecipes?: Prisma.PreviewRecipeCreateNestedManyWithoutWorkspaceInput
+  previewVariables?: Prisma.PreviewVariableCreateNestedManyWithoutWorkspaceInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutWorkspaceInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutWorkspaceInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutWorkspaceInput
+  libraryShares?: Prisma.LibraryShareCreateNestedManyWithoutWorkspaceInput
+  toolStates?: Prisma.ToolStateCreateNestedManyWithoutWorkspaceInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutWorkspaceInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutWorkspaceInput
+  toolAccounts?: Prisma.ToolAccountCreateNestedManyWithoutWorkspaceInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutWorkspaceInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutWorkspaceInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutWorkspaceInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutWorkspaceInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutWorkspaceInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutWorkspaceInput
+  playbookActions?: Prisma.PlaybookActionCreateNestedManyWithoutWorkspaceInput
+  playbookRuns?: Prisma.PlaybookRunCreateNestedManyWithoutWorkspaceInput
+  playbookDryRuns?: Prisma.PlaybookDryRunCreateNestedManyWithoutWorkspaceInput
+  threadFollows?: Prisma.ThreadFollowCreateNestedManyWithoutWorkspaceInput
+  billingSubscriptions?: Prisma.BillingSubscriptionCreateNestedManyWithoutWorkspaceInput
+  mailProjects?: Prisma.MailProjectCreateNestedManyWithoutWorkspaceInput
+  mailAliases?: Prisma.MailAliasCreateNestedManyWithoutWorkspaceInput
+  mailMessages?: Prisma.MailMessageCreateNestedManyWithoutWorkspaceInput
+  mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
+  contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
+  contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
+  listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
+  listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
+  specPulls?: Prisma.SpecPullCreateNestedManyWithoutWorkspaceInput
+  vmRuns?: Prisma.VmRunCreateNestedManyWithoutWorkspaceInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutWorkspaceInput
+  initiativeActions?: Prisma.InitiativeActionCreateNestedManyWithoutWorkspaceInput
+  initiativeOutputs?: Prisma.InitiativeOutputCreateNestedManyWithoutWorkspaceInput
+  initiativeValues?: Prisma.InitiativeValueCreateNestedManyWithoutWorkspaceInput
+}
+
+export type WorkspaceUncheckedCreateWithoutMailMutesInput = {
+  id?: string
+  organizationId: string
+  name: string
+  logo?: string | null
+  stripeCustomerId?: string | null
+  hubMode?: $Enums.HubMode
+  deletingAt?: Date | string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  builtinSkillsOff?: Prisma.WorkspaceCreatebuiltinSkillsOffInput | string[]
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutWorkspaceInput
+  runners?: Prisma.RunnerUncheckedCreateNestedManyWithoutWorkspaceInput
+  teammates?: Prisma.TeammateUncheckedCreateNestedManyWithoutWorkspaceInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutWorkspaceInput
+  sessionEvents?: Prisma.SessionEventUncheckedCreateNestedManyWithoutWorkspaceInput
+  tokenUsage?: Prisma.TokenUsageUncheckedCreateNestedManyWithoutWorkspaceInput
+  threadSeats?: Prisma.ThreadTeammateUncheckedCreateNestedManyWithoutWorkspaceInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutWorkspaceInput
+  comments?: Prisma.CommentUncheckedCreateNestedManyWithoutWorkspaceInput
+  connections?: Prisma.ConnectionUncheckedCreateNestedManyWithoutWorkspaceInput
+  apps?: Prisma.AppUncheckedCreateNestedManyWithoutWorkspaceInput
+  vaultSecrets?: Prisma.VaultSecretUncheckedCreateNestedManyWithoutWorkspaceInput
+  credentials?: Prisma.CredentialUncheckedCreateNestedManyWithoutWorkspaceInput
+  credentialGrants?: Prisma.CredentialGrantUncheckedCreateNestedManyWithoutWorkspaceInput
+  grants?: Prisma.GrantUncheckedCreateNestedManyWithoutWorkspaceInput
+  connectionCalls?: Prisma.ConnectionCallUncheckedCreateNestedManyWithoutWorkspaceInput
+  triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutWorkspaceInput
+  subscriptions?: Prisma.SubscriptionUncheckedCreateNestedManyWithoutWorkspaceInput
+  tickets?: Prisma.TicketUncheckedCreateNestedManyWithoutWorkspaceInput
+  documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutWorkspaceInput
+  libraryFolders?: Prisma.LibraryFolderUncheckedCreateNestedManyWithoutWorkspaceInput
+  libraryFolderGrants?: Prisma.LibraryFolderGrantUncheckedCreateNestedManyWithoutWorkspaceInput
+  attachments?: Prisma.AttachmentUncheckedCreateNestedManyWithoutWorkspaceInput
+  threadAttachments?: Prisma.ThreadAttachmentUncheckedCreateNestedManyWithoutWorkspaceInput
+  pullRequests?: Prisma.PullRequestUncheckedCreateNestedManyWithoutWorkspaceInput
+  pullRequestReviews?: Prisma.PullRequestReviewUncheckedCreateNestedManyWithoutWorkspaceInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutWorkspaceInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutWorkspaceInput
+  wakeups?: Prisma.WakeupUncheckedCreateNestedManyWithoutWorkspaceInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutWorkspaceInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutWorkspaceInput
+  goals?: Prisma.GoalUncheckedCreateNestedManyWithoutWorkspaceInput
+  replyWatches?: Prisma.ReplyWatchUncheckedCreateNestedManyWithoutWorkspaceInput
+  heldCalls?: Prisma.HeldCallUncheckedCreateNestedManyWithoutWorkspaceInput
+  runnerCommands?: Prisma.RunnerCommandUncheckedCreateNestedManyWithoutWorkspaceInput
+  specParts?: Prisma.SpecPartUncheckedCreateNestedManyWithoutWorkspaceInput
+  eventDays?: Prisma.WorkspaceEventDayUncheckedCreateNestedManyWithoutWorkspaceInput
+  triggerDeliveries?: Prisma.TriggerDeliveryUncheckedCreateNestedManyWithoutWorkspaceInput
+  projects?: Prisma.ProjectUncheckedCreateNestedManyWithoutWorkspaceInput
+  projectRepositories?: Prisma.ProjectRepositoryUncheckedCreateNestedManyWithoutWorkspaceInput
+  auditEntries?: Prisma.AuditEntryUncheckedCreateNestedManyWithoutWorkspaceInput
+  designSystems?: Prisma.DesignSystemUncheckedCreateNestedManyWithoutWorkspaceInput
+  skills?: Prisma.SkillUncheckedCreateNestedManyWithoutWorkspaceInput
+  skillPacks?: Prisma.SkillPackUncheckedCreateNestedManyWithoutWorkspaceInput
+  previewRecipes?: Prisma.PreviewRecipeUncheckedCreateNestedManyWithoutWorkspaceInput
+  previewVariables?: Prisma.PreviewVariableUncheckedCreateNestedManyWithoutWorkspaceInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutWorkspaceInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutWorkspaceInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutWorkspaceInput
+  libraryShares?: Prisma.LibraryShareUncheckedCreateNestedManyWithoutWorkspaceInput
+  toolStates?: Prisma.ToolStateUncheckedCreateNestedManyWithoutWorkspaceInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutWorkspaceInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutWorkspaceInput
+  toolAccounts?: Prisma.ToolAccountUncheckedCreateNestedManyWithoutWorkspaceInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutWorkspaceInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutWorkspaceInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutWorkspaceInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutWorkspaceInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutWorkspaceInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutWorkspaceInput
+  playbookActions?: Prisma.PlaybookActionUncheckedCreateNestedManyWithoutWorkspaceInput
+  playbookRuns?: Prisma.PlaybookRunUncheckedCreateNestedManyWithoutWorkspaceInput
+  playbookDryRuns?: Prisma.PlaybookDryRunUncheckedCreateNestedManyWithoutWorkspaceInput
+  threadFollows?: Prisma.ThreadFollowUncheckedCreateNestedManyWithoutWorkspaceInput
+  billingSubscriptions?: Prisma.BillingSubscriptionUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailProjects?: Prisma.MailProjectUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailAliases?: Prisma.MailAliasUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMessages?: Prisma.MailMessageUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
+  contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
+  contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
+  listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
+  listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
+  specPulls?: Prisma.SpecPullUncheckedCreateNestedManyWithoutWorkspaceInput
+  vmRuns?: Prisma.VmRunUncheckedCreateNestedManyWithoutWorkspaceInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutWorkspaceInput
+  initiativeActions?: Prisma.InitiativeActionUncheckedCreateNestedManyWithoutWorkspaceInput
+  initiativeOutputs?: Prisma.InitiativeOutputUncheckedCreateNestedManyWithoutWorkspaceInput
+  initiativeValues?: Prisma.InitiativeValueUncheckedCreateNestedManyWithoutWorkspaceInput
+}
+
+export type WorkspaceCreateOrConnectWithoutMailMutesInput = {
+  where: Prisma.WorkspaceWhereUniqueInput
+  create: Prisma.XOR<Prisma.WorkspaceCreateWithoutMailMutesInput, Prisma.WorkspaceUncheckedCreateWithoutMailMutesInput>
+}
+
+export type WorkspaceUpsertWithoutMailMutesInput = {
+  update: Prisma.XOR<Prisma.WorkspaceUpdateWithoutMailMutesInput, Prisma.WorkspaceUncheckedUpdateWithoutMailMutesInput>
+  create: Prisma.XOR<Prisma.WorkspaceCreateWithoutMailMutesInput, Prisma.WorkspaceUncheckedCreateWithoutMailMutesInput>
+  where?: Prisma.WorkspaceWhereInput
+}
+
+export type WorkspaceUpdateToOneWithWhereWithoutMailMutesInput = {
+  where?: Prisma.WorkspaceWhereInput
+  data: Prisma.XOR<Prisma.WorkspaceUpdateWithoutMailMutesInput, Prisma.WorkspaceUncheckedUpdateWithoutMailMutesInput>
+}
+
+export type WorkspaceUpdateWithoutMailMutesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  logo?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  stripeCustomerId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  hubMode?: Prisma.EnumHubModeFieldUpdateOperationsInput | $Enums.HubMode
+  deletingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  builtinSkillsOff?: Prisma.WorkspaceUpdatebuiltinSkillsOffInput | string[]
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutWorkspacesNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutWorkspaceNestedInput
+  runners?: Prisma.RunnerUpdateManyWithoutWorkspaceNestedInput
+  teammates?: Prisma.TeammateUpdateManyWithoutWorkspaceNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutWorkspaceNestedInput
+  sessionEvents?: Prisma.SessionEventUpdateManyWithoutWorkspaceNestedInput
+  tokenUsage?: Prisma.TokenUsageUpdateManyWithoutWorkspaceNestedInput
+  threadSeats?: Prisma.ThreadTeammateUpdateManyWithoutWorkspaceNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutWorkspaceNestedInput
+  comments?: Prisma.CommentUpdateManyWithoutWorkspaceNestedInput
+  connections?: Prisma.ConnectionUpdateManyWithoutWorkspaceNestedInput
+  apps?: Prisma.AppUpdateManyWithoutWorkspaceNestedInput
+  vaultSecrets?: Prisma.VaultSecretUpdateManyWithoutWorkspaceNestedInput
+  credentials?: Prisma.CredentialUpdateManyWithoutWorkspaceNestedInput
+  credentialGrants?: Prisma.CredentialGrantUpdateManyWithoutWorkspaceNestedInput
+  grants?: Prisma.GrantUpdateManyWithoutWorkspaceNestedInput
+  connectionCalls?: Prisma.ConnectionCallUpdateManyWithoutWorkspaceNestedInput
+  triggers?: Prisma.TriggerUpdateManyWithoutWorkspaceNestedInput
+  subscriptions?: Prisma.SubscriptionUpdateManyWithoutWorkspaceNestedInput
+  tickets?: Prisma.TicketUpdateManyWithoutWorkspaceNestedInput
+  documents?: Prisma.DocumentUpdateManyWithoutWorkspaceNestedInput
+  libraryFolders?: Prisma.LibraryFolderUpdateManyWithoutWorkspaceNestedInput
+  libraryFolderGrants?: Prisma.LibraryFolderGrantUpdateManyWithoutWorkspaceNestedInput
+  attachments?: Prisma.AttachmentUpdateManyWithoutWorkspaceNestedInput
+  threadAttachments?: Prisma.ThreadAttachmentUpdateManyWithoutWorkspaceNestedInput
+  pullRequests?: Prisma.PullRequestUpdateManyWithoutWorkspaceNestedInput
+  pullRequestReviews?: Prisma.PullRequestReviewUpdateManyWithoutWorkspaceNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutWorkspaceNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutWorkspaceNestedInput
+  wakeups?: Prisma.WakeupUpdateManyWithoutWorkspaceNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutWorkspaceNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutWorkspaceNestedInput
+  goals?: Prisma.GoalUpdateManyWithoutWorkspaceNestedInput
+  replyWatches?: Prisma.ReplyWatchUpdateManyWithoutWorkspaceNestedInput
+  heldCalls?: Prisma.HeldCallUpdateManyWithoutWorkspaceNestedInput
+  runnerCommands?: Prisma.RunnerCommandUpdateManyWithoutWorkspaceNestedInput
+  specParts?: Prisma.SpecPartUpdateManyWithoutWorkspaceNestedInput
+  eventDays?: Prisma.WorkspaceEventDayUpdateManyWithoutWorkspaceNestedInput
+  triggerDeliveries?: Prisma.TriggerDeliveryUpdateManyWithoutWorkspaceNestedInput
+  projects?: Prisma.ProjectUpdateManyWithoutWorkspaceNestedInput
+  projectRepositories?: Prisma.ProjectRepositoryUpdateManyWithoutWorkspaceNestedInput
+  auditEntries?: Prisma.AuditEntryUpdateManyWithoutWorkspaceNestedInput
+  designSystems?: Prisma.DesignSystemUpdateManyWithoutWorkspaceNestedInput
+  skills?: Prisma.SkillUpdateManyWithoutWorkspaceNestedInput
+  skillPacks?: Prisma.SkillPackUpdateManyWithoutWorkspaceNestedInput
+  previewRecipes?: Prisma.PreviewRecipeUpdateManyWithoutWorkspaceNestedInput
+  previewVariables?: Prisma.PreviewVariableUpdateManyWithoutWorkspaceNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutWorkspaceNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutWorkspaceNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutWorkspaceNestedInput
+  libraryShares?: Prisma.LibraryShareUpdateManyWithoutWorkspaceNestedInput
+  toolStates?: Prisma.ToolStateUpdateManyWithoutWorkspaceNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutWorkspaceNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutWorkspaceNestedInput
+  toolAccounts?: Prisma.ToolAccountUpdateManyWithoutWorkspaceNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutWorkspaceNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutWorkspaceNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutWorkspaceNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutWorkspaceNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutWorkspaceNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutWorkspaceNestedInput
+  playbookActions?: Prisma.PlaybookActionUpdateManyWithoutWorkspaceNestedInput
+  playbookRuns?: Prisma.PlaybookRunUpdateManyWithoutWorkspaceNestedInput
+  playbookDryRuns?: Prisma.PlaybookDryRunUpdateManyWithoutWorkspaceNestedInput
+  threadFollows?: Prisma.ThreadFollowUpdateManyWithoutWorkspaceNestedInput
+  billingSubscriptions?: Prisma.BillingSubscriptionUpdateManyWithoutWorkspaceNestedInput
+  mailProjects?: Prisma.MailProjectUpdateManyWithoutWorkspaceNestedInput
+  mailAliases?: Prisma.MailAliasUpdateManyWithoutWorkspaceNestedInput
+  mailMessages?: Prisma.MailMessageUpdateManyWithoutWorkspaceNestedInput
+  mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
+  contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
+  contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
+  listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
+  listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
+  specPulls?: Prisma.SpecPullUpdateManyWithoutWorkspaceNestedInput
+  vmRuns?: Prisma.VmRunUpdateManyWithoutWorkspaceNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutWorkspaceNestedInput
+  initiativeActions?: Prisma.InitiativeActionUpdateManyWithoutWorkspaceNestedInput
+  initiativeOutputs?: Prisma.InitiativeOutputUpdateManyWithoutWorkspaceNestedInput
+  initiativeValues?: Prisma.InitiativeValueUpdateManyWithoutWorkspaceNestedInput
+}
+
+export type WorkspaceUncheckedUpdateWithoutMailMutesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  logo?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  stripeCustomerId?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  hubMode?: Prisma.EnumHubModeFieldUpdateOperationsInput | $Enums.HubMode
+  deletingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  builtinSkillsOff?: Prisma.WorkspaceUpdatebuiltinSkillsOffInput | string[]
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutWorkspaceNestedInput
+  runners?: Prisma.RunnerUncheckedUpdateManyWithoutWorkspaceNestedInput
+  teammates?: Prisma.TeammateUncheckedUpdateManyWithoutWorkspaceNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutWorkspaceNestedInput
+  sessionEvents?: Prisma.SessionEventUncheckedUpdateManyWithoutWorkspaceNestedInput
+  tokenUsage?: Prisma.TokenUsageUncheckedUpdateManyWithoutWorkspaceNestedInput
+  threadSeats?: Prisma.ThreadTeammateUncheckedUpdateManyWithoutWorkspaceNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutWorkspaceNestedInput
+  comments?: Prisma.CommentUncheckedUpdateManyWithoutWorkspaceNestedInput
+  connections?: Prisma.ConnectionUncheckedUpdateManyWithoutWorkspaceNestedInput
+  apps?: Prisma.AppUncheckedUpdateManyWithoutWorkspaceNestedInput
+  vaultSecrets?: Prisma.VaultSecretUncheckedUpdateManyWithoutWorkspaceNestedInput
+  credentials?: Prisma.CredentialUncheckedUpdateManyWithoutWorkspaceNestedInput
+  credentialGrants?: Prisma.CredentialGrantUncheckedUpdateManyWithoutWorkspaceNestedInput
+  grants?: Prisma.GrantUncheckedUpdateManyWithoutWorkspaceNestedInput
+  connectionCalls?: Prisma.ConnectionCallUncheckedUpdateManyWithoutWorkspaceNestedInput
+  triggers?: Prisma.TriggerUncheckedUpdateManyWithoutWorkspaceNestedInput
+  subscriptions?: Prisma.SubscriptionUncheckedUpdateManyWithoutWorkspaceNestedInput
+  tickets?: Prisma.TicketUncheckedUpdateManyWithoutWorkspaceNestedInput
+  documents?: Prisma.DocumentUncheckedUpdateManyWithoutWorkspaceNestedInput
+  libraryFolders?: Prisma.LibraryFolderUncheckedUpdateManyWithoutWorkspaceNestedInput
+  libraryFolderGrants?: Prisma.LibraryFolderGrantUncheckedUpdateManyWithoutWorkspaceNestedInput
+  attachments?: Prisma.AttachmentUncheckedUpdateManyWithoutWorkspaceNestedInput
+  threadAttachments?: Prisma.ThreadAttachmentUncheckedUpdateManyWithoutWorkspaceNestedInput
+  pullRequests?: Prisma.PullRequestUncheckedUpdateManyWithoutWorkspaceNestedInput
+  pullRequestReviews?: Prisma.PullRequestReviewUncheckedUpdateManyWithoutWorkspaceNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutWorkspaceNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  wakeups?: Prisma.WakeupUncheckedUpdateManyWithoutWorkspaceNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutWorkspaceNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutWorkspaceNestedInput
+  goals?: Prisma.GoalUncheckedUpdateManyWithoutWorkspaceNestedInput
+  replyWatches?: Prisma.ReplyWatchUncheckedUpdateManyWithoutWorkspaceNestedInput
+  heldCalls?: Prisma.HeldCallUncheckedUpdateManyWithoutWorkspaceNestedInput
+  runnerCommands?: Prisma.RunnerCommandUncheckedUpdateManyWithoutWorkspaceNestedInput
+  specParts?: Prisma.SpecPartUncheckedUpdateManyWithoutWorkspaceNestedInput
+  eventDays?: Prisma.WorkspaceEventDayUncheckedUpdateManyWithoutWorkspaceNestedInput
+  triggerDeliveries?: Prisma.TriggerDeliveryUncheckedUpdateManyWithoutWorkspaceNestedInput
+  projects?: Prisma.ProjectUncheckedUpdateManyWithoutWorkspaceNestedInput
+  projectRepositories?: Prisma.ProjectRepositoryUncheckedUpdateManyWithoutWorkspaceNestedInput
+  auditEntries?: Prisma.AuditEntryUncheckedUpdateManyWithoutWorkspaceNestedInput
+  designSystems?: Prisma.DesignSystemUncheckedUpdateManyWithoutWorkspaceNestedInput
+  skills?: Prisma.SkillUncheckedUpdateManyWithoutWorkspaceNestedInput
+  skillPacks?: Prisma.SkillPackUncheckedUpdateManyWithoutWorkspaceNestedInput
+  previewRecipes?: Prisma.PreviewRecipeUncheckedUpdateManyWithoutWorkspaceNestedInput
+  previewVariables?: Prisma.PreviewVariableUncheckedUpdateManyWithoutWorkspaceNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutWorkspaceNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutWorkspaceNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutWorkspaceNestedInput
+  libraryShares?: Prisma.LibraryShareUncheckedUpdateManyWithoutWorkspaceNestedInput
+  toolStates?: Prisma.ToolStateUncheckedUpdateManyWithoutWorkspaceNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutWorkspaceNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutWorkspaceNestedInput
+  toolAccounts?: Prisma.ToolAccountUncheckedUpdateManyWithoutWorkspaceNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutWorkspaceNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutWorkspaceNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutWorkspaceNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutWorkspaceNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutWorkspaceNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutWorkspaceNestedInput
+  playbookActions?: Prisma.PlaybookActionUncheckedUpdateManyWithoutWorkspaceNestedInput
+  playbookRuns?: Prisma.PlaybookRunUncheckedUpdateManyWithoutWorkspaceNestedInput
+  playbookDryRuns?: Prisma.PlaybookDryRunUncheckedUpdateManyWithoutWorkspaceNestedInput
+  threadFollows?: Prisma.ThreadFollowUncheckedUpdateManyWithoutWorkspaceNestedInput
+  billingSubscriptions?: Prisma.BillingSubscriptionUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailProjects?: Prisma.MailProjectUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailAliases?: Prisma.MailAliasUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMessages?: Prisma.MailMessageUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
+  contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -29355,6 +30046,7 @@ export type WorkspaceCreateWithoutContactHandlesInput = {
   mailMessages?: Prisma.MailMessageCreateNestedManyWithoutWorkspaceInput
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -29447,6 +30139,7 @@ export type WorkspaceUncheckedCreateWithoutContactHandlesInput = {
   mailMessages?: Prisma.MailMessageUncheckedCreateNestedManyWithoutWorkspaceInput
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -29555,6 +30248,7 @@ export type WorkspaceUpdateWithoutContactHandlesInput = {
   mailMessages?: Prisma.MailMessageUpdateManyWithoutWorkspaceNestedInput
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -29647,6 +30341,7 @@ export type WorkspaceUncheckedUpdateWithoutContactHandlesInput = {
   mailMessages?: Prisma.MailMessageUncheckedUpdateManyWithoutWorkspaceNestedInput
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -29739,6 +30434,7 @@ export type WorkspaceCreateWithoutHeldCallsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -29831,6 +30527,7 @@ export type WorkspaceUncheckedCreateWithoutHeldCallsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -29939,6 +30636,7 @@ export type WorkspaceUpdateWithoutHeldCallsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -30031,6 +30729,7 @@ export type WorkspaceUncheckedUpdateWithoutHeldCallsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -30123,6 +30822,7 @@ export type WorkspaceCreateWithoutRunnerCommandsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -30215,6 +30915,7 @@ export type WorkspaceUncheckedCreateWithoutRunnerCommandsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -30323,6 +31024,7 @@ export type WorkspaceUpdateWithoutRunnerCommandsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -30415,6 +31117,7 @@ export type WorkspaceUncheckedUpdateWithoutRunnerCommandsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -30507,6 +31210,7 @@ export type WorkspaceCreateWithoutSpecPartsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -30599,6 +31303,7 @@ export type WorkspaceUncheckedCreateWithoutSpecPartsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -30707,6 +31412,7 @@ export type WorkspaceUpdateWithoutSpecPartsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -30799,6 +31505,7 @@ export type WorkspaceUncheckedUpdateWithoutSpecPartsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -30891,6 +31598,7 @@ export type WorkspaceCreateWithoutTriggerDeliveriesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -30983,6 +31691,7 @@ export type WorkspaceUncheckedCreateWithoutTriggerDeliveriesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -31091,6 +31800,7 @@ export type WorkspaceUpdateWithoutTriggerDeliveriesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -31183,6 +31893,7 @@ export type WorkspaceUncheckedUpdateWithoutTriggerDeliveriesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -31276,6 +31987,7 @@ export type WorkspaceCreateWithoutSpecPullsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -31368,6 +32080,7 @@ export type WorkspaceUncheckedCreateWithoutSpecPullsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -31476,6 +32189,7 @@ export type WorkspaceUpdateWithoutSpecPullsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -31568,6 +32282,7 @@ export type WorkspaceUncheckedUpdateWithoutSpecPullsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -31660,6 +32375,7 @@ export type WorkspaceCreateWithoutInitiativesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -31752,6 +32468,7 @@ export type WorkspaceUncheckedCreateWithoutInitiativesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -31860,6 +32577,7 @@ export type WorkspaceUpdateWithoutInitiativesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -31952,6 +32670,7 @@ export type WorkspaceUncheckedUpdateWithoutInitiativesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -32044,6 +32763,7 @@ export type WorkspaceCreateWithoutInitiativeActionsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -32136,6 +32856,7 @@ export type WorkspaceUncheckedCreateWithoutInitiativeActionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -32244,6 +32965,7 @@ export type WorkspaceUpdateWithoutInitiativeActionsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -32336,6 +33058,7 @@ export type WorkspaceUncheckedUpdateWithoutInitiativeActionsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -32428,6 +33151,7 @@ export type WorkspaceCreateWithoutInitiativeOutputsInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -32520,6 +33244,7 @@ export type WorkspaceUncheckedCreateWithoutInitiativeOutputsInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -32628,6 +33353,7 @@ export type WorkspaceUpdateWithoutInitiativeOutputsInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -32720,6 +33446,7 @@ export type WorkspaceUncheckedUpdateWithoutInitiativeOutputsInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -32812,6 +33539,7 @@ export type WorkspaceCreateWithoutInitiativeValuesInput = {
   mailDomains?: Prisma.MailDomainCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullCreateNestedManyWithoutWorkspaceInput
@@ -32904,6 +33632,7 @@ export type WorkspaceUncheckedCreateWithoutInitiativeValuesInput = {
   mailDomains?: Prisma.MailDomainUncheckedCreateNestedManyWithoutWorkspaceInput
   contacts?: Prisma.ContactUncheckedCreateNestedManyWithoutWorkspaceInput
   contactHandles?: Prisma.ContactHandleUncheckedCreateNestedManyWithoutWorkspaceInput
+  mailMutes?: Prisma.MailMuteUncheckedCreateNestedManyWithoutWorkspaceInput
   listItems?: Prisma.ListItemUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemThreads?: Prisma.ListItemThreadUncheckedCreateNestedManyWithoutWorkspaceInput
   listItemPulls?: Prisma.ListItemPullUncheckedCreateNestedManyWithoutWorkspaceInput
@@ -33012,6 +33741,7 @@ export type WorkspaceUpdateWithoutInitiativeValuesInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -33104,6 +33834,7 @@ export type WorkspaceUncheckedUpdateWithoutInitiativeValuesInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -33207,6 +33938,7 @@ export type WorkspaceUpdateWithoutOrganizationInput = {
   mailDomains?: Prisma.MailDomainUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUpdateManyWithoutWorkspaceNestedInput
@@ -33299,6 +34031,7 @@ export type WorkspaceUncheckedUpdateWithoutOrganizationInput = {
   mailDomains?: Prisma.MailDomainUncheckedUpdateManyWithoutWorkspaceNestedInput
   contacts?: Prisma.ContactUncheckedUpdateManyWithoutWorkspaceNestedInput
   contactHandles?: Prisma.ContactHandleUncheckedUpdateManyWithoutWorkspaceNestedInput
+  mailMutes?: Prisma.MailMuteUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItems?: Prisma.ListItemUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemThreads?: Prisma.ListItemThreadUncheckedUpdateManyWithoutWorkspaceNestedInput
   listItemPulls?: Prisma.ListItemPullUncheckedUpdateManyWithoutWorkspaceNestedInput
@@ -33399,6 +34132,7 @@ export type WorkspaceCountOutputType = {
   mailDomains: number
   contacts: number
   contactHandles: number
+  mailMutes: number
   listItems: number
   listItemThreads: number
   listItemPulls: number
@@ -33482,6 +34216,7 @@ export type WorkspaceCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensi
   mailDomains?: boolean | WorkspaceCountOutputTypeCountMailDomainsArgs
   contacts?: boolean | WorkspaceCountOutputTypeCountContactsArgs
   contactHandles?: boolean | WorkspaceCountOutputTypeCountContactHandlesArgs
+  mailMutes?: boolean | WorkspaceCountOutputTypeCountMailMutesArgs
   listItems?: boolean | WorkspaceCountOutputTypeCountListItemsArgs
   listItemThreads?: boolean | WorkspaceCountOutputTypeCountListItemThreadsArgs
   listItemPulls?: boolean | WorkspaceCountOutputTypeCountListItemPullsArgs
@@ -34003,6 +34738,13 @@ export type WorkspaceCountOutputTypeCountContactHandlesArgs<ExtArgs extends runt
 /**
  * WorkspaceCountOutputType without action
  */
+export type WorkspaceCountOutputTypeCountMailMutesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.MailMuteWhereInput
+}
+
+/**
+ * WorkspaceCountOutputType without action
+ */
 export type WorkspaceCountOutputTypeCountListItemsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   where?: Prisma.ListItemWhereInput
 }
@@ -34147,6 +34889,7 @@ export type WorkspaceSelect<ExtArgs extends runtime.Types.Extensions.InternalArg
   mailDomains?: boolean | Prisma.Workspace$mailDomainsArgs<ExtArgs>
   contacts?: boolean | Prisma.Workspace$contactsArgs<ExtArgs>
   contactHandles?: boolean | Prisma.Workspace$contactHandlesArgs<ExtArgs>
+  mailMutes?: boolean | Prisma.Workspace$mailMutesArgs<ExtArgs>
   listItems?: boolean | Prisma.Workspace$listItemsArgs<ExtArgs>
   listItemThreads?: boolean | Prisma.Workspace$listItemThreadsArgs<ExtArgs>
   listItemPulls?: boolean | Prisma.Workspace$listItemPullsArgs<ExtArgs>
@@ -34274,6 +35017,7 @@ export type WorkspaceInclude<ExtArgs extends runtime.Types.Extensions.InternalAr
   mailDomains?: boolean | Prisma.Workspace$mailDomainsArgs<ExtArgs>
   contacts?: boolean | Prisma.Workspace$contactsArgs<ExtArgs>
   contactHandles?: boolean | Prisma.Workspace$contactHandlesArgs<ExtArgs>
+  mailMutes?: boolean | Prisma.Workspace$mailMutesArgs<ExtArgs>
   listItems?: boolean | Prisma.Workspace$listItemsArgs<ExtArgs>
   listItemThreads?: boolean | Prisma.Workspace$listItemThreadsArgs<ExtArgs>
   listItemPulls?: boolean | Prisma.Workspace$listItemPullsArgs<ExtArgs>
@@ -34367,6 +35111,7 @@ export type $WorkspacePayload<ExtArgs extends runtime.Types.Extensions.InternalA
     mailDomains: Prisma.$MailDomainPayload<ExtArgs>[]
     contacts: Prisma.$ContactPayload<ExtArgs>[]
     contactHandles: Prisma.$ContactHandlePayload<ExtArgs>[]
+    mailMutes: Prisma.$MailMutePayload<ExtArgs>[]
     listItems: Prisma.$ListItemPayload<ExtArgs>[]
     listItemThreads: Prisma.$ListItemThreadPayload<ExtArgs>[]
     listItemPulls: Prisma.$ListItemPullPayload<ExtArgs>[]
@@ -34877,6 +35622,7 @@ export interface Prisma__WorkspaceClient<T, Null = never, ExtArgs extends runtim
   mailDomains<T extends Prisma.Workspace$mailDomainsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Workspace$mailDomainsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$MailDomainPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   contacts<T extends Prisma.Workspace$contactsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Workspace$contactsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ContactPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   contactHandles<T extends Prisma.Workspace$contactHandlesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Workspace$contactHandlesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ContactHandlePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  mailMutes<T extends Prisma.Workspace$mailMutesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Workspace$mailMutesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$MailMutePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   listItems<T extends Prisma.Workspace$listItemsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Workspace$listItemsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ListItemPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   listItemThreads<T extends Prisma.Workspace$listItemThreadsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Workspace$listItemThreadsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ListItemThreadPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   listItemPulls<T extends Prisma.Workspace$listItemPullsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Workspace$listItemPullsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ListItemPullPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
@@ -37027,6 +37773,30 @@ export type Workspace$contactHandlesArgs<ExtArgs extends runtime.Types.Extension
   take?: number
   skip?: number
   distinct?: Prisma.ContactHandleScalarFieldEnum | Prisma.ContactHandleScalarFieldEnum[]
+}
+
+/**
+ * Workspace.mailMutes
+ */
+export type Workspace$mailMutesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the MailMute
+   */
+  select?: Prisma.MailMuteSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the MailMute
+   */
+  omit?: Prisma.MailMuteOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.MailMuteInclude<ExtArgs> | null
+  where?: Prisma.MailMuteWhereInput
+  orderBy?: Prisma.MailMuteOrderByWithRelationInput | Prisma.MailMuteOrderByWithRelationInput[]
+  cursor?: Prisma.MailMuteWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.MailMuteScalarFieldEnum | Prisma.MailMuteScalarFieldEnum[]
 }
 
 /**

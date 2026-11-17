@@ -500,6 +500,7 @@ export const ModelName = {
   MailHtml: 'MailHtml',
   MailDomain: 'MailDomain',
   Contact: 'Contact',
+  MailMute: 'MailMute',
   ContactHandle: 'ContactHandle',
   OpsAlert: 'OpsAlert',
   HeldCall: 'HeldCall',
@@ -532,7 +533,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "user" | "analyticsFirst" | "adConversion" | "billingSubscription" | "authSession" | "authAccount" | "verification" | "rateLimit" | "organization" | "billingClosing" | "member" | "invitation" | "invitationSend" | "workspace" | "computer" | "runner" | "teammate" | "threadRead" | "threadPin" | "sidebarOrder" | "threadLater" | "homeDismissal" | "session" | "task" | "schedule" | "chiefDecision" | "chiefPass" | "goal" | "goalMeasurement" | "wakeup" | "replyWatch" | "threadTeammate" | "sessionEvent" | "coldEventChunk" | "threadEventVolume" | "workspaceEventDay" | "tokenUsage" | "account" | "pullRequest" | "pullRequestReview" | "comment" | "mcpClient" | "app" | "connection" | "vaultSecret" | "credential" | "credentialGrant" | "grant" | "connectionCall" | "trigger" | "subscription" | "ticket" | "document" | "listItem" | "listItemThread" | "listItemPull" | "libraryLock" | "listPin" | "documentPin" | "memoryLine" | "documentVersion" | "libraryObjectFolder" | "libraryObject" | "libraryFolder" | "libraryFolderGrant" | "libraryShare" | "toolState" | "theme" | "themeAsset" | "themeChange" | "toolAccount" | "documentAsset" | "bucketCleanup" | "workspaceCleanup" | "auditEntry" | "upload" | "attachment" | "threadAttachment" | "designSystem" | "skill" | "skillPack" | "previewRecipe" | "previewMachine" | "vmRun" | "previewVariable" | "project" | "projectRepository" | "pushDevice" | "desktopDevice" | "desktopMessage" | "pushNotice" | "playbookInstallation" | "playbookAction" | "playbookRun" | "playbookDryRun" | "threadFollow" | "mailAddress" | "mailProject" | "mailAlias" | "mailMessage" | "mailHtml" | "mailDomain" | "contact" | "contactHandle" | "opsAlert" | "heldCall" | "runnerCommand" | "specPart" | "triggerDelivery" | "inboundEvent" | "folderBackup" | "teammateBackup" | "accountLoginBackup" | "computerReplacement" | "featureFlag" | "specPull" | "initiative" | "initiativeAction" | "initiativeOutput" | "initiativeValue"
+    modelProps: "user" | "analyticsFirst" | "adConversion" | "billingSubscription" | "authSession" | "authAccount" | "verification" | "rateLimit" | "organization" | "billingClosing" | "member" | "invitation" | "invitationSend" | "workspace" | "computer" | "runner" | "teammate" | "threadRead" | "threadPin" | "sidebarOrder" | "threadLater" | "homeDismissal" | "session" | "task" | "schedule" | "chiefDecision" | "chiefPass" | "goal" | "goalMeasurement" | "wakeup" | "replyWatch" | "threadTeammate" | "sessionEvent" | "coldEventChunk" | "threadEventVolume" | "workspaceEventDay" | "tokenUsage" | "account" | "pullRequest" | "pullRequestReview" | "comment" | "mcpClient" | "app" | "connection" | "vaultSecret" | "credential" | "credentialGrant" | "grant" | "connectionCall" | "trigger" | "subscription" | "ticket" | "document" | "listItem" | "listItemThread" | "listItemPull" | "libraryLock" | "listPin" | "documentPin" | "memoryLine" | "documentVersion" | "libraryObjectFolder" | "libraryObject" | "libraryFolder" | "libraryFolderGrant" | "libraryShare" | "toolState" | "theme" | "themeAsset" | "themeChange" | "toolAccount" | "documentAsset" | "bucketCleanup" | "workspaceCleanup" | "auditEntry" | "upload" | "attachment" | "threadAttachment" | "designSystem" | "skill" | "skillPack" | "previewRecipe" | "previewMachine" | "vmRun" | "previewVariable" | "project" | "projectRepository" | "pushDevice" | "desktopDevice" | "desktopMessage" | "pushNotice" | "playbookInstallation" | "playbookAction" | "playbookRun" | "playbookDryRun" | "threadFollow" | "mailAddress" | "mailProject" | "mailAlias" | "mailMessage" | "mailHtml" | "mailDomain" | "contact" | "mailMute" | "contactHandle" | "opsAlert" | "heldCall" | "runnerCommand" | "specPart" | "triggerDelivery" | "inboundEvent" | "folderBackup" | "teammateBackup" | "accountLoginBackup" | "computerReplacement" | "featureFlag" | "specPull" | "initiative" | "initiativeAction" | "initiativeOutput" | "initiativeValue"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -8158,6 +8159,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         }
       }
     }
+    MailMute: {
+      payload: Prisma.$MailMutePayload<ExtArgs>
+      fields: Prisma.MailMuteFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.MailMuteFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.MailMuteFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload>
+        }
+        findFirst: {
+          args: Prisma.MailMuteFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.MailMuteFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload>
+        }
+        findMany: {
+          args: Prisma.MailMuteFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload>[]
+        }
+        create: {
+          args: Prisma.MailMuteCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload>
+        }
+        createMany: {
+          args: Prisma.MailMuteCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.MailMuteCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload>[]
+        }
+        delete: {
+          args: Prisma.MailMuteDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload>
+        }
+        update: {
+          args: Prisma.MailMuteUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload>
+        }
+        deleteMany: {
+          args: Prisma.MailMuteDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.MailMuteUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.MailMuteUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload>[]
+        }
+        upsert: {
+          args: Prisma.MailMuteUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$MailMutePayload>
+        }
+        aggregate: {
+          args: Prisma.MailMuteAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateMailMute>
+        }
+        groupBy: {
+          args: Prisma.MailMuteGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.MailMuteGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.MailMuteCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.MailMuteCountAggregateOutputType> | number
+        }
+      }
+    }
     ContactHandle: {
       payload: Prisma.$ContactHandlePayload<ExtArgs>
       fields: Prisma.ContactHandleFieldRefs
@@ -11201,6 +11276,7 @@ export const MailMessageScalarFieldEnum = {
   headers: 'headers',
   authentication: 'authentication',
   automatic: 'automatic',
+  noise: 'noise',
   sender: 'sender',
   memberId: 'memberId',
   contactId: 'contactId',
@@ -11271,6 +11347,19 @@ export const ContactScalarFieldEnum = {
 } as const
 
 export type ContactScalarFieldEnum = (typeof ContactScalarFieldEnum)[keyof typeof ContactScalarFieldEnum]
+
+
+export const MailMuteScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  kind: 'kind',
+  value: 'value',
+  createdByMemberId: 'createdByMemberId',
+  createdAt: 'createdAt'
+} as const
+
+export type MailMuteScalarFieldEnum = (typeof MailMuteScalarFieldEnum)[keyof typeof MailMuteScalarFieldEnum]
 
 
 export const ContactHandleScalarFieldEnum = {
@@ -12677,6 +12766,7 @@ export type GlobalOmitConfig = {
   mailHtml?: Prisma.MailHtmlOmit
   mailDomain?: Prisma.MailDomainOmit
   contact?: Prisma.ContactOmit
+  mailMute?: Prisma.MailMuteOmit
   contactHandle?: Prisma.ContactHandleOmit
   opsAlert?: Prisma.OpsAlertOmit
   heldCall?: Prisma.HeldCallOmit

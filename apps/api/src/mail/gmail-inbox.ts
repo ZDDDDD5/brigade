@@ -9,6 +9,7 @@ import type { ReceivedEmail } from '../connectors/gmail.js'
 import { scoped, type Scope } from '../db.js'
 import { BOX_DAYS } from './inbound.js'
 import { bareAddress } from './names.js'
+import { noiseOf } from './noise.js'
 import { addressesIn, keptHtml } from './text.js'
 
 /**
@@ -53,6 +54,10 @@ export async function keepGmail(
   const at = Date.parse(email.date ?? '')
   const data = {
     route: outcome.route,
+    // Left in the Inbox with nothing on it: To do, or Other when it waits for nobody.
+    noise: taken
+      ? null
+      : await noiseOf(db, { fromAddress: from.address, bulk: !!(email.bulk || email.automatic) }),
     sessionId: outcome.sessionId ?? null,
     triggerId: outcome.triggerId ?? null,
     expiresAt: outcome.sessionId ? null : new Date(Date.now() + BOX_DAYS * 86_400_000),

@@ -635,6 +635,103 @@ describe('the Inbox', { skip }, () => {
     assert.equal((await inbox.readItem(db, as(0), `mail:${m.id}`)).status, 'waiting')
   })
 
+  test('Other: mail that waits for nobody is out of To do and its count; back To do on demand', async () => {
+    const db = scoped(scope)
+    const person = await mail(agent, { fromAddress: `jane-${id}@client.test` })
+    const news = await mail(agent, { fromAddress: `digest-${id}@news.test`, noise: 'automatic' })
+    const signUp = await mail(agent, { fromAddress: `hi-${id}@site.test`, noise: 'sign_up' })
+    const count = await inbox.waitingCount(db, as(0))
+    const todo = await inbox.listInbox(db, as(0), { status: 'waiting' })
+    const ids = (items: { id: string }[]) => new Set(items.map((i) => i.id))
+    assert.ok(ids(todo.items).has(`mail:${person.id}`))
+    assert.ok(!ids(todo.items).has(`mail:${news.id}`))
+    assert.ok(!ids(todo.items).has(`mail:${signUp.id}`))
+    const other = await inbox.listInbox(db, as(0), { status: 'other' })
+    assert.ok(ids(other.items).has(`mail:${news.id}`))
+    assert.ok(ids(other.items).has(`mail:${signUp.id}`))
+    assert.ok(!ids(other.items).has(`mail:${person.id}`))
+    // Not with a teammate either: nobody has it.
+    const handled = await inbox.listInbox(db, as(0), { status: 'handled' })
+    assert.ok(!ids(handled.items).has(`mail:${news.id}`))
+    const read = await inbox.readItem(db, as(0), `mail:${news.id}`)
+    assert.equal(read.status, 'other')
+    assert.equal(read.noise, 'automatic')
+    assert.equal(read.reason, null)
+
+    // A person says it waits for them after all.
+    await inbox.keepInTodo(db, as(1), `mail:${news.id}`)
+    const back = await inbox.readItem(db, as(0), `mail:${news.id}`)
+    assert.equal(back.status, 'waiting')
+    assert.equal(back.noise, null)
+    assert.equal(await inbox.waitingCount(db, as(0)), count + 1)
+
+    // Done from Other is done, and leaves it.
+    await inbox.setDone(db, as(0), `mail:${signUp.id}`, true)
+    assert.equal((await inbox.readItem(db, as(0), `mail:${signUp.id}`)).noise, null)
+    assert.ok(
+      !ids((await inbox.listInbox(db, as(0), { status: 'other' })).items).has(`mail:${signUp.id}`),
+    )
+  })
+
+  test('mute a sender: what waits from them goes to Other, by address or domain; unmute brings it back', async () => {
+    const db = scoped(scope)
+    const first = await mail(agent, { fromAddress: `seo-${id}@links-${id}.test` })
+    const second = await mail(support, { fromAddress: `deals-${id}@mail.links-${id}.test` })
+    const machine = await mail(support, {
+      fromAddress: `bot-${id}@links-${id}.test`,
+      automatic: true,
+      noise: 'automatic',
+    })
+    const ruled = await thread(cody.id)
+    const taken = await mail(support, {
+      fromAddress: `seo-${id}@links-${id}.test`,
+      route: 'rule',
+      sessionId: ruled.id,
+    })
+    const stranger = await mail(agent, { fromAddress: `jane-${id}@gmail.com` })
+
+    // A public provider's domain is everyone's: only the address can be muted.
+    assert.equal((await inbox.readItem(db, as(0), `mail:${stranger.id}`)).muteDomain, null)
+    await assert.rejects(inbox.muteSender(db, as(1), `mail:${stranger.id}`, 'domain'), /address/)
+    assert.equal(await db.mailMute.count({ where: { value: 'gmail.com' } }), 0)
+
+    assert.equal(
+      (await inbox.readItem(db, as(0), `mail:${first.id}`)).muteDomain,
+      `links-${id}.test`,
+    )
+    await inbox.muteSender(db, as(1), `mail:${first.id}`, 'domain')
+    // Twice is once.
+    await inbox.muteSender(db, as(1), `mail:${first.id}`, 'domain')
+    const row = (m: { id: string }) => prisma.mailMessage.findUniqueOrThrow({ where: { id: m.id } })
+    assert.equal((await row(first)).noise, 'muted')
+    // Its subdomains too.
+    assert.equal((await row(second)).noise, 'muted')
+    // What a thread took stays with it; a machine's stays what it was.
+    assert.equal((await row(taken)).noise, null)
+    assert.equal((await row(machine)).noise, 'automatic')
+    const read = await inbox.readItem(db, as(0), `mail:${second.id}`)
+    assert.equal(read.status, 'other')
+    assert.deepEqual(read.muted, { kind: 'domain', value: `links-${id}.test` })
+
+    await inbox.unmuteSender(db, as(0), `mail:${second.id}`)
+    assert.equal((await row(first)).noise, null)
+    assert.equal((await row(second)).noise, null)
+    assert.equal((await row(machine)).noise, 'automatic')
+    assert.equal((await inbox.readItem(db, as(0), `mail:${first.id}`)).muted, null)
+    assert.equal(await db.mailMute.count({ where: { value: `links-${id}.test` } }), 0)
+
+    // By address: that sender only.
+    await inbox.muteSender(db, as(0), `mail:${stranger.id}`, 'address')
+    assert.equal((await row(stranger)).noise, 'muted')
+    assert.equal((await row(first)).noise, null)
+    const { mutedSender } = await import('../src/mail/noise.js')
+    assert.deepEqual(await mutedSender(db, `Jane <JANE-${id}@gmail.com>`), {
+      kind: 'address',
+      value: `jane-${id}@gmail.com`,
+    })
+    assert.equal(await mutedSender(db, `other-${id}@gmail.com`), null)
+  })
+
   test('hand to a teammate: only one given the mailbox; the conversation stays with its thread', async () => {
     const db = scoped(scope)
     const m = await mail(support, { messageId: `<hand-${id}@x.test>` })

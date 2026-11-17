@@ -200,12 +200,32 @@ export function automatic(headers: { name: string; value: string }[] | undefined
   )
 }
 
+/**
+ * Whether an email went to a list (a newsletter, a campaign) or was sent by a machine: kept out of
+ * the Inbox's To do when nothing took it (src/mail/noise.ts), never a reason to skip it.
+ */
+export function bulk(headers: { name: string; value: string }[] | undefined) {
+  const has = (name: string) => !!headers?.some((h) => h.name.toLowerCase() === name)
+  const precedence = headers
+    ?.find((h) => h.name.toLowerCase() === 'precedence')
+    ?.value.trim()
+    .toLowerCase()
+  return (
+    automatic(headers) ||
+    has('list-unsubscribe') ||
+    has('list-id') ||
+    precedence === 'bulk' ||
+    precedence === 'list'
+  )
+}
+
 export const full = (m: Message) => ({
   ...summary(m),
   cc: header(m, 'Cc'),
   body: textOf(m.payload).slice(0, 50_000),
   attachments: attachmentsOf(m),
   automatic: automatic(m.payload?.headers),
+  bulk: bulk(m.payload?.headers),
 })
 
 const Compose = z.object({

@@ -28,7 +28,8 @@ import { ingestExternal, PROGRAM } from './attachments.js'
 import { authorisedFetch } from './connector-calls.js'
 import { attachmentLink } from './connectors/email.js'
 import { gmailFile } from './connectors/gmail.js'
-import { addressOf } from './mail/names.js'
+import { addressOf, bareAddress } from './mail/names.js'
+import { domainOf, mutableDomain, mutedSender, type Noise } from './mail/noise.js'
 import { holdGmail } from './mail/gmail-outbound.js'
 import { readReceived, unread } from './mail/inbound.js'
 import { whenToReply } from './mail/guidance.js'
@@ -48,7 +49,7 @@ export type InboxFilters = {
   source?: string
   teammateId?: string
   projectId?: string
-  status?: 'waiting' | 'handled' | 'scheduled' | 'done' | 'all'
+  status?: 'waiting' | 'handled' | 'other' | 'scheduled' | 'done' | 'all'
   q?: string
   /** The previous page's last item, its time and id: mails of the same second are not lost. */
   before?: { at: Date; id: string }
@@ -163,7 +164,7 @@ const anyOf = (column: Prisma.Sql, ids: string[]) =>
 const heads = (scope: WorkspaceScope, sources: InboxSource[]) => sql`
   select distinct on (m.box, m."conversationId")
     m.id, m.box, m."conversationId", m."receivedAt", m."doneAt", m."sessionId", m.route, m.status,
-    m.outcome
+    m.outcome, m.noise
   from "MailMessage" m
   where m."workspaceId" = ${scope.workspaceId} and m.direction = 'in'
     and (${anyOf(
@@ -174,9 +175,15 @@ const heads = (scope: WorkspaceScope, sources: InboxSource[]) => sql`
       and m.route in (${Prisma.join(TAKEN_ROUTES)})))
   order by m.box, m."conversationId", m."receivedAt" desc, m.id desc`
 
-/** Nobody took it, and no person marked it done (h: a head). */
-const WAITING = sql`(h."doneAt" is null and h."sessionId" is null
+/** Nobody took it, and no person marked it done (h: a head); not one that waits for nobody. */
+const WAITING = sql`(h."doneAt" is null and h."sessionId" is null and h.noise is null
   and (coalesce(h.route, '') in (${Prisma.join(WAITING_ROUTES)}) or h.status in ('pending', 'failed')))`
+
+/**
+ * Other: nobody took it, and it waits for nobody (h: a head): a newsletter, a machine's or a
+ * muted sender's mail (src/mail/noise.ts). Not To do; done once a person marks it so.
+ */
+const OTHER = sql`(h."doneAt" is null and h."sessionId" is null and h.noise is not null)`
 
 /**
  * Its thread chose not to reply (email_no_reply), and nothing was sent in it since (h: a head):
@@ -227,11 +234,13 @@ const statusSql = (scope: WorkspaceScope, status: InboxFilters['status']) =>
     : status === 'done'
       ? sql`h."doneAt" is not null`
       : status === 'handled'
-        ? sql`(h."doneAt" is null and not ${WAITING} and not ${declinedSql(scope)}
+        ? sql`(h."doneAt" is null and not ${WAITING} and not ${OTHER} and not ${declinedSql(scope)}
             and not ${draftSql(scope)})`
-        : status === 'scheduled'
-          ? scheduledSql(scope)
-          : sql`true`
+        : status === 'other'
+          ? OTHER
+          : status === 'scheduled'
+            ? scheduledSql(scope)
+            : sql`true`
 
 /**
  * A conversation this member may read (h: its head): no sign-up mail of another's thread in it.
@@ -363,6 +372,7 @@ const hidden = (scope: WorkspaceScope, m: Row) =>
 const waiting = (m: Row) =>
   !m.doneAt &&
   !m.sessionId &&
+  !m.noise &&
   (m.status === 'failed' || m.status === 'pending' || WAITING_ROUTES.includes(m.route ?? ''))
 
 /** The mails of these conversations, both ways, but those cancelled before they left. */
@@ -458,7 +468,10 @@ async function toItems(
         ? 'done'
         : waiting(m) || outcome?.kind === 'no_reply'
           ? 'waiting'
-          : 'handled',
+          : !m.sessionId && m.noise
+            ? 'other'
+            : 'handled',
+      noise: !m.doneAt && !m.sessionId ? ((m.noise as Noise | null) ?? null) : null,
       route: (m.route as MailRoute | null) ?? null,
       thread: m.session ? { id: m.session.id, title: m.session.title } : null,
       rule: rules.find((r) => r.id === m.triggerId) ?? null,
@@ -749,6 +762,8 @@ export async function readItem(
     ).map((h) => [h.mailId, h.html]),
   )
   const [item] = await toItems(db, scope, [head], sources)
+  const muted = await mutedSender(db, head.fromAddress)
+  const domain = domainOf(head.fromAddress)
   const mailbox = head.address?.connectionId ?? head.connectionId
   // Brigade's rules are per project variant of the address; Gmail's, the account's.
   const projectId = head.address ? (head.projectId ?? head.address.projectId ?? null) : undefined
@@ -814,6 +829,8 @@ export async function readItem(
       }
     }),
     routeNote: head.routeNote,
+    muted,
+    muteDomain: mutableDomain(domain) ? domain : null,
     handTo: await handableTeammates(db, head.address?.connectionId ?? head.connectionId),
     doneAt: head.doneAt?.toISOString() ?? null,
     drafts: item!.hidden ? [] : (await draftsOf(db, scope, mails)).map(({ replyTo: _, ...d }) => d),
@@ -931,6 +948,116 @@ export async function setDone(db: ScopedDb, scope: WorkspaceScope, itemId: strin
     action: done ? 'inbox.done' : 'inbox.undone',
     target: { type: 'mail_message', id: m.id },
   })
+}
+
+/**
+ * Back To do from Other: a person says this conversation waits for them after all. Its next mail
+ * is sorted again as it comes.
+ */
+export async function keepInTodo(db: ScopedDb, scope: WorkspaceScope, itemId: string) {
+  const m = await load(db, scope, itemId)
+  await db.mailMessage.updateMany({
+    where: { box: m.box, conversationId: m.conversationId, direction: 'in', noise: { not: null } },
+    data: { noise: null },
+  })
+  await audit({
+    ...scope,
+    actor: { type: 'member', id: scope.memberId },
+    action: 'inbox.todo',
+    target: { type: 'mail_message', id: m.id },
+  })
+}
+
+/** Mail of a sender, or of anyone at a domain or under it, by its From. */
+const fromWhere = (kind: 'address' | 'domain', value: string): Prisma.MailMessageWhereInput =>
+  kind === 'address'
+    ? { fromAddress: value }
+    : {
+        OR: [
+          { fromAddress: { endsWith: `@${value}` } },
+          { fromAddress: { endsWith: `.${value}` } },
+        ],
+      }
+
+/**
+ * Mute a conversation's sender for the workspace, by address or by domain (never a public mail
+ * provider's): its mail nobody takes goes to Other from now on, as does what of it waits To do.
+ * Threads, rules and replies a thread waits on still take its mail as before.
+ */
+export async function muteSender(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  itemId: string,
+  kind: 'address' | 'domain',
+) {
+  const m = await load(db, scope, itemId)
+  const address = bareAddress(m.fromAddress)
+  const value = kind === 'address' ? address : domainOf(address)
+  if (!value || (kind === 'domain' && !mutableDomain(value)))
+    throw new HTTPException(400, {
+      message: 'Mute this sender’s address: everyone writes from its domain.',
+    })
+  try {
+    await db.mailMute.create({
+      data: { kind, value, createdByMemberId: scope.memberId } as never,
+    })
+  } catch (error) {
+    // Muted already.
+    if ((error as { code?: string }).code !== 'P2002') throw error
+  }
+  await db.mailMessage.updateMany({
+    where: {
+      direction: 'in',
+      route: 'box',
+      routeNote: null,
+      status: 'done',
+      doneAt: null,
+      sessionId: null,
+      noise: null,
+      AND: [fromWhere(kind, value)],
+    },
+    data: { noise: 'muted' },
+  })
+  await audit({
+    ...scope,
+    actor: { type: 'member', id: scope.memberId },
+    action: 'inbox.mute',
+    target: { type: 'mail_message', id: m.id },
+    data: { kind, value },
+  })
+  return { kind, value }
+}
+
+/** Unmute a conversation's sender: its address, and the domain it was muted by. Its mail waits To do again. */
+export async function unmuteSender(db: ScopedDb, scope: WorkspaceScope, itemId: string) {
+  const m = await load(db, scope, itemId)
+  const address = bareAddress(m.fromAddress)
+  for (let muted = await mutedSender(db, address); muted; muted = await mutedSender(db, address)) {
+    await db.mailMute.deleteMany({ where: { kind: muted.kind, value: muted.value } })
+    // Sorted again as they came: a sign-up's and a machine's still wait for nobody.
+    const where = (more: Prisma.MailMessageWhereInput): Prisma.MailMessageWhereInput => ({
+      direction: 'in',
+      noise: 'muted',
+      doneAt: null,
+      AND: [fromWhere(muted.kind, muted.value), more],
+    })
+    await db.mailMessage.updateMany({
+      where: where({ aliasId: { not: null } }),
+      data: { noise: 'sign_up' },
+    })
+    await db.mailMessage.updateMany({
+      where: where({ automatic: true }),
+      data: { noise: 'automatic' },
+    })
+    await db.mailMessage.updateMany({ where: where({}), data: { noise: null } })
+    await audit({
+      ...scope,
+      actor: { type: 'member', id: scope.memberId },
+      action: 'inbox.unmute',
+      target: { type: 'mail_message', id: m.id },
+      data: { kind: muted.kind, value: muted.value },
+    })
+  }
 }
 
 /**
