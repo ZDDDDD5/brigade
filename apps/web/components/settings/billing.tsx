@@ -99,7 +99,7 @@ const OFFERS: Offer[] = [
     audience: 'For a team that works around the clock',
     includes: 'Starter',
     headline: 'A cloud computer with no hour limit, 24/7',
-    features: [],
+    features: ['Priority support'],
   },
 ]
 
