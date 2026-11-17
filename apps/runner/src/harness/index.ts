@@ -87,6 +87,7 @@ import {
   type WaitingApproval,
   type WaitingCall,
 } from './closed-turn.js'
+import { lostWhy } from './codex-restart.js'
 import {
   changedTools,
   toolChangesNote,
@@ -318,6 +319,8 @@ const RESTARTED =
 /** Before the message a cut-off turn answered, told again after a restart. */
 const ASKED =
   'In case your conversation came back without it, this is the latest message you were answering:'
+/** Before the latest request in a handoff whose conversation so far no longer holds it (handoff). */
+const LATEST_REQUEST = 'The latest request, too long to stay in the conversation above:'
 
 /** What Codex may read of a thread's AGENTS.md (its own default is 32 KiB). */
 const INSTRUCTIONS_MAX_BYTES = 256 * 1024
@@ -2010,7 +2013,7 @@ export class HarnessThread {
       if (mapper.error && !signal.aborted) {
         await this.drop()
         // Its conversation gone from this computer: the thread goes on in a new session (run).
-        if (mapper.lost) return lost(mapper.error)
+        if (mapper.lost) return lost(mapper.error, lostWhy(mapper.error))
         return { kind: 'done', result: { status: 'failed', error: mapper.error } }
       }
       if (signal.aborted) await this.endCommands(live)
@@ -2034,7 +2037,7 @@ export class HarnessThread {
       if (exhausted) return { kind: 'exhausted', resetsAt: exhausted.resetsAt }
       if (EventMapper.sessionLost(message)) {
         await this.drop()
-        return lost(message)
+        return lost(message, lostWhy(message))
       }
       this.emit({ type: 'error', message })
       await this.drop()
@@ -2395,11 +2398,16 @@ export class HarnessThread {
       .map((t) => `${t.role === 'user' ? 'User' : 'You'}: ${t.text}`)
       .join('\n\n')
     const last = transcript.findLast((t) => t.role === 'user')
+    // The latest request, kept whole (asked), may have left a transcript cut to its last
+    // TRANSCRIPT_CHARS: a long message (pasted logs, say) followed by a few replies.
+    const asked = this.saved?.asked
+    const lost = asked && !transcript.some((t) => t.role === 'user' && t.text === asked)
     return [
       why,
       where,
       lines && `Conversation so far:\n\n${lines}`,
-      last && `Continue with the latest request if it is not finished yet.`,
+      lost && `${LATEST_REQUEST}\n\n${asked}`,
+      (last || lost) && `Continue with the latest request if it is not finished yet.`,
     ]
       .filter(Boolean)
       .join('\n\n')
