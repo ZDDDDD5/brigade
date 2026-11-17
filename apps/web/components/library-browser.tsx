@@ -9,6 +9,7 @@ import {
   designName,
   designOptionsOf,
   folderAccessFor,
+  TOOL_ENTRY,
   toolFolderOf,
   toolName,
   type FolderAccess,
@@ -47,7 +48,6 @@ import {
 } from 'react'
 import { timeAgo, useDashboard } from '@/components/dashboard'
 import { DesignPanel } from '@/components/design-view'
-import { ToolPanel } from '@/components/tool-view'
 import { libraryDocument, useDocumentPanel } from '@/components/document-panel'
 import { PUBLIC_LINK } from '@/components/share-button'
 import { ActorName, size } from '@/components/library-history'
@@ -177,8 +177,6 @@ export function LibraryBrowser({
   const documents = useDocumentPanel()
   /** The design open beside the page: its folder. */
   const [design, setDesign] = useState<string>()
-  /** The tool open beside the page: its folder. */
-  const [tool, setTool] = useState<string>()
   const { me } = useDashboard()
   /** Tools (docs/tools.md) show as tools for people who have them; as folders for the others. */
   const tools = me.features?.includes('tools') ?? false
@@ -262,11 +260,6 @@ export function LibraryBrowser({
     openTool(focusTool)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once the list is in, not on each reload
   }, [focusTool, loaded, tools])
-  // A tool whose page went away closes.
-  const toolGone = !!tool && !!tree && !tree.files.some((f) => f.path === `${tool}/index.html`)
-  useEffect(() => {
-    if (toolGone) setTool(undefined)
-  }, [toolGone])
   // A design whose files all went away closes.
   const designFiles = design ? tree?.files.filter((f) => f.path.startsWith(`${design}/`)) : []
   useEffect(() => {
@@ -276,20 +269,21 @@ export function LibraryBrowser({
   // Any file opens in the file panel (components/document-panel.tsx), beside whatever page shows.
   function open(file: LibraryFile, show: 'file' | 'history' = 'file') {
     setDesign(undefined)
-    setTool(undefined)
     documents.open(libraryDocument(file), { history: show === 'history' })
   }
 
   function openDesign(path: string) {
     documents.close()
-    setTool(undefined)
     setDesign(path)
   }
 
+  // A tool opens in the document panel too, as the tool (its page): it stays open from page to
+  // page, and minimizes into the panel's button as a document does.
   function openTool(path: string) {
-    documents.close()
+    const page = tree?.files.find((f) => f.path === `${path}/${TOOL_ENTRY}`)
+    if (!page) return
     setDesign(undefined)
-    setTool(path)
+    documents.open(libraryDocument(page))
   }
 
   async function act(work: () => Promise<unknown>) {
@@ -708,7 +702,6 @@ export function LibraryBrowser({
             : {})}
         />
       )}
-      {tool && <ToolPanel folder={tool} libraryLink={false} onClose={() => setTool(undefined)} />}
       {access !== undefined && (
         <FolderAccessDialog
           path={access}

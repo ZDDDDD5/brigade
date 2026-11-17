@@ -24,10 +24,15 @@ import {
   X,
 } from 'lucide-react'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useDashboard } from '@/components/dashboard'
 import { useDocumentDiscussion } from '@/components/document-discussion'
-import { libraryDocument, useOptionalDocumentPanel } from '@/components/document-panel'
+import {
+  libraryDocument,
+  MinimizeButton,
+  useOptionalDocumentPanel,
+} from '@/components/document-panel'
 import { ProviderTile, providerKind } from '@/components/provider-logo'
 import { SidePanel } from '@/components/side-panel'
 import { Button } from '@/components/ui/button'
@@ -49,6 +54,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { api } from '@/lib/api'
 import { useElementPicker, type ElementPicker } from '@/lib/element-pickers'
+import { minimizesOnPageChange } from '@/lib/tool-aside'
 import { answer, bridgeRequest, connectPort, isBye, type ToolConfirm } from '@/lib/tool-host'
 import { cn } from '@/lib/utils'
 
@@ -65,6 +71,7 @@ export function ToolPanel({
   libraryLink = true,
   inDocuments = false,
   hidden = false,
+  onMinimize,
 }: {
   folder: string
   /** Shown beside this thread: its messages go to it. */
@@ -79,6 +86,8 @@ export function ToolPanel({
    * a minimized document): its page stays as it was, not loaded again when it shows.
    */
   hidden?: boolean
+  /** In the document panel: folds it into its button, as a document does (⌄, ⌘.). */
+  onMinimize?: () => void
 }) {
   const { me } = useDashboard()
   const [view, setView] = useState<ToolView>()
@@ -223,6 +232,21 @@ export function ToolPanel({
     }
     await discussion.ask()
   }, [discussion, inDocuments, documents, toolId, folder, onClose])
+  // In the document panel below wide screens it covers the page: another page showing (the
+  // thread Ask or Select opened, or any other) minimizes it, so that page shows.
+  const pathname = usePathname()
+  const shownAt = useRef(pathname)
+  const aside = useRef({ hidden, onMinimize })
+  aside.current = { hidden, onMinimize }
+  useEffect(() => {
+    const was = shownAt.current
+    shownAt.current = pathname
+    const { hidden: out, onMinimize: minimize } = aside.current
+    if (!minimize) return
+    const wide = window.matchMedia('(min-width: 1280px)').matches
+    if (minimizesOnPageChange({ inDocuments, hidden: out, wide, shownAt: was, pathname }))
+      minimize()
+  }, [pathname, inDocuments])
   // Elements picked in the page go to the reply box of the thread beside it, else of the one
   // open last; without one, the button opens the tool's thread first, as Ask does.
   const picker = useElementPicker(threadId)
@@ -365,6 +389,7 @@ export function ToolPanel({
               Accounts
             </Button>
           )}
+          {onMinimize && !expanded && <MinimizeButton onMinimize={onMinimize} />}
           <Button
             type="button"
             variant="ghost"
