@@ -158,8 +158,8 @@ export class ThreadCredentials {
   }
 
   /** Write a credential to a private env file. Returns where, and its variable names. */
-  async env(credentialId: string, call: Call) {
-    const { credential, secret } = await this.release(credentialId, 'env', call)
+  async env(credentialId: string, call: Call, purpose?: string) {
+    const { credential, secret } = await this.release(credentialId, 'env', call, purpose)
     const vars = envFor(credential, secret)
     const file = join(this.dir, `${slug(credential.name)}.env`)
     const text = `${Object.entries(vars)
@@ -182,7 +182,7 @@ export class ThreadCredentials {
   }
 
   /** Sign in with a website login on the thread's tab of that site. */
-  async fill(credentialId: string, submit: boolean, call: Call) {
+  async fill(credentialId: string, submit: boolean, call: Call, purpose?: string) {
     const { browser, runAs } = this.options
     if (!browser || !runAs)
       throw new Error('This teammate has no browser here; website logins work on cloud computers.')
@@ -221,7 +221,7 @@ export class ThreadCredentials {
       'browser',
       call,
       // The page without its query, which can be long (a SAML request) and hold tokens.
-      `The login goes into ${pageOf(check.url)}.`.slice(0, 500),
+      `${purpose ? `${purpose} ` : ''}The login goes into ${pageOf(check.url)}.`.slice(0, 500),
     )
     // The vault's own URL decides where the password may go, not the earlier listing.
     const result = await helper({
