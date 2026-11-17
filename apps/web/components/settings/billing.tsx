@@ -349,9 +349,9 @@ export default function BillingPage() {
             })}
           </div>
           <p className="max-w-4xl text-[0.8125rem] leading-snug text-muted-foreground">
-            AI usage isn’t included in any plan: teammates run on your own Claude or ChatGPT plan,
-            and your provider bills you for it. A cloud hour counts while the cloud computer is on;
-            it goes to sleep 30 minutes after teammates finish. Switch or cancel anytime.
+            Teammates run on your own Claude or ChatGPT plan, and your provider bills you for it. A
+            cloud hour counts while the cloud computer is on; it goes to sleep 30 minutes after
+            teammates finish. Switch or cancel anytime.
           </p>
         </div>
       )}
