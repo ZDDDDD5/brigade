@@ -11,7 +11,10 @@ Tools are behind the `tools` feature (docs/feature-flags.md) while the team trie
 ## What a member sees
 
 - **Library → Tools**: every tool, newest first, with its picture. In Files, a tool's folder is one
-  row ("Tool · …") that opens it; a thread's mention of it opens it beside the thread.
+  row ("Tool · …") that opens it. From the library, a tool opens in the document panel, as a
+  Markdown document does: it stays open from page to page, and Minimize (⌄, ⌘.) folds it into
+  the panel's round button, its page kept as it was. A thread's mention of it opens it beside
+  the thread.
 - **The tool's panel**: its page fills the panel (Expand for the whole window). The title's menu
   says who made it and where its messages go, opens it in the library or in a new tab (outside
   Brigade, where its calls fail), and reloads it.

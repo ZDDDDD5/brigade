@@ -477,6 +477,7 @@ export function DocumentPanel() {
         onClose={() => remove(target)}
         inDocuments
         hidden={!shown}
+        onMinimize={minimize}
       />
     )
   const view: FileView =
@@ -716,7 +717,7 @@ function useSwipeDown(onSwipe: () => void) {
   }
 }
 
-function MinimizeButton({ onMinimize }: { onMinimize: () => void }) {
+export function MinimizeButton({ onMinimize }: { onMinimize: () => void }) {
   const mac = useIsMac()
   return (
     <Button

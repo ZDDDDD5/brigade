@@ -27,7 +27,11 @@ import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { useDashboard } from '@/components/dashboard'
 import { useDocumentDiscussion } from '@/components/document-discussion'
-import { libraryDocument, useOptionalDocumentPanel } from '@/components/document-panel'
+import {
+  libraryDocument,
+  MinimizeButton,
+  useOptionalDocumentPanel,
+} from '@/components/document-panel'
 import { ProviderTile, providerKind } from '@/components/provider-logo'
 import { SidePanel } from '@/components/side-panel'
 import { Button } from '@/components/ui/button'
@@ -65,6 +69,7 @@ export function ToolPanel({
   libraryLink = true,
   inDocuments = false,
   hidden = false,
+  onMinimize,
 }: {
   folder: string
   /** Shown beside this thread: its messages go to it. */
@@ -79,6 +84,8 @@ export function ToolPanel({
    * a minimized document): its page stays as it was, not loaded again when it shows.
    */
   hidden?: boolean
+  /** In the document panel: folds it into its button, as a document does (⌄, ⌘.). */
+  onMinimize?: () => void
 }) {
   const { me } = useDashboard()
   const [view, setView] = useState<ToolView>()
@@ -365,6 +372,7 @@ export function ToolPanel({
               Accounts
             </Button>
           )}
+          {onMinimize && !expanded && <MinimizeButton onMinimize={onMinimize} />}
           <Button
             type="button"
             variant="ghost"
