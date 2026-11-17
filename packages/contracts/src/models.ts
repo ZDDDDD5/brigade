@@ -51,17 +51,27 @@ const CLAUDE_MODELS = [
 
 const CODEX_MODELS = [
   {
+    id: 'gpt-6.2-sol',
+    label: 'GPT-6.2 Sol',
+    description: 'Latest workhorse model for coding and everyday work.',
+  },
+  {
+    id: 'gpt-6.2-astra',
+    label: 'GPT-6.2 Astra',
+    description: 'Frontier intelligence for the most demanding work.',
+  },
+  {
     id: 'gpt-6.1-sol',
     label: 'GPT-6.1 Sol',
-    description: 'Latest workhorse model for coding and everyday work.',
+    description: 'Previous workhorse model.',
     effort: 'medium',
   },
   {
     id: 'gpt-6-astra',
     label: 'GPT-6 Astra',
-    description: 'Frontier intelligence for the most demanding work.',
+    description: 'Previous frontier model.',
   },
-  { id: 'gpt-6-sol', label: 'GPT-6 Sol', description: 'Previous generation workhorse model.' },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', description: 'Older generation workhorse model.' },
   {
     id: 'gpt-6-luna',
     label: 'GPT-6 Luna',
@@ -91,7 +101,7 @@ export const PI_DEFAULT_MODEL = 'claude-opus-5-5'
  * What a Codex teammate on Default runs, and the image tool. The Codex adapter's
  * own default (GPT-5.5) was retired for ChatGPT sign-ins on 2026-10-14.
  */
-export const CODEX_DEFAULT_MODEL = 'gpt-6.1-sol'
+export const CODEX_DEFAULT_MODEL = 'gpt-6.2-sol'
 
 /** The model a turn asks for: on Default, Claude Code runs the account's own, Codex and Pi ours. */
 export const runModel = (harness: TeammateHarness, model: string | null) =>

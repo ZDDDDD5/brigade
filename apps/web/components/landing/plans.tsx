@@ -109,7 +109,7 @@ export function Plans() {
                 <span className={c('cp-l')}>In use</span>
               </div>
               <div className={c('acct-m')}>
-                <span className={c('mono')}>GPT-6.1 Sol</span>
+                <span className={c('mono')}>GPT-6.2 Sol</span>
                 <span className={c('acct-bar')}>
                   <span className={c('acct-f c')}></span>
                 </span>
@@ -137,7 +137,7 @@ export function Plans() {
               Mark
               <span className={c('cp-l')}>
                 <ChatGptMark />
-                GPT-6.1 Sol
+                GPT-6.2 Sol
               </span>
             </div>
           </div>
