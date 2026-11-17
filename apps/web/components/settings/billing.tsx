@@ -255,13 +255,13 @@ export default function BillingPage() {
             <div className="flex flex-wrap gap-2">
               {tier === 'starter' && (
                 <Button disabled={busy} onClick={() => void go('upgrade', () => upgradeToCloud())}>
-                  Upgrade to Max · $99
                   {opening === 'upgrade' && <ActivityIndicator label="Opening Stripe" />}
+                  Upgrade to Max · $99
                 </Button>
               )}
               <Button variant="outline" disabled={busy} onClick={() => void manage()}>
-                Manage billing
                 {opening === 'manage' && <ActivityIndicator label="Opening Stripe" />}
+                Manage billing
               </Button>
             </div>
           )}
@@ -346,8 +346,8 @@ export default function BillingPage() {
                           void go(offer.key, () => subscribeToCloud('billing', offer.key as Tier))
                         }
                       >
-                        Get {offer.name}
                         {opening === offer.key && <ActivityIndicator label="Opening Stripe" />}
+                        Get {offer.name}
                       </Button>
                     )
                   )}
