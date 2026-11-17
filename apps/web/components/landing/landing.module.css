@@ -1917,9 +1917,28 @@ svg.os {
 }
 .plans {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 24px;
   position: relative;
+}
+/* Who the plan is for, under its price. */
+.who {
+  margin-top: 12px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--muted-foreground);
+}
+/* What every plan shares, under them. */
+.pr-note {
+  margin-top: 28px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+/* Three cards stop fitting side by side: one under the other. */
+@media (max-width: 1099px) {
+  .plans {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 .plan {
   background: var(--card);
@@ -1966,7 +1985,7 @@ svg.os {
   color: var(--muted-foreground);
 }
 .feat {
-  margin: 30px 0 34px;
+  margin: 26px 0 34px;
   display: flex;
   flex-direction: column;
   gap: 14px;
