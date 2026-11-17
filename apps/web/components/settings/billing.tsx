@@ -302,8 +302,9 @@ export default function BillingPage() {
                   </div>
                   <ul className="flex flex-col gap-2 text-sm">
                     {offer.includes && (
-                      <li className="text-muted-foreground">
-                        Everything in {offer.includes}, plus:
+                      <li className="flex gap-2">
+                        <Check aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
+                        Everything in {offer.includes}
                       </li>
                     )}
                     <li className="flex gap-2 font-semibold">
