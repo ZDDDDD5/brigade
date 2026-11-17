@@ -1159,11 +1159,14 @@ export class HarnessThread {
    * Keep Codex's ask in the thread's state, once per call: its call (openAsk) and the event that
    * shows it (codexAsk) wait on the same write, whichever starts it. Rejects when it could not be
    * written, the ask dropped again: nothing may answer an ask a runner that stops would forget.
+   * One at a time, a failed one written out again first: Codex may open two at once, and a
+   * write that went through must not keep, on disk, another whose own write failed (persist
+   * takes the state as it is when called).
    */
   private keepAsk(call: WaitingCall) {
     let kept = this.asksKept.get(call.toolCallId)
     if (kept) return kept
-    kept = (async () => {
+    kept = this.askWrites.then(async () => {
       this.saved ??= { accountId: this.current.id, transcript: [] }
       this.saved.later = [
         ...(this.saved.later ?? []).filter((c) => c.toolCallId !== call.toolCallId),
@@ -1174,12 +1177,19 @@ export class HarnessThread {
       } catch (error) {
         if (this.saved?.later)
           this.saved.later = this.saved.later.filter((c) => c.toolCallId !== call.toolCallId)
+        // Another write taken while this one was under way may hold it: the state on disk
+        // goes back to what is kept, as best it can.
+        await this.persist().catch(() => undefined)
         throw error
       }
-    })()
+    })
+    this.askWrites = kept.catch(() => undefined)
     this.asksKept.set(call.toolCallId, kept)
     return kept
   }
+
+  /** The last of Codex's asks being kept: the next waits for it (keepAsk). */
+  private askWrites: Promise<unknown> = Promise.resolve()
 
   /** Codex's asks being kept, by call (keepAsk). */
   private asksKept = new Map<string, Promise<void>>()

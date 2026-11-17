@@ -5,7 +5,8 @@
 // Codex bridge, with its stand-in for `codex app-server` calling open_ticket mid-turn, as Codex
 // does, and the runner's own thread (HarnessThread) on top.
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import fs, { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { test } from 'node:test'
@@ -28,7 +29,7 @@ const TICKET = {
 }
 
 /** A Codex thread on a computer of its own, whose stand-in makes `call` in its first turn. */
-async function codexThread(call: { tool: string; arguments: unknown }, waits = false) {
+async function codexThread(call?: { tool: string; arguments: unknown }, waits = false) {
   const home = await mkdtemp(join(tmpdir(), 'codex-asks-'))
   const work = join(home, 'work')
   await mkdir(work, { recursive: true })
@@ -76,7 +77,7 @@ async function codexThread(call: { tool: string; arguments: unknown }, waits = f
           USERPROFILE: home,
           CODEX_HOME: join(home, '.codex'),
           FAKE_CODEX_RECORD: record,
-          FAKE_CODEX_CALL: JSON.stringify(call),
+          ...(call ? { FAKE_CODEX_CALL: JSON.stringify(call) } : {}),
           FAKE_CODEX_REPLY: 'I opened a ticket: sign in to X, then I post the reply.',
         },
       })
@@ -392,6 +393,88 @@ test(
       }
       assert.equal(state.later?.length ?? 0, 0)
     } finally {
+      await t.done()
+    }
+  },
+)
+
+test(
+  'Codex: two asks at once, the first not kept: neither the state nor the thread keeps it',
+  { timeout: 60_000 },
+  async () => {
+    const t = await codexThread()
+    const inner = t.thread as unknown as {
+      keepAsk: (call: WaitingCall) => Promise<void>
+      saved?: { later?: WaitingCall[] }
+    }
+    // The thread's first state write fails (a disk full for a moment), once it was let go; the
+    // ones after it go through.
+    const realWrite = fs.writeFile
+    let entered!: () => void
+    const writing = new Promise<void>((resolve) => (entered = resolve))
+    let release!: () => void
+    const released = new Promise<void>((resolve) => (release = resolve))
+    let writes = 0
+    /** What each write that went through put on disk. */
+    const written: string[] = []
+    fs.writeFile = (async (...args: Parameters<typeof realWrite>) => {
+      if (!String(args[0]).startsWith(join(t.home, 'codex-asks.json.'))) return realWrite(...args)
+      if (++writes === 1) {
+        entered()
+        await released
+        throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' })
+      }
+      written.push(String(args[1]))
+      return realWrite(...args)
+    }) as typeof fs.writeFile
+    syncBuiltinESMExports()
+    try {
+      const first = inner.keepAsk({ toolCallId: 'first', toolName: 'open_ticket', input: TICKET })
+      const failed = assert.rejects(first, /no space left/)
+      await entered
+      // Codex opens a second ask from another script meanwhile.
+      const second = inner.keepAsk({ toolCallId: 'second', toolName: 'open_ticket', input: TICKET })
+      release()
+      await failed
+      await second
+      assert.deepEqual(
+        inner.saved?.later?.map((c) => c.toolCallId),
+        ['second'],
+      )
+      const disk = JSON.parse(await readFile(join(t.home, 'codex-asks.json'), 'utf8')) as {
+        later?: WaitingCall[]
+      }
+      assert.deepEqual(
+        disk.later?.map((c) => c.toolCallId),
+        ['second'],
+        'the failed ask is not on disk',
+      )
+      // Nor was it at any time: a runner stopped after any of these writes forgets it too.
+      assert.ok(written.length > 0)
+      for (const text of written) assert.doesNotMatch(text, /"toolCallId":"first"/)
+      fs.writeFile = realWrite
+      syncBuiltinESMExports()
+      // A runner that starts from that state: answered, the second leaves nothing open.
+      const restarted = await codexThread()
+      try {
+        await writeFile(join(restarted.home, 'codex-asks.json'), JSON.stringify(disk))
+        assert.deepEqual(
+          await restarted.run({
+            kind: 'ticket',
+            requestId: 'second',
+            answer: { action: 'answered', replies: { x_login: { type: 'action', done: true } } },
+          } as never),
+          { status: 'idle' },
+        )
+        const ended = restarted.events.filter((e) => e.type === 'turn.completed').at(-1)
+        assert.equal(ended?.type === 'turn.completed' && ended.waiting, undefined)
+      } finally {
+        await restarted.done()
+      }
+    } finally {
+      release()
+      fs.writeFile = realWrite
+      syncBuiltinESMExports()
       await t.done()
     }
   },
