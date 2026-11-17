@@ -6,7 +6,7 @@ import pg from 'pg'
 
 // Brigade Cloud Starter (src/billing.ts PLANS): its tier follows the subscription's price, its
 // Checkout uses its own price, and its cloud computer runs only while the period's hours last.
-// Email stays; dictation and threads' own machines do not come with it. Stripe is faked where
+// Email and dictation stay; threads' own machines do not come with it. Stripe is faked where
 // billing calls it. The database parts run against the local one of apps/api/.env (or
 // DATABASE_URL), in an organization of their own removed at the end; without one, skipped.
 const fromEnvFile = () => {
@@ -328,15 +328,17 @@ test("the upgrade opens the portal's confirmation of Cloud's price", { skip }, a
   )
 })
 
-test('dictation comes with Brigade Cloud, not Starter', { skip }, async () => {
+test('dictation comes with Starter too, whatever its hours', { skip }, async () => {
   const workspaceId = ws.features!
-  const row = await starterRow(
+  await starterRow(
     workspaceId,
-    new Date(Date.now() - 24 * HOUR),
-    new Date(Date.now() + 24 * HOUR),
+    new Date(Date.now() - 10 * 24 * HOUR),
+    new Date(Date.now() + 20 * 24 * HOUR),
   )
-  assert.deepEqual(await dictationStatus(workspaceId), { available: false, reason: 'plan' })
-  await assert.rejects(requireDictation(workspaceId), /not Starter/)
-  await prisma.billingSubscription.update({ where: { id: row.id }, data: { tier: 'cloud' } })
+  assert.deepEqual(await dictationStatus(workspaceId), { available: true })
+  await requireDictation(workspaceId)
+  // Its hours used up: the cloud computer sleeps, dictation stays.
+  await run(workspaceId, new Date(Date.now() - 5 * 24 * HOUR), 101)
+  assert.equal(await billing.cloudEntitled(workspaceId), false)
   assert.deepEqual(await dictationStatus(workspaceId), { available: true })
 })

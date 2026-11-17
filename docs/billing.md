@@ -3,8 +3,8 @@
 Brigade is free on members' own machines (the Free plan). **Brigade Cloud** adds the
 workspace's cloud computer and Brigade's own email addresses (see Email below), in two plans:
 **Max**, $99 a month per workspace (€99 in the euro zone), and **Starter**, $15 a month (€15),
-the same with 100 hours of cloud computer a billing period, and without dictation or threads'
-own machines (see Starter below). In code, rows and events, Max's tier is still `cloud`. One subscription per
+the same with 100 hours of cloud computer a billing period, and without threads' own machines
+(see Starter below). In code, rows and events, Max's tier is still `cloud`. One subscription per
 workspace, paid by the owner or admin who subscribes. All of it is in
 `apps/api/src/billing.ts`.
 
@@ -81,9 +81,9 @@ on the same row, at the next reconcile.
   it does not start again (`requireCloudPlan` answers 402 with when it comes back), and the work
   sent to it waits in the hub until the period renews or the plan goes up. Its disk stays.
   Computers says so, and a new thread points to Settings › Billing.
-- **The plan still stands:** email addresses and the Inbox work (`planEntitled`), whatever the
-  hours. Dictation comes only with Max (`dictationStatus`), and threads' own machines
-  (`wantsMachine`, preview_machines) never with Starter.
+- **The plan still stands:** email addresses, the Inbox and dictation work (`planEntitled`),
+  whatever the hours. Threads' own machines (`wantsMachine`, preview_machines) never come with
+  Starter.
 - **Upgrade:** Settings › Billing's Upgrade opens Stripe's portal at the confirmation of
   Max's price for the same subscription (`startUpgrade`, a `subscription_update_confirm`
   flow), which charges the difference for the rest of the period at once. Brigade's portal

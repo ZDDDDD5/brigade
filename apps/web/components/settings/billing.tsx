@@ -66,21 +66,29 @@ const OFFERS: Offer[] = [
     name: 'Free',
     icon: <Laptop />,
     amount: 0,
-    audience: 'Teammates work on your computer while it’s on',
+    audience: 'For trying it on your own computer',
     headline: 'Unlimited teammates, threads and members',
-    features: ['Runs on your own Claude or ChatGPT plan', 'Apps, memory, schedules and approvals'],
+    features: [
+      'Claude Code or Codex, on your own Claude or ChatGPT plan',
+      'GitHub, Notion, Linear, Stripe and many more Apps',
+      'Apps for Mac, Windows and Linux, and alerts on your phone',
+      'Teammates work while your computer is on',
+    ],
   },
   {
     key: 'starter',
     name: 'Starter',
     icon: <Gauge />,
     amount: 15,
-    audience: 'Teammates keep working when your computer is off',
+    audience: 'Always-on teammates at the lowest price',
     includes: 'Free',
-    headline: 'A cloud computer, 100 hours a month',
+    headline: 'A cloud computer about 3 hours a day (100 hours a month)',
     features: [
+      'Teammates keep working with your laptop closed',
       'Schedules and triggers run on time, even at 3 a.m.',
-      'An email address for each teammate',
+      'A live desktop you can watch or take over',
+      'An email address for each teammate, with the Inbox',
+      'Dictation in every message box',
     ],
   },
   {
@@ -90,8 +98,8 @@ const OFFERS: Offer[] = [
     amount: 99,
     audience: 'For a team that works around the clock',
     includes: 'Starter',
-    headline: 'Unlimited cloud computer hours',
-    features: ['Dictation in every message box'],
+    headline: 'No limit of cloud computer hours: 24/7, every day',
+    features: [],
   },
 ]
 
@@ -341,8 +349,9 @@ export default function BillingPage() {
             })}
           </div>
           <p className="max-w-4xl text-[0.8125rem] leading-snug text-muted-foreground">
-            No AI bill from us on any plan. Switch or cancel anytime. A cloud hour counts while the
-            cloud computer is on; it goes to sleep 30 minutes after teammates finish.
+            AI usage isn’t included in any plan: teammates run on your own Claude or ChatGPT plan,
+            and your provider bills you for it. A cloud hour counts while the cloud computer is on;
+            it goes to sleep 30 minutes after teammates finish. Switch or cancel anytime.
           </p>
         </div>
       )}

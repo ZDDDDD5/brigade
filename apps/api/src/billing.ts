@@ -49,7 +49,7 @@ export const CLOUD_PLAN = { name: 'cloud', lookupKey: 'brigade_cloud_monthly' }
  * - cloud: Max, $99 / €99 a month, the cloud computer without a limit of hours. Its code name
  *   stays `cloud` (rows, events, the lookup key): only people see "Max".
  * - starter: Starter, $15 / €15 a month: the same cloud computer for `hours` hours
- *   a billing period (its VM's running time, src/vm-costs.ts), without dictation or threads'
+ *   a billing period (its VM's running time, src/vm-costs.ts), without threads'
  *   own machines. Past them, the computer sleeps until the period renews or the plan goes up.
  */
 export const PLANS = {
