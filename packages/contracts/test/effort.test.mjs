@@ -33,7 +33,8 @@ test("Default sits on the model's own level, Medium when it is not known", async
   assert.equal(defaultEffort('claude_code', 'claude-fable-5-1'), 'high')
   // On Default, Claude Code runs the account's own model: not known here.
   assert.equal(defaultEffort('claude_code', null), 'medium')
-  // On Default, Codex runs GPT-6.1 Sol.
+  // On Default, Codex runs GPT-6.2 Sol, whose level OpenAI doesn't publish.
   assert.equal(defaultEffort('codex', null), 'medium')
   assert.equal(defaultEffort('codex', 'gpt-6-astra'), 'medium')
+  assert.equal(defaultEffort('codex', 'gpt-6.1-sol'), 'medium')
 })
