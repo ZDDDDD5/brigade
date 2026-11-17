@@ -5,7 +5,7 @@
 // with Brigade Cloud while billing is on, as the provider charges for each second heard.
 import { DICTATION_MAX_BYTES, type DictationResult, type DictationStatus } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
-import { cloudEntitled } from './billing.js'
+import { planOf } from './billing.js'
 import { env } from './config.js'
 
 /** Where a recording is heard, and by which model: OpenRouter's name or Groq's own. */
@@ -36,6 +36,9 @@ export function transcriber(): Transcriber | null {
 export const DICTATION_PLAN_REQUIRED =
   'Dictation comes with Brigade Cloud: an owner or admin subscribes in Settings › Billing'
 
+export const DICTATION_STARTER =
+  'Dictation comes with Brigade Cloud, not Starter: an owner or admin upgrades in Settings › Billing'
+
 /**
  * The kinds of audio browsers record (MediaRecorder: WebM/Opus in Chrome and Firefox, MP4/AAC
  * in Safari), by the file name the provider reads the format from.
@@ -65,7 +68,9 @@ export function audioName(type: string) {
 /** Whether the workspace's composers show a working microphone. */
 export async function dictationStatus(workspaceId: string): Promise<DictationStatus> {
   if (!transcriber()) return { available: false, reason: 'off' }
-  if (!(await cloudEntitled(workspaceId))) return { available: false, reason: 'plan' }
+  // The provider charges for each second heard: Brigade Cloud only, not Starter.
+  const plan = await planOf(workspaceId)
+  if (!plan.entitled || plan.tier !== 'cloud') return { available: false, reason: 'plan' }
   return { available: true }
 }
 
@@ -75,7 +80,10 @@ export async function requireDictation(workspaceId: string) {
   if (status.available) return
   if (status.reason === 'off')
     throw new HTTPException(404, { message: 'Dictation is not set up on this Brigade' })
-  throw new HTTPException(402, { message: DICTATION_PLAN_REQUIRED })
+  const { tier } = await planOf(workspaceId)
+  throw new HTTPException(402, {
+    message: tier === 'starter' ? DICTATION_STARTER : DICTATION_PLAN_REQUIRED,
+  })
 }
 
 /** The words in `audio`, by the provider. `fetcher` is for tests. */

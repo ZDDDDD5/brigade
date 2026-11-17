@@ -804,8 +804,13 @@ export type ComputersResponse = {
   cloudAvailable: boolean
   /** Billing is on: the cloud computer comes with the workspace's Cloud plan (Settings › Billing). */
   billing: boolean
-  /** The workspace may have its cloud computer: it has the plan, or billing is off. */
+  /**
+   * The workspace may have its cloud computer running: it has the plan (on Starter, with hours
+   * left this period), or billing is off.
+   */
   cloudEntitled: boolean
+  /** Brigade Cloud Starter's hours are used up: the cloud computer sleeps until then (ISO). */
+  cloudHoursUsedUp?: string | null
   computers: Computer[]
 }
 
@@ -842,9 +847,19 @@ export async function openStripe(address: () => Promise<string>) {
 }
 
 /** Stripe Checkout for the workspace's Cloud plan: opens it, coming back to `from` after. */
-export function subscribeToCloud(from: 'billing' | 'onboarding' = 'billing') {
+export function subscribeToCloud(
+  from: 'billing' | 'onboarding' = 'billing',
+  tier: 'cloud' | 'starter' = 'cloud',
+) {
   return openStripe(
-    async () => (await api<{ url: string }>('/billing/checkout', { body: { from } })).url,
+    async () => (await api<{ url: string }>('/billing/checkout', { body: { from, tier } })).url,
+  )
+}
+
+/** From Brigade Cloud Starter to Brigade Cloud, confirmed in Stripe's portal. Call it on a click. */
+export function upgradeToCloud() {
+  return openStripe(
+    async () => (await api<{ url: string }>('/billing/upgrade', { method: 'POST' })).url,
   )
 }
 
