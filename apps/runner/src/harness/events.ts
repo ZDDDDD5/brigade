@@ -113,6 +113,12 @@ export function askUserResult(questions: Question[], answer: QuestionAnswer) {
   }
 }
 
+/** What a teammate is told of a ticket nobody could answer. */
+export const INVALID_TICKET =
+  'Invalid ticket: give a title and 1 to 6 asks, each with the fields its type needs ' +
+  '(approval: title, draft; decision: question; access: kind, what; action: title; input: question). ' +
+  'An app.repository is for kind github only, as owner/name.'
+
 /** open_ticket's input as a ticket; ids filled in where the model left them out. */
 export function ticketAsks(input: unknown): { title: string; asks: Ask[] } | undefined {
   const raw = input as { title?: string; asks?: Record<string, unknown>[] } | undefined
@@ -622,10 +628,7 @@ export class EventMapper {
           this.rejected.push({
             toolCallId: part.toolCallId,
             toolName: part.toolName,
-            error:
-              'Invalid ticket: give a title and 1 to 6 asks, each with the fields its type needs ' +
-              '(approval: title, draft; decision: question; access: kind, what; action: title; input: question). ' +
-              'An app.repository is for kind github only, as owner/name.',
+            error: INVALID_TICKET,
           })
         }
         this.emit({

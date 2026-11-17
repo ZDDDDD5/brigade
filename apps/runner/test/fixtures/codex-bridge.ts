@@ -9,7 +9,9 @@ import { toNative, WINDOWS } from '../../src/windows.js'
 
 // Runs of the Codex bridge (patched) with a stand-in for `codex app-server`: what the bridge
 // asks Codex, without Codex. The stand-in answers each request, plays one turn that says
-// FAKE_CODEX_REPLY, and writes every request it got to FAKE_CODEX_RECORD.
+// FAKE_CODEX_REPLY, and writes every request it got to FAKE_CODEX_RECORD. With FAKE_CODEX_CALL
+// ({ tool, arguments }), its first turn calls that dynamic tool first, as Codex does from a
+// script it runs, and goes on once the bridge answers (written down as `tool/answered`).
 
 const require = createRequire(import.meta.url)
 const packageDir = (name: string) => dirname(require.resolve(`${name}/package.json`))
@@ -19,9 +21,23 @@ const FAKE_APP_SERVER = `import { appendFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n')
 const permissions = { approvalPolicy: 'never', sandbox: { type: 'dangerFullAccess' }, model: 'fake-model' }
+let called = false
+const finishTurn = (threadId) => {
+  const turn = { id: 'turn-1' }
+  const item = { type: 'agentMessage', id: 'message-1', text: process.env.FAKE_CODEX_REPLY ?? 'done' }
+  send({ method: 'item/started', params: { threadId, turnId: 'turn-1', item: { ...item, text: '' } } })
+  send({ method: 'item/completed', params: { threadId, turnId: 'turn-1', item } })
+  send({ method: 'turn/completed', params: { threadId, turn: { ...turn, status: 'completed' } } })
+}
+let afterCall = () => {}
 createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line)
   if (message.id === undefined) return
+  // The bridge's answer to the tool call the stand-in made (FAKE_CODEX_CALL).
+  if (message.method === undefined) {
+    appendFileSync(process.env.FAKE_CODEX_RECORD, JSON.stringify({ method: 'tool/answered', params: message.result ?? message.error ?? null }) + '\\n')
+    return afterCall()
+  }
   appendFileSync(process.env.FAKE_CODEX_RECORD, JSON.stringify({ method: message.method, params: message.params ?? null }) + '\\n')
   const answer = (result) => send({ id: message.id, result })
   switch (message.method) {
@@ -37,10 +53,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       answer({ turn: { id: 'turn-1' } })
       const turn = { id: 'turn-1' }
       send({ method: 'turn/started', params: { threadId, turn } })
-      const item = { type: 'agentMessage', id: 'message-1', text: process.env.FAKE_CODEX_REPLY ?? 'done' }
-      send({ method: 'item/started', params: { threadId, turnId: 'turn-1', item: { ...item, text: '' } } })
-      send({ method: 'item/completed', params: { threadId, turnId: 'turn-1', item } })
-      send({ method: 'turn/completed', params: { threadId, turn: { ...turn, status: 'completed' } } })
+      if (process.env.FAKE_CODEX_CALL && !called) {
+        called = true
+        const call = JSON.parse(process.env.FAKE_CODEX_CALL)
+        afterCall = () => finishTurn(threadId)
+        send({ id: 'tool-call-1', method: 'item/tool/call', params: { threadId, turnId: 'turn-1', callId: 'call-1', tool: call.tool, arguments: call.arguments } })
+        return
+      }
+      finishTurn(threadId)
       return
     }
     default:

@@ -87,6 +87,7 @@ import {
   type WaitingApproval,
   type WaitingCall,
 } from './closed-turn.js'
+import { asksWithoutWaiting } from './codex-asks.js'
 import { lostWhy } from './codex-restart.js'
 import {
   changedTools,
@@ -412,6 +413,8 @@ function createAgent(
   desktop: Desktop | undefined,
   machine: MachineRunTools | undefined,
   arrivals: Arrivals,
+  /** Keeps a ticket or question Codex opened without waiting (codex-asks.ts). */
+  openAsk: (call: WaitingCall) => Promise<void>,
   pi?: PiSetup,
 ) {
   // auth {}: the adapter adds no credential of its own. The vendor CLI uses the
@@ -562,6 +565,9 @@ function createAgent(
         // Claude Code asks with its own question tool; Codex's and Pi's adapters have none.
         ...(codex || onPi ? { [ASK_USER_TOOL]: askUserTool } : {}),
         [OPEN_TICKET_TOOL]: openTicketTool,
+        // Codex ends its turn whatever a call waits on: its asks open, return at once and are
+        // answered by a message (codex-asks.ts).
+        ...(codex ? asksWithoutWaiting(openAsk) : {}),
         [SHOW_WIDGET_TOOL]: showWidgetTool,
         [WIDGET_GUIDE_TOOL]: widgetGuideTool,
         // A person's message given to the running turn, answered at once (steeredText in threads.ts).
@@ -706,6 +712,12 @@ function frozenMidRun(resume: unknown) {
     from[key].some((p) => !(p as { completedResult?: unknown }).completedResult)
   return !waits('pendingToolApprovals') && !waits('pendingToolResults')
 }
+
+/**
+ * How long the thread's events wait behind Codex's ask being kept (codex-asks.ts): past that,
+ * they go on, and the ask shows once it is kept.
+ */
+const askKeptMs = () => Number(process.env.BRIGADE_ASK_KEPT_MS) || 10_000
 
 /** How long a harness may take to let go of its turn when the runner hands it over. */
 const HAND_OVER_MS = 20_000
@@ -1132,6 +1144,96 @@ export class HarnessThread {
   async awaitingPerson() {
     if (!this.live) await this.load()
     return this.waitsOnPerson()
+  }
+
+  /**
+   * A ticket or question Codex opened without waiting (codex-asks.ts): open for the person, its
+   * answer comes as a message (laterAnswer). Its call returns only once it is kept, so Codex
+   * hears it opened only then; one that could not be kept fails, and Codex hears that instead.
+   */
+  private openAsk(call: WaitingCall) {
+    return this.keepAsk(call)
+  }
+
+  /**
+   * Keep Codex's ask in the thread's state, once per call: its call (openAsk) and the event that
+   * shows it (codexAsk) wait on the same write, whichever starts it. Rejects when it could not be
+   * written, the ask dropped again: nothing may answer an ask a runner that stops would forget.
+   * One at a time, a failed one written out again first: Codex may open two at once, and a
+   * write that went through must not keep, on disk, another whose own write failed (persist
+   * takes the state as it is when called).
+   */
+  private keepAsk(call: WaitingCall) {
+    let kept = this.asksKept.get(call.toolCallId)
+    if (kept) return kept
+    kept = this.askWrites.then(async () => {
+      this.saved ??= { accountId: this.current.id, transcript: [] }
+      this.saved.later = [
+        ...(this.saved.later ?? []).filter((c) => c.toolCallId !== call.toolCallId),
+        call,
+      ]
+      try {
+        await this.persist()
+      } catch (error) {
+        if (this.saved?.later)
+          this.saved.later = this.saved.later.filter((c) => c.toolCallId !== call.toolCallId)
+        // Another write taken while this one was under way may hold it: the state on disk
+        // goes back to what is kept, as best it can.
+        await this.persist().catch(() => undefined)
+        throw error
+      }
+    })
+    this.askWrites = kept.catch(() => undefined)
+    this.asksKept.set(call.toolCallId, kept)
+    return kept
+  }
+
+  /** The last of Codex's asks being kept: the next waits for it (keepAsk). */
+  private askWrites: Promise<unknown> = Promise.resolve()
+
+  /** Codex's asks being kept, by call (keepAsk). */
+  private asksKept = new Map<string, Promise<void>>()
+
+  /**
+   * What goes out for an event that shows Codex's ask (ticket.opened, question.asked): the
+   * event once the ask is kept (keepAsk), never before, so that its answer always finds it. A
+   * write slower than askKeptMs() holds the thread's other events no longer: the ask shows once
+   * kept, after them. One that could not be kept never shows. Undefined for any other event.
+   */
+  private codexAsk(event: AgentEvent): Promise<AgentEvent[]> | undefined {
+    if (this.spec.teammate.harness !== 'codex') return undefined
+    const id =
+      event.type === 'ticket.opened'
+        ? event.requestId
+        : event.type === 'question.asked'
+          ? event.questionId
+          : undefined
+    // Seen by the mapper just before it made this event: its call, with its input.
+    const call = id === undefined ? undefined : this.toolCalls.get(id)
+    if (id === undefined || !call) return undefined
+    const shown = this.keepAsk({ toolCallId: id, toolName: call.toolName, input: call.input }).then(
+      () => true,
+      (error: unknown) => {
+        console.warn(
+          `thread ${this.spec.sessionId}: could not keep ask ${id}: ${errorMessage(error)}`,
+        )
+        return false
+      },
+    )
+    let timer: NodeJS.Timeout | undefined
+    let late = false
+    void shown.then((ok) => {
+      clearTimeout(timer)
+      if (ok && late) this.outbox.send(event)
+    })
+    const slow = new Promise<AgentEvent[]>(
+      (resolve) =>
+        (timer = setTimeout(() => {
+          late = true
+          resolve([])
+        }, askKeptMs())),
+    )
+    return Promise.race([shown.then((ok) => (ok ? [event] : [])), slow])
   }
 
   private waitsOnPerson() {
@@ -1732,6 +1834,13 @@ export class HarnessThread {
         if (event.type === 'message.done' && hasVisibleText(event.text)) this.steeredPending = false
         this.noteBackground(event)
         if (backgroundWait(event) !== undefined || backgroundTasks(event)) watchWait()
+        // A ticket or question Codex opened without waiting (codex-asks.ts) shows once it is kept:
+        // answered at once, or after the runner stopped, the answer finds the ask it is to.
+        const ask = this.codexAsk(event)
+        if (ask) {
+          this.outbox.hold(ask)
+          return
+        }
         // A turn's usage says whose account spent it: the stream's own, which after running out
         // of usage (switchTo) is the next account's, not the one the turn started on.
         this.outbox.send(
@@ -2561,6 +2670,7 @@ export class HarnessThread {
         : this.cloudDesktop(),
       this.context.machine,
       this.arrivals,
+      (call) => this.openAsk(call),
       onPi
         ? { instructions: text, skills: piSkills(this.workDir, skills), pi: await loadPi() }
         : undefined,

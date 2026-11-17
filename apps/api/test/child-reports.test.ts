@@ -179,8 +179,8 @@ const upload = (session: Row, name: string, text: string) =>
   })
 
 let seq = 0
-/** The child's last words, and the end of its turn. */
-async function endTurn(child: Row, text: string) {
+/** The child's last words, and the end of its turn: `waiting` while an ask of its is open. */
+async function endTurn(child: Row, text: string, { waiting = false } = {}) {
   const at = new Date().toISOString()
   await prisma.sessionEvent.create({
     data: {
@@ -192,7 +192,9 @@ async function endTurn(child: Row, text: string) {
       at,
     },
   })
-  await noteChildEvents(child, [{ event: { type: 'turn.completed', at } }])
+  await noteChildEvents(child, [
+    { event: { type: 'turn.completed', at, ...(waiting ? { waiting: true } : {}) } },
+  ])
 }
 
 const notes = async (session: { id: string }) =>
@@ -414,3 +416,32 @@ test('an error with no try after it sends what the child has', { skip }, async (
   const [note] = await notes(parent)
   assert.match(note!, /It broke\./)
 })
+
+test(
+  'a child whose turn ends with its question still open reports once the answer is in',
+  { skip },
+  async () => {
+    const { parent, child } = await family({ awaited: true })
+    // A Codex teammate's question holds no turn (codex-asks.ts in apps/runner): its turn ends,
+    // waiting on the person's answer. It is not done, and its parent hears nothing yet.
+    await endTurn(child, 'Which repository should I review, web or api?', { waiting: true })
+    assert.deepEqual(await notes(parent), [])
+    const held = await prisma.session.findUniqueOrThrow({
+      where: { id: child.id },
+      select: { report: true, reportDeliveredAt: true },
+    })
+    assert.equal(held.report, null)
+    assert.equal(held.reportDeliveredAt, null)
+
+    // The answer brings a turn of its own (question.answered, then its turn): that one reports.
+    await noteChildEvents(child, [
+      { event: { type: 'question.answered', at: new Date().toISOString() } },
+    ])
+    assert.deepEqual(await notes(parent), [])
+    await endTurn(child, 'Reviewed web: two findings.')
+    const [note, ...more] = await notes(parent)
+    assert.equal(more.length, 0)
+    assert.match(note!, /Reviewed web: two findings\./)
+    assert.doesNotMatch(note!, /Which repository/)
+  },
+)

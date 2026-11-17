@@ -307,10 +307,14 @@ export async function noteDryRunEvents(
     workspaceId: string
     playbookRunId: string | null
   },
-  events: { event: { type: string; message?: string } }[],
+  events: { event: { type: string; message?: string; waiting?: boolean } }[],
 ) {
   if (!session.playbookRunId) return
-  const ended = events.find((e) => e.event.type === 'turn.completed' || e.event.type === 'error')
+  // A turn over while it still waits on a person's answer (a Codex teammate's ask holds no turn,
+  // codex-asks.ts in apps/runner) has not ended its run: it waits, as a turn paused on an ask.
+  const ended = events.find(
+    (e) => (e.event.type === 'turn.completed' && !e.event.waiting) || e.event.type === 'error',
+  )
   if (!ended) return
   const scope: Scope = { organizationId: session.organizationId, workspaceId: session.workspaceId }
   const db = scoped(scope)
