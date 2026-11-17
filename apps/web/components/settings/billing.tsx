@@ -48,39 +48,50 @@ type Offer = {
   amount: number
   /** Who it is for, in a line. */
   audience: string
-  /** What sets it apart, first and in bold. */
+  /** The plan below it, whose features it has too: its list opens with "Everything in …". */
+  includes?: string
+  /** What sets it apart, in bold. */
   headline: string
   features: string[]
 }
 
-/** The three plans side by side: Free, where every workspace starts, then the two Cloud plans. */
+/**
+ * The three plans side by side: Free, where every workspace starts, then the two Cloud plans,
+ * each opening with the plan below it and what it adds. Only what the product does: check a
+ * line against the code before changing it.
+ */
 const OFFERS: Offer[] = [
   {
     key: 'free',
     name: 'Free',
     icon: <Laptop />,
     amount: 0,
-    audience: 'Teammates run on your own computer',
-    headline: 'While your computer is on',
-    features: ['They stop when it sleeps or is off'],
+    audience: 'Teammates work on your computer while it’s on',
+    headline: 'Unlimited teammates, threads and members',
+    features: ['Runs on your own Claude or ChatGPT plan', 'Apps, memory, schedules and approvals'],
   },
   {
     key: 'starter',
     name: 'Starter',
     icon: <Gauge />,
     amount: 15,
-    audience: 'To try teammates in the cloud',
-    headline: '100 cloud hours a month',
-    features: ['An email address for each teammate'],
+    audience: 'Teammates keep working when your computer is off',
+    includes: 'Free',
+    headline: 'A cloud computer, 100 hours a month',
+    features: [
+      'Schedules and triggers run on time, even at 3 a.m.',
+      'An email address for each teammate',
+    ],
   },
   {
     key: 'cloud',
     name: 'Max',
     icon: <Cloud />,
     amount: 99,
-    audience: 'For work that runs around the clock',
-    headline: 'Unlimited cloud hours',
-    features: ['Everything in Starter', 'Dictation'],
+    audience: 'For a team that works around the clock',
+    includes: 'Starter',
+    headline: 'Unlimited cloud computer hours',
+    features: ['Dictation in every message box'],
   },
 ]
 
@@ -290,6 +301,11 @@ export default function BillingPage() {
                     <p className="text-sm text-muted-foreground">{offer.audience}</p>
                   </div>
                   <ul className="flex flex-col gap-2 text-sm">
+                    {offer.includes && (
+                      <li className="text-muted-foreground">
+                        Everything in {offer.includes}, plus:
+                      </li>
+                    )}
                     <li className="flex gap-2 font-semibold">
                       <Check aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
                       {offer.headline}
@@ -324,9 +340,8 @@ export default function BillingPage() {
             })}
           </div>
           <p className="max-w-4xl text-[0.8125rem] leading-snug text-muted-foreground">
-            Both cloud plans run on your own Claude or ChatGPT plan: no AI bill from us. Switch or
-            cancel anytime. An hour counts while the cloud computer is on; it sleeps 30 minutes
-            after teammates finish.
+            No AI bill from us on any plan. Switch or cancel anytime. A cloud hour counts while the
+            cloud computer is on; it goes to sleep 30 minutes after teammates finish.
           </p>
         </div>
       )}
