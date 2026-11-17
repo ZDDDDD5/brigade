@@ -811,6 +811,8 @@ export type ComputersResponse = {
   cloudEntitled: boolean
   /** Starter's hours are used up: the cloud computer sleeps until then (ISO). */
   cloudHoursUsedUp?: string | null
+  /** On Starter, the cloud computer's hours this period, starting over at `resetsAt`. */
+  cloudHours?: { used: number; included: number; resetsAt: string } | null
   computers: Computer[]
 }
 

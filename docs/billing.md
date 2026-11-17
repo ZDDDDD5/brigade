@@ -81,6 +81,11 @@ on the same row, at the next reconcile.
   it does not start again (`requireCloudPlan` answers 402 with when it comes back), and the work
   sent to it waits in the hub until the period renews or the plan goes up. Its disk stays.
   Computers says so, and a new thread points to Settings › Billing.
+- **Running low:** from 80% of the period's hours, a card at the foot of the sidebar
+  (`components/cloud-hours-banner.tsx`) shows the hours used and when they start over, with
+  Upgrade to Max for owners and admins; at 100%, that the cloud computer sleeps until then. It
+  cannot be dismissed. Its figures come with `GET /api/computers` (`cloudHours`), read again
+  every 5 minutes.
 - **The plan still stands:** email addresses, the Inbox and dictation work (`planEntitled`),
   whatever the hours. Threads' own machines (`wantsMachine`, preview_machines) never come with
   Starter.
