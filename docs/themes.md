@@ -38,6 +38,11 @@ css before each `theme_set`: those custom buttons are not `[data-slot="button"]`
 missed them left them in the default look. Give any new control that stays on screen a
 `data-look` and mark it `always`.
 
+A teammate's reply drawn close to others of the same teammate carries `data-run` (`first`,
+`middle`, `last`, or `single` when alone, from `runPlace`): a theme in bubbles groups them with
+it (Midnight tightens the spacing and rounds less where bubbles meet) without guessing at the
+page's structure.
+
 ## Nothing loads from elsewhere
 
 A theme's stylesheet could otherwise send what the page shows to another site (a selector per

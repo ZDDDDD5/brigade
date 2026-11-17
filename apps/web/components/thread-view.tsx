@@ -193,7 +193,7 @@ import { useTicketReplies } from '@/lib/ticket-replies'
 import { turnWait } from '@/lib/turn-wait'
 import { nextShownUntil } from '@/lib/next-up'
 import { inGap, type EventGap } from '@/lib/use-thread-events'
-import { messageRuns, type RunEntry } from '@/lib/message-runs'
+import { messageRuns, runPlace, type RunEntry } from '@/lib/message-runs'
 import { revealSeq } from '@/lib/reveal'
 import { closeOpenMarkdown, useSmoothText } from '@/lib/stream-text'
 import { pauseLabel, pauses } from '@/lib/thread-times'
@@ -3023,6 +3023,7 @@ export function ThreadItems({
               {/* As wide as its text, so actions floating by its first line sit at the end of a short line, not at the far edge. */}
               <div
                 data-look="teammate-message"
+                data-run={run && runPlace(run)}
                 className={cn(
                   'relative flex w-fit max-w-full min-w-0 flex-col gap-0.5',
                   // Room for them on the right, so they never cover its text.
