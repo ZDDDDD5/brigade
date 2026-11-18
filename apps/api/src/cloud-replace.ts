@@ -253,29 +253,46 @@ async function backUpAndSwitch(row: Replacement) {
   if (!(await startsSettled(computer.id)))
     throw new Error('a start of the old VM is under way: tried again')
   // An automatic replacement whose runner came back meanwhile: the computer works again, and is
-  // left as it is (the row goes: it never was one).
-  if (row.memberId === AUTOMATIC_REPLACEMENT && currentHub().isOnline(computer.id)) {
+  // left as it is (the row goes: it never was one). Asked again right before boat is asked to stop
+  // it (stopOldVm's proceed), past its waits on boat.
+  const automatic = row.memberId === AUTOMATIC_REPLACEMENT
+  const runnerBack = () => automatic && currentHub().isOnline(computer.id)
+  const dropped = async () => {
     await prisma.computerReplacement.deleteMany({ where: { id: row.id, phase: 'backing_up' } })
     console.log(`not replacing ${computer.id}: ${RUNNER_BACK.toLowerCase()}`)
     currentHub().broadcastComputer(computer.id)
-    return
   }
+  if (runnerBack()) return dropped()
   // Stopped, so that nothing runs there with the threads' logins any more: two computers
   // refreshing one login sign each other out. One that does not run (it no longer starts, say)
   // stays as it is; one still running that will not stop holds the replacement back, tried again.
-  // Its runner away: forced if need be; one boat neither reaches nor ever saved is left running
-  // rather than holding the replacement back for good, its disk untouched (stopOldVm).
-  const left =
-    ref && (await stopOldVm(ref as never, { unreachable: !currentHub().isOnline(computer.id) }))
-  if (left === 'left running') {
-    const current = await prisma.computerReplacement.findUnique({ where: { id: row.id } })
-    const note = `${current?.backup ?? 'not backed up'}; its old VM was left running: boat would not stop it without a snapshot`
-    await prisma.computerReplacement.update({ where: { id: row.id }, data: { backup: note } })
+  // Its runner away: forced if need be (stopOldVm).
+  const stopped = ref
+    ? await stopOldVm(ref as never, {
+        unreachable: !currentHub().isOnline(computer.id),
+        proceed: () => !runnerBack(),
+      })
+    : 'stopped'
+  if (stopped === 'kept') return dropped()
+  // Unreachable, never saved, and boat will not stop it: its disk is all there is of it, and a
+  // new VM beside it would run the same logins. Left to operators, the old VM as it is.
+  if (stopped === 'refused') {
+    await prisma.computerReplacement.update({
+      where: { id: row.id },
+      data: {
+        phase: 'failed',
+        finishedAt: new Date(),
+        error: 'boat would not stop the old VM, which it cannot reach and never saved',
+      },
+    })
+    if (automatic) currentHub().noteAwayGaveUp(computer.id)
     noteFailure(
-      'cloud-replace',
-      new Error(`replacing ${computer.id}: old VM left running, boat would not stop it`),
+      'cloud:replace-refused',
+      new Error(`replacing ${computer.id}: boat refused to stop its old VM, never saved`),
       { workspaceId: computer.workspaceId },
     )
+    currentHub().broadcastComputer(computer.id)
+    return
   }
   currentHub().dropRunner(computer.id)
   await prisma.$transaction(async (tx) => {

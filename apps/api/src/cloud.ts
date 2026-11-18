@@ -180,12 +180,16 @@ export async function startsSettled(computerId: string, forMs = 2 * 60_000) {
   return true
 }
 
-/** Whether the computer's VM is still `ref`, and no replacement is taking it to a new one. */
+/**
+ * Whether the computer's VM is still `ref`, and no replacement is stopping it for a new one
+ * (`backing_up`). Once switched, its new VM is the computer's own: it starts as any does, its
+ * backups still being put back (`restoring`) or not.
+ */
 async function stillItsVm(computerId: string, ref: ComputerRef) {
   const computer = await prisma.computer.findUnique({ where: { id: computerId } })
   const current = computer && refOf(computer)
   if (!current || current.id !== ref.id) return false
-  return !(await openReplacement(computerId))
+  return (await openReplacement(computerId))?.phase !== 'backing_up'
 }
 
 /** A replaced VM in one of these runs nothing: it no longer starts (error), or it is off. */
@@ -193,26 +197,28 @@ const INACTIVE = new Set(['stopped', 'destroyed', 'error'])
 
 /**
  * Stop a VM a replacement left behind (cloud-replace.ts): kept with the provider, never destroyed.
- * Resolves only once the provider confirms it runs nothing; throws otherwise (the provider did
- * not answer, it still runs), and the replacement tries again: two machines on one login sign
- * each other out. `unreachable` (its runner away): stopped with force when it has a snapshot to
- * keep, as boat refuses a plain stop to a machine it has not saved for 30 minutes (on Nov 18, a
+ * Resolves `stopped` only once the provider confirms it runs nothing; throws otherwise (the
+ * provider did not answer, it still runs), and the replacement tries again: two machines on one
+ * login sign each other out, and nothing short of its stop ends what runs there (its teammates'
+ * services, its logins). `unreachable` (its runner away): stopped with force when it has a snapshot
+ * to keep, as boat refuses a plain stop to a machine it has not saved for 30 minutes (on Nov 18, a
  * member's replacement of one waited on it); forced, boat still saves the disk first when it can.
- * Never forced without a snapshot: that would lose its whole disk. Unreachable and never saved,
- * boat may refuse a plain stop for good: it is left running then (`left running`), its disk
- * untouched, rather than holding the replacement back forever; its runner's token goes with the
- * replacement, so nothing there works as the computer any more.
+ * Never forced without a snapshot: that would lose its whole disk; boat refusing the plain stop
+ * then, `refused`: only an operator can choose between that disk and a new VM. `proceed`, asked
+ * right before the provider is asked to stop it: false, it is left as it is (`kept`), its runner
+ * back meanwhile, say.
  */
 export async function stopOldVm(
   ref: ComputerRef,
-  options: { unreachable?: boolean } = {},
-): Promise<'stopped' | 'left running'> {
+  options: { unreachable?: boolean; proceed?: () => boolean } = {},
+): Promise<'stopped' | 'refused' | 'kept'> {
   if (!provider) return 'stopped'
   if (INACTIVE.has(await provider.status(ref))) return 'stopped'
   const force =
     options.unreachable === true &&
     !!provider.saved &&
     (await provider.saved(ref)).snapshotAt !== null
+  if (options.proceed && !options.proceed()) return 'kept'
   const stop = await provider.stop(ref, force ? { force: true } : undefined).then(
     () => null,
     (error: unknown) => error,
@@ -222,11 +228,11 @@ export async function stopOldVm(
     if (!stop) await runStopped(ref.id, new Date(), 'brigade')
     return 'stopped'
   }
-  if (options.unreachable && !force) {
-    console.warn(
-      `old VM ${ref.id} left running: unreachable, never saved, and boat did not stop it (${stop instanceof Error ? await providerReason(stop) : status})`,
+  if (options.unreachable && !force && stop) {
+    console.error(
+      `old VM ${ref.id} not stopped: unreachable, never saved, and boat refused a plain stop (${await providerReason(stop)})`,
     )
-    return 'left running'
+    return 'refused'
   }
   throw stop instanceof Error
     ? new Error(`the old VM did not stop (${status}): ${await providerReason(stop)}`)
@@ -955,8 +961,9 @@ export async function checkIdle(computer: Computer) {
   const { keptAlive, stoppingIdle } = state()
   const ref = refOf(computer)
   if (provider && ref && !hub.isOnline(computer.id)) {
-    // Being replaced (src/cloud-replace.ts): its old VM is stopped on purpose, never started again.
-    if (await openReplacement(computer.id)) return
+    // Its old VM being stopped for a new one (src/cloud-replace.ts): never started again. Once
+    // switched (restoring), the new VM is checked as any.
+    if ((await openReplacement(computer.id))?.phase === 'backing_up') return
     const status = await provider.status(ref).catch(() => null)
     if (status === 'stopped') {
       console.log(`computer ${computer.id} was stopped outside Brigade`)
@@ -1183,6 +1190,20 @@ export async function recoverFailedRestart(computer: Computer, now = Date.now())
   if (recovering.has(computer.id)) return false
   recovering.add(computer.id)
   try {
+    // Only a resume boat confirms failed: one whose answer was lost, or that took longer than the
+    // start waited, may be up, its runner on its way. Running, it is marked so, and recoverAway
+    // gives it its grace from now.
+    const status = await provider.status(refOf(computer)!).catch(() => null)
+    if (status === 'running') {
+      console.warn(`computer ${computer.id}: in error after its restart, but up at boat: running`)
+      await prisma.computer.updateMany({
+        where: { id: computer.id, status: 'error' },
+        data: { status: 'running' },
+      })
+      hub.broadcastComputer(computer.id, 'running')
+      return false
+    }
+    if (status !== 'error' && status !== 'stopped') return false
     const replaced = await automaticReplacements(computer.id, now)
     if (replaced >= AUTO_REPLACE_LIMIT) {
       console.error(

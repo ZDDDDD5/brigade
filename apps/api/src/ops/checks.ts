@@ -161,6 +161,15 @@ export const RULES: Rule[] = [
     quietMs: 2 * 60 * MINUTE,
   },
   {
+    kind: 'cloud:replace-refused',
+    title: 'A cloud computer could not be replaced: boat will not stop its old VM',
+    windowMs: 60 * MINUTE,
+    warning: 1,
+    critical: 3,
+    quietMs: 6 * 60 * MINUTE,
+    hint: 'Its old VM is unreachable, was never saved, and boat refuses a plain stop: a forced stop would lose its whole disk. Ask boat to recover the machine or save its disk, or force-stop it once its data is given up, then Replace cloud computer again.',
+  },
+  {
     kind: 'cloud:replacements-burst',
     title: 'Cloud computers unreachable in numbers, their automatic replacements held back',
     windowMs: 30 * MINUTE,

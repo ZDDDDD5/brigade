@@ -136,9 +136,14 @@ The fleet-wide count and the new row are written under one lock, so two workspac
 both pass it. An automatic replacement whose runner comes back before its old VM is stopped is
 dropped, the computer left as it is. A restart of Brigade's that leaves the computer in `error`
 (boat refused to resume it, or it never booted) moves it to a new VM too (`recoverFailedRestart`).
-An old VM boat neither reaches nor ever saved, whose plain stop boat refuses, is left running
-rather than holding the replacement back (its disk untouched; the replacement's `backup` says
-so). A `gaveUp` left by the earlier three-restart ladder no longer stops anything: only
+An automatic replacement asks again whether its runner is back right before boat is asked to
+stop the old VM. A new VM stopped while its backups are put back (`restoring`) starts as any.
+A computer in `error` after a restart is moved only when boat confirms the VM did not come up
+(`error`, `stopped`); up at boat (an answer lost), it is marked running and given its grace. An
+old VM boat neither reaches nor ever saved, whose plain stop boat refuses, is never cut over
+from: a forced stop would lose its only disk, and a new VM beside it would run the same logins.
+The replacement fails (shown on Computers), Brigade gives up on it, and `cloud:replace-refused`
+is raised for operators. A `gaveUp` left by the earlier three-restart ladder no longer stops anything: only
 `gaveUpAt` does.
 
 A stop without force does not do: boat refuses to stop a machine it has not saved for 30 minutes,

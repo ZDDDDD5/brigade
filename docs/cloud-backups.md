@@ -31,7 +31,8 @@ backups (they are in its files folder, late uploads included through `BucketClea
 1. **backing_up**: the old VM backs up if it answers, then is stopped (with force when its runner
    is away and it has a snapshot to keep: boat refuses a plain stop to a machine it has not saved
    for 30 minutes). Meanwhile it is never started again. It is never destroyed: its reference stays
-   on the replacement row, to read its data at the provider.
+   on the replacement row, to read its data at the provider. One boat cannot reach, never saved
+   and will not stop fails the replacement (`failed`): only an operator can give up its disk.
 2. **creating**: the computer gets a new VM and runner (the same `Computer` row: threads, accounts and
    queued commands stay). The old runner token goes. Every thread of the computer "moves" to the new
    VM (`Session.moved`): its next turn takes its folder from its latest backup and its conversation
