@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
@@ -149,4 +149,51 @@ test('a turn stopped while it waits runs nothing, even when the install before i
   // The next turn tries again.
   await assert.rejects(prepare(home, undefined, failing), /Bootstrap command failed/)
   assert.equal(await readFile(log, 'utf8'), 'run\nrun\n')
+})
+
+test("a runner of another version on the same home finds its own bridge, never the other's", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), 'bootstrap-race-versions-'))
+  const log = join(await mkdtemp(join(tmpdir(), 'bootstrap-race-versions-log-')), 'runs.txt')
+  t.after(() =>
+    Promise.all([home, dirname(log)].map((dir) => rm(dir, { recursive: true, force: true }))),
+  )
+  const dir = join(home, '.ai-sdk-harness', '.harness-bootstrap', 'claude-code')
+  const markers = async () => (await readdir(dir)).filter((f) => f.startsWith('.bootstrap-'))
+  const bridge = () => readFile(join(dir, 'bridge.mjs'), 'utf8')
+  // This runner's recipe: a key-pair bridge.
+  const current = {
+    harnessId: 'claude-code',
+    getBootstrap: async () => ({
+      harnessId: 'claude-code',
+      bootstrapDir: '.harness-bootstrap/claude-code',
+      files: [{ path: '.harness-bootstrap/claude-code/bridge.mjs', content: '// key pair\n' }],
+      commands: [{ command: `echo install >> '${log}'` }],
+    }),
+  } as unknown as Adapter
+  // What a runner from before does, with its own recipe: it writes its token bridge over the
+  // folder, then, once its install went through, its marker beside the others, which it leaves.
+  const older = async ({ installed = true } = {}) => {
+    await writeFile(join(dir, 'bridge.mjs'), '// token\n')
+    if (installed) await writeFile(join(dir, '.bootstrap-older.ok'), '')
+  }
+
+  await mkdir(dir, { recursive: true })
+  await older()
+  // Updated: it installs its own, and the older marker goes, so that a runner rolled back to the
+  // older version installs its own again rather than start this one's bridge.
+  await prepare(home, undefined, current)
+  assert.equal(await bridge(), '// key pair\n')
+  assert.equal((await markers()).length, 1)
+  assert.ok(!(await markers()).includes('.bootstrap-older.ok'))
+  // Rolled back, then forward again: the older runner's files over its own, it installs again.
+  await older()
+  await prepare(home, undefined, current)
+  assert.equal(await bridge(), '// key pair\n')
+  // So when the older runner's install failed after it wrote its files, leaving no marker.
+  await older({ installed: false })
+  await prepare(home, undefined, current)
+  assert.equal(await bridge(), '// key pair\n')
+  // Its own install there, it installs nothing.
+  await prepare(home, undefined, current)
+  assert.equal(await readFile(log, 'utf8'), 'install\ninstall\ninstall\n')
 })

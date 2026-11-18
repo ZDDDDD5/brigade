@@ -79,7 +79,9 @@ import {
   answerInNewSession,
   approvalAfterRestart,
   approvalInNewSession,
+  attachablePort,
   closeTurn,
+  readableByOlderRunners,
   sameCall,
   waitingOn,
   withoutBridge,
@@ -1073,7 +1075,14 @@ export class HarnessThread {
       const handoff = await this.switchTo(spec.account, 'unavailable', null)
       return { input: { kind: 'resume', text: '' }, handoff: `${handoff}\n\n${told}` }
     }
-    if (!saved.inTurn && frozenMidRun(saved.resume))
+    // Frozen on the way down, the turn goes on in its conversation. A Codex turn frozen before
+    // its conversation started (thread/start still under way) has none: continued without its
+    // bridge, Codex would start a new one told only "Continue.", so it is told the thread instead.
+    if (
+      !saved.inTurn &&
+      frozenMidRun(saved.resume) &&
+      (spec.teammate.harness !== 'codex' || resumable('codex', saved.resume))
+    )
       return { input: { kind: 'resume', text: unseen } }
     const resume = resumable(spec.teammate.harness, saved.resume)
     if (resume) {
@@ -1677,9 +1686,8 @@ export class HarnessThread {
 
   /** The bridge a handed-over session ran under still answers (on the thread's own network, there). */
   private async bridgeAnswers(resume: unknown) {
-    const state = resume as { continueFrom?: { data?: { bridge?: { port?: unknown } } } }
-    const port = state.continueFrom?.data?.bridge?.port
-    if (typeof port !== 'number') return false
+    const port = attachablePort(resume)
+    if (port === undefined) return false
     const host = this.runAs
       ? ((await threadNet(this.spec.sessionId))?.address ?? '127.0.0.1')
       : '127.0.0.1'
@@ -2874,7 +2882,11 @@ export class HarnessThread {
    */
   private persist() {
     if (!this.saved) return Promise.resolve()
-    const text = JSON.stringify(this.saved)
+    // Readable by a runner from before this one too, should it be rolled back (closed-turn.ts).
+    const text = JSON.stringify({
+      ...this.saved,
+      resume: readableByOlderRunners(this.saved.resume),
+    })
     const write = async () => {
       await mkdir(dirname(this.stateFile), { recursive: true, mode: 0o700 })
       const temp = `${this.stateFile}.${randomUUID()}.tmp`

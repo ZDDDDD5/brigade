@@ -328,6 +328,12 @@ const FILE_TOOLS = new Set([
 const PLAN_TOOLS = new Set(['TodoWrite', 'todoWrite', 'update_plan'])
 /** Low-level echoes of the model stream; their content already arrives as mapped parts. */
 const DROPPED_RAW = new Set(['stream_event'])
+/**
+ * Claude Code's session start and status notes, which its bridge passes on since
+ * harness-claude-code 1.0.191 for the permission mode they name: Brigade's is its own (allow-all),
+ * and one of each for every turn would only add rows to the thread.
+ */
+const DROPPED_SYSTEM = new Set(['init', 'status'])
 /** Longest guess at a person's next message kept: Claude Code's own are under 100 characters. */
 const SUGGESTION_CHARS = 300
 
@@ -727,6 +733,7 @@ export class EventMapper {
       case 'raw': {
         const value = part.rawValue
         if (DROPPED_RAW.has(value?.type)) return
+        if (value?.type === 'system' && DROPPED_SYSTEM.has(value.subtype)) return
         if (value?.type === 'rate_limit_event') {
           const info = value.rate_limit_info ?? {}
           const status =

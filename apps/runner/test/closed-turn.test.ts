@@ -2,7 +2,9 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   answerAfterRestart,
+  attachablePort,
   closeTurn,
+  readableByOlderRunners,
   withoutBridge,
   withTools,
 } from '../src/harness/closed-turn.js'
@@ -12,12 +14,12 @@ const waiting = {
   type: 'resume-session',
   harnessId: 'claude-code',
   specificationVersion: 'harness-v1',
-  data: { bridge: { port: 41000, token: 't' }, claudeSessionId: 'c1' },
+  data: { bridge: { port: 41000, privateKey: 'k' }, claudeSessionId: 'c1' },
   continueFrom: {
     type: 'continue-turn',
     harnessId: 'claude-code',
     specificationVersion: 'harness-v1',
-    data: { bridge: { port: 41000, token: 't', lastSeenEventId: 9 }, claudeSessionId: 'c1' },
+    data: { bridge: { port: 41000, privateKey: 'k', lastSeenEventId: 9 }, claudeSessionId: 'c1' },
     turnSettings: { skills: [], tools: [{ name: 'open_ticket' }] },
     pendingToolResults: [
       { toolCallId: 'toolu_1', toolName: 'open_ticket', input: '{"title":"Access to Vault"}' },
@@ -56,6 +58,42 @@ test('a parked session keeps its conversation and frozen turn, without the bridg
   const between = { type: 'resume-session', harnessId: 'codex', data: { threadId: 't1' } }
   assert.deepEqual(withoutBridge(between), between)
   assert.equal(withoutBridge(undefined), undefined)
+})
+
+test('a turn handed over by a runner before the key-pair bridges starts anew rather than attach', () => {
+  const frozen = { ...waiting, continueFrom: { ...waiting.continueFrom, pendingToolResults: [] } }
+  assert.equal(attachablePort(frozen), 41000)
+  // Its bridge takes a token, which this runner's harness cannot give: it is not attached to.
+  const old = {
+    ...frozen,
+    continueFrom: {
+      ...frozen.continueFrom,
+      data: { bridge: { port: 41000, token: 't', lastSeenEventId: 9 }, claudeSessionId: 'c1' },
+    },
+  }
+  assert.equal(attachablePort(old), undefined)
+  assert.equal(attachablePort(withoutBridge(frozen)), undefined)
+  assert.equal(attachablePort(undefined), undefined)
+})
+
+test('a saved session stays readable by a runner from before the key-pair bridges', () => {
+  const frozen = { ...waiting, continueFrom: { ...waiting.continueFrom, pendingToolResults: [] } }
+  const readable = readableByOlderRunners(frozen) as typeof frozen & {
+    data: { bridge: Record<string, unknown> }
+    continueFrom: { data: { bridge: Record<string, unknown> } }
+  }
+  // A token their harness asks for, beside the key pair this runner's attaches with.
+  assert.equal(typeof readable.continueFrom.data.bridge.token, 'string')
+  assert.equal(readable.continueFrom.data.bridge.privateKey, 'k')
+  assert.equal(typeof readable.data.bridge.token, 'string')
+  assert.equal(attachablePort(readable), 41000)
+  // Nothing else changes, and a bridge's own token, or no bridge, stays as it is.
+  const { token: _token, ...bridge } = readable.continueFrom.data.bridge
+  assert.deepEqual(bridge, frozen.continueFrom.data.bridge)
+  const own = { continueFrom: { data: { bridge: { port: 1, token: 't' } } } }
+  assert.deepEqual(readableByOlderRunners(own), own)
+  assert.deepEqual(readableByOlderRunners(withoutBridge(frozen)), withoutBridge(frozen))
+  assert.equal(readableByOlderRunners(undefined), undefined)
 })
 
 test('no turn is left as it is', () => {
@@ -108,7 +146,7 @@ test('a turn waiting on an approval is closed too, keeping the call it would hav
       type: 'continue-turn',
       harnessId: 'claude-code',
       specificationVersion: 'harness-v1',
-      data: { bridge: { port: 1, token: 't' } },
+      data: { bridge: { port: 1, privateKey: 'k' } },
       pendingToolApprovals: [
         {
           approvalId: 'toolu_9',
