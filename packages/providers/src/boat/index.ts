@@ -163,7 +163,7 @@ export function createBoatProvider(options: {
       return { provider: PROVIDER, id: sandboxId }
     },
 
-    async start(ref): Promise<StartResult> {
+    async start(ref, options): Promise<StartResult> {
       const sandboxId = idOf(ref)
       // A stop snapshots the disk first; resume once that has finished. A
       // failed resume leaves the sandbox in 'error': resuming again is boat's remedy.
@@ -172,6 +172,8 @@ export function createBoatProvider(options: {
       for (;;) {
         const { sandbox } = await boat.get({ sandboxId })
         if (sandbox.state === 'archived' || sandbox.state === 'error') {
+          if (options?.proceed && !(await options.proceed()))
+            return { resumedAt: null, cancelled: true }
           resumedAt = new Date()
           await boat.resume({ sandboxId, noEnv: true })
           break

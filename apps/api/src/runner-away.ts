@@ -11,7 +11,13 @@ import type { RecoverAnswer } from '@brigade/providers'
 export type RunnerAway = {
   since: number
   restarts: number
+  /**
+   * Set by the three-restart ladder before automatic replacements too: on its own (no
+   * `gaveUpAt`), it no longer stops anything, so that a computer it gave up on gets a new VM.
+   */
   gaveUp?: boolean
+  /** When Brigade gave up on it, after AUTO_REPLACE_LIMIT automatic replacements. */
+  gaveUpAt?: number
   /** When boat was last asked to recover it, and what it answered. */
   recoverAskedAt?: number
   recover?: RecoverAnswer
@@ -52,6 +58,12 @@ export const REACHABLE_REPLACE_MS = 30 * 60_000
  */
 export const AUTO_REPLACE_LIMIT = 2
 export const AUTO_REPLACE_WINDOW_MS = 6 * 60 * 60_000
+/**
+ * Automatic replacements across Brigade within AUTO_REPLACE_BURST_MS, at most: more means boat
+ * itself is failing, not one machine, and the next ones wait.
+ */
+export const AUTO_REPLACE_BURST = 5
+export const AUTO_REPLACE_BURST_MS = 30 * 60_000
 
 /** How long a running computer's runner has been away; 0 while it is connected (null). */
 export function awayFor(
@@ -105,7 +117,7 @@ export function recoveryStep(
   },
 ): RecoveryStep {
   const { awayMs, savedAt, snapshotAt, diskFull, now } = state
-  if (awayMs < RECOVER_AFTER_MS || away.gaveUp) return 'none'
+  if (awayMs < RECOVER_AFTER_MS || away.gaveUpAt !== undefined) return 'none'
   // boat may still save a machine it no longer gets a command to (Nov 18: snapshots for 34
   // minutes after a resume whose machine never ran one): unreached that long, it is as unsaved.
   const unreached = away.unreachedSince !== undefined && now - away.unreachedSince >= UNSAVED_MS

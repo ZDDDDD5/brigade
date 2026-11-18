@@ -21,6 +21,7 @@ export type {
   RestoreState,
   SavedState,
   SshAccess,
+  StartOptions,
   StartResult,
   VmState,
   VmUsage,

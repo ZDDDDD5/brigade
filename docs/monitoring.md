@@ -129,8 +129,17 @@ A machine boat still saves is never moved: its runner is the trouble there, and 
 everywhere (a bad release) must not move every workspace. One recovery runs at a time per
 computer: the service start is not waited for (boat held such commands 10 minutes on Nov 18), and
 the next minute's check does not join one still waiting on boat (on Nov 18, two restarts 55
-seconds apart). While a replacement is under way, its old VM is never started again, by the idle
-check nor by a message.
+seconds apart). While a replacement is under way, its old VM is never started again: not by the
+idle check nor by a message, and a start that passed that fence first asks again right before boat
+resumes the VM (`StartOptions.proceed`); the replacement waits for it before stopping the old VM.
+The fleet-wide count and the new row are written under one lock, so two workspaces' hubs cannot
+both pass it. An automatic replacement whose runner comes back before its old VM is stopped is
+dropped, the computer left as it is. A restart of Brigade's that leaves the computer in `error`
+(boat refused to resume it, or it never booted) moves it to a new VM too (`recoverFailedRestart`).
+An old VM boat neither reaches nor ever saved, whose plain stop boat refuses, is left running
+rather than holding the replacement back (its disk untouched; the replacement's `backup` says
+so). A `gaveUp` left by the earlier three-restart ladder no longer stops anything: only
+`gaveUpAt` does.
 
 A stop without force does not do: boat refuses to stop a machine it has not saved for 30 minutes,
 so as not to lose what it has not saved, and keeps it running (it mails the account "could not

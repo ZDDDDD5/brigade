@@ -241,11 +241,11 @@ export class WorkspaceHub {
     away.set(computerId, rest)
   }
 
-  /** Past its restarts (RECOVER_LIMIT): said once in the log. */
+  /** Past its automatic replacements (AUTO_REPLACE_LIMIT): said once in the log. */
   noteAwayGaveUp(computerId: string) {
     const away = this.durable<RunnerAway>('runner-away')
     const found = away.get(computerId)
-    if (found) away.set(computerId, { ...found, gaveUp: true })
+    if (found) away.set(computerId, { ...found, gaveUp: true, gaveUpAt: Date.now() })
   }
 
   /** Its runner said hello, or the computer was stopped on purpose (idle, its plan, a member). */

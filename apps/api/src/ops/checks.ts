@@ -329,7 +329,7 @@ export function computerProblem(
 function recoveryDetail(away: RunnerAway | null, now: number) {
   const restarts = away?.restarts ?? 0
   const journal = 'its journal says why, as root through boat'
-  if (away?.gaveUp)
+  if (away?.gaveUpAt !== undefined)
     return `Brigade moved it to a new VM ${AUTO_REPLACE_LIMIT} times within ${AUTO_REPLACE_WINDOW_MS / 3_600_000} h, and no longer does: its runner does not stay up on new VMs either (${journal}).`
   if (away?.recover === 'reachable')
     return `boat reaches its machine but has not saved its disk lately (a full disk?): asked again, and moved to a new VM if it stays so ${REACHABLE_REPLACE_MS / MINUTE} min more (${journal}).`
