@@ -154,14 +154,17 @@ const components: Components = {
   ),
   table: ({ node: _, ...props }) => (
     <div className="my-4 overflow-x-auto first:mt-0 last:mb-0">
-      <table className="w-full border-collapse text-sm" {...props} />
+      <table className="w-full border-collapse text-sm wrap-break-word" {...props} />
     </div>
   ),
   th: ({ node: _, ...props }) => (
-    <th className="border border-border bg-muted px-3 py-1.5 text-left font-semibold" {...props} />
+    <th
+      className="border border-border bg-muted px-2 py-1.5 text-left font-semibold sm:px-3"
+      {...props}
+    />
   ),
   td: ({ node: _, ...props }) => (
-    <td className="border border-border px-3 py-1.5 align-top" {...props} />
+    <td className="border border-border px-2 py-1.5 align-top sm:px-3" {...props} />
   ),
   // Checkboxes of a shared list show where it stands, and change nothing.
   input: ({ node: _, ...props }) => <input {...props} disabled />,
