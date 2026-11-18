@@ -1074,7 +1074,14 @@ export class HarnessThread {
       const handoff = await this.switchTo(spec.account, 'unavailable', null)
       return { input: { kind: 'resume', text: '' }, handoff: `${handoff}\n\n${told}` }
     }
-    if (!saved.inTurn && frozenMidRun(saved.resume))
+    // Frozen on the way down, the turn goes on in its conversation. A Codex turn frozen before
+    // its conversation started (thread/start still under way) has none: continued without its
+    // bridge, Codex would start a new one told only "Continue.", so it is told the thread instead.
+    if (
+      !saved.inTurn &&
+      frozenMidRun(saved.resume) &&
+      (spec.teammate.harness !== 'codex' || resumable('codex', saved.resume))
+    )
       return { input: { kind: 'resume', text: unseen } }
     const resume = resumable(spec.teammate.harness, saved.resume)
     if (resume) {

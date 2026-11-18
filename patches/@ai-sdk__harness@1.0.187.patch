@@ -1,5 +1,5 @@
 diff --git a/dist/agent/index.js b/dist/agent/index.js
-index 36a3d8673f3ae90d46161b61682b1cab97128951..9294f3e62d36a6acfb39f50976ada6c2df08f99e 100644
+index 36a3d8673f3ae90d46161b61682b1cab97128951..903dadbad29c4289373e370d7954e6ffb74c1bab 100644
 --- a/dist/agent/index.js
 +++ b/dist/agent/index.js
 @@ -1756,6 +1756,21 @@ function runPrompt(input) {
@@ -75,7 +75,7 @@ index 36a3d8673f3ae90d46161b61682b1cab97128951..9294f3e62d36a6acfb39f50976ada6c2
  						deferredPauseFinishStep = value;
  						continue;
  					}
-@@ -3409,7 +3441,34 @@ function bootstrapMarkerPath({ recipe, identity, stateDirectory }) {
+@@ -3409,22 +3441,64 @@ function bootstrapMarkerPath({ recipe, identity, stateDirectory }) {
  * recipe (resumed from snapshot, reused across sessions, or applied by
  * an earlier process) this is a single fast read.
  */
@@ -111,6 +111,41 @@ index 36a3d8673f3ae90d46161b61682b1cab97128951..9294f3e62d36a6acfb39f50976ada6c2
  	const markerPath = bootstrapMarkerPath({
  		recipe,
  		identity,
+ 		stateDirectory
+ 	});
+-	if (await session.readTextFile({
+-		path: markerPath,
+-		abortSignal
+-	}) !== null) return;
+ 	const bootstrapDir = resolveBootstrapPath({
+ 		path: recipe.bootstrapDir,
+ 		stateDirectory
+ 	});
++	// Brigade: its marker says the folder holds this recipe only while no other recipe's marker is
++	// beside it. A runner of another version on the same home (one rolled back, then forward again)
++	// installed its own recipe over this one's files since, and left its marker there.
++	if (await session.readTextFile({
++		path: markerPath,
++		abortSignal
++	}) !== null && (await session.run({
++		command: "for f in \"$BOOTSTRAP_DIR\"/.bootstrap-*.ok; do [ \"${f##*/}\" = \"$MARKER\" ] || exit 1; done",
++		env: {
++			BOOTSTRAP_DIR: bootstrapDir,
++			MARKER: posix.basename(markerPath)
++		},
++		abortSignal
++	})).exitCode === 0) return;
++	// Brigade: the folder is the harness's, whatever its recipe: the files written next replace
++	// those of the recipe installed before, whose marker goes first. Kept, it would tell a runner
++	// of that recipe (back after an update, or one of another version on the same home) that its
++	// install is there, and that runner would start this recipe's bridge, which it may not speak
++	// to (a token one after the key-pair bridges of harness 1.0.187).
+ 	const mkdirResult = await session.run({
+-		command: "mkdir -p \"$BOOTSTRAP_DIR\"",
++		command: "mkdir -p \"$BOOTSTRAP_DIR\" && rm -f \"$BOOTSTRAP_DIR\"/.bootstrap-*.ok",
+ 		env: { BOOTSTRAP_DIR: bootstrapDir },
+ 		abortSignal
+ 	});
 diff --git a/dist/utils/index.js b/dist/utils/index.js
 index 900bc8bfd7d4fad262342eb5939062edab52ddca..05baca224cebbeac468a9425dfb193a913929d07 100644
 --- a/dist/utils/index.js
