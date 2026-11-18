@@ -44,6 +44,22 @@ test("the bridge's word that the turn is answered stays the runner's", () => {
   assert.ok(!answered({ at, type: 'turn.completed', finishReason: 'stop' }))
 })
 
+test("Claude Code's session start and status notes add nothing to the thread", () => {
+  for (const subtype of ['init', 'status'])
+    assert.deepEqual(
+      mapped({
+        type: 'raw',
+        rawValue: { type: 'system', subtype, permissionMode: 'bypassPermissions' },
+      }),
+      [],
+    )
+  // Its other notes still go out: the runner reads some (background.ts).
+  const tasks = { type: 'system', subtype: 'background_tasks_changed', tasks: [] }
+  assert.deepEqual(mapped({ type: 'raw', rawValue: tasks }), [
+    { type: 'raw', source: 'harness', value: tasks },
+  ])
+})
+
 test('a turn owes a reply until the person has read one after its last step', () => {
   const watch = new ReplyWatch()
   watch.start()

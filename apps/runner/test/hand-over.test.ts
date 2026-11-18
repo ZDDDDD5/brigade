@@ -38,7 +38,7 @@ test('a turn frozen while a Brigade tool answered waits on nobody', () => {
       type: 'continue-turn',
       harnessId: 'claude-code',
       specificationVersion: 'harness-v1',
-      data: { bridge: { port: 41000, token: 't', lastSeenEventId: 9 } },
+      data: { bridge: { port: 41000, privateKey: 'k', lastSeenEventId: 9 } },
       pendingToolResults: [
         {
           toolCallId: 'toolu_1',

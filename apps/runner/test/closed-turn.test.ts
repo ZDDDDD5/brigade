@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
   answerAfterRestart,
+  attachablePort,
   closeTurn,
   withoutBridge,
   withTools,
@@ -12,12 +13,12 @@ const waiting = {
   type: 'resume-session',
   harnessId: 'claude-code',
   specificationVersion: 'harness-v1',
-  data: { bridge: { port: 41000, token: 't' }, claudeSessionId: 'c1' },
+  data: { bridge: { port: 41000, privateKey: 'k' }, claudeSessionId: 'c1' },
   continueFrom: {
     type: 'continue-turn',
     harnessId: 'claude-code',
     specificationVersion: 'harness-v1',
-    data: { bridge: { port: 41000, token: 't', lastSeenEventId: 9 }, claudeSessionId: 'c1' },
+    data: { bridge: { port: 41000, privateKey: 'k', lastSeenEventId: 9 }, claudeSessionId: 'c1' },
     turnSettings: { skills: [], tools: [{ name: 'open_ticket' }] },
     pendingToolResults: [
       { toolCallId: 'toolu_1', toolName: 'open_ticket', input: '{"title":"Access to Vault"}' },
@@ -56,6 +57,22 @@ test('a parked session keeps its conversation and frozen turn, without the bridg
   const between = { type: 'resume-session', harnessId: 'codex', data: { threadId: 't1' } }
   assert.deepEqual(withoutBridge(between), between)
   assert.equal(withoutBridge(undefined), undefined)
+})
+
+test('a turn handed over by a runner before the key-pair bridges starts anew rather than attach', () => {
+  const frozen = { ...waiting, continueFrom: { ...waiting.continueFrom, pendingToolResults: [] } }
+  assert.equal(attachablePort(frozen), 41000)
+  // Its bridge takes a token, which this runner's harness cannot give: it is not attached to.
+  const old = {
+    ...frozen,
+    continueFrom: {
+      ...frozen.continueFrom,
+      data: { bridge: { port: 41000, token: 't', lastSeenEventId: 9 }, claudeSessionId: 'c1' },
+    },
+  }
+  assert.equal(attachablePort(old), undefined)
+  assert.equal(attachablePort(withoutBridge(frozen)), undefined)
+  assert.equal(attachablePort(undefined), undefined)
 })
 
 test('no turn is left as it is', () => {
@@ -108,7 +125,7 @@ test('a turn waiting on an approval is closed too, keeping the call it would hav
       type: 'continue-turn',
       harnessId: 'claude-code',
       specificationVersion: 'harness-v1',
-      data: { bridge: { port: 1, token: 't' } },
+      data: { bridge: { port: 1, privateKey: 'k' } },
       pendingToolApprovals: [
         {
           approvalId: 'toolu_9',

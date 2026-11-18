@@ -77,6 +77,22 @@ export function withoutBridge(resume: unknown): unknown {
 }
 
 /**
+ * The port of the bridge a saved session can attach to, if any. Since harness-claude-code 1.0.191
+ * and harness-codex 1.0.189, the host proves itself to its bridge with the key pair it started
+ * it with (`privateKey`). A bridge started by an older runner takes a token instead, which the
+ * new host cannot give: attached to, it refuses the connection, and the session starts a second
+ * bridge on the same conversation while the first one's turn goes on. So such a bridge is not
+ * attachable: it is stopped, and the turn continued from its conversation.
+ */
+export function attachablePort(resume: unknown): number | undefined {
+  const state = resume as
+    { continueFrom?: { data?: { bridge?: { port?: unknown; privateKey?: unknown } } } } | undefined
+  const bridge = state?.continueFrom?.data?.bridge
+  if (typeof bridge?.port !== 'number' || typeof bridge.privateKey !== 'string') return
+  return bridge.port
+}
+
+/**
  * A saved turn, for an agent made with these tools. The harness continues a turn with the
  * tools it started with, and stops it outright when one of them is gone: an App granted or
  * removed since, or a second account of a kind, which renames that kind's tools

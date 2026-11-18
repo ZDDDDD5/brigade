@@ -79,6 +79,7 @@ import {
   answerInNewSession,
   approvalAfterRestart,
   approvalInNewSession,
+  attachablePort,
   closeTurn,
   sameCall,
   waitingOn,
@@ -1677,9 +1678,8 @@ export class HarnessThread {
 
   /** The bridge a handed-over session ran under still answers (on the thread's own network, there). */
   private async bridgeAnswers(resume: unknown) {
-    const state = resume as { continueFrom?: { data?: { bridge?: { port?: unknown } } } }
-    const port = state.continueFrom?.data?.bridge?.port
-    if (typeof port !== 'number') return false
+    const port = attachablePort(resume)
+    if (port === undefined) return false
     const host = this.runAs
       ? ((await threadNet(this.spec.sessionId))?.address ?? '127.0.0.1')
       : '127.0.0.1'
