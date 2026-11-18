@@ -12,7 +12,10 @@ import { hubs } from '../hub.js'
 import type { ThreadWaiting } from '../hub/host.js'
 import { localHubs } from '../hub/memory-host.js'
 import {
+  AUTO_REPLACE_LIMIT,
+  AUTO_REPLACE_WINDOW_MS,
   awayFor,
+  REACHABLE_REPLACE_MS,
   RECOVER_AFTER_MS,
   RECOVER_LIMIT,
   RECOVER_WAIT_MS,
@@ -156,6 +159,15 @@ export const RULES: Rule[] = [
     warning: 1,
     critical: 5,
     quietMs: 2 * 60 * MINUTE,
+  },
+  {
+    kind: 'cloud:replacements-burst',
+    title: 'Cloud computers unreachable in numbers, their automatic replacements held back',
+    windowMs: 30 * MINUTE,
+    warning: 1,
+    critical: 10,
+    quietMs: 30 * MINUTE,
+    hint: "More than 5 cloud computers moved to new VMs within 30 minutes (src/cloud.ts's recoverAway): boat itself is likely failing. The next ones wait and are asked again each minute; check boat's status before replacing any by hand.",
   },
 ]
 
@@ -317,18 +329,18 @@ export function computerProblem(
 function recoveryDetail(away: RunnerAway | null, now: number) {
   const restarts = away?.restarts ?? 0
   const journal = 'its journal says why, as root through boat'
-  if (away?.gaveUp || restarts >= RECOVER_LIMIT)
-    return `Brigade stopped it with its last snapshot and started it again ${restarts} times, and no longer does: its runner does not stay up (${journal}).`
+  if (away?.gaveUp)
+    return `Brigade moved it to a new VM ${AUTO_REPLACE_LIMIT} times within ${AUTO_REPLACE_WINDOW_MS / 3_600_000} h, and no longer does: its runner does not stay up on new VMs either (${journal}).`
   if (away?.recover === 'reachable')
-    return `boat reaches its machine but has not saved its disk lately (a full disk?): left as it is (${journal}).`
+    return `boat reaches its machine but has not saved its disk lately (a full disk?): asked again, and moved to a new VM if it stays so ${REACHABLE_REPLACE_MS / MINUTE} min more (${journal}).`
   // Only while its runner is waited for: a power-cycle after which boat saves the machine again,
   // its runner still away, is over (recoveryStep does nothing more then).
   if (away?.recover === 'recovering' && now - (away.recoverAskedAt ?? 0) < RECOVER_WAIT_MS)
     return 'boat is power-cycling its machine.'
   return [
-    `Once its runner has been away ${RECOVER_AFTER_MS / MINUTE} min and boat has not saved its disk for ${UNSAVED_MS / MINUTE} min, Brigade asks boat to recover it, then stops it with its last snapshot and starts it again`,
+    `Once its runner has been away ${RECOVER_AFTER_MS / MINUTE} min and boat has not saved its disk for ${UNSAVED_MS / MINUTE} min, Brigade asks boat to recover it, then stops it with its last snapshot and starts it again (${RECOVER_LIMIT} time(s)), then moves it to a new VM`,
     restarts
-      ? ` (done ${restarts} time(s) so far).`
+      ? ` (restarted ${restarts} time(s) so far).`
       : '. While boat saves it, its machine answers and its runner is the trouble.',
   ].join('')
 }

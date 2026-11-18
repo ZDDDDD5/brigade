@@ -55,6 +55,8 @@ const boat = {
   resumes: [] as string[],
   commands: [] as string[],
   recovers: [] as string[],
+  /** New sandboxes made (a replacement's new VM). */
+  creates: [] as string[],
   /** By sandbox: its state; ready unless said. */
   states: new Map<string, string>(),
   /** By sandbox: its last check (verified) and its last completed snapshot. */
@@ -108,6 +110,11 @@ Object.assign(BoatApi.prototype, {
     if (boat.recoverAnswer !== 'accept') throw conflict(boat.recoverAnswer)
     return { ok: true, status: 'recovering' }
   },
+  create: async () => {
+    const sandboxId = `sb-new-${randomUUID().slice(0, 8)}`
+    boat.creates.push(sandboxId)
+    return { sandbox: { id: sandboxId, state: 'ready' } }
+  },
   command: async ({ sandboxId }: { sandboxId: string }) => {
     boat.commands.push(sandboxId)
     throw new Error('the sandbox agent is not reachable')
@@ -117,6 +124,8 @@ Object.assign(BoatApi.prototype, {
 const { prisma } = await import('../src/db.js')
 const cloud = await import('../src/cloud.js')
 const {
+  AUTO_REPLACE_LIMIT,
+  REACHABLE_REPLACE_MS,
   RECOVER_AFTER_MS,
   RECOVER_AGAIN_MS,
   RECOVER_LIMIT,
@@ -126,6 +135,7 @@ const {
   recoveryStep,
 } = await import('../src/runner-away.js')
 const { computerProblem } = await import('../src/ops/checks.js')
+const { AUTOMATIC_REPLACEMENT, replaceAutomatically } = await import('../src/cloud-replace.js')
 const { localHub } = await import('../src/hub/memory-host.js')
 const { inWorkspaceHub, fakeRunner } = await import('./in-hub.js')
 
@@ -181,6 +191,9 @@ async function marked(computerId: string, minutesAgo: number) {
 const sandboxOf = (computer: { providerRef: unknown }) =>
   (computer.providerRef as { id: string }).id
 
+const statusOf = async (computerId: string) =>
+  (await prisma.computer.findUniqueOrThrow({ where: { id: computerId } })).status
+
 /** Wait for a computer to reach a status: its start runs in the background. */
 async function until(computerId: string, status: string) {
   const statusOf = async () =>
@@ -223,31 +236,47 @@ test('what Brigade does for a runner away, from what boat last saved', () => {
     savedAt: now - UNSAVED_MS,
     snapshotAt: now - UNSAVED_MS,
     diskFull: false,
+    replaced: 0,
     now,
   }
   // Nov 6, 23:23: its runner away 20 minutes, nothing saved since 23:01: boat is asked first.
   assert.equal(recoveryStep(away, lost), 'recover')
-  // Away for less, or boat still saving it (its machine answers): nothing.
+  // Away for less, or boat still saving it (its machine answers: its runner is the trouble, and a
+  // new VM would not help): nothing.
   assert.equal(recoveryStep(away, { ...lost, awayMs: RECOVER_AFTER_MS - 1 }), 'none')
   assert.equal(recoveryStep(away, { ...lost, savedAt: now - UNSAVED_MS + MIN }), 'none')
+  assert.equal(
+    recoveryStep(away, { ...lost, savedAt: now - UNSAVED_MS + MIN, replaced: 0 }),
+    'none',
+  )
   // boat cannot power-cycle it (its baremetal machines), or could not: stopped with its last
-  // snapshot and started again.
+  // snapshot and started again, which keeps its whole disk.
   const impossible = { ...away, recover: 'impossible' as const, recoverAskedAt: now }
-  assert.equal(recoveryStep(impossible, lost), 'replace')
+  assert.equal(recoveryStep(impossible, lost), 'restart')
   // boat power-cycles it: its runner is waited for, then the same.
   const recovering = { ...away, recover: 'recovering' as const, recoverAskedAt: now }
   assert.equal(recoveryStep(recovering, lost), 'none')
-  assert.equal(recoveryStep(recovering, { ...lost, now: now + RECOVER_WAIT_MS }), 'replace')
-  // boat reaches it though it does not save it (a full disk?): left as it is, asked again later.
+  assert.equal(recoveryStep(recovering, { ...lost, now: now + RECOVER_WAIT_MS }), 'restart')
+  // Still away after RECOVER_LIMIT restarts (Nov 18: three on the same host, its restore stuck at
+  // 15%): moved to a new VM.
+  assert.equal(recoveryStep({ ...impossible, restarts: RECOVER_LIMIT }, lost), 'replace')
+  // Nothing to restart from, or a full disk boat would not start again: moved at once.
+  assert.equal(recoveryStep(impossible, { ...lost, snapshotAt: null }), 'replace')
+  assert.equal(recoveryStep(impossible, { ...lost, savedAt: null, snapshotAt: null }), 'replace')
+  assert.equal(recoveryStep(impossible, { ...lost, diskFull: true }), 'replace')
+  // boat reaches it though it does not save it (a full disk?): asked again later, and moved once
+  // it has stayed so for REACHABLE_REPLACE_MS.
   const reachable = { ...away, recover: 'reachable' as const, recoverAskedAt: now }
   assert.equal(recoveryStep(reachable, lost), 'none')
   assert.equal(recoveryStep(reachable, { ...lost, now: now + RECOVER_AGAIN_MS }), 'recover')
-  // Never stopped so without a snapshot to keep, nor on a full disk.
-  assert.equal(recoveryStep(impossible, { ...lost, snapshotAt: null }), 'none')
-  assert.equal(recoveryStep(impossible, { ...lost, savedAt: null, snapshotAt: null }), 'none')
-  assert.equal(recoveryStep(impossible, { ...lost, diskFull: true }), 'none')
-  // At most RECOVER_LIMIT times in a row, then left to operators.
-  assert.equal(recoveryStep({ ...impossible, restarts: RECOVER_LIMIT }, lost), 'give-up')
+  assert.equal(
+    recoveryStep(reachable, { ...lost, awayMs: RECOVER_AFTER_MS + REACHABLE_REPLACE_MS }),
+    'replace',
+  )
+  // Moved AUTO_REPLACE_LIMIT times lately: its new VMs do not stay up either, left to operators.
+  const many = { ...lost, replaced: AUTO_REPLACE_LIMIT }
+  assert.equal(recoveryStep({ ...impossible, restarts: RECOVER_LIMIT }, many), 'give-up')
+  assert.equal(recoveryStep(impossible, { ...many, snapshotAt: null }), 'give-up')
   assert.equal(recoveryStep({ ...impossible, restarts: 1, gaveUp: true }, lost), 'none')
 })
 
@@ -263,8 +292,11 @@ test(
     savedAgo(computer, 23)
 
     await inHub(() => cloud.checkIdle(computer))
-    // Its service was started for it first: boat refused, as on Nov 7. Its disk was not asked
-    // about before the stop: nothing reaches it.
+    // Its service was started for it, not waited for (boat held such commands 10 minutes on Nov
+    // 18): boat refused, as on Nov 7. Its disk was not asked about before the stop: nothing
+    // reaches it.
+    for (let i = 0; i < 100 && !boat.commands.includes(sandbox); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10))
     assert.deepEqual(
       boat.commands.filter((c) => c === sandbox),
       [sandbox],
@@ -301,18 +333,63 @@ test(
     )
     assert.equal(stopsOf(computer).length, 1)
 
-    // Still away and unsaved after each: RECOVER_LIMIT times in all, then left to operators.
-    for (let i = 2; i <= RECOVER_LIMIT; i++) {
-      row = await marked(computer.id, 21)
-      assert.equal(await inHub(() => cloud.recoverAway(row)), true)
-      assert.equal(await until(computer.id, 'running'), 'running')
-    }
-    assert.equal(stopsOf(computer).length, RECOVER_LIMIT)
+    // Still away and unsaved after it (Nov 18: three restarts on the same host, its restore stuck
+    // at 15%): moved to a new VM by itself, as a member's Replace cloud computer does. Its old VM
+    // is stopped with force (boat refuses a plain stop to a machine it has not saved for 30
+    // minutes), kept on the replacement, never destroyed.
+    row = await marked(computer.id, 21)
+    assert.equal(await inHub(() => cloud.recoverAway(row)), true)
+    const replacement = async () =>
+      prisma.computerReplacement.findFirst({ where: { computerId: computer.id } })
+    for (let i = 0; i < 200 && (await replacement())?.phase !== 'creating'; i++)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    const made = await replacement()
+    assert.equal(made?.phase, 'creating')
+    assert.equal(made?.memberId, AUTOMATIC_REPLACEMENT)
+    assert.equal(made?.backup, 'not backed up: it was offline, its latest backups are used')
+    assert.deepEqual(made?.oldProviderRef, { provider: 'boat', id: sandbox })
+    assert.equal(stopsOf(computer).length, 2)
+    assert.deepEqual(stopsOf(computer).at(-1), { sandbox, force: true })
+    // Never started again meanwhile: only the restart resumed it.
+    assert.deepEqual(boat.resumes, [sandbox])
+    const after = await prisma.computer.findUniqueOrThrow({ where: { id: computer.id } })
+    assert.notDeepEqual(after.providerRef, computer.providerRef)
+    // Asked for by Brigade, said so in its audit.
+    const asked = await prisma.auditEntry.findFirst({
+      where: { targetId: computer.id, action: 'computer.replace_requested' },
+    })
+    assert.equal(asked?.actorType, 'system')
+    // Being replaced: not replaced again.
+    assert.equal(await inHub(() => replaceAutomatically(after)), false)
+    assert.equal(await prisma.computerReplacement.count({ where: { computerId: computer.id } }), 1)
+    // Its new VM's making ends (it fails here: this boat runs no command), then the replacement.
+    for (let i = 0; i < 200 && (await statusOf(computer.id)) === 'creating'; i++)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    await prisma.computerReplacement.updateMany({
+      where: { computerId: computer.id },
+      data: { phase: 'done' },
+    })
+    await prisma.computer.update({
+      where: { id: computer.id },
+      data: { status: 'running', providerRef: computer.providerRef as never },
+    })
+
+    // Moved AUTO_REPLACE_LIMIT times lately and still away: left to operators, and its alert says
+    // so.
+    await prisma.computerReplacement.create({
+      data: {
+        organizationId,
+        workspaceId,
+        computerId: computer.id,
+        memberId: AUTOMATIC_REPLACEMENT,
+        phase: 'done',
+      },
+    })
+    localHub(workspaceId).noteAwayRestart(computer.id)
     row = await marked(computer.id, 60)
     assert.equal(await inHub(() => cloud.recoverAway(row)), false)
-    assert.equal(stopsOf(computer).length, RECOVER_LIMIT)
+    assert.equal(await prisma.computerReplacement.count({ where: { computerId: computer.id } }), 2)
     assert.equal(hub.runnerAway(computer.id)?.gaveUp, true)
-    // Its alert says so.
     const alert = computerProblem(
       { ...row, workspace: { name: 'recover' } },
       false,
@@ -321,7 +398,7 @@ test(
       hub.runnerAway(computer.id),
     )
     assert.equal(alert?.severity, 'warning')
-    assert.match(alert?.detail ?? '', /started it again 3 times, and no longer does/)
+    assert.match(alert?.detail ?? '', /moved it to a new VM 2 times within 6 h, and no longer does/)
 
     // Its runner connects: nothing is away any more, and nothing is done.
     const runner = await fakeRunner({ organizationId, workspaceId }, computer.id)
@@ -411,28 +488,137 @@ test(
   },
 )
 
-test('never stopped so without a snapshot, nor on a full disk', { skip }, async () => {
-  const hub = localHub(workspaceId)
-  const never = await runningComputer(30)
-  hub.runnerAway(never.id, Date.now() - RECOVER_AFTER_MS - MIN)
-  savedAgo(never, null)
-  assert.equal(await inHub(() => cloud.recoverAway(never)), false)
-  assert.deepEqual(stopsOf(never), [])
+test(
+  'without a snapshot to restart from, or on a full disk, moved to a new VM at once',
+  { skip },
+  async () => {
+    const hub = localHub(workspaceId)
+    const replacementOf = (computerId: string) =>
+      prisma.computerReplacement.findFirst({ where: { computerId } })
+    const switched = async (computerId: string) => {
+      for (let i = 0; i < 200 && (await replacementOf(computerId))?.phase !== 'creating'; i++)
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      return replacementOf(computerId)
+    }
+    // Never saved: no restart, which would lose its whole disk; a new VM, its old one stopped
+    // without force, for the same reason.
+    const never = await runningComputer(30)
+    hub.runnerAway(never.id, Date.now() - RECOVER_AFTER_MS - MIN)
+    savedAgo(never, null)
+    assert.equal(await inHub(() => cloud.recoverAway(never)), true)
+    assert.equal((await switched(never.id))?.memberId, AUTOMATIC_REPLACEMENT)
+    assert.deepEqual(stopsOf(never), [{ sandbox: sandboxOf(never), force: false }])
+    assert.ok(!boat.resumes.includes(sandboxOf(never)))
 
-  const full = await runningComputer(30)
-  await prisma.computer.update({
-    where: { id: full.id },
-    data: { disk: { used: 0.91, since: new Date().toISOString(), at: new Date().toISOString() } },
+    // A full disk, which boat would not start again: a new VM, its old one stopped with force.
+    const full = await runningComputer(30)
+    await prisma.computer.update({
+      where: { id: full.id },
+      data: { disk: { used: 0.91, since: new Date().toISOString(), at: new Date().toISOString() } },
+    })
+    const row = await marked(full.id, 30)
+    hub.runnerAway(full.id, Date.now() - RECOVER_AFTER_MS - MIN)
+    savedAgo(full, 25)
+    assert.equal(await inHub(() => cloud.recoverAway(row)), true)
+    assert.equal((await switched(full.id))?.memberId, AUTOMATIC_REPLACEMENT)
+    assert.deepEqual(stopsOf(full), [{ sandbox: sandboxOf(full), force: true }])
+    assert.ok(!boat.resumes.includes(sandboxOf(full)))
+  },
+)
+
+test('stopped on purpose, a computer is not awaited any more', { skip }, async () => {
+  const hub = localHub(workspaceId)
+  const computer = await runningComputer(30)
+  hub.runnerAway(computer.id, Date.now() - RECOVER_AFTER_MS - MIN)
+  hub.noteAwayRecover(computer.id, 'impossible')
+  // Its idle stop, a member's.
+  await inHub(() =>
+    cloud.stopComputer(computer, { type: 'system', id: 'brigade' }, { force: true }),
+  )
+  assert.equal(hub.runnerAway(computer.id)?.recover, undefined)
+  assert.equal(hub.runnerAway(computer.id)?.restarts, 0)
+})
+
+test('one recovery at a time for a computer', { skip }, async () => {
+  const computer = await runningComputer(30)
+  const hub = localHub(workspaceId)
+  hub.runnerAway(computer.id, Date.now() - RECOVER_AFTER_MS - MIN)
+  savedAgo(computer, 25)
+  // boat's answer waits; the next minute's check comes meanwhile (Nov 18: two restarts 55
+  // seconds apart, from two checks that read the computer before either changed it).
+  let answer!: () => void
+  boat.answering = new Promise((resolve) => (answer = resolve))
+  const first = inHub(() => cloud.recoverAway(computer))
+  for (let i = 0; i < 100 && !boat.recovers.includes(sandboxOf(computer)); i++)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  const second = inHub(() => cloud.recoverAway(computer))
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  answer()
+  boat.answering = null
+  assert.equal(await second, false)
+  assert.equal(await first, true)
+  assert.equal(boat.recovers.filter((r) => r === sandboxOf(computer)).length, 1)
+  assert.equal(stopsOf(computer).length, 1)
+  assert.equal(await until(computer.id, 'running'), 'running')
+})
+
+test(
+  'many computers replaced at once: boat is failing, not one machine, and it is waited out',
+  { skip },
+  async () => {
+    const computer = await runningComputer(30)
+    const hub = localHub(workspaceId)
+    hub.runnerAway(computer.id, Date.now() - RECOVER_AFTER_MS - MIN)
+    hub.noteAwayRestart(computer.id)
+    savedAgo(computer, 25)
+    // Five others replaced by Brigade in the last half hour.
+    const others = await Promise.all(Array.from({ length: 5 }, () => runningComputer(30)))
+    await prisma.computerReplacement.createMany({
+      data: others.map((other) => ({
+        organizationId,
+        workspaceId,
+        computerId: other.id,
+        memberId: AUTOMATIC_REPLACEMENT,
+        phase: 'done',
+      })),
+    })
+    const row = await marked(computer.id, 30)
+    assert.equal(await inHub(() => cloud.recoverAway(row)), false)
+    assert.equal(await prisma.computerReplacement.count({ where: { computerId: computer.id } }), 0)
+    assert.equal(hub.runnerAway(computer.id)?.gaveUp, undefined)
+    // Asked again each minute: once they are older, it is replaced.
+    await prisma.computerReplacement.updateMany({
+      where: { computerId: { in: others.map((o) => o.id) } },
+      data: { createdAt: new Date(Date.now() - 60 * MIN) },
+    })
+    assert.equal(await inHub(() => cloud.recoverAway(row)), true)
+    assert.equal(await prisma.computerReplacement.count({ where: { computerId: computer.id } }), 1)
+    await prisma.computerReplacement.deleteMany({
+      where: { computerId: { in: others.map((o) => o.id) } },
+    })
+  },
+)
+
+test('an old VM being replaced is never started again', { skip }, async () => {
+  const computer = await runningComputer(30)
+  const sandbox = sandboxOf(computer)
+  await prisma.computerReplacement.create({
+    data: {
+      organizationId,
+      workspaceId,
+      computerId: computer.id,
+      memberId: AUTOMATIC_REPLACEMENT,
+      phase: 'backing_up',
+    },
   })
-  const row = await marked(full.id, 30)
-  hub.runnerAway(full.id, Date.now() - RECOVER_AFTER_MS - MIN)
-  savedAgo(full, 25)
-  assert.equal(await inHub(() => cloud.recoverAway(row)), false)
-  assert.deepEqual(stopsOf(full), [])
-  // Stopped on purpose (its idle stop, a member): not awaited any more.
-  await inHub(() => cloud.stopComputer(row, { type: 'system', id: 'brigade' }, { force: true }))
-  assert.equal(hub.runnerAway(full.id)?.recover, undefined)
-  assert.equal(hub.runnerAway(full.id)?.restarts, 0)
+  // Its replacement stopped it, before switching it to a new VM: the minute's check would mark
+  // it stopped, and start it again with a thread running (Nov 18, 23:06); so would a message.
+  boat.states.set(sandbox, 'archived')
+  await inHub(() => cloud.checkIdle(computer))
+  await inHub(() => cloud.ensureRunning(computer.id))
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.ok(!boat.resumes.includes(sandbox))
+  assert.equal(await statusOf(computer.id), 'running')
 })
 
 test('a runner back while boat is asked is left running', { skip }, async () => {

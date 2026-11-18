@@ -99,9 +99,44 @@ export async function lastReplacement(computerId: string) {
   }
 }
 
+/**
+ * Who asked for a replacement Brigade made by itself (replaceAutomatically), on the row's
+ * memberId: no member did.
+ */
+export const AUTOMATIC_REPLACEMENT = 'brigade'
+
 /** A member asks for the workspace's cloud computer on a new VM. */
 export async function replaceComputer(scope: Scope, computerId: string, memberId: string) {
   await requireCloudPlan(scope.workspaceId)
+  return startReplacement(scope, computerId, memberId)
+}
+
+/**
+ * In the hub: Brigade moves a cloud computer whose VM no longer comes back to a new one by
+ * itself (src/cloud.ts's recoverAway), as a member's Replace cloud computer does, so that nobody
+ * has to: its threads show it restarting, then carry on. True when a replacement started; false
+ * when one is under way already, the computer is being made, or its workspace has no plan.
+ */
+export async function replaceAutomatically(computer: {
+  id: string
+  organizationId: string
+  workspaceId: string
+}) {
+  const scope = { organizationId: computer.organizationId, workspaceId: computer.workspaceId }
+  try {
+    await requireCloudPlan(scope.workspaceId)
+    await startReplacement(scope, computer.id, AUTOMATIC_REPLACEMENT)
+    return true
+  } catch (error) {
+    if (error instanceof HTTPException && [402, 404, 409].includes(error.status)) {
+      console.warn(`not replacing ${computer.id}: ${error.message}`)
+      return false
+    }
+    throw error
+  }
+}
+
+async function startReplacement(scope: Scope, computerId: string, memberId: string) {
   const hub = hubs.get(scope.workspaceId)
   const making = await hub.isProvisioning(computerId)
   const row = await prisma.$transaction(async (tx) => {
@@ -124,15 +159,21 @@ export async function replaceComputer(scope: Scope, computerId: string, memberId
   })
   await audit({
     ...scope,
-    actor: { type: 'member', id: memberId },
+    actor: actorOf(memberId),
     action: 'computer.replace_requested',
     target: { type: 'computer', id: computerId },
-    data: { replacementId: row.id },
+    data: { replacementId: row.id, ...(memberId === AUTOMATIC_REPLACEMENT && { automatic: true }) },
   })
   void hub.broadcastComputer(computerId)
   void hub.driveReplacement(row.id)
   return row
 }
+
+/** Who asked for a replacement, for its audit. */
+export const actorOf = (memberId: string) =>
+  memberId === AUTOMATIC_REPLACEMENT
+    ? ({ type: 'system', id: 'brigade' } as const)
+    : ({ type: 'member', id: memberId } as const)
 
 /** What the running hub keeps of its replacements. */
 const state = () =>
@@ -183,7 +224,8 @@ async function backUpAndSwitch(row: Replacement) {
   // Stopped, so that nothing runs there with the threads' logins any more: two computers
   // refreshing one login sign each other out. One that does not run (it no longer starts, say)
   // stays as it is; one still running that will not stop holds the replacement back, tried again.
-  if (ref) await stopOldVm(ref as never)
+  // Its runner away: forced if need be (stopOldVm).
+  if (ref) await stopOldVm(ref as never, { unreachable: !currentHub().isOnline(computer.id) })
   currentHub().dropRunner(computer.id)
   await prisma.$transaction(async (tx) => {
     // Kept on the row, never destroyed: provision() destroys only the computer's own reference.

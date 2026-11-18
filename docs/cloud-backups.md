@@ -2,7 +2,9 @@
 
 A cloud computer's disk is a cache. What lives only there is backed up to Brigade, so that a VM
 that no longer starts costs minutes of work, and **Replace cloud computer** (Computers, owners and
-admins) moves the workspace onto a new VM with everything it had.
+admins) moves the workspace onto a new VM with everything it had. Brigade also does so by itself
+when a VM stays unreachable after a restart (`replaceAutomatically`, see docs/monitoring.md), so
+nobody has to.
 
 ## What is backed up, where, and when
 
@@ -26,8 +28,10 @@ backups (they are in its files folder, late uploads included through `BucketClea
 
 `POST /api/computers/:id/replace` (`src/cloud-replace.ts`), steps kept on `ComputerReplacement`:
 
-1. **backing_up**: the old VM backs up if it answers, then is stopped. It is never destroyed: its
-   reference stays on the replacement row, to read its data at the provider.
+1. **backing_up**: the old VM backs up if it answers, then is stopped (with force when its runner
+   is away and it has a snapshot to keep: boat refuses a plain stop to a machine it has not saved
+   for 30 minutes). Meanwhile it is never started again. It is never destroyed: its reference stays
+   on the replacement row, to read its data at the provider.
 2. **creating**: the computer gets a new VM and runner (the same `Computer` row: threads, accounts and
    queued commands stay). The old runner token goes. Every thread of the computer "moves" to the new
    VM (`Session.moved`): its next turn takes its folder from its latest backup and its conversation
