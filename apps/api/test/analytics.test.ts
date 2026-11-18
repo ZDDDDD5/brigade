@@ -536,3 +536,66 @@ test("a person's first event of a kind says first, the next ones do not", { skip
   )
   assert.equal(events().find((e) => e.event === 'thread_interrupted')!.properties.first, undefined)
 })
+
+test(
+  "a guest of Brigade.app takes the source of the site's download from the same address",
+  { skip },
+  async () => {
+    const { rememberDownload, visitorOf } = await import('../src/download-source.js')
+    const ip = `203.0.113.${Math.floor(Math.random() * 200) + 1}`
+    // A visit that says nothing is not kept; one from a directory is, by a hash of its address.
+    assert.equal(await rememberDownload(ip, { lp: '/' }), false)
+    assert.equal(await rememberDownload(ip, { utm_source: 'macaiapps', lp: '/' }), true)
+    const row = await prisma.downloadSource.findUniqueOrThrow({
+      where: { visitor: visitorOf(ip)! },
+    })
+    assert.ok(!row.visitor.includes(ip), 'the address itself is never kept')
+
+    const email = `guest-${run}@guest.brigade.invalid`
+    emails.push(email)
+    const user = await prisma.user.create({ data: { email, name: 'Guest', guest: true } })
+    await analytics.recordSignup(user, {
+      path: '/guest',
+      body: {},
+      headers: new Headers({ 'cf-connecting-ip': ip }),
+    })
+    const saved = await prisma.user.findUniqueOrThrow({ where: { id: user.id } })
+    assert.deepEqual(saved.attribution, {
+      channel: 'other',
+      source: 'macaiapps',
+      landingPage: '/',
+      fromDownload: true,
+      method: 'guest',
+    })
+    // Taken once: the next guest from that address is direct.
+    assert.equal(await prisma.downloadSource.count({ where: { visitor: visitorOf(ip)! } }), 0)
+  },
+)
+
+test(
+  'a direct download clears an earlier source, and two guests at once take a download once',
+  { skip },
+  async () => {
+    const { rememberDownload, takeDownloadSource, visitorOf } =
+      await import('../src/download-source.js')
+    const ip = `198.51.100.${Math.floor(Math.random() * 200) + 1}`
+    const count = () => prisma.downloadSource.count({ where: { visitor: visitorOf(ip)! } })
+    // Someone else on the address downloads later, from nowhere in particular: no campaign then.
+    await rememberDownload(ip, { utm_source: 'macaiapps', lp: '/' })
+    await rememberDownload(ip, { lp: '/' })
+    assert.equal(await count(), 0)
+    assert.equal(await takeDownloadSource(ip), undefined)
+
+    // An unreadable beacon leaves what was kept.
+    await rememberDownload(ip, { utm_source: 'macaiapps', lp: '/' })
+    await rememberDownload(ip, null)
+    assert.equal(await count(), 1)
+
+    // Two guests at the same moment: one takes it, the other nothing.
+    await rememberDownload(ip, { utm_source: 'macaiapps', lp: '/' })
+    const taken = await Promise.all([takeDownloadSource(ip), takeDownloadSource(ip)])
+    assert.equal(taken.filter(Boolean).length, 1)
+    assert.equal(taken.find(Boolean)?.source, 'macaiapps')
+    assert.equal(await count(), 0)
+  },
+)
