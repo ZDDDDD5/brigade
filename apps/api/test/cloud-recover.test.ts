@@ -69,6 +69,8 @@ const boat = {
   holding: null as { sandbox: string; until: Promise<void>; reached: () => void } | null,
   /** Sandboxes whose plain stop boat refuses (a machine it cannot save). */
   refuseStop: new Set<string>(),
+  /** Sandboxes whose next stop fails on the way (a 503), once. */
+  failStopOnce: new Set<string>(),
 }
 const longAgo = () => new Date(Date.now() - 2 * 60 * MIN)
 const conflict = (code: string) =>
@@ -106,6 +108,10 @@ Object.assign(BoatApi.prototype, {
     stopRequest?: { force?: boolean }
   }) => {
     boat.stops.push({ sandbox: sandboxId, force: stopRequest?.force === true })
+    if (boat.failStopOnce.delete(sandboxId))
+      throw Object.assign(new Error('Response returned an error code'), {
+        response: new Response('unavailable', { status: 503 }),
+      })
     if (boat.refuseStop.has(sandboxId) && stopRequest?.force !== true)
       throw conflict('snapshot_failing')
     boat.states.set(sandboxId, 'archived')
@@ -862,8 +868,30 @@ test(
     const row = await prisma.computer.findUniqueOrThrow({ where: { id: computer.id } })
     assert.deepEqual(row.providerRef, computer.providerRef)
     assert.ok(hub.runnerAway(computer.id)?.gaveUpAt !== undefined)
-    // Not open: a member's Replace is not refused for it.
+    // Its alert says why, not that new VMs failed.
+    const alert = computerProblem(
+      { ...row, workspace: { name: 'recover' } },
+      false,
+      awayFor(hub.runnerAway(computer.id), row),
+      Date.now(),
+      hub.runnerAway(computer.id),
+    )
+    assert.match(alert?.detail ?? '', /boat refuses to stop its old one/)
     boat.refuseStop.delete(sandbox)
+
+    // A stop that fails on the way (a 503) is no refusal: tried again, then the new VM.
+    const flaky = await runningComputer(30)
+    hub.runnerAway(flaky.id, Date.now() - RECOVER_AFTER_MS - MIN)
+    savedAgo(flaky, null)
+    boat.failStopOnce.add(sandboxOf(flaky))
+    assert.equal(await inHub(() => cloud.recoverAway(flaky)), true)
+    for (let i = 0; i < 200 && !(await replacementOf(flaky.id))?.error; i++)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    const held = await replacementOf(flaky.id)
+    assert.equal(held?.phase, 'backing_up')
+    assert.equal(hub.runnerAway(flaky.id)?.gaveUpAt, undefined)
+    await inHub(() => drive(held!.id))
+    assert.equal((await replacementOf(flaky.id))?.phase, 'creating')
   },
 )
 

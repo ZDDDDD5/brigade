@@ -16,8 +16,9 @@ export type RunnerAway = {
    * `gaveUpAt`), it no longer stops anything, so that a computer it gave up on gets a new VM.
    */
   gaveUp?: boolean
-  /** When Brigade gave up on it, after AUTO_REPLACE_LIMIT automatic replacements. */
+  /** When Brigade gave up on it, and why: AUTO_REPLACE_LIMIT new VMs, or an old VM boat will not stop. */
   gaveUpAt?: number
+  gaveUpFor?: 'replacements' | 'refused-stop'
   /** When boat was last asked to recover it, and what it answered. */
   recoverAskedAt?: number
   recover?: RecoverAnswer

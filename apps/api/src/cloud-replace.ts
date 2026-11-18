@@ -285,7 +285,7 @@ async function backUpAndSwitch(row: Replacement) {
         error: 'boat would not stop the old VM, which it cannot reach and never saved',
       },
     })
-    if (automatic) currentHub().noteAwayGaveUp(computer.id)
+    if (automatic) currentHub().noteAwayGaveUp(computer.id, 'refused-stop')
     noteFailure(
       'cloud:replace-refused',
       new Error(`replacing ${computer.id}: boat refused to stop its old VM, never saved`),

@@ -242,10 +242,13 @@ export class WorkspaceHub {
   }
 
   /** Past its automatic replacements (AUTO_REPLACE_LIMIT): said once in the log. */
-  noteAwayGaveUp(computerId: string) {
+  noteAwayGaveUp(
+    computerId: string,
+    gaveUpFor: NonNullable<RunnerAway['gaveUpFor']> = 'replacements',
+  ) {
     const away = this.durable<RunnerAway>('runner-away')
-    const found = away.get(computerId)
-    if (found) away.set(computerId, { ...found, gaveUp: true, gaveUpAt: Date.now() })
+    const found = away.get(computerId) ?? { since: Date.now(), restarts: 0 }
+    away.set(computerId, { ...found, gaveUp: true, gaveUpAt: Date.now(), gaveUpFor })
   }
 
   /** Its runner said hello, or the computer was stopped on purpose (idle, its plan, a member). */

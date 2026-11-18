@@ -338,6 +338,8 @@ export function computerProblem(
 function recoveryDetail(away: RunnerAway | null, now: number) {
   const restarts = away?.restarts ?? 0
   const journal = 'its journal says why, as root through boat'
+  if (away?.gaveUpAt !== undefined && away.gaveUpFor === 'refused-stop')
+    return `Brigade tried to move it to a new VM, but boat refuses to stop its old one, which it cannot reach and never saved: left as it is for operators (cloud:replace-refused).`
   if (away?.gaveUpAt !== undefined)
     return `Brigade moved it to a new VM ${AUTO_REPLACE_LIMIT} times within ${AUTO_REPLACE_WINDOW_MS / 3_600_000} h, and no longer does: its runner does not stay up on new VMs either (${journal}).`
   if (away?.recover === 'reachable')

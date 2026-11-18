@@ -180,6 +180,12 @@ export async function startsSettled(computerId: string, forMs = 2 * 60_000) {
   return true
 }
 
+/** Whether the provider answered a request with a refusal (409), rather than failing on the way. */
+function refusedByProvider(error: unknown) {
+  const response = (error as { response?: unknown } | null)?.response
+  return response instanceof Response && response.status === 409
+}
+
 /**
  * Whether the computer's VM is still `ref`, and no replacement is stopping it for a new one
  * (`backing_up`). Once switched, its new VM is the computer's own: it starts as any does, its
@@ -228,7 +234,9 @@ export async function stopOldVm(
     if (!stop) await runStopped(ref.id, new Date(), 'brigade')
     return 'stopped'
   }
-  if (options.unreachable && !force && stop) {
+  // Only boat's refusal (a 409): a failure on the way (a 503, a 429, a lost connection) is tried
+  // again as any.
+  if (options.unreachable && !force && refusedByProvider(stop)) {
     console.error(
       `old VM ${ref.id} not stopped: unreachable, never saved, and boat refused a plain stop (${await providerReason(stop)})`,
     )
