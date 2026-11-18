@@ -93,6 +93,33 @@ export function attachablePort(resume: unknown): number | undefined {
 }
 
 /**
+ * The saved session as runners from before the key-pair bridges can read it too. Their harness
+ * refuses saved bridge coordinates without a `token` before anything else, so a runner rolled
+ * back while a turn ran could not take the thread up at all. With one that no bridge accepts, it
+ * reads them, fails to attach, and starts a bridge of its own on the conversation, as after a
+ * bridge that stopped. This runner's harness ignores it (attachablePort looks for `privateKey`).
+ */
+export function readableByOlderRunners(resume: unknown): unknown {
+  if (!resume || typeof resume !== 'object') return resume
+  const state = resume as { data?: unknown; continueFrom?: { data?: unknown } }
+  const add = (data: unknown) => {
+    const bridge = (data as { bridge?: Record<string, unknown> } | undefined)?.bridge
+    if (!bridge || typeof bridge !== 'object' || 'token' in bridge) return data
+    return { ...(data as object), bridge: { ...bridge, token: OLDER_RUNNERS_TOKEN } }
+  }
+  return {
+    ...state,
+    ...(state.data !== undefined ? { data: add(state.data) } : {}),
+    ...(state.continueFrom
+      ? { continueFrom: { ...state.continueFrom, data: add(state.continueFrom.data) } }
+      : {}),
+  }
+}
+
+/** A token no bridge takes: key-pair ones read none, and token ones were each given their own. */
+const OLDER_RUNNERS_TOKEN = 'none'
+
+/**
  * A saved turn, for an agent made with these tools. The harness continues a turn with the
  * tools it started with, and stops it outright when one of them is gone: an App granted or
  * removed since, or a second account of a kind, which renames that kind's tools

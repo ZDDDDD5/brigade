@@ -81,6 +81,7 @@ import {
   approvalInNewSession,
   attachablePort,
   closeTurn,
+  readableByOlderRunners,
   sameCall,
   waitingOn,
   withoutBridge,
@@ -2881,7 +2882,11 @@ export class HarnessThread {
    */
   private persist() {
     if (!this.saved) return Promise.resolve()
-    const text = JSON.stringify(this.saved)
+    // Readable by a runner from before this one too, should it be rolled back (closed-turn.ts).
+    const text = JSON.stringify({
+      ...this.saved,
+      resume: readableByOlderRunners(this.saved.resume),
+    })
     const write = async () => {
       await mkdir(dirname(this.stateFile), { recursive: true, mode: 0o700 })
       const temp = `${this.stateFile}.${randomUUID()}.tmp`

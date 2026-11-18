@@ -171,10 +171,10 @@ test("a runner of another version on the same home finds its own bridge, never t
     }),
   } as unknown as Adapter
   // What a runner from before does, with its own recipe: it writes its token bridge over the
-  // folder and its marker beside the others, which it leaves.
-  const older = async () => {
+  // folder, then, once its install went through, its marker beside the others, which it leaves.
+  const older = async ({ installed = true } = {}) => {
     await writeFile(join(dir, 'bridge.mjs'), '// token\n')
-    await writeFile(join(dir, '.bootstrap-older.ok'), '')
+    if (installed) await writeFile(join(dir, '.bootstrap-older.ok'), '')
   }
 
   await mkdir(dir, { recursive: true })
@@ -185,11 +185,15 @@ test("a runner of another version on the same home finds its own bridge, never t
   assert.equal(await bridge(), '// key pair\n')
   assert.equal((await markers()).length, 1)
   assert.ok(!(await markers()).includes('.bootstrap-older.ok'))
-  // Rolled back, then forward again: the older runner's marker beside its own, it installs again.
+  // Rolled back, then forward again: the older runner's files over its own, it installs again.
   await older()
   await prepare(home, undefined, current)
   assert.equal(await bridge(), '// key pair\n')
-  // Its own install alone there, it installs nothing.
+  // So when the older runner's install failed after it wrote its files, leaving no marker.
+  await older({ installed: false })
   await prepare(home, undefined, current)
-  assert.equal(await readFile(log, 'utf8'), 'install\ninstall\n')
+  assert.equal(await bridge(), '// key pair\n')
+  // Its own install there, it installs nothing.
+  await prepare(home, undefined, current)
+  assert.equal(await readFile(log, 'utf8'), 'install\ninstall\ninstall\n')
 })

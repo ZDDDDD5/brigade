@@ -1,16 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import {
-  appendFile,
-  mkdir,
-  mkdtemp,
-  readdir,
-  readFile,
-  rm,
-  stat,
-  utimes,
-  writeFile,
-} from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { jsonSchema, tool, type ToolSet } from 'ai'
@@ -318,16 +308,12 @@ test("another dependency lock means converting again, in a file of the new bridg
     const kept = await readSchemas(before)
     for (const entry of Object.values(kept)) entry.s.description = 'from the file'
     await writeFile(before, JSON.stringify(kept))
-    // The lock the bootstrap installed beside the bridge, as an update of its dependencies leaves it.
-    const lock = join(
-      home,
-      '.ai-sdk-harness',
-      '.harness-bootstrap',
-      'claude-code',
-      'pnpm-lock.yaml',
-    )
-    assert.ok((await stat(lock)).size > 0)
-    await appendFile(lock, '\n# another version of the converter\n')
+    const dir = join(home, '.ai-sdk-harness', '.harness-bootstrap', 'claude-code')
+    assert.ok((await stat(join(dir, 'pnpm-lock.yaml'))).size > 0)
+    // Other dependencies beside the bridge. Not its own lock, pnpm-lock.yaml, edited: the
+    // bootstrap puts the recipe's files back as they were (applyBootstrapRecipeAlone). The
+    // name the package ships the lock under counts as well (toolSchemasFile).
+    await writeFile(join(dir, 'pnpm-lockfile.yaml'), '# another version of the converter\n')
 
     const after = await turn([], { home })
     for (const t of after.tools)

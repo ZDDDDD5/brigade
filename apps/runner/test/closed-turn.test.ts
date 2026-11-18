@@ -4,6 +4,7 @@ import {
   answerAfterRestart,
   attachablePort,
   closeTurn,
+  readableByOlderRunners,
   withoutBridge,
   withTools,
 } from '../src/harness/closed-turn.js'
@@ -73,6 +74,26 @@ test('a turn handed over by a runner before the key-pair bridges starts anew rat
   assert.equal(attachablePort(old), undefined)
   assert.equal(attachablePort(withoutBridge(frozen)), undefined)
   assert.equal(attachablePort(undefined), undefined)
+})
+
+test('a saved session stays readable by a runner from before the key-pair bridges', () => {
+  const frozen = { ...waiting, continueFrom: { ...waiting.continueFrom, pendingToolResults: [] } }
+  const readable = readableByOlderRunners(frozen) as typeof frozen & {
+    data: { bridge: Record<string, unknown> }
+    continueFrom: { data: { bridge: Record<string, unknown> } }
+  }
+  // A token their harness asks for, beside the key pair this runner's attaches with.
+  assert.equal(typeof readable.continueFrom.data.bridge.token, 'string')
+  assert.equal(readable.continueFrom.data.bridge.privateKey, 'k')
+  assert.equal(typeof readable.data.bridge.token, 'string')
+  assert.equal(attachablePort(readable), 41000)
+  // Nothing else changes, and a bridge's own token, or no bridge, stays as it is.
+  const { token: _token, ...bridge } = readable.continueFrom.data.bridge
+  assert.deepEqual(bridge, frozen.continueFrom.data.bridge)
+  const own = { continueFrom: { data: { bridge: { port: 1, token: 't' } } } }
+  assert.deepEqual(readableByOlderRunners(own), own)
+  assert.deepEqual(readableByOlderRunners(withoutBridge(frozen)), withoutBridge(frozen))
+  assert.equal(readableByOlderRunners(undefined), undefined)
 })
 
 test('no turn is left as it is', () => {
