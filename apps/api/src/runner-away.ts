@@ -15,6 +15,11 @@ export type RunnerAway = {
   /** When boat was last asked to recover it, and what it answered. */
   recoverAskedAt?: number
   recover?: RecoverAnswer
+  /**
+   * Since when the commands boat is asked to run there (its runner's service start) never reach
+   * the machine: sent then, and none has reached it since.
+   */
+  unreachedSince?: number
 }
 
 /** Its runner away this long, Brigade looks at whether boat still reaches the machine. */
@@ -70,10 +75,12 @@ export type RecoveryStep = 'none' | 'recover' | 'restart' | 'replace' | 'give-up
  * had nothing new to save (`savedAt`), its last completed snapshot (`snapshotAt`, what a forced
  * stop keeps), whether its runner said its disk is full, and how many times Brigade moved it to a
  * new VM by itself lately (`replaced`, within AUTO_REPLACE_WINDOW_MS):
- * - its runner away less than RECOVER_AFTER_MS, or boat saving it lately: nothing. A machine boat
- *   still saves answers, and its runner is the trouble: a new VM would not help, and a runner
- *   that fails everywhere (a bad release) must not move every workspace. On Nov 7 at 11:05, one
- *   stalled for 12 minutes after a resume and came back by itself;
+ * - its runner away less than RECOVER_AFTER_MS, or boat saving it lately while its commands
+ *   reach it: nothing. A machine boat still saves and runs commands on answers, and its runner is
+ *   the trouble: a new VM would not help, and a runner that fails everywhere (a bad release) must
+ *   not move every workspace. On Nov 7 at 11:05, one stalled for 12 minutes after a resume and
+ *   came back by itself. Its commands not reaching it for UNSAVED_MS (`unreachedSince`) counts as
+ *   unsaved, whatever boat's snapshots say;
  * - else boat is asked to recover it (power-cycle its machine, its disk untouched);
  * - boat cannot (`impossible`: its baremetal machines), or its runner is still away
  *   RECOVER_WAIT_MS after a power-cycle: it is stopped with its last snapshot and started again,
@@ -99,7 +106,10 @@ export function recoveryStep(
 ): RecoveryStep {
   const { awayMs, savedAt, snapshotAt, diskFull, now } = state
   if (awayMs < RECOVER_AFTER_MS || away.gaveUp) return 'none'
-  if (savedAt !== null && now - savedAt < UNSAVED_MS) return 'none'
+  // boat may still save a machine it no longer gets a command to (Nov 18: snapshots for 34
+  // minutes after a resume whose machine never ran one): unreached that long, it is as unsaved.
+  const unreached = away.unreachedSince !== undefined && now - away.unreachedSince >= UNSAVED_MS
+  if (!unreached && savedAt !== null && now - savedAt < UNSAVED_MS) return 'none'
   const replace = (state.replaced ?? 0) >= AUTO_REPLACE_LIMIT ? 'give-up' : 'replace'
   const askedFor = now - (away.recoverAskedAt ?? 0)
   if (!away.recover) return 'recover'

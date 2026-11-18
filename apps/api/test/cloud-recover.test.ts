@@ -245,10 +245,11 @@ test('what Brigade does for a runner away, from what boat last saved', () => {
   // new VM would not help): nothing.
   assert.equal(recoveryStep(away, { ...lost, awayMs: RECOVER_AFTER_MS - 1 }), 'none')
   assert.equal(recoveryStep(away, { ...lost, savedAt: now - UNSAVED_MS + MIN }), 'none')
-  assert.equal(
-    recoveryStep(away, { ...lost, savedAt: now - UNSAVED_MS + MIN, replaced: 0 }),
-    'none',
-  )
+  // Saved lately, but none of its commands reached it for UNSAVED_MS (Nov 18: boat's snapshots
+  // went on for 34 minutes after a resume whose machine never ran a command): as unsaved.
+  const saving = { ...lost, savedAt: now - MIN }
+  assert.equal(recoveryStep({ ...away, unreachedSince: now - UNSAVED_MS }, saving), 'recover')
+  assert.equal(recoveryStep({ ...away, unreachedSince: now - UNSAVED_MS + MIN }, saving), 'none')
   // boat cannot power-cycle it (its baremetal machines), or could not: stopped with its last
   // snapshot and started again, which keeps its whole disk.
   const impossible = { ...away, recover: 'impossible' as const, recoverAskedAt: now }
@@ -405,6 +406,44 @@ test(
     assert.equal(hub.runnerAway(computer.id), null)
     assert.equal(await inHub(() => cloud.recoverAway(row)), false)
     runner.close()
+  },
+)
+
+test(
+  'a machine boat still saves but gets no command to is recovered all the same',
+  { skip },
+  async () => {
+    const computer = await runningComputer(30)
+    const sandbox = sandboxOf(computer)
+    const hub = localHub(workspaceId)
+    hub.runnerAway(computer.id, Date.now() - RECOVER_AFTER_MS - MIN)
+    savedAgo(computer, 2)
+    // Its runner's service start never reaches it (boat refuses, or holds it until it times out).
+    // In use: not stopped as idle meanwhile.
+    hub.touch(computer.id)
+    await inHub(() => cloud.checkIdle(computer))
+    for (let i = 0; i < 100 && hub.runnerAway(computer.id)?.unreachedSince === undefined; i++)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    const since = hub.runnerAway(computer.id)?.unreachedSince
+    assert.ok(since !== undefined)
+    // boat still saves it: nothing yet, until its commands have not reached it for UNSAVED_MS.
+    const before = boat.recovers.filter((r) => r === sandbox).length
+    const savedAt = (at: number) =>
+      boat.saved.set(sandbox, {
+        verified: new Date(at - 2 * MIN),
+        snapshot: new Date(at - 2 * MIN),
+      })
+    savedAt(since + UNSAVED_MS - MIN)
+    assert.equal(await inHub(() => cloud.recoverAway(computer, since + UNSAVED_MS - MIN)), false)
+    savedAt(since + UNSAVED_MS)
+    assert.equal(await inHub(() => cloud.recoverAway(computer, since + UNSAVED_MS)), true)
+    assert.equal(boat.recovers.filter((r) => r === sandbox).length, before + 1)
+    assert.deepEqual(stopsOf(computer), [{ sandbox, force: true }])
+    assert.equal(await until(computer.id, 'running'), 'running')
+    // A command that reaches it, whatever it answers, ends that.
+    hub.noteAwayUnreached(computer.id, Date.now())
+    hub.noteAwayReached(computer.id)
+    assert.equal(hub.runnerAway(computer.id)?.unreachedSince, undefined)
   },
 )
 

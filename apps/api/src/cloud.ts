@@ -960,7 +960,17 @@ async function startRunnerService(computer: Computer, ref: ComputerRef) {
   if (Date.now() - (runnerStarted.get(computer.id) ?? 0) < RUNNER_START_EVERY_MS) return
   runnerStarted.set(computer.id, Date.now())
   console.warn(`computer ${computer.id} up without its runner: starting its service`)
-  const result = await provider!.exec(ref, 'sudo systemctl start brigade-runner')
+  const hub = currentHub(computer.workspaceId)
+  const sentAt = Date.now()
+  // Whether boat still gets a command to the machine, which its snapshots do not tell: on Nov 18
+  // they went on for 34 minutes after a resume whose machine never ran a command (recoveryStep).
+  const result = await provider!
+    .exec(ref, 'sudo systemctl start brigade-runner')
+    .catch((error: unknown) => {
+      hub.noteAwayUnreached(computer.id, sentAt)
+      throw error
+    })
+  hub.noteAwayReached(computer.id)
   if (result.exitCode !== 0)
     console.error(
       `starting the runner on ${computer.id} failed (${result.exitCode}): ${result.stderr.slice(-2000)}`,
