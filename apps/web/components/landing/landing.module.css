@@ -368,7 +368,7 @@ svg.i {
   }
 }
 .hero .sub {
-  margin: 30px auto 0;
+  margin: 24px auto 0;
   font-size: 19px;
   line-height: 1.6;
   color: var(--muted-foreground);
@@ -380,7 +380,7 @@ svg.i {
   display: flex;
   align-items: center;
   gap: 22px;
-  margin-top: 38px;
+  margin-top: 32px;
   flex-wrap: wrap;
 }
 .hero .cta-row {
@@ -623,9 +623,6 @@ svg.os {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
   gap: 80px;
   align-items: center;
-}
-.byo-copy .h2 {
-  font-size: 48px;
 }
 .byo-pts {
   margin-top: 44px;
@@ -958,7 +955,7 @@ svg.os {
   max-width: 780px;
 }
 .sec-head.c .lead {
-  margin-top: 18px;
+  margin-top: 20px;
 }
 
 /* =================== 3 · Message =================== */
@@ -1677,13 +1674,13 @@ svg.os {
   align-items: center;
 }
 .built .h2 {
-  margin-bottom: 28px;
+  margin-bottom: 20px;
 }
 .built .lead + .lead {
   margin-top: 18px;
 }
 .built .link {
-  margin-top: 30px;
+  margin-top: 32px;
 }
 .link {
   display: inline-flex;
@@ -1699,11 +1696,11 @@ svg.os {
 }
 .nums {
   display: flex;
-  gap: 56px;
-  margin-bottom: 26px;
+  gap: 48px;
+  margin-bottom: 24px;
 }
 .nums .num {
-  font-size: 76px;
+  font-size: 48px;
 }
 .num {
   font-family: var(--font-mono);
@@ -1721,7 +1718,7 @@ svg.os {
   color: var(--muted-foreground);
   letter-spacing: 0;
 }
-.log {
+.pr-log {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius-xl);
@@ -2149,9 +2146,6 @@ svg.os {
   display: grid;
   grid-template-columns: 360px 1fr;
   gap: 80px;
-}
-.faq .h2 {
-  font-size: 44px;
 }
 .qs {
   border-top: 2px solid var(--foreground);
@@ -2597,8 +2591,14 @@ svg.os {
   font-weight: 800;
   letter-spacing: -0.035em;
 }
+/* Side by side, both cards' text takes the taller one's height, so their pictures line up. */
+@media (min-width: 641px) {
+  .tk-copy {
+    min-height: 112px;
+  }
+}
 .tk p {
-  margin-top: 6px;
+  margin-top: 8px;
   font-size: 15px;
   color: var(--muted-foreground);
   max-width: 520px;
@@ -5113,7 +5113,7 @@ svg.os {
   }
   .num,
   .nums .num {
-    font-size: 50px;
+    font-size: 36px;
   }
   .num-l {
     font-size: 11.5px;

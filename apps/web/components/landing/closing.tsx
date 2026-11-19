@@ -52,7 +52,7 @@ export function BuiltBy({ numbers }: { numbers: ProofNumbers }) {
             </div>
           )}
           {recentMerges && (
-            <section className={c('log')} aria-label="Latest merged pull requests">
+            <section className={c('pr-log')} aria-label="Latest merged pull requests">
               <div className={c('log-h')}>
                 <Icon name="github" />
                 <span className={c('mono')}>{REPO}</span>
