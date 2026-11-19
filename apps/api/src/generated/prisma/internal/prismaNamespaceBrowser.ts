@@ -952,6 +952,7 @@ export const McpClientScalarFieldEnum = {
   redirectUri: 'redirectUri',
   clientId: 'clientId',
   clientSecret: 'clientSecret',
+  clientSealed: 'clientSealed',
   createdAt: 'createdAt'
 } as const
 

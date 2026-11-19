@@ -7,6 +7,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { env } from '../config.js'
 import { prisma } from '../db.js'
+import { openShared, sealShared } from '../vault.js'
 import { mcpOutput } from './mcp-output.js'
 import { redact, type McpServer } from './types.js'
 
@@ -260,7 +261,7 @@ async function client(
   const known = await prisma.mcpClient.findUnique({
     where: { issuer_redirectUri: { issuer: authServer.issuer, redirectUri } },
   })
-  if (known) return known
+  if (known) return registeredClient(known)
   if (!authServer.registration_endpoint) {
     if (registersItself(authServer)) return { clientId: mcpClientDocumentUrl() }
     throw new Error(`${authServer.issuer} does not let Brigade register as a client`)
@@ -293,16 +294,45 @@ async function client(
       `Registering with ${authServer.issuer} failed: ${data.error_description ?? response.status}`,
     )
   }
-  return prisma.mcpClient.upsert({
+  const kept = await prisma.mcpClient.upsert({
     where: { issuer_redirectUri: { issuer: authServer.issuer, redirectUri } },
     create: {
       issuer: authServer.issuer,
       redirectUri,
       clientId: data.client_id,
-      clientSecret: data.client_secret ?? null,
+      clientSealed: data.client_secret
+        ? sealShared(MCP_CLIENT, `${authServer.issuer}\n${redirectUri}`, data.client_secret)
+        : null,
     },
     update: {},
   })
+  return registeredClient(kept)
+}
+
+const MCP_CLIENT = 'mcp-client'
+
+/**
+ * A registration as Brigade signs in with it: its secret opened. One kept in plain text (rows
+ * from before clientSealed) is sealed now, and the plain text cleared, unless another request
+ * did it first.
+ */
+async function registeredClient(row: {
+  id: string
+  issuer: string
+  redirectUri: string
+  clientId: string
+  clientSecret: string | null
+  clientSealed: string | null
+}): Promise<McpOAuthClient> {
+  const bound = `${row.issuer}\n${row.redirectUri}`
+  if (row.clientSealed)
+    return { clientId: row.clientId, clientSecret: openShared(MCP_CLIENT, bound, row.clientSealed) }
+  if (!row.clientSecret) return { clientId: row.clientId, clientSecret: null }
+  await prisma.mcpClient.updateMany({
+    where: { id: row.id, clientSecret: row.clientSecret, clientSealed: null },
+    data: { clientSealed: sealShared(MCP_CLIENT, bound, row.clientSecret), clientSecret: null },
+  })
+  return { clientId: row.clientId, clientSecret: row.clientSecret }
 }
 
 /** A PKCE verifier, kept with the sign-in's state until the callback. */
