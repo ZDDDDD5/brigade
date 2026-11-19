@@ -300,9 +300,7 @@ async function client(
       issuer: authServer.issuer,
       redirectUri,
       clientId: data.client_id,
-      // Both, for now: an API from before clientSealed, still serving during a rollout or
-      // after a rollback, reads clientSecret. The next deploy stops writing it and clears it.
-      clientSecret: data.client_secret ?? null,
+      // Sealed only: the API before this one (#942) reads clientSealed first too.
       clientSealed: data.client_secret
         ? sealShared(MCP_CLIENT, bound(authServer.issuer, redirectUri), data.client_secret)
         : null,
@@ -318,8 +316,8 @@ const bound = (issuer: string, redirectUri: string) => `${issuer}\n${redirectUri
 
 /**
  * A registration as Brigade signs in with it: its secret opened from clientSealed, or read from
- * clientSecret for a row sealMcpClients has not reached yet. The plain text stays for now: an
- * API from before clientSealed reads only it.
+ * clientSecret for a row sealMcpClients has not reached yet (kept in plain text by an API from
+ * before clientSealed).
  */
 function registeredClient(row: {
   issuer: string
@@ -336,28 +334,49 @@ function registeredClient(row: {
   return { clientId: row.clientId, clientSecret: row.clientSecret }
 }
 
+/** A sealed secret opened, or null when it does not open for this row. */
+const openedOrNull = (to: string, sealed: string) => {
+  try {
+    return openShared(MCP_CLIENT, to, sealed)
+  } catch {
+    return null
+  }
+}
+
 /**
- * Seal the registrations kept in plain text only (rows from before clientSealed): a connection
- * refreshes with the copy in its own vault secret and never reads its registration again, so
- * waiting for a new sign-in could leave one in plain text for good. Safe to run twice, and
- * beside a registration being written: each row is sealed only while still unsealed.
+ * Leave no registration's secret in plain text: one kept in plain text only is sealed, and one
+ * also sealed (written by #942, which kept both) loses its plain copy once the sealed one opens
+ * to the same secret. A connection refreshes with the copy in its own vault secret and never
+ * reads its registration again, so this job, not a new sign-in, is what clears old rows. Safe
+ * to run twice, and beside a registration being written: each row changes only while it still
+ * holds what was read.
  */
 export async function sealMcpClients() {
   const rows = await prisma.mcpClient.findMany({
-    where: { clientSecret: { not: null }, clientSealed: null },
-    select: { id: true, issuer: true, redirectUri: true, clientSecret: true },
+    where: { clientSecret: { not: null } },
+    select: { id: true, issuer: true, redirectUri: true, clientSecret: true, clientSealed: true },
   })
-  let sealed = 0
+  let cleared = 0
   for (const row of rows) {
+    const plain = row.clientSecret!
+    const to = bound(row.issuer, row.redirectUri)
+    if (row.clientSealed) {
+      // A sealed copy that doesn't open to the same secret: keep the plain one, and say so.
+      if (openedOrNull(to, row.clientSealed) !== plain) {
+        console.warn(`mcp client ${row.id}: sealed secret does not match, plain copy kept`)
+        continue
+      }
+    }
     const { count } = await prisma.mcpClient.updateMany({
-      where: { id: row.id, clientSecret: row.clientSecret, clientSealed: null },
+      where: { id: row.id, clientSecret: plain, clientSealed: row.clientSealed },
       data: {
-        clientSealed: sealShared(MCP_CLIENT, bound(row.issuer, row.redirectUri), row.clientSecret!),
+        clientSealed: row.clientSealed ?? sealShared(MCP_CLIENT, to, plain),
+        clientSecret: null,
       },
     })
-    sealed += count
+    cleared += count
   }
-  return sealed
+  return cleared
 }
 
 /** A PKCE verifier, kept with the sign-in's state until the callback. */
