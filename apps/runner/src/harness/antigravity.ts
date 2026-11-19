@@ -19,9 +19,9 @@
 //   the same refresh token is left as it is (Antigravity may have refreshed its access token). The
 //   machine's own login (a member's ~/.gemini) is used where it is, and never copied.
 import { execFile, spawn } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -154,6 +154,12 @@ export function installAgy(
 
 /** The account's Google login, in its folder: written by the sign-in, read by the runner alone. */
 export const AGY_TOKEN_FILE = 'antigravity-oauth-token'
+/**
+ * Where a sign-in runs (its own --gemini-dir, under the account's folder): never the folder a
+ * turn runs on there (a member's machine, `.gemini`), whose conversations a sign-in, a failed one
+ * or one cancelled, would otherwise take with it.
+ */
+export const AGY_SIGN_IN_DIR = '.signing-in'
 /** Where Antigravity keeps its login under its folder (--gemini-dir). */
 export const agyTokenIn = (geminiDir: string) => join(geminiDir, 'antigravity-cli', AGY_TOKEN_FILE)
 
@@ -181,14 +187,14 @@ export function loginEmail(login: string | undefined): string | undefined {
 }
 
 /**
- * After Antigravity's sign-in into `<dir>/.gemini`: its login kept as the account's one file, the
- * rest of that folder (its logs, an empty conversation store) dropped. Says who signed in.
+ * After Antigravity's sign-in into `<dir>/.signing-in`: its login kept as the account's one file,
+ * the rest of that folder (its logs, an empty conversation store) dropped. Says who signed in.
  */
 export async function keepLogin(dir: string): Promise<{ email?: string }> {
-  const signedIn = join(dir, '.gemini')
+  const signedIn = join(dir, AGY_SIGN_IN_DIR)
   const login = await readFile(agyTokenIn(signedIn), 'utf8')
   if (!refreshTokenOf(login)) throw new Error('Antigravity saved no Google login')
-  const temp = join(dir, `.${AGY_TOKEN_FILE}.new`)
+  const temp = join(dir, `.${AGY_TOKEN_FILE}.${randomUUID()}`)
   await writeFile(temp, login, { mode: 0o600 })
   await chmod(temp, 0o600)
   await rename(temp, join(dir, AGY_TOKEN_FILE))
@@ -263,12 +269,42 @@ export async function antigravityEnv(options: {
   if (refreshTokenOf(current) !== refreshTokenOf(login)) {
     if (options.runAs) await writeAs(options.runAs, file, login)
     else {
+      // Its own temporary file: a title run and the turn may start on the account together.
+      const temp = `${file}.brigade-${randomUUID()}`
       await mkdir(dirname(file), { recursive: true, mode: 0o700 })
-      await writeFile(`${file}.brigade`, login, { mode: 0o600 })
-      await rename(`${file}.brigade`, file)
+      await writeFile(temp, login, { mode: 0o600 })
+      await rename(temp, file).catch(async (error: unknown) => {
+        await rm(temp, { force: true })
+        throw error
+      })
     }
   }
   return { ...env, AGY_BRIGADE_GEMINI_DIR: geminiDir }
+}
+
+/**
+ * A removed account's copies of its login, and all Antigravity kept for it, in teammates' homes on
+ * a cloud computer (antigravityEnv): each teammate's ~/.accounts/<id>, removed as that teammate.
+ */
+export async function removeTeammateCopies(accountId: string, homes = '/home') {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(accountId)) throw new Error('Invalid account id')
+  const users = (await readdir(homes).catch(() => [] as string[])).filter((u) =>
+    /^bt-[a-z0-9]{1,28}$/.test(u),
+  )
+  await Promise.all(
+    users.map(
+      (user) =>
+        new Promise<void>((resolve) => {
+          const child = spawn(
+            'sudo',
+            ['-n', '-u', user, 'rm', '-rf', '--', join(homes, user, '.accounts', accountId)],
+            { cwd: '/', stdio: 'ignore' },
+          )
+          child.on('error', () => resolve())
+          child.on('close', () => resolve())
+        }),
+    ),
+  )
 }
 
 /** Whether the machine's own Antigravity is signed in (a member's ~/.gemini), never read. */

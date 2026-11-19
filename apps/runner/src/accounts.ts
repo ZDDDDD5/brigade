@@ -6,14 +6,20 @@
 // Claude account is a long-lived token from `claude setup-token`, which the
 // runner keeps beside the config directory and hands to each turn.
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AccountRef } from '@brigade/contracts'
 import xterm from '@xterm/headless'
-import { ACCOUNTS_DIR, CLOUD } from './config.js'
-import { installAgy, keepLogin, machineAgyLogin } from './harness/antigravity.js'
+import { ACCOUNTS_DIR, CLOUD, HOME as BRIGADE_HOME } from './config.js'
+import {
+  AGY_SIGN_IN_DIR,
+  installAgy,
+  keepLogin,
+  machineAgyLogin,
+  removeTeammateCopies,
+} from './harness/antigravity.js'
 import { shareAccount } from './teammates.js'
 import { harnessEnv } from './harness/env.js'
 import { vendorCli, type Vendor } from './vendor-cli.js'
@@ -149,7 +155,7 @@ class Login {
               '--login',
               '--disable-telemetry',
               '--gemini-dir',
-              join(dir, '.gemini'),
+              join(dir, AGY_SIGN_IN_DIR),
             ],
           ]
         : account.provider === 'codex'
@@ -313,7 +319,11 @@ class Login {
     clearTimeout(this.quiet)
     clearTimeout(this.due)
     this.onDone(done)
-    if (!done.ok && !keepDir) void rm(this.dir, { recursive: true, force: true })
+    if (done.ok || keepDir) return
+    // Antigravity's sign-in has a folder of its own: the account's login and conversations stay.
+    if (this.account.provider === 'antigravity')
+      void rm(join(this.dir, AGY_SIGN_IN_DIR), { recursive: true, force: true })
+    else void rm(this.dir, { recursive: true, force: true })
   }
 }
 
@@ -386,9 +396,28 @@ export async function machineLogins(home = homedir()): Promise<
       ...(claude.subscriptionType ? { plan: claude.subscriptionType } : {}),
     },
     { provider: 'codex', loggedIn: codex },
-    // Antigravity's, only once it is there: an API from before Antigravity knows no such login.
-    ...(machineAgyLogin(home) ? [{ provider: 'antigravity' as const, loggedIn: true }] : []),
+    // Antigravity's once it was ever there, signed in or out since: an API from before Antigravity
+    // knows no such login, so a machine that never had it says nothing of it.
+    ...machineAntigravityLogin(home),
   ]
+}
+
+/** Remembers that this machine had an Antigravity login: its sign-out is said from then on. */
+const AGY_SEEN = join(BRIGADE_HOME, 'machine-antigravity')
+
+export function machineAntigravityLogin(
+  home: string,
+): { provider: 'antigravity'; loggedIn: boolean }[] {
+  const loggedIn = machineAgyLogin(home)
+  if (loggedIn && !existsSync(AGY_SEEN)) {
+    try {
+      mkdirSync(BRIGADE_HOME, { recursive: true })
+      writeFileSync(AGY_SEEN, '')
+    } catch {
+      // Not remembered: a sign-out later goes unsaid, as before.
+    }
+  }
+  return loggedIn || existsSync(AGY_SEEN) ? [{ provider: 'antigravity', loggedIn }] : []
 }
 
 /** A vendor CLI's output; undefined on Windows when it is not installed (vendor-cli.ts). */
@@ -493,8 +522,12 @@ export class Accounts {
   async remove(account: AccountRef) {
     const dir = accountDir(account)
     if (!dir) return // never sign the member's own machine login out
-    // Antigravity keeps its login in the folder alone (no sign-out command to run).
-    if (account.provider === 'antigravity') return rm(dir, { recursive: true, force: true })
+    // Antigravity keeps its login in the folder alone (no sign-out command to run), and in the
+    // copies each teammate's turns made of it on a cloud computer.
+    if (account.provider === 'antigravity') {
+      if (CLOUD) await removeTeammateCopies(account.id)
+      return rm(dir, { recursive: true, force: true })
+    }
     await run(
       account.provider === 'codex' ? 'codex' : 'claude',
       account.provider === 'codex' ? ['logout'] : ['auth', 'logout'],

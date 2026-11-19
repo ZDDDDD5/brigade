@@ -1045,6 +1045,20 @@ export class Threads {
       await Promise.all([...this.threads.values()].map((t) => t.queue.catch(() => undefined)))
   }
 
+  /**
+   * Stop the harness sessions running on an account that is being removed, keeping saved state:
+   * none goes on with a login it no longer has (an Antigravity one keeps it in memory).
+   */
+  async parkAccount(accountId: string) {
+    await Promise.all(
+      [...this.threads.values()].flatMap((t) =>
+        [...t.harnesses.values()]
+          .filter((h) => h.harness.liveAccountId === accountId)
+          .map((h) => h.harness.park().catch(() => undefined)),
+      ),
+    )
+  }
+
   /** Stop every harness session, keeping saved state. */
   private async parkAll() {
     await Promise.all(

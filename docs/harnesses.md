@@ -39,9 +39,13 @@ user on a cloud computer, and is handed over across a runner update.
   alone and backed up with the others (`ACCOUNT_LOGIN_FILES`). Each turn copies it into the folder
   Antigravity runs on: the teammate's `~/.accounts/<id>/.gemini` on a cloud computer, the
   account's own on a member's machine. A Google refresh token is not spent when used, so every
-  copy stays signed in, and a copy holding the same login is left as it is. A member machine's own
-  `~/.gemini` login is used as it is (a machine account). The email comes from the login; the plan
-  is not known.
+  copy stays signed in, and a copy holding the same login is left as it is. A sign-in runs in a
+  folder of its own (`.signing-in`), so a failed, cancelled or repeated one never touches the
+  conversations a member's machine keeps in the account's `.gemini`. Removing the account stops
+  its sessions and removes each teammate's copy too. The account's folder is never shared with the
+  teammates' group, restored from a backup included. A member machine's own `~/.gemini` login is
+  used as it is (a machine account), and said signed out once it is gone. The email comes from the
+  login; the plan is not known. Project briefs are never written with a Google account.
 - **Models.** Gemini models only (`HARNESS_MODELS.antigravity`): Google offers its other models to
   its own and a few named editors' clients. Default is Gemini 3.8 Flash, the model `agy` starts on.
   The thread's effort goes on the model's id (`antigravityModelId`: `gemini-3.8-flash-low`), at

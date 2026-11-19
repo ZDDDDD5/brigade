@@ -21,9 +21,11 @@ import { antigravityModelId, modelEffort, loginOf, runModel } from '@brigade/con
 const root = mkdtempSync(join(tmpdir(), 'brigade-agy-'))
 process.env.BRIGADE_ANTIGRAVITY_DIR = join(root, 'cli')
 process.env.BRIGADE_ACCOUNTS_DIR = join(root, 'accounts')
+process.env.BRIGADE_HOME = join(root, 'brigade-home')
 
 const agy = await import('../src/harness/antigravity.js')
-const { Accounts, accountDir } = await import('../src/accounts.js')
+const { Accounts, accountDir, machineAntigravityLogin } = await import('../src/accounts.js')
+const { writeLogin } = await import('../src/account-backups.js')
 const { EventMapper } = await import('../src/harness/events.js')
 
 const login = (refresh: string, access = 'ya29.test') =>
@@ -84,7 +86,7 @@ test('a Google account signs in with Antigravity’s own sign-in, its login kept
   assert.equal(agy.refreshTokenOf(readFileSync(file, 'utf8')), 'refresh-1')
   assert.equal(statSync(file).mode & 0o777, 0o600)
   // Only the login stays: the rest of Antigravity's folder from the sign-in goes.
-  assert.equal(existsSync(join(dir, '.gemini')), false)
+  assert.equal(existsSync(join(dir, agy.AGY_SIGN_IN_DIR)), false)
 })
 
 test('a wrong code fails the sign-in and leaves no login', async () => {
@@ -98,10 +100,12 @@ test('a wrong code fails the sign-in and leaves no login', async () => {
   })
   assert.equal(result.ok, false)
   assert.match(result.error ?? '', /invalid_grant/)
-  // The failed sign-in's folder goes just after it says so.
-  const gone = join(process.env.BRIGADE_ACCOUNTS_DIR!, 'acct-bad')
+  // The failed sign-in's folder goes just after it says so, and no login is left.
+  const dir = join(process.env.BRIGADE_ACCOUNTS_DIR!, 'acct-bad')
+  const gone = join(dir, agy.AGY_SIGN_IN_DIR)
   for (let i = 0; i < 50 && existsSync(gone); i++) await new Promise((r) => setTimeout(r, 20))
   assert.equal(existsSync(gone), false)
+  assert.equal(existsSync(join(dir, agy.AGY_TOKEN_FILE)), false)
 })
 
 test('a turn gets the account’s login where it runs, and a refreshed copy is left as it is', async () => {
@@ -233,4 +237,92 @@ test('Google’s quota errors are out of usage, not a failure', () => {
   assert.ok(EventMapper.exhaustedBy('RESOURCE_EXHAUSTED: You have exhausted your weekly quota'))
   assert.ok(EventMapper.exhaustedBy('Error 429: Resource exhausted'))
   assert.equal(EventMapper.exhaustedBy('Authentication required'), undefined)
+})
+
+/** Sign the account in again through Accounts, with the stand-in CLI and this code. */
+const signIn = (id: string, loginId: string, code: string) =>
+  new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    const accounts = new Accounts({
+      prompt: () => accounts.submit(loginId, code),
+      done: (_id, r) => resolve(r),
+    })
+    void accounts.start(loginId, { id, provider: 'antigravity', source: 'brigade' })
+  })
+
+test('signing in again, or failing to, keeps the conversations a member’s machine ran there', async () => {
+  fakeCli()
+  const account = { id: 'acct-again', provider: 'antigravity' as const, source: 'brigade' as const }
+  const dir = accountDir(account)!
+  mkdirSync(join(dir, '.gemini', 'antigravity-cli', 'conversations'), { recursive: true })
+  const conversation = join(dir, '.gemini', 'antigravity-cli', 'conversations', 'c1.pb')
+  writeFileSync(conversation, 'a conversation')
+  writeFileSync(join(dir, agy.AGY_TOKEN_FILE), login('refresh-old'), { mode: 0o600 })
+  assert.equal((await signIn(account.id, 'again-1', '4/bad')).ok, false)
+  for (let i = 0; i < 50 && existsSync(join(dir, agy.AGY_SIGN_IN_DIR)); i++)
+    await new Promise((r) => setTimeout(r, 20))
+  // Failed: the account's login and its conversations are as they were.
+  assert.equal(
+    agy.refreshTokenOf(readFileSync(join(dir, agy.AGY_TOKEN_FILE), 'utf8')),
+    'refresh-old',
+  )
+  assert.equal(readFileSync(conversation, 'utf8'), 'a conversation')
+  assert.equal(existsSync(join(dir, agy.AGY_SIGN_IN_DIR)), false)
+  assert.deepEqual(await signIn(account.id, 'again-2', '4/good-code'), {
+    ok: true,
+    email: 'ada@example.com',
+  })
+  assert.equal(agy.refreshTokenOf(readFileSync(join(dir, agy.AGY_TOKEN_FILE), 'utf8')), 'refresh-1')
+  assert.equal(readFileSync(conversation, 'utf8'), 'a conversation')
+})
+
+test('a turn and a title run starting together on a new account both get its login', async () => {
+  fakeCli()
+  for (let i = 0; i < 20; i++) {
+    const account = {
+      id: `acct-race-${i}`,
+      provider: 'antigravity' as const,
+      source: 'brigade' as const,
+    }
+    const dir = accountDir(account)!
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, agy.AGY_TOKEN_FILE), login(`refresh-race-${i}`), { mode: 0o600 })
+    const home = mkdtempSync(join(root, 'race-'))
+    const both = await Promise.all([
+      agy.antigravityEnv({ account, accountDir: dir, home }),
+      agy.antigravityEnv({ account, accountDir: dir, home }),
+    ])
+    const copy = agy.agyTokenIn(both[0].AGY_BRIGADE_GEMINI_DIR!)
+    assert.equal(agy.refreshTokenOf(readFileSync(copy, 'utf8')), `refresh-race-${i}`)
+  }
+})
+
+test('a Google login put back from its backup keeps its folder the runner’s alone', async () => {
+  const dir = join(process.env.BRIGADE_ACCOUNTS_DIR!, 'acct-restored')
+  mkdirSync(dir, { recursive: true, mode: 0o770 })
+  chmodSync(dir, 0o770)
+  // Put back over a copy already there, readable by the folder's group.
+  writeFileSync(join(dir, agy.AGY_TOKEN_FILE), login('refresh-before'), { mode: 0o660 })
+  const content = Buffer.from(login('refresh-backup')).toString('base64')
+  await writeLogin(dir, 'acct-restored', {
+    files: [{ name: agy.AGY_TOKEN_FILE, content }],
+    sha256: 'x',
+  })
+  assert.equal(statSync(dir).mode & 0o777, 0o700)
+  assert.equal(statSync(join(dir, agy.AGY_TOKEN_FILE)).mode & 0o777, 0o600)
+  assert.equal(
+    agy.refreshTokenOf(readFileSync(join(dir, agy.AGY_TOKEN_FILE), 'utf8')),
+    'refresh-backup',
+  )
+})
+
+test('a machine signed out of Antigravity says so, once it had a login', () => {
+  const home = mkdtempSync(join(root, 'machine-'))
+  // Never had one: nothing said, for an API from before Antigravity.
+  assert.deepEqual(machineAntigravityLogin(home), [])
+  mkdirSync(join(home, '.gemini', 'antigravity-cli'), { recursive: true })
+  writeFileSync(agy.agyTokenIn(join(home, '.gemini')), login('refresh-m'))
+  assert.deepEqual(machineAntigravityLogin(home), [{ provider: 'antigravity', loggedIn: true }])
+  // Signed out since: said, so its account is no longer used.
+  execFileSync('rm', ['-f', agy.agyTokenIn(join(home, '.gemini'))])
+  assert.deepEqual(machineAntigravityLogin(home), [{ provider: 'antigravity', loggedIn: false }])
 })

@@ -84,8 +84,11 @@ export async function writeLogin(dir: string, accountId: string, login: AccountL
   }
   for (const file of login.files)
     if (!PRIVATE_FILES.includes(file.name)) await put(file.name, file.content, 0o660)
-  // Teammate users reach the login files through the folder's group (link-account).
-  if (CLOUD) await shareAccount(accountId)
+  // Teammate users reach the login files through the folder's group (link-account). Antigravity's
+  // folder is never shared: its turns get copies of its login (harness/antigravity.ts), and a
+  // folder its teammates may write in would let them replace it.
+  if (login.files.some((file) => file.name === AGY_TOKEN_FILE)) await chmod(dir, 0o700)
+  else if (CLOUD) await shareAccount(accountId)
   for (const file of login.files)
     if (PRIVATE_FILES.includes(file.name)) await put(file.name, file.content, 0o600)
 }

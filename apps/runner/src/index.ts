@@ -681,7 +681,8 @@ async function start() {
       case 'account.login.cancel':
         return accounts.cancel(message.loginId)
       case 'account.remove':
-        return accounts.remove(message.account)
+        // Its sessions stop first, then its login goes (and Antigravity's copies of it).
+        return threads.parkAccount(message.account.id).then(() => accounts.remove(message.account))
       case 'computer.backup': {
         const reply = (ok: boolean, error?: string) =>
           connection.send({

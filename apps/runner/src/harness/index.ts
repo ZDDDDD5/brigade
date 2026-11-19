@@ -1736,6 +1736,11 @@ export class HarnessThread {
     return this.live?.account ?? this.spec.account
   }
 
+  /** The account its live session runs on, if one runs. */
+  get liveAccountId(): string | undefined {
+    return this.live?.account.id
+  }
+
   private async turn(
     input: ThreadInput,
     signal: AbortSignal,

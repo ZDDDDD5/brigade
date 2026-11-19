@@ -141,6 +141,23 @@ describe(
       assert.ok(spec.fallbacks.every((a) => a.provider === 'claude_code'))
     })
 
+    test('a project brief is never written with a Google account', async () => {
+      const { briefAccount } = await import('../src/project-sites.js')
+      // The member's only ready accounts are Google ones.
+      await db.account.updateMany({
+        where: { id: accounts.claude },
+        data: { status: 'needs_sign_in' },
+      })
+      try {
+        const scope = { memberId, workspaceId, organizationId: org } as never
+        const picked = await briefAccount(db, scope)
+        assert.ok(!('account' in picked))
+        assert.match('reason' in picked ? picked.reason : '', /Connect a Claude or Codex account/)
+      } finally {
+        await db.account.updateMany({ where: { id: accounts.claude }, data: { status: 'ready' } })
+      }
+    })
+
     test('without the feature, it does not run', async () => {
       const { specFor, loadThread } = await import('../src/thread-spec.js')
       await open(false)
