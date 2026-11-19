@@ -221,11 +221,34 @@ export class WorkspaceHub {
     away.set(computerId, { ...found, recover: answer, recoverAskedAt: now })
   }
 
-  /** Past its restarts (RECOVER_LIMIT): said once in the log. */
-  noteAwayGaveUp(computerId: string) {
+  /**
+   * A command boat was asked to run on the computer (startRunnerService), sent at `sentAt`, never
+   * reached it: since when, kept until one does (noteAwayReached) or it is restarted.
+   */
+  noteAwayUnreached(computerId: string, sentAt: number) {
+    const away = this.durable<RunnerAway>('runner-away')
+    const found = away.get(computerId) ?? { since: sentAt, restarts: 0 }
+    if (found.unreachedSince !== undefined) return
+    away.set(computerId, { ...found, unreachedSince: sentAt })
+  }
+
+  /** A command boat was asked to run on the computer reached it, whatever it answered. */
+  noteAwayReached(computerId: string) {
     const away = this.durable<RunnerAway>('runner-away')
     const found = away.get(computerId)
-    if (found) away.set(computerId, { ...found, gaveUp: true })
+    if (found?.unreachedSince === undefined) return
+    const { unreachedSince: _, ...rest } = found
+    away.set(computerId, rest)
+  }
+
+  /** Past its automatic replacements (AUTO_REPLACE_LIMIT): said once in the log. */
+  noteAwayGaveUp(
+    computerId: string,
+    gaveUpFor: NonNullable<RunnerAway['gaveUpFor']> = 'replacements',
+  ) {
+    const away = this.durable<RunnerAway>('runner-away')
+    const found = away.get(computerId) ?? { since: Date.now(), restarts: 0 }
+    away.set(computerId, { ...found, gaveUp: true, gaveUpAt: Date.now(), gaveUpFor })
   }
 
   /** Its runner said hello, or the computer was stopped on purpose (idle, its plan, a member). */

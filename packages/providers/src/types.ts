@@ -15,7 +15,13 @@ export type ComputerSpec = {
  * What a start did: `resumedAt`, when the provider started the VM (it bills from then); null
  * when it was up already, or on its way up, so nothing was started.
  */
-export type StartResult = { resumedAt: Date | null }
+/** `cancelled`: its `proceed` said no before the provider was asked to resume it (StartOptions). */
+export type StartResult = { resumedAt: Date | null; cancelled?: boolean }
+/**
+ * `proceed`: asked right before the provider is asked to resume the computer, after any wait for
+ * a stop to finish; false, it is not resumed (a replacement took the computer's VM meanwhile).
+ */
+export type StartOptions = { proceed?: () => Promise<boolean> }
 
 /** Opaque to everything outside this package. Stored as JSON on Computer.providerRef. */
 export type ComputerRef = { provider: string; id: string }
@@ -101,7 +107,7 @@ export interface MachineProvider {
 
 export interface ComputerProvider {
   create(spec: ComputerSpec): Promise<ComputerRef>
-  start(ref: ComputerRef): Promise<StartResult | void> // resume with its disk
+  start(ref: ComputerRef, options?: StartOptions): Promise<StartResult | void> // resume with its disk
   /**
    * Keep the disk, stop billing. `force`: stop even when the disk cannot be saved any more,
    * keeping its last completed snapshot (what was written since is lost); without it, boat refuses

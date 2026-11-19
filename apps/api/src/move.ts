@@ -18,6 +18,7 @@ import { attachToThread } from './attachments.js'
 import { audit } from './audit.js'
 import { Prisma, prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { wake } from './cloud.js'
+import { actorOf } from './cloud-replace.js'
 import { hubs } from './hub.js'
 import { currentHub } from './hub/context.js'
 import { usableAccounts } from './routes/accounts.js'
@@ -303,7 +304,7 @@ async function arrive(
   })
   await audit({
     ...scope,
-    actor: { type: 'member', id: move.by },
+    actor: actorOf(move.by),
     action: 'thread.moved',
     target: { type: 'thread', id: session.id },
     data: { from: session.computerId, to: target.id, handedOver },

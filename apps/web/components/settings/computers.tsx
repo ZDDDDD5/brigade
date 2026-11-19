@@ -219,6 +219,11 @@ export default function Computers() {
                     Held up, trying again: {replacement.error}
                   </span>
                 )}
+                {replacement?.phase === 'failed' && replacement.error && (
+                  <span className="text-sm text-muted-foreground">
+                    Not replaced: {replacement.error}. Brigade’s team has been alerted.
+                  </span>
+                )}
                 {replacement?.phase === 'done' && replacement.problems.length > 0 && (
                   <details className="text-sm text-muted-foreground">
                     <summary className="cursor-pointer">

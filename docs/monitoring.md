@@ -72,6 +72,7 @@ told stays open until it is, and a turn for the worse that was not sent is tried
 | `runner-silent`               | Cloud computers' runners that stop their heartbeats without closing their connection                                                                                                                                      | 3 / 10 in 15 min                       |
 | `account-signed-out`          | An account marked `needs_sign_in` after 2 turns in a row failed for want of a login ("Not logged in · Please run /login")                                                                                                 | 1 / 5 in 1 h                           |
 | `runner-restart`              | Cloud computers' runners not back 2 minutes after an update's restart                                                                                                                                                     | 1 / 5 in 1 h                           |
+| `cloud:replacements-burst`    | More than 5 cloud computers moved to new VMs within 30 minutes: boat itself failing, the next replacements held back                                                                                                      | 1 / 10 in 30 min                       |
 | `runner-reconnects`           | A computer's runner connecting 10 times within a minute: a reconnect storm                                                                                                                                                | 1 / 5 in 15 min                        |
 | `runner-outbox`               | Commands refused: too many wait for a computer that stays down (`src/runner-commands.ts`)                                                                                                                                 | 1 / 20 in 30 min                       |
 | `jobs:dead`                   | Job messages that failed every try, waiting in `brigade-jobs-dlq` (once jobs are on the queue)                                                                                                                            | 1 / 20 waiting                         |
@@ -105,12 +106,45 @@ A cloud computer `running` without its runner is mended before operators need to
   (power-cycle the machine, its disk untouched). boat's baremetal machines cannot be power-cycled
   (`recover_unsupported`, tried on a throwaway sandbox on Nov 7): the computer is then stopped
   with its last snapshot (boat's forced stop, which still saves the disk first when it can) and
-  started again. The same once a power-cycle boat accepted has not brought the runner back within
-  5 minutes (`RECOVER_WAIT_MS`). When boat answers it reaches the machine, it is left as it is, and
-  asked again 10 minutes later;
-- never so without a snapshot to keep (a forced stop would lose the whole disk), nor while its
-  runner says its disk is full; at most 3 times in a row (`RECOVER_LIMIT`), after which its alert
-  says so and it is left to operators.
+  started again, once (`RECOVER_LIMIT`), which keeps its whole disk and sometimes lands it on
+  another of boat's hosts. The same once a power-cycle boat accepted has not brought the runner
+  back within 5 minutes (`RECOVER_WAIT_MS`);
+- still away 20 minutes after that restart, or with no snapshot to restart from, or a full disk
+  (boat does not start one past ~90% again): it moves to a new VM by itself
+  (`replaceAutomatically` in `src/cloud-replace.ts`, the same steps as a member's **Replace cloud
+  computer**, its row's `memberId` set to `brigade`). Nobody has to act: its threads say it is
+  restarting, then carry on from Brigade's backups. On Nov 18, a resumed VM never ran a command
+  again, its restore stuck at 15%: restarted three times on the same host, then left
+  "restarting" for an hour, until a member replaced it by hand;
+- when boat answers it reaches the machine though it does not save it (a full disk, failing
+  snapshots), it is asked again every 10 minutes, and moved to a new VM once it has stayed so 30
+  more minutes (`REACHABLE_REPLACE_MS`);
+- moved twice within 6 hours (`AUTO_REPLACE_LIMIT`, `AUTO_REPLACE_WINDOW_MS`) and still away: its
+  new VMs do not stay up either; its alert says so, `cloud:recovery-gave-up` is raised, and it is
+  left to operators. More than 5 computers moved across Brigade within 30 minutes means boat
+  itself is failing: the next ones wait (`cloud:replacements-burst`), asked again each minute,
+  rather than every workspace's computer being replaced at once.
+
+A machine boat still saves is never moved: its runner is the trouble there, and a runner failing
+everywhere (a bad release) must not move every workspace. One recovery runs at a time per
+computer: the service start is not waited for (boat held such commands 10 minutes on Nov 18), and
+the next minute's check does not join one still waiting on boat (on Nov 18, two restarts 55
+seconds apart). While a replacement is under way, its old VM is never started again: not by the
+idle check nor by a message, and a start that passed that fence first asks again right before boat
+resumes the VM (`StartOptions.proceed`); the replacement waits for it before stopping the old VM.
+The fleet-wide count and the new row are written under one lock, so two workspaces' hubs cannot
+both pass it. An automatic replacement whose runner comes back before its old VM is stopped is
+dropped, the computer left as it is. A restart of Brigade's that leaves the computer in `error`
+(boat refused to resume it, or it never booted) moves it to a new VM too (`recoverFailedRestart`).
+An automatic replacement asks again whether its runner is back right before boat is asked to
+stop the old VM. A new VM stopped while its backups are put back (`restoring`) starts as any.
+A computer in `error` after a restart is moved only when boat confirms the VM did not come up
+(`error`, `stopped`); up at boat (an answer lost), it is marked running and given its grace. An
+old VM boat neither reaches nor ever saved, whose plain stop boat refuses, is never cut over
+from: a forced stop would lose its only disk, and a new VM beside it would run the same logins.
+The replacement fails (shown on Computers), Brigade gives up on it, and `cloud:replace-refused`
+is raised for operators. A `gaveUp` left by the earlier three-restart ladder no longer stops anything: only
+`gaveUpAt` does.
 
 A stop without force does not do: boat refuses to stop a machine it has not saved for 30 minutes,
 so as not to lose what it has not saved, and keeps it running (it mails the account "could not
