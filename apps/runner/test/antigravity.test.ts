@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
+  readdirSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -27,6 +28,14 @@ const agy = await import('../src/harness/antigravity.js')
 const { Accounts, accountDir, machineAntigravityLogin } = await import('../src/accounts.js')
 const { writeLogin } = await import('../src/account-backups.js')
 const { EventMapper } = await import('../src/harness/events.js')
+
+/** A sign-in attempt's folders still in an account's folder. */
+const attempts = (dir: string) =>
+  existsSync(dir) ? readdirSync(dir).filter((name) => name.startsWith('.signing-in')) : []
+/** Wait for a failed sign-in's folder to go (just after it says so). */
+const settled = async (dir: string) => {
+  for (let i = 0; i < 50 && attempts(dir).length; i++) await new Promise((r) => setTimeout(r, 20))
+}
 
 const login = (refresh: string, access = 'ya29.test') =>
   JSON.stringify({
@@ -86,7 +95,7 @@ test('a Google account signs in with Antigravity’s own sign-in, its login kept
   assert.equal(agy.refreshTokenOf(readFileSync(file, 'utf8')), 'refresh-1')
   assert.equal(statSync(file).mode & 0o777, 0o600)
   // Only the login stays: the rest of Antigravity's folder from the sign-in goes.
-  assert.equal(existsSync(join(dir, agy.AGY_SIGN_IN_DIR)), false)
+  assert.deepEqual(attempts(dir), [])
 })
 
 test('a wrong code fails the sign-in and leaves no login', async () => {
@@ -102,9 +111,8 @@ test('a wrong code fails the sign-in and leaves no login', async () => {
   assert.match(result.error ?? '', /invalid_grant/)
   // The failed sign-in's folder goes just after it says so, and no login is left.
   const dir = join(process.env.BRIGADE_ACCOUNTS_DIR!, 'acct-bad')
-  const gone = join(dir, agy.AGY_SIGN_IN_DIR)
-  for (let i = 0; i < 50 && existsSync(gone); i++) await new Promise((r) => setTimeout(r, 20))
-  assert.equal(existsSync(gone), false)
+  await settled(dir)
+  assert.deepEqual(attempts(dir), [])
   assert.equal(existsSync(join(dir, agy.AGY_TOKEN_FILE)), false)
 })
 
@@ -258,15 +266,14 @@ test('signing in again, or failing to, keeps the conversations a member’s mach
   writeFileSync(conversation, 'a conversation')
   writeFileSync(join(dir, agy.AGY_TOKEN_FILE), login('refresh-old'), { mode: 0o600 })
   assert.equal((await signIn(account.id, 'again-1', '4/bad')).ok, false)
-  for (let i = 0; i < 50 && existsSync(join(dir, agy.AGY_SIGN_IN_DIR)); i++)
-    await new Promise((r) => setTimeout(r, 20))
+  await settled(dir)
   // Failed: the account's login and its conversations are as they were.
   assert.equal(
     agy.refreshTokenOf(readFileSync(join(dir, agy.AGY_TOKEN_FILE), 'utf8')),
     'refresh-old',
   )
   assert.equal(readFileSync(conversation, 'utf8'), 'a conversation')
-  assert.equal(existsSync(join(dir, agy.AGY_SIGN_IN_DIR)), false)
+  assert.deepEqual(attempts(dir), [])
   assert.deepEqual(await signIn(account.id, 'again-2', '4/good-code'), {
     ok: true,
     email: 'ada@example.com',
@@ -325,4 +332,106 @@ test('a machine signed out of Antigravity says so, once it had a login', () => {
   // Signed out since: said, so its account is no longer used.
   execFileSync('rm', ['-f', agy.agyTokenIn(join(home, '.gemini'))])
   assert.deepEqual(machineAntigravityLogin(home), [{ provider: 'antigravity', loggedIn: false }])
+})
+
+test('a sign-in a newer one replaced saves nothing over the newer one’s login', async () => {
+  const dir = join(process.env.BRIGADE_ACCOUNTS_DIR!, 'acct-two-sign-ins')
+  const attempt = (name: string, refresh: string) => {
+    const folder = join(dir, agy.signInDir(name), 'antigravity-cli')
+    mkdirSync(folder, { recursive: true })
+    writeFileSync(join(folder, agy.AGY_TOKEN_FILE), login(refresh))
+  }
+  attempt('old', 'refresh-old-attempt')
+  attempt('new', 'refresh-new-attempt')
+  // The old one's save starts first; a newer sign-in replaces it before it lands.
+  let replaced = false
+  const old = agy.keepLogin(dir, 'old', () => !replaced)
+  replaced = true
+  const newer = agy.keepLogin(dir, 'new', () => true)
+  await assert.rejects(old, /Replaced by a new sign-in/)
+  await newer
+  assert.equal(
+    agy.refreshTokenOf(readFileSync(join(dir, agy.AGY_TOKEN_FILE), 'utf8')),
+    'refresh-new-attempt',
+  )
+  // Each took only its own folder away.
+  assert.deepEqual(attempts(dir), [])
+  // The old one's CLI ending only after the newer one saved: it lands nothing over it either.
+  attempt('old', 'refresh-old-attempt')
+  attempt('new', 'refresh-newest-attempt')
+  const newest = agy.keepLogin(dir, 'new', () => true)
+  const late = agy.keepLogin(dir, 'old', () => false)
+  await newest
+  await assert.rejects(late, /Replaced by a new sign-in/)
+  assert.equal(
+    agy.refreshTokenOf(readFileSync(join(dir, agy.AGY_TOKEN_FILE), 'utf8')),
+    'refresh-newest-attempt',
+  )
+  assert.deepEqual(attempts(dir), [])
+})
+
+/** `sudo` for these tests: fails, or runs the command as this user (its -n -u <user> left out). */
+function fakeSudo(works: boolean) {
+  const bin = mkdtempSync(join(root, 'sudo-'))
+  writeFileSync(
+    join(bin, 'sudo'),
+    works
+      ? '#!/bin/sh\nshift 3\n[ "$1" = "--" ] && shift\nexec "$@"\n'
+      : '#!/bin/sh\necho "sudo: a password is required" >&2\nexit 1\n',
+  )
+  chmodSync(join(bin, 'sudo'), 0o755)
+  return bin
+}
+
+test('a removed account’s copies in teammates’ homes are tried again until they are gone', async () => {
+  const homes = mkdtempSync(join(root, 'homes-'))
+  const copy = join(homes, 'bt-gemma', '.accounts', 'acct-removed', '.gemini')
+  mkdirSync(copy, { recursive: true })
+  writeFileSync(join(copy, 'antigravity-oauth-token'), login('refresh-removed'))
+  process.env.BRIGADE_ANTIGRAVITY_REMOVED = join(root, 'removed.json')
+  const path = process.env.PATH
+  try {
+    await agy.fenceRemoved('acct-removed', true)
+    // The teammate's copy cannot be removed: said, and kept for the next try.
+    process.env.PATH = `${fakeSudo(false)}:${path}`
+    await assert.rejects(agy.cleanRemoved(homes), /acct-removed: bt-gemma: sudo: a password/)
+    assert.ok(existsSync(copy))
+    assert.deepEqual(JSON.parse(readFileSync(process.env.BRIGADE_ANTIGRAVITY_REMOVED, 'utf8')), [
+      'acct-removed',
+    ])
+    // The next try removes it, and the account leaves the list.
+    process.env.PATH = `${fakeSudo(true)}:${path}`
+    await agy.cleanRemoved(homes)
+    assert.equal(existsSync(join(homes, 'bt-gemma', '.accounts', 'acct-removed')), false)
+    assert.deepEqual(JSON.parse(readFileSync(process.env.BRIGADE_ANTIGRAVITY_REMOVED, 'utf8')), [])
+  } finally {
+    process.env.PATH = path
+  }
+})
+
+test('a turn that read the login just before its account was removed starts nothing', async () => {
+  fakeCli()
+  const account = {
+    id: 'acct-fenced',
+    provider: 'antigravity' as const,
+    source: 'brigade' as const,
+  }
+  const dir = accountDir(account)!
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, agy.AGY_TOKEN_FILE), login('refresh-fenced'), { mode: 0o600 })
+  const home = mkdtempSync(join(root, 'fenced-'))
+  // The account is removed after the turn read its login, before it wrote its copy.
+  await assert.rejects(
+    agy.antigravityEnv({
+      account,
+      accountDir: dir,
+      home,
+      afterRead: () => agy.fenceRemoved(account.id, false),
+    }),
+    /was removed/,
+  )
+  assert.equal(existsSync(join(dir, '.gemini')), false)
+  // And nothing later starts on it.
+  assert.equal(agy.isRemoved(account.id), true)
+  await assert.rejects(agy.antigravityEnv({ account, accountDir: dir, home }), /was removed/)
 })

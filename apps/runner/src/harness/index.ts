@@ -125,7 +125,12 @@ import { claimHandOver, type HandedOver } from '../hand-over.js'
 import { asTeammate, bridgeBrowser, threadNet } from '../thread-net.js'
 import { type PiPackage, loadPi } from '../pi-package.js'
 import { createPiHarness, piModel, piSkills } from './pi.js'
-import { antigravityEnv, createAntigravityHarness } from './antigravity.js'
+import {
+  antigravityEnv,
+  createAntigravityHarness,
+  isRemoved,
+  refuseRemoved,
+} from './antigravity.js'
 import { ReplyWatch, terminalTools } from './replies.js'
 import { declareDone, Outbox } from './outbox.js'
 import { Arrivals } from './arrivals.js'
@@ -2764,6 +2769,12 @@ export class HarnessThread {
       sandboxSession: sandbox,
       ...(resume ? { resumeFrom: resume as never } : {}),
     })
+    // A Google account removed while the session started (account.remove): it does not go on.
+    if (account.provider === 'antigravity' && isRemoved(account.id)) {
+      await session.destroy().catch(() => undefined)
+      await sandbox.destroy()
+      refuseRemoved(account)
+    }
     sandbox.dropAdopted()
     return this.begin(
       {
@@ -3232,6 +3243,8 @@ export async function runOnce(input: {
     sandboxSession: sandbox,
   })
   try {
+    // A Google account removed while the run started (account.remove): it does not go on.
+    if (spec.account.provider === 'antigravity') refuseRemoved(spec.account)
     let text = ''
     const mapper = new EventMapper((event) => {
       if (event.type === 'message.done') text = event.text

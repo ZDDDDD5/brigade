@@ -6,6 +6,7 @@
 // Claude account is a long-lived token from `claude setup-token`, which the
 // runner keeps beside the config directory and hands to each turn.
 import { spawn, type ChildProcess } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -14,11 +15,11 @@ import type { AccountRef } from '@brigade/contracts'
 import xterm from '@xterm/headless'
 import { ACCOUNTS_DIR, CLOUD, HOME as BRIGADE_HOME } from './config.js'
 import {
-  AGY_SIGN_IN_DIR,
+  cleanRemoved,
   installAgy,
   keepLogin,
   machineAgyLogin,
-  removeTeammateCopies,
+  signInDir,
 } from './harness/antigravity.js'
 import { shareAccount } from './teammates.js'
 import { harnessEnv } from './harness/env.js'
@@ -133,6 +134,8 @@ class Login {
   private due: NodeJS.Timeout | undefined
   private token: string | undefined
   private timer: NodeJS.Timeout
+  /** This sign-in's own folder, for Antigravity's (signInDir). */
+  private readonly attempt = randomUUID().slice(0, 12)
 
   constructor(
     readonly account: AccountRef,
@@ -155,7 +158,7 @@ class Login {
               '--login',
               '--disable-telemetry',
               '--gemini-dir',
-              join(dir, AGY_SIGN_IN_DIR),
+              join(dir, signInDir(this.attempt)),
             ],
           ]
         : account.provider === 'codex'
@@ -286,7 +289,11 @@ class Login {
     if (this.account.provider === 'antigravity') {
       // Its one login file, the runner's alone: each turn copies it where it runs.
       try {
-        return this.finish({ ok: true, ...(await keepLogin(this.dir)) })
+        // Only while it is still the account's sign-in: a newer one replaced it, it saves nothing.
+        return this.finish({
+          ok: true,
+          ...(await keepLogin(this.dir, this.attempt, () => !this.finished)),
+        })
       } catch (error) {
         return this.finish({ ok: false, error: `Could not save the sign-in: ${String(error)}` })
       }
@@ -322,7 +329,7 @@ class Login {
     if (done.ok || keepDir) return
     // Antigravity's sign-in has a folder of its own: the account's login and conversations stay.
     if (this.account.provider === 'antigravity')
-      void rm(join(this.dir, AGY_SIGN_IN_DIR), { recursive: true, force: true })
+      void rm(join(this.dir, signInDir(this.attempt)), { recursive: true, force: true })
     else void rm(this.dir, { recursive: true, force: true })
   }
 }
@@ -523,10 +530,12 @@ export class Accounts {
     const dir = accountDir(account)
     if (!dir) return // never sign the member's own machine login out
     // Antigravity keeps its login in the folder alone (no sign-out command to run), and in the
-    // copies each teammate's turns made of it on a cloud computer.
+    // copies each teammate's turns made of it on a cloud computer: those that cannot be removed
+    // now stay listed, removed at the runner's next tries (cleanRemoved), and the removal fails.
     if (account.provider === 'antigravity') {
-      if (CLOUD) await removeTeammateCopies(account.id)
-      return rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true })
+      if (CLOUD) await cleanRemoved()
+      return
     }
     await run(
       account.provider === 'codex' ? 'codex' : 'claude',

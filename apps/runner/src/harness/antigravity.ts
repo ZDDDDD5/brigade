@@ -28,6 +28,7 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { createACP } from '@ai-sdk/harness-acp'
 import type { AccountRef } from '@brigade/contracts'
+import { HOME as BRIGADE_HOME } from '../config.js'
 
 const run = promisify(execFile)
 
@@ -155,11 +156,14 @@ export function installAgy(
 /** The account's Google login, in its folder: written by the sign-in, read by the runner alone. */
 export const AGY_TOKEN_FILE = 'antigravity-oauth-token'
 /**
- * Where a sign-in runs (its own --gemini-dir, under the account's folder): never the folder a
- * turn runs on there (a member's machine, `.gemini`), whose conversations a sign-in, a failed one
- * or one cancelled, would otherwise take with it.
+ * Where a sign-in attempt runs (its own --gemini-dir, under the account's folder): never the
+ * folder a turn runs on there (a member's machine, `.gemini`), whose conversations a sign-in, a
+ * failed one or one cancelled, would otherwise take with it; nor another attempt's.
  */
-export const AGY_SIGN_IN_DIR = '.signing-in'
+export const signInDir = (attempt: string) => {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(attempt)) throw new Error('Invalid sign-in attempt')
+  return `.signing-in-${attempt}`
+}
 /** Where Antigravity keeps its login under its folder (--gemini-dir). */
 export const agyTokenIn = (geminiDir: string) => join(geminiDir, 'antigravity-cli', AGY_TOKEN_FILE)
 
@@ -186,21 +190,50 @@ export function loginEmail(login: string | undefined): string | undefined {
   }
 }
 
+/** The sign-ins saving into an account's folder, one after the other (keepLogin). */
+const saving = new Map<string, Promise<unknown>>()
+
 /**
- * After Antigravity's sign-in into `<dir>/.signing-in`: its login kept as the account's one file,
- * the rest of that folder (its logs, an empty conversation store) dropped. Says who signed in.
+ * After Antigravity's sign-in attempt into `<dir>/<signInDir(attempt)>`: its login kept as the
+ * account's one file, the rest of that folder (its logs, an empty conversation store) dropped.
+ * Says who signed in. `current` says whether the attempt still stands: one a newer sign-in
+ * replaced publishes nothing. Saves into one folder go one at a time, each looking at `current`
+ * right before its rename, so a superseded one can never land over a newer one's login.
  */
-export async function keepLogin(dir: string): Promise<{ email?: string }> {
-  const signedIn = join(dir, AGY_SIGN_IN_DIR)
-  const login = await readFile(agyTokenIn(signedIn), 'utf8')
-  if (!refreshTokenOf(login)) throw new Error('Antigravity saved no Google login')
-  const temp = join(dir, `.${AGY_TOKEN_FILE}.${randomUUID()}`)
-  await writeFile(temp, login, { mode: 0o600 })
-  await chmod(temp, 0o600)
-  await rename(temp, join(dir, AGY_TOKEN_FILE))
-  await rm(signedIn, { recursive: true, force: true })
-  const email = loginEmail(login)
-  return email ? { email } : {}
+export async function keepLogin(
+  dir: string,
+  attempt: string,
+  current: () => boolean = () => true,
+): Promise<{ email?: string }> {
+  const signedIn = join(dir, signInDir(attempt))
+  const before = saving.get(dir) ?? Promise.resolve()
+  const save = before
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        const login = await readFile(agyTokenIn(signedIn), 'utf8')
+        if (!refreshTokenOf(login)) throw new Error('Antigravity saved no Google login')
+        const temp = join(dir, `.${AGY_TOKEN_FILE}.${randomUUID()}`)
+        await writeFile(temp, login, { mode: 0o600 })
+        await chmod(temp, 0o600)
+        if (!current()) {
+          await rm(temp, { force: true })
+          throw new Error('Replaced by a new sign-in')
+        }
+        await rename(temp, join(dir, AGY_TOKEN_FILE))
+        const email = loginEmail(login)
+        return email ? { email } : {}
+      } finally {
+        await rm(signedIn, { recursive: true, force: true })
+      }
+    })
+  saving.set(dir, save)
+  void save
+    .finally(() => {
+      if (saving.get(dir) === save) saving.delete(dir)
+    })
+    .catch(() => undefined)
+  return save
 }
 
 /** A file's content as `user` reads it (a teammate's, on a cloud computer); undefined when none. */
@@ -248,6 +281,8 @@ export async function antigravityEnv(options: {
   home: string
   runAs?: string
   root?: string
+  /** Tests: after the account's login is read, before its copy is written. */
+  afterRead?: () => Promise<void>
 }): Promise<Record<string, string>> {
   const bin = await installAgy(options.root ? { root: options.root } : {})
   const env: Record<string, string> = {
@@ -256,9 +291,11 @@ export async function antigravityEnv(options: {
     AGY_CLI_DISABLE_AUTO_UPDATE: '1',
   }
   if (!options.accountDir) return env
+  refuseRemoved(options.account)
   const login = await readFile(join(options.accountDir, AGY_TOKEN_FILE), 'utf8').catch(() => {
     throw new Error('Not logged in: this Google account has no Antigravity login. Sign in again.')
   })
+  await options.afterRead?.()
   const geminiDir = options.runAs
     ? join(options.home, '.accounts', options.account.id, '.gemini')
     : join(options.accountDir, '.gemini')
@@ -279,7 +316,91 @@ export async function antigravityEnv(options: {
       })
     }
   }
+  // Removed meanwhile: the copy just made goes too, and nothing starts on it.
+  if (removed.has(options.account.id)) {
+    if (options.runAs)
+      await rmAs(options.runAs, join(options.home, '.accounts', options.account.id))
+    else await rm(geminiDir, { recursive: true, force: true })
+    refuseRemoved(options.account)
+  }
   return { ...env, AGY_BRIGADE_GEMINI_DIR: geminiDir }
+}
+
+/**
+ * Google accounts being removed, or removed, whose teammate copies may still be there: in memory
+ * for the work that starts meanwhile (refuseRemoved), and in a file of the runner's until each
+ * copy is gone (cleanRemoved), so a cleanup that failed or that a restart cut off goes on later.
+ */
+const removed = new Set<string>()
+const REMOVED_FILE = () =>
+  process.env.BRIGADE_ANTIGRAVITY_REMOVED ?? join(BRIGADE_HOME, 'antigravity-removed.json')
+
+async function readRemoved(): Promise<string[]> {
+  try {
+    const ids = JSON.parse(await readFile(REMOVED_FILE(), 'utf8')) as unknown
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+async function writeRemoved(ids: string[]) {
+  await mkdir(dirname(REMOVED_FILE()), { recursive: true })
+  const temp = `${REMOVED_FILE()}.${randomUUID()}`
+  await writeFile(temp, JSON.stringify([...new Set(ids)]))
+  await rename(temp, REMOVED_FILE())
+}
+
+/**
+ * Nothing new starts on this account from now on. On a cloud computer (`copies`), its teammates'
+ * copies are to be removed (cleanRemoved), kept in the list until they are.
+ */
+export async function fenceRemoved(accountId: string, copies: boolean) {
+  removed.add(accountId)
+  if (copies) await writeRemoved([...(await readRemoved()), accountId])
+}
+
+/** Refuse work on an account being removed. */
+export function refuseRemoved(account: Pick<AccountRef, 'id' | 'provider'>) {
+  if (account.provider === 'antigravity' && removed.has(account.id))
+    throw new Error('Not logged in: this Google account was removed.')
+}
+
+/** Whether the account is being removed (its sessions stop when they find it so). */
+export const isRemoved = (accountId: string) => removed.has(accountId)
+
+/**
+ * Remove the teammates' copies of each removed account (removeTeammateCopies), dropping it from
+ * the list once all are gone. Throws with what could not be removed, kept for the next try.
+ */
+export async function cleanRemoved(homes = '/home') {
+  const ids = await readRemoved()
+  const failed: string[] = []
+  for (const id of ids) {
+    removed.add(id)
+    await removeTeammateCopies(id, homes).catch((error: unknown) =>
+      failed.push(`${id}: ${error instanceof Error ? error.message : String(error)}`),
+    )
+  }
+  const left = ids.filter((id) => failed.some((f) => f.startsWith(`${id}:`)))
+  await writeRemoved([...left, ...(await readRemoved()).filter((id) => !ids.includes(id))])
+  if (failed.length) throw new Error(`Antigravity logins not removed: ${failed.join('; ')}`)
+}
+
+/** Remove a folder as `user`; rejects when it is still there. */
+function rmAs(user: string, path: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('sudo', ['-n', '-u', user, 'rm', '-rf', '--', path], {
+      cwd: '/',
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.setEncoding('utf8').on('data', (d: string) => (stderr += d))
+    child.on('error', reject)
+    child.on('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(`${user}: ${stderr.trim() || `exit ${code}`}`)),
+    )
+  })
 }
 
 /**
@@ -291,20 +412,15 @@ export async function removeTeammateCopies(accountId: string, homes = '/home') {
   const users = (await readdir(homes).catch(() => [] as string[])).filter((u) =>
     /^bt-[a-z0-9]{1,28}$/.test(u),
   )
-  await Promise.all(
-    users.map(
-      (user) =>
-        new Promise<void>((resolve) => {
-          const child = spawn(
-            'sudo',
-            ['-n', '-u', user, 'rm', '-rf', '--', join(homes, user, '.accounts', accountId)],
-            { cwd: '/', stdio: 'ignore' },
-          )
-          child.on('error', () => resolve())
-          child.on('close', () => resolve())
-        }),
-    ),
+  const results = await Promise.allSettled(
+    users.map((user) => rmAs(user, join(homes, user, '.accounts', accountId))),
   )
+  const failed = results.flatMap((r) =>
+    r.status === 'rejected'
+      ? [r.reason instanceof Error ? r.reason.message : String(r.reason)]
+      : [],
+  )
+  if (failed.length) throw new Error(failed.join('; '))
 }
 
 /** Whether the machine's own Antigravity is signed in (a member's ~/.gemini), never read. */
