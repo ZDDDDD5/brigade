@@ -1,6 +1,6 @@
 import { type BetterAuthPlugin, betterAuth } from 'better-auth'
 import { prismaAdapter } from 'better-auth/adapters/prisma'
-import { APIError } from 'better-auth/api'
+import { APIError, createAuthMiddleware } from 'better-auth/api'
 import { bearer, captcha, emailOTP, organization } from 'better-auth/plugins'
 import { createAccessControl } from 'better-auth/plugins/access'
 import {
@@ -45,6 +45,36 @@ function limitOf(request: Request, rule: { window: number; max: number }) {
   if (path === '/guest' && request.method === 'POST') return { window: 3600, max: 5 }
   return rule
 }
+
+/**
+ * Password resets and changes, closed: nobody sets or changes a password through Brigade
+ * (sign-up with one is off in production, config.ts; the few accounts that have one were given
+ * it by hand, src/password-sign-in.ts). Open, they let anyone have a reset code made for any
+ * address, never mailed (sendVerificationOTP below mails sign-in codes only), then guess it and
+ * set a password on that account, which made it a password sign-in.
+ */
+const CLOSED_PASSWORD_ROUTES = new Set([
+  '/email-otp/request-password-reset',
+  '/forget-password/email-otp',
+  '/email-otp/reset-password',
+  '/request-password-reset',
+  '/reset-password',
+  '/change-password',
+])
+const passwordRouteClosed = (path: string) =>
+  CLOSED_PASSWORD_ROUTES.has(path) || path.startsWith('/reset-password/')
+
+/**
+ * Before every auth endpoint, over HTTP or through auth.api: the password routes above answer
+ * 404, and a code is only ever made to sign in: a reset code served only the routes above, and
+ * nobody needs a code to verify an address (it is proven when signing in). Both were made
+ * without being sent.
+ */
+const closePasswordRoutes = createAuthMiddleware(async (ctx) => {
+  if (passwordRouteClosed(ctx.path)) throw new APIError('NOT_FOUND')
+  if (ctx.path === '/email-otp/send-verification-otp' && ctx.body?.type !== 'sign-in')
+    throw new APIError('FORBIDDEN', { message: 'Codes are only sent to sign in' })
+})
 
 /** The organization plugin's roles: its default three, and a viewer. */
 const access = createAccessControl(defaultStatements)
@@ -109,6 +139,7 @@ export const auth = betterAuth({
       },
     },
   },
+  hooks: { before: closePasswordRoutes },
   advanced: {
     ipAddress: { ipAddressHeaders: ['cf-connecting-ip'] },
     ...(env.CROSS_SITE_COOKIES && {
