@@ -26,12 +26,16 @@ backups (they are in its files folder, late uploads included through `BucketClea
 
 A harness rewrites a login as the teammate that runs it: Codex (0.167 on) renames a new `auth.json`
 over the shared one, mode 0600, owned by the teammate's user, which neither the runner nor the
-account's other teammates can read. Before reading an account's login, the runner shares its folder
-again (`share-account`) when a login file there is another user's or not the group's to read and
-write; a login it still cannot read is logged (`could not read the login of …`), not skipped. A
-folder holding a long-lived token (`.oauth-token`) is never shared again: that token is the
-runner's alone. Without this, the API's copy stayed at the login before the refresh, whose refresh
-token Codex had spent, and the computer that replaced this one was signed out (Nov 18).
+account's other teammates can read. Before reading an account's login, the runner shares its
+shared login files (`auth.json`, `auth.json.lock`, `.credentials.json`) again when one is another
+user's or not the group's to read and write: itself for its own files, else through the root
+helper's `share-login`, which touches only those files, never through a link, and never the
+runner's `.oauth-token`. A login it still cannot read, or could not send, is logged
+(`could not read the login of …`) and fails the backup the API asks for before a replacement
+(its note says which). A backup asked for while a pass is under way waits for a pass that starts
+after it, so it never reports the login read before a refresh. Without this, the API's copy
+stayed at the login before the refresh, whose refresh token Codex had spent, and the computer
+that replaced this one was signed out (Nov 18).
 
 ## Replacing
 

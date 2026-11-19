@@ -28,7 +28,7 @@ process.env.BRIGADE_HOME = home
 const { seal, unseal } = await import('../src/sealed.js')
 const { Folders, pack, changedSince } = await import('../src/folders.js')
 const { threadFolder, backgroundTasks } = await import('../src/threads.js')
-const { readLogin, writeLogin, AccountBackups, needsSharing } =
+const { readLogin, writeLogin, AccountBackups, unsharedFiles } =
   await import('../src/account-backups.js')
 
 test.after(() => rm(home, { recursive: true, force: true }))
@@ -199,13 +199,18 @@ async function codexRefreshed(dir: string, content: string) {
   await rename(temp, join(dir, 'auth.json'))
 }
 
-function backups(share: (accountId: string) => Promise<unknown>) {
+function backups(
+  share: (accountId: string) => Promise<unknown>,
+  put?: (accountId: string, auth: string) => Promise<void>,
+) {
   const sent = new Map<string, string>()
   const puts: { accountId: string; auth: string }[] = []
   const store = new AccountBackups({
     put: async (accountId, login) => {
-      const auth = login.files.find((f) => f.name === 'auth.json')
-      puts.push({ accountId, auth: Buffer.from(auth?.content ?? '', 'base64').toString() })
+      const file = login.files.find((f) => f.name === 'auth.json')
+      const auth = Buffer.from(file?.content ?? '', 'base64').toString()
+      await put?.(accountId, auth)
+      puts.push({ accountId, auth })
     },
     sent: (accountId) => sent.get(accountId),
     noteSent: (accountId, sha256) => void sent.set(accountId, sha256),
@@ -216,6 +221,9 @@ function backups(share: (accountId: string) => Promise<unknown>) {
 }
 
 const asRoot = process.getuid?.() === 0
+const lastPut = (puts: { accountId: string; auth: string }[], accountId: string) =>
+  puts.filter((p) => p.accountId === accountId).at(-1)?.auth
+const mode = async (file: string) => (await stat(file)).mode & 0o777
 
 test(
   'a Codex login refreshed by a teammate is shared again and backed up, not skipped',
@@ -228,31 +236,42 @@ test(
     const shared: string[] = []
     const { store, puts } = backups(async (accountId) => {
       shared.push(accountId)
-      // share-account: the runner's again, the group's read and write back.
+      // share-login: the shared login files the runner's again, the group's read and write back.
       await chmod(join(home, 'accounts', accountId, 'auth.json'), 0o660)
     })
-    await store.sync()
-    assert.deepEqual(
-      puts.filter((p) => p.accountId === 'codex-refreshed').map((p) => p.auth),
-      ['{"refresh_token":"r1"}'],
-    )
-    assert.ok(!shared.includes('codex-refreshed'), 'a shared folder is left as it is')
+    await store.sync().catch(() => undefined)
+    assert.equal(lastPut(puts, 'codex-refreshed'), '{"refresh_token":"r1"}')
+    assert.ok(!shared.includes('codex-refreshed'), 'a shared login is left as it is')
 
     // The teammate's Codex refreshes: r1 is spent, and only r2 signs in from now on.
     await codexRefreshed(dir, '{"refresh_token":"r2"}')
-    assert.ok(await needsSharing(dir))
-    await store.sync()
+    assert.equal((await unsharedFiles(dir)).length, 1)
+    await store.sync().catch(() => undefined)
     assert.ok(shared.includes('codex-refreshed'))
-    assert.equal(
-      puts.filter((p) => p.accountId === 'codex-refreshed').at(-1)?.auth,
-      '{"refresh_token":"r2"}',
-    )
-    assert.equal(await needsSharing(dir), false)
+    assert.equal(lastPut(puts, 'codex-refreshed'), '{"refresh_token":"r2"}')
+    assert.deepEqual(await unsharedFiles(dir), [])
   },
 )
 
+test("a login file of the runner's own is shared by the runner, and its token stays its own", async () => {
+  const dir = join(home, 'accounts', 'own-files')
+  await mkdir(dir, { recursive: true })
+  // The runner's own Codex (a usage read) refreshed it: 0600, which teammates cannot read.
+  await writeFile(join(dir, 'auth.json'), '{"refresh_token":"r5"}', { mode: 0o600 })
+  await chmod(join(dir, 'auth.json'), 0o600)
+  await writeFile(join(dir, '.oauth-token'), 'sk-ant-oat01-x\n', { mode: 0o600 })
+  await chmod(join(dir, '.oauth-token'), 0o600)
+  const shared: string[] = []
+  const { store, puts } = backups(async (accountId) => void shared.push(accountId))
+  await store.sync().catch(() => undefined)
+  assert.equal(await mode(join(dir, 'auth.json')), 0o660)
+  assert.equal(await mode(join(dir, '.oauth-token')), 0o600, 'the token is never shared')
+  assert.ok(!shared.includes('own-files'), "no root needed for the runner's own file")
+  assert.equal(lastPut(puts, 'own-files'), '{"refresh_token":"r5"}')
+})
+
 test(
-  'a login the runner still cannot read is said, and sent once it can be',
+  'a login the runner still cannot read fails the backup, is said once, and is sent once it can be',
   { skip: asRoot && 'root reads any file' },
   async (t) => {
     const dir = join(home, 'accounts', 'codex-unreadable')
@@ -263,27 +282,49 @@ test(
     const { store, puts } = backups(async () => {
       throw new Error('sudo: a password is required')
     })
-    await store.sync()
-    await store.sync()
+    await assert.rejects(store.sync(), /codex-unreadable could not be read/)
+    await assert.rejects(store.sync(), /codex-unreadable could not be read/)
     assert.ok(!puts.some((p) => p.accountId === 'codex-unreadable'))
     const said = warnings.filter((w) => w.includes('could not read the login of codex-unreadable'))
     assert.equal(said.length, 1, 'said once, not at every pass')
 
     await chmod(join(dir, 'auth.json'), 0o660)
-    await store.sync()
-    assert.equal(
-      puts.filter((p) => p.accountId === 'codex-unreadable').at(-1)?.auth,
-      '{"refresh_token":"r3"}',
-    )
+    await store.sync().catch(() => undefined)
+    assert.equal(lastPut(puts, 'codex-unreadable'), '{"refresh_token":"r3"}')
   },
 )
 
-test('a folder with a long-lived token is never shared again', async () => {
-  const dir = join(home, 'accounts', 'claude-token')
+test('a backup asked for while a pass uploads waits for a pass that reads the login again', async () => {
+  const dir = join(home, 'accounts', 'codex-in-flight')
   await mkdir(dir, { recursive: true })
-  await writeFile(join(dir, '.oauth-token'), 'sk-ant-oat01-x\n', { mode: 0o600 })
-  await writeFile(join(dir, '.credentials.json'), '{}', { mode: 0o600 })
-  assert.equal(await needsSharing(dir), false)
+  await writeFile(join(dir, 'auth.json'), '{"refresh_token":"r1"}', { mode: 0o660 })
+  await chmod(join(dir, 'auth.json'), 0o660)
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let uploading!: () => void
+  const started = new Promise<void>((resolve) => (uploading = resolve))
+  const { store, puts } = backups(
+    async () => undefined,
+    async (accountId, auth) => {
+      if (accountId !== 'codex-in-flight' || !auth.includes('r1')) return
+      uploading()
+      await held
+    },
+  )
+  const first = store.sync().catch(() => undefined)
+  await started
+  // Codex refreshes while r1 is on its way; then the replacement's last backup is asked for.
+  await writeFile(join(dir, 'auth.json'), '{"refresh_token":"r2"}')
+  const last = store.sync().catch(() => undefined)
+  const again = store.sync().catch(() => undefined)
+  release()
+  await Promise.all([first, last, again])
+  assert.equal(lastPut(puts, 'codex-in-flight'), '{"refresh_token":"r2"}')
+  assert.equal(
+    puts.filter((p) => p.accountId === 'codex-in-flight').length,
+    2,
+    'callers that come while one waits join it',
+  )
 })
 
 test("what a turn runs in the background, from Claude Code's task messages", () => {

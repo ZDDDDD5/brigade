@@ -73,6 +73,20 @@ case "\${1:-}" in
     chown -R brigade:"$GROUP" "$D"
     chmod -R g+rwX,o-rwx "$D"
     find "$D" -type d -exec chmod g+s {} +
+    # The long-lived token stays the runner's alone, whatever the chmod above found.
+    if [ -f "$D/.oauth-token" ] && [ ! -L "$D/.oauth-token" ]; then chmod 600 "$D/.oauth-token"; fi
+    ;;
+  share-login) # <accountId>: a login file a harness rewrote as a teammate (0600, its owner) shared again
+    id_ok "$2"
+    D="$ACCOUNTS/$2"
+    [ -d "$D" ] || exit 0
+    # Only these files, never followed through a link, never the token: nothing else changes.
+    for F in auth.json auth.json.lock .credentials.json; do
+      if [ -f "$D/$F" ] && [ ! -L "$D/$F" ]; then
+        chown brigade:"$GROUP" "$D/$F"
+        chmod 660 "$D/$F"
+      fi
+    done
     ;;
   link-account) # <user> <accountId> <provider>: a private config dir sharing only the login file
     user_ok "$2"; id_ok "$3"; F=$(cred "$4")
