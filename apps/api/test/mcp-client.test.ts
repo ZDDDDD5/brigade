@@ -257,6 +257,17 @@ test(
         clientSealed: sealShared('mcp-client', `${AUTH}\n${redirectUri}`, 'the-real-secret'),
       },
     })
+    // Sealed for this row, but to another secret: the plain copy is kept too.
+    const mismatch = 'https://mismatch-auth.test'
+    const differs = await prisma.mcpClient.create({
+      data: {
+        issuer: mismatch,
+        redirectUri,
+        clientId: 'mismatch-client',
+        clientSecret: 'the-plain-secret',
+        clientSealed: sealShared('mcp-client', `${mismatch}\n${redirectUri}`, 'another-secret'),
+      },
+    })
     try {
       assert.ok((await sealMcpClients()) >= 1)
       const cleared = await prisma.mcpClient.findUniqueOrThrow({ where: { id: row.id } })
@@ -264,6 +275,8 @@ test(
       assert.equal(cleared.clientSealed, both, 'the sealed copy is kept as it was')
       const kept = await prisma.mcpClient.findUniqueOrThrow({ where: { id: wrong.id } })
       assert.equal(kept.clientSecret, 'the-real-secret')
+      const stillPlain = await prisma.mcpClient.findUniqueOrThrow({ where: { id: differs.id } })
+      assert.equal(stillPlain.clientSecret, 'the-plain-secret')
 
       secretsSent = []
       const signIn = await mcpAuthUrl(server, 'state', 'verifier')
@@ -271,7 +284,7 @@ test(
       await exchangeMcpCode(server, 'code', 'verifier', undefined, signIn.clientId)
       assert.deepEqual(secretsSent, ['kept-both-ways'])
     } finally {
-      await prisma.mcpClient.deleteMany({ where: { issuer: other } })
+      await prisma.mcpClient.deleteMany({ where: { issuer: { in: [other, mismatch] } } })
     }
   },
 )
