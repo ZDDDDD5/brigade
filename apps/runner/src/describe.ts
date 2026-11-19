@@ -93,6 +93,9 @@ export async function describeProject(request: Request): Promise<Result> {
   const id = `project-${request.requestId.replace(/[^\w-]/g, '').slice(0, 40)}`
   const workDir = join(paths.state, 'project-runs', id)
   try {
+    // Never on a Google account (the API picks none): Antigravity is behind a feature of its own.
+    if (request.account.provider === 'antigravity')
+      throw new Error('A project brief is not written with a Google account')
     const answer = await runOnce({
       spec: {
         sessionId: id,

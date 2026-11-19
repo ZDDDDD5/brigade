@@ -17,15 +17,27 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { PiCredentialStore, PiHarnessExtensionFactory } from '@ai-sdk/harness-pi'
-import { type AccountRef, type Effort, type ThreadSkill, SKILL_ENTRY } from '@brigade/contracts'
+import {
+  type AccountRef,
+  type Effort,
+  type HarnessId,
+  type ThreadSkill,
+  SKILL_ENTRY,
+} from '@brigade/contracts'
 import { accountDir, accountToken } from '../accounts.js'
 import { refreshCodexLogin } from '../codex-usage.js'
 import type { PiPackage } from '../pi-package.js'
 
 type Credential = NonNullable<Awaited<ReturnType<PiCredentialStore['read']>>>
 
-/** Pi's provider for a login: Anthropic's API, or the ChatGPT backend Codex uses. */
-export const PI_PROVIDER = { claude_code: 'anthropic', codex: 'openai-codex' } as const
+/**
+ * Pi's provider for a login: Anthropic's API, or the ChatGPT backend Codex uses. None for a Google
+ * account (Antigravity's): Pi never runs on one (loginOf).
+ */
+export const PI_PROVIDER: Partial<Record<HarnessId, string>> = {
+  claude_code: 'anthropic',
+  codex: 'openai-codex',
+}
 
 /** How long a token must still hold for a request to go out on it, as Pi itself asks (5 min). */
 const VALID_MS = 5 * 60_000
@@ -152,6 +164,7 @@ export function loginCredentials(
     read: (providerId) => readLogin(account, providerId, options),
     async list() {
       const providerId = PI_PROVIDER[account.provider]
+      if (!providerId) return []
       const credential = await readLogin(account, providerId, options).catch(() => undefined)
       return credential ? [{ providerId, type: credential.type }] : []
     },
@@ -179,8 +192,11 @@ export function loginCredentials(
 }
 
 /** Pi's model reference: the provider of the teammate's login, so Pi never picks another one. */
-export const piModel = (account: AccountRef, model: string) =>
-  `${PI_PROVIDER[account.provider]}/${model}`
+export const piModel = (account: AccountRef, model: string) => {
+  const provider = PI_PROVIDER[account.provider]
+  if (!provider) throw new PiLoginError('Pi does not run on a Google account')
+  return `${provider}/${model}`
+}
 
 /** Brigade's skills as Pi lists them: written in the thread's `.agents/skills` (skills.ts). */
 export const piSkills = (workDir: string, skills: Pick<ThreadSkill, 'name' | 'description'>[]) =>

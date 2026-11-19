@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@ai-sdk/harness": "1.0.187",
+    "@ai-sdk/harness-acp": "1.0.127",
     "@ai-sdk/harness-claude-code": "1.0.191",
     "@ai-sdk/harness-codex": "1.0.189",
     "@brigade/contracts": "workspace:*",

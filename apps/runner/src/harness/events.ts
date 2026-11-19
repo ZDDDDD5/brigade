@@ -459,10 +459,13 @@ export class EventMapper {
     return /No conversation found with session ID/i.test(message) || codexRestartRefused(message)
   }
 
-  /** Recognise an out-of-usage error from either harness. */
+  /**
+   * Recognise an out-of-usage error from a harness: Claude Code's, Codex's, or Antigravity's
+   * (Google's RESOURCE_EXHAUSTED, its weekly and five-hour quotas).
+   */
   static exhaustedBy(message: string): { resetsAt: string | null } | undefined {
     if (
-      !/usage limit|limit reached|hit your (?:[\w-]+ )?limit|out of (usage|credits)|quota exceeded|rate_limit_error|too many requests/i.test(
+      !/usage limit|limit reached|hit your (?:[\w-]+ )?limit|out of (usage|credits)|quota exceeded|rate_limit_error|too many requests|resource.?exhausted|exhausted your (?:[\w-]+ )?(?:quota|capacity)|(?:weekly|five-hour|5-hour) quota/i.test(
         message,
       )
     )

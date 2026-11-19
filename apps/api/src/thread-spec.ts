@@ -4,6 +4,8 @@ import {
   type Feature,
   loginOf,
   PI_PROTOCOL,
+  ANTIGRAVITY_PROTOCOL,
+  loginName,
   folderExceptions,
   libraryAccessFor,
   MCP_PROTOCOL,
@@ -116,7 +118,7 @@ export async function actingTeammate(
 
 export const noAccount = (harness: string) =>
   new HTTPException(409, {
-    message: `No ${harness === 'codex' ? 'Codex' : 'Claude'} account you can use on this computer is ready. Add or sign in to one under Accounts.`,
+    message: `No ${loginName(harness === 'codex' || harness === 'antigravity' ? harness : 'claude_code')} account you can use on this computer is ready. Add or sign in to one under Accounts.`,
   })
 
 /** The thread's latest arrival on its computer, as a spec says it (ThreadSpec.moved). */
@@ -220,6 +222,31 @@ async function piAllowed(thread: LoadedThread) {
 }
 
 /**
+ * A teammate on Antigravity runs only where the antigravity_harness feature is open to the person
+ * the thread works for, and on a runner that knows Antigravity (ANTIGRAVITY_PROTOCOL).
+ */
+async function antigravityAllowed(thread: LoadedThread) {
+  if (
+    !(await featuresOfMember(thread.startedByMemberId, thread.workspaceId)).has(
+      'antigravity_harness',
+    )
+  )
+    throw new HTTPException(409, {
+      message:
+        'Teammates on Antigravity are not open to this workspace. Switch it to Claude Code or Codex.',
+    })
+  const protocol = await hubs
+    .get(thread.workspaceId)
+    .runnerProtocol(thread.computer.id)
+    .catch(() => undefined)
+  if (protocol !== undefined && protocol < ANTIGRAVITY_PROTOCOL)
+    throw new HTTPException(409, {
+      message:
+        "This computer's Brigade is too old to run a teammate on Antigravity. It updates by itself after a quiet while; try again then.",
+    })
+}
+
+/**
  * The thread's spec, with the account it should run on next: its current
  * account if still usable, else the next one its starter may run on (src/account-sharing.ts).
  */
@@ -231,6 +258,7 @@ export async function specFor(
   // The teammate whose turn it is; by default the one asked last.
   const teammate = options.teammate ?? currentTeammate(thread)
   if (teammate.harness === 'pi') await piAllowed(thread)
+  if (teammate.harness === 'antigravity') await antigravityAllowed(thread)
   // The login its turns run on: Pi's is its model's vendor's (loginOf).
   const login = loginOf(teammate.harness, teammate.model)
   // Each a trip to the database, none waiting on another: asked together.

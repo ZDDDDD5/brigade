@@ -18,3 +18,4 @@ codex-usage.test.ts # a fake codex on the PATH; Windows runs the harness's own c
 member-folders.test.ts # a fake docker as a sh script on the PATH, which Windows runs no program from
 lazy-mcp.test.ts # the cloud computer's browser MCP server (runAs), checked with pgrep
 preview-handover.test.ts # previews handed over across an update, which Windows starts again instead (docs/windows.md)
+antigravity.test.ts # Antigravity's CLI runs on Linux and macOS only; its stand-ins are shell scripts

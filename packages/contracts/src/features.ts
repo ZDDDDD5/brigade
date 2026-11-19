@@ -73,6 +73,15 @@ export const FEATURES = {
       'tried by the team first.',
     default: false,
   },
+  antigravity_harness: {
+    description:
+      'Teammates on Antigravity (docs/harnesses.md), beside Claude Code and Codex: Google’s own ' +
+      '`agy acp`, on a Google account with a Google AI Pro or Ultra plan, signed in through Brigade ' +
+      'like a Claude or ChatGPT account. Google’s forum guidance allows third-party ACP clients only ' +
+      'for a person driving the session, which Brigade’s routines and background work go past, so ' +
+      'Google may suspend the account. Opened to Brigade’s own workspace only, to try Gemini models.',
+    default: false,
+  },
   pi_harness: {
     description:
       'Teammates on Pi (docs/harnesses.md), beside Claude Code and Codex: Pi runs inside the runner ' +

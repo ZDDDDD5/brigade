@@ -22,6 +22,7 @@ import {
   type ThreadSpec,
 } from '@brigade/contracts'
 import {
+  ACCOUNTS_DIR,
   ALREADY_RUNNING_EXIT_CODE,
   claimRunner,
   CLOUD,
@@ -35,6 +36,7 @@ import {
 import { watchAbuse } from './abuse.js'
 import { useWindowsTools } from './windows.js'
 import { Accounts, machineLogins } from './accounts.js'
+import { cleanRemoved, fenceRemoved } from './harness/antigravity.js'
 import { Attachments } from './attachments.js'
 import { SpecParts } from './spec-parts.js'
 import { Connection } from './connection.js'
@@ -680,8 +682,14 @@ async function start() {
         return
       case 'account.login.cancel':
         return accounts.cancel(message.loginId)
-      case 'account.remove':
-        return accounts.remove(message.account)
+      case 'account.remove': {
+        // Nothing new starts on it, its sessions stop, then its login goes (and Antigravity's
+        // copies of it, listed until each is gone).
+        const account = message.account
+        return (account.provider === 'antigravity' ? fenceRemoved(account.id) : Promise.resolve())
+          .then(() => threads.parkAccount(account.id))
+          .then(() => accounts.remove(account))
+      }
       case 'computer.backup': {
         const reply = (ok: boolean, error?: string) =>
           connection.send({
@@ -909,6 +917,13 @@ async function start() {
     )
   setTimeout(sweepRepos, 10 * 60_000).unref()
   setInterval(sweepRepos, 6 * 60 * 60_000).unref()
+  // Google accounts whose removal did not finish (a copy left, a restart in between): again.
+  const cleanAgy = () =>
+    void cleanRemoved({ accountsDir: ACCOUNTS_DIR, copies: CLOUD }).catch((error) =>
+      console.warn(String(error)),
+    )
+  setTimeout(cleanAgy, 60_000).unref()
+  setInterval(cleanAgy, 60 * 60_000).unref()
   // On a cloud computer, archive the folders of the threads quiet longest when the disk fills up.
   folders.start()
   // And back up what lives only on this cloud computer's disk, now and then.

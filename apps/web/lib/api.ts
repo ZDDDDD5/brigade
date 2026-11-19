@@ -781,7 +781,7 @@ export type AccountLogin = {
 
 export type Account = {
   id: string
-  provider: 'claude_code' | 'codex'
+  provider: 'claude_code' | 'codex' | 'antigravity'
   source: 'machine' | 'brigade'
   label: string
   email: string | null
@@ -1429,7 +1429,13 @@ export function waitsOn(t: Ticket, me: Me) {
 }
 
 export const harnessLabel = (harness: string) =>
-  harness === 'codex' ? 'Codex' : harness === 'pi' ? 'Pi' : 'Claude'
+  harness === 'codex'
+    ? 'Codex'
+    : harness === 'pi'
+      ? 'Pi'
+      : harness === 'antigravity'
+        ? 'Antigravity'
+        : 'Claude'
 
 /**
  * What a teammate runs on, as people name it: its model ("Opus 5.5"), else the

@@ -245,7 +245,7 @@ export async function syncMachineLogins(
           computerId: computer.id,
           provider: login.provider,
           source: 'machine',
-          label: `${login.provider === 'codex' ? 'Codex' : 'Claude'} on ${computer.name}`,
+          label: `${login.provider === 'codex' ? 'Codex' : login.provider === 'antigravity' ? 'Antigravity' : 'Claude'} on ${computer.name}`,
           status: 'ready',
           isDefault: hasDefault === 0,
           ...identity,

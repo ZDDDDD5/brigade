@@ -25,6 +25,7 @@ await prisma.featureFlag.createMany({
     { key: 'google_drive', everyone: true, note: 'Local development' },
     { key: 'tools', everyone: true, note: 'Local development' },
     { key: 'missions', everyone: true, note: 'Local development' },
+    { key: 'antigravity_harness', everyone: true, note: 'Local development' },
   ],
   skipDuplicates: true,
 })

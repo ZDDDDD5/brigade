@@ -31,6 +31,13 @@ export function HarnessLogo({
     viewBox: '0 0 24 24',
     className: cn('size-4 shrink-0', className),
   } as const
+  // Antigravity: a plain four-point spark in Google's blue (no Google mark of its own).
+  if (harness === 'antigravity')
+    return (
+      <svg fill="#4285f4" {...common}>
+        <path d="M12 2c.6 4.9 4.1 9.4 10 10-5.9.6-9.4 5.1-10 10-.6-4.9-4.1-9.4-10-10 5.9-.6 9.4-5.1 10-10Z" />
+      </svg>
+    )
   // Pi has no mark of its own Brigade may use: its letter, in the text color.
   if (harness === 'pi')
     return (

@@ -6,6 +6,8 @@ import { type HarnessId, mentionsToText } from '@brigade/contracts'
 export const TITLE_MODEL: Record<HarnessId, string> = {
   claude_code: 'claude-haiku-5-5',
   codex: 'gpt-6-luna',
+  // As `agy acp` takes it: the model with its thinking level (antigravityModelId).
+  antigravity: 'gemini-3.8-flash-low',
 }
 
 /** How much of the first message a title run reads. */

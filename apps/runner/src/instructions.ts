@@ -1536,7 +1536,12 @@ export async function writeMemoryFiles(
 
 export const instructionsFileName = (spec: ThreadSpec) =>
   // Pi reads no file (its turn is given them, harness/pi.ts): AGENTS.md keeps them for people.
-  spec.teammate.harness === 'codex' || spec.teammate.harness === 'pi' ? 'AGENTS.md' : 'CLAUDE.md'
+  // Codex and Antigravity read AGENTS.md.
+  spec.teammate.harness === 'codex' ||
+  spec.teammate.harness === 'pi' ||
+  spec.teammate.harness === 'antigravity'
+    ? 'AGENTS.md'
+    : 'CLAUDE.md'
 
 /** Write the file into the working directory, as the teammate's user on a cloud computer. */
 export async function writeInstructions(

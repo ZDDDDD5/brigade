@@ -631,13 +631,19 @@ type DescribeResult = Extract<RunnerToApi, { type: 'project.describe.result' }>
 /**
  * The account the brief is written with: one the member may run on (src/account-sharing.ts),
  * on a computer online now with a runner that knows project.describe. The
- * default first, Claude before Codex, accounts out of usage never.
+ * default first, Claude before Codex, accounts out of usage never, Google accounts never.
  */
-async function briefAccount(db: ScopedDb, scope: WorkspaceScope) {
+export async function briefAccount(db: ScopedDb, scope: WorkspaceScope) {
   const { memberId } = scope
   const now = new Date()
   const rows = await db.account.findMany({
-    where: { ...usableBy(memberId), status: { in: ['ready', 'unverified'] } },
+    where: {
+      ...usableBy(memberId),
+      status: { in: ['ready', 'unverified'] },
+      // Claude and Codex only: a Google account runs Antigravity, behind its feature (a shared one
+      // would reach members without it) and on newer runners than DESCRIBE_PROTOCOL.
+      provider: { in: ['claude_code', 'codex'] },
+    },
     orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
   })
   if (rows.length === 0)

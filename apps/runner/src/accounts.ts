@@ -6,13 +6,22 @@
 // Claude account is a long-lived token from `claude setup-token`, which the
 // runner keeps beside the config directory and hands to each turn.
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { AccountRef } from '@brigade/contracts'
 import xterm from '@xterm/headless'
-import { ACCOUNTS_DIR, CLOUD } from './config.js'
+import { ACCOUNTS_DIR, CLOUD, HOME as BRIGADE_HOME } from './config.js'
+import {
+  cleanRemoved,
+  fenceRemoved,
+  installAgy,
+  keepLogin,
+  machineAgyLogin,
+  signInDir,
+} from './harness/antigravity.js'
 import { shareAccount } from './teammates.js'
 import { harnessEnv } from './harness/env.js'
 import { vendorCli, type Vendor } from './vendor-cli.js'
@@ -24,6 +33,8 @@ const LOGIN_TIMEOUT_MS = 15 * 60_000
 const TOKEN_FILE = '.oauth-token'
 const TOKEN = /sk-ant-oat\d+-[A-Za-z0-9_-]{20,}/
 const AUTHORIZE_URL = /https:\/\/\S+\/oauth\/authorize\?\S+/
+/** Google's sign-in page, as Antigravity's `agy acp --login` prints it. */
+const GOOGLE_AUTH_URL = /https:\/\/accounts\.google\.com\/o\/oauth2\/auth\?\S+/
 /** setup-token's pseudo-terminal: wide enough that its URL and token stay on one line. */
 const COLS = 1000
 const ROWS = 50
@@ -39,6 +50,8 @@ export function accountDir(account: AccountRef): string | null {
 function configEnv(account: AccountRef): Record<string, string> {
   const dir = accountDir(account)
   if (!dir) return {}
+  // Antigravity's folder is given per turn, with its login copied there (harness/antigravity.ts).
+  if (account.provider === 'antigravity') return {}
   return account.provider === 'codex' ? { CODEX_HOME: dir } : { CLAUDE_CONFIG_DIR: dir }
 }
 
@@ -48,7 +61,7 @@ function configEnv(account: AccountRef): Record<string, string> {
  */
 export function accountToken(account: AccountRef): Record<string, string> {
   const dir = accountDir(account)
-  if (!dir || account.provider === 'codex') return {}
+  if (!dir || account.provider === 'codex' || account.provider === 'antigravity') return {}
   try {
     const token = readFileSync(join(dir, TOKEN_FILE), 'utf8').trim()
     return token ? { CLAUDE_CODE_OAUTH_TOKEN: token } : {}
@@ -122,6 +135,8 @@ class Login {
   private due: NodeJS.Timeout | undefined
   private token: string | undefined
   private timer: NodeJS.Timeout
+  /** This sign-in's own folder, for Antigravity's (signInDir). */
+  private readonly attempt = randomUUID().slice(0, 12)
 
   constructor(
     readonly account: AccountRef,
@@ -131,19 +146,37 @@ class Login {
     /** The vendor CLI: its program and first arguments (vendor-cli.ts). */
     cli: [string, string[]],
   ) {
-    if (account.provider !== 'codex' && CLOUD) this.screen = new Screen()
+    if (account.provider !== 'codex' && account.provider !== 'antigravity' && CLOUD)
+      this.screen = new Screen()
     const [command, args]: [string, string[]] =
-      account.provider === 'codex'
-        ? [cli[0], [...cli[1], 'login', '--device-auth']]
-        : this.screen
-          ? // A terminal UI, so in a pseudo-terminal.
+      account.provider === 'antigravity'
+        ? // Google's sign-in by a pasted code, into the account's folder (kept by keepLogin).
+          [
+            cli[0],
             [
-              'script',
-              ['-qefc', `stty cols ${COLS} rows ${ROWS}; exec claude setup-token`, '/dev/null'],
-            ]
-          : [cli[0], [...cli[1], 'auth', 'login', '--claudeai']]
+              ...cli[1],
+              'acp',
+              '--login',
+              '--disable-telemetry',
+              '--gemini-dir',
+              join(dir, signInDir(this.attempt)),
+            ],
+          ]
+        : account.provider === 'codex'
+          ? [cli[0], [...cli[1], 'login', '--device-auth']]
+          : this.screen
+            ? // A terminal UI, so in a pseudo-terminal.
+              [
+                'script',
+                ['-qefc', `stty cols ${COLS} rows ${ROWS}; exec claude setup-token`, '/dev/null'],
+              ]
+            : [cli[0], [...cli[1], 'auth', 'login', '--claudeai']]
     this.child = spawn(command, args, {
-      env: harnessEnv({ ...configEnv(account), BROWSER: 'false' }),
+      env: harnessEnv({
+        ...configEnv(account),
+        BROWSER: 'false',
+        ...(account.provider === 'antigravity' ? { AGY_CLI_DISABLE_AUTO_UPDATE: '1' } : {}),
+      }),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
@@ -186,7 +219,13 @@ class Login {
     this.raw = (this.raw + chunk.toString()).slice(-16000)
     if (this.prompted) return
     const output = strip(this.raw)
-    if (this.account.provider === 'codex') {
+    if (this.account.provider === 'antigravity') {
+      const url = output.match(GOOGLE_AUTH_URL)?.[0]
+      if (url) {
+        this.prompted = true
+        this.onPrompt({ url, flow: 'paste' })
+      }
+    } else if (this.account.provider === 'codex') {
       const url = output.match(/https:\/\/auth\.openai\.com\/\S+/)?.[0]
       const code = output.match(/\b[A-Z0-9]{4,5}-[A-Z0-9]{4,6}\b/)?.[0]
       if (url && code) {
@@ -248,6 +287,18 @@ class Login {
       return this.finish({ ok: true })
     }
     if (code !== 0) return this.finish({ ok: false, error: this.lastLine() })
+    if (this.account.provider === 'antigravity') {
+      // Its one login file, the runner's alone: each turn copies it where it runs.
+      try {
+        // Only while it is still the account's sign-in: a newer one replaced it, it saves nothing.
+        return this.finish({
+          ok: true,
+          ...(await keepLogin(this.dir, this.attempt, () => !this.finished)),
+        })
+      } catch (error) {
+        return this.finish({ ok: false, error: `Could not save the sign-in: ${String(error)}` })
+      }
+    }
     if (CLOUD) await shareAccount(this.account.id)
     this.finish({ ok: true, ...(await identity(this.account)) })
   }
@@ -276,13 +327,17 @@ class Login {
     clearTimeout(this.quiet)
     clearTimeout(this.due)
     this.onDone(done)
-    if (!done.ok && !keepDir) void rm(this.dir, { recursive: true, force: true })
+    if (done.ok || keepDir) return
+    // Antigravity's sign-in has a folder of its own: the account's login and conversations stay.
+    if (this.account.provider === 'antigravity')
+      void rm(join(this.dir, signInDir(this.attempt)), { recursive: true, force: true })
+    else void rm(this.dir, { recursive: true, force: true })
   }
 }
 
 /** Who the account is signed in as, from the CLI's own status command. Never the credential. */
 async function identity(account: AccountRef): Promise<{ email?: string; plan?: string }> {
-  if (account.provider === 'codex') return {}
+  if (account.provider === 'codex' || account.provider === 'antigravity') return {}
   const out = await run('claude', ['auth', 'status', '--json'], configEnv(account))
   if (out === undefined) return {}
   try {
@@ -315,10 +370,13 @@ const loginFile = (vendor: Vendor, home = homedir()) =>
  * again. Its CLI says so; on Windows without that CLI (a connection never downloads it), its
  * login file does, and the turn's own copy of the CLI signs in with it.
  */
-export async function machineLogins(
-  home = homedir(),
-): Promise<
-  { provider: 'claude_code' | 'codex'; loggedIn: boolean; email?: string; plan?: string }[]
+export async function machineLogins(home = homedir()): Promise<
+  {
+    provider: 'claude_code' | 'codex' | 'antigravity'
+    loggedIn: boolean
+    email?: string
+    plan?: string
+  }[]
 > {
   const fileOnly = async (vendor: Vendor) =>
     WINDOWS && !(await vendorCli(vendor)) ? existsSync(loginFile(vendor, home)) : undefined
@@ -346,7 +404,28 @@ export async function machineLogins(
       ...(claude.subscriptionType ? { plan: claude.subscriptionType } : {}),
     },
     { provider: 'codex', loggedIn: codex },
+    // Antigravity's once it was ever there, signed in or out since: an API from before Antigravity
+    // knows no such login, so a machine that never had it says nothing of it.
+    ...machineAntigravityLogin(home),
   ]
+}
+
+/** Remembers that this machine had an Antigravity login: its sign-out is said from then on. */
+const AGY_SEEN = join(BRIGADE_HOME, 'machine-antigravity')
+
+export function machineAntigravityLogin(
+  home: string,
+): { provider: 'antigravity'; loggedIn: boolean }[] {
+  const loggedIn = machineAgyLogin(home)
+  if (loggedIn && !existsSync(AGY_SEEN)) {
+    try {
+      mkdirSync(BRIGADE_HOME, { recursive: true })
+      writeFileSync(AGY_SEEN, '')
+    } catch {
+      // Not remembered: a sign-out later goes unsaid, as before.
+    }
+  }
+  return loggedIn || existsSync(AGY_SEEN) ? [{ provider: 'antigravity', loggedIn }] : []
 }
 
 /** A vendor CLI's output; undefined on Windows when it is not installed (vendor-cli.ts). */
@@ -404,8 +483,12 @@ export class Accounts {
     let cli: [string, string[]] | undefined
     try {
       await mkdir(dir, { recursive: true, mode: 0o700 })
-      // On Windows, the CLI may have to be installed first: a minute or two, once.
-      cli = await this.cliFor(account.provider === 'codex' ? 'codex' : 'claude', { install: true })
+      // On Windows, the CLI may have to be installed first: a minute or two, once. Antigravity's
+      // is the runner's own pinned copy, downloaded on first use.
+      cli =
+        account.provider === 'antigravity'
+          ? [await installAgy(), []]
+          : await this.cliFor(account.provider === 'codex' ? 'codex' : 'claude', { install: true })
     } finally {
       this.installing.delete(loginId)
     }
@@ -447,6 +530,14 @@ export class Accounts {
   async remove(account: AccountRef) {
     const dir = accountDir(account)
     if (!dir) return // never sign the member's own machine login out
+    // Antigravity keeps its login in the folder alone (no sign-out command to run), and in the
+    // copies each teammate's turns made of it on a cloud computer. Its removal was recorded
+    // (fenceRemoved): it removes both once nothing runs on the account, and what it cannot do now
+    // stays recorded, for the runner's next tries (cleanRemoved), and the removal fails.
+    if (account.provider === 'antigravity') {
+      await fenceRemoved(account.id)
+      return cleanRemoved({ accountsDir: ACCOUNTS_DIR, copies: CLOUD })
+    }
     await run(
       account.provider === 'codex' ? 'codex' : 'claude',
       account.provider === 'codex' ? ['logout'] : ['auth', 'logout'],

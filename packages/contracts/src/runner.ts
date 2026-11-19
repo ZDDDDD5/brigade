@@ -44,15 +44,19 @@ import { UsageRunKind } from './usage.js'
 /** Longest clipboard text carried between a person's browser and a desktop. */
 export const CLIPBOARD_MAX = 1_000_000
 
-/** A login's provider: the vendor CLI it signs in with (Claude Code or Codex). */
-export const HarnessId = z.enum(['claude_code', 'codex'])
+/**
+ * A login's provider: the vendor CLI it signs in with (Claude Code, Codex, or Antigravity's `agy`
+ * for a Google account, behind the antigravity_harness feature).
+ */
+export const HarnessId = z.enum(['claude_code', 'codex', 'antigravity'])
 
 /**
- * What runs a teammate's turns. Claude Code and Codex are each their own login's CLI. Pi (behind
- * the pi_harness feature) runs inside the runner on one of those logins, the one its model is
- * from (loginOf in models.ts). A new harness goes here, with its login in loginOf.
+ * What runs a teammate's turns. Claude Code, Codex and Antigravity (Google's `agy acp`, behind the
+ * antigravity_harness feature) are each their own login's CLI. Pi (behind the pi_harness feature)
+ * runs inside the runner on one of the Claude or Codex logins, the one its model is from (loginOf
+ * in models.ts). A new harness goes here, with its login in loginOf.
  */
-export const TeammateHarness = z.enum(['claude_code', 'codex', 'pi'])
+export const TeammateHarness = z.enum(['claude_code', 'codex', 'pi', 'antigravity'])
 export type TeammateHarness = z.infer<typeof TeammateHarness>
 
 /** Most responses in one usage.responses. */
@@ -388,7 +392,13 @@ export const TEAMMATE_BACKUP_KINDS = ['tasks', 'browser'] as const
 export type TeammateBackupKind = (typeof TEAMMATE_BACKUP_KINDS)[number]
 
 /** The files of an account's login, as backed up in the vault (POST /runner/accounts/<id>/login). */
-export const ACCOUNT_LOGIN_FILES = ['.oauth-token', '.credentials.json', 'auth.json'] as const
+export const ACCOUNT_LOGIN_FILES = [
+  '.oauth-token',
+  '.credentials.json',
+  'auth.json',
+  // Antigravity's Google login (antigravity.ts), kept beside the account's folder by the runner.
+  'antigravity-oauth-token',
+] as const
 export const AccountLogin = z.object({
   files: z
     .array(
