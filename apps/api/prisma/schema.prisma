@@ -1655,8 +1655,8 @@ model McpClient {
   redirectUri  String
   clientId     String
   /// Set only when the server gave the client a secret; Brigade asks for a public client.
-  /// Also kept here in plain text for now, for an API from before clientSealed; the next deploy
-  /// stops writing it and clears it, a later one drops it.
+  /// No longer written: rows kept it here in plain text before clientSealed, and the job
+  /// mcp-client-seal clears it (src/connectors/mcp.ts sealMcpClients). A later deploy drops it.
   clientSecret String?
   /// The secret, sealed with the vault's key (src/vault.ts sealShared), bound to the issuer
   /// and redirect URI.

@@ -176,8 +176,7 @@ test('a client secret the server gives is kept sealed, and signs in', { skip }, 
     const signIn = await mcpAuthUrl(server, 'state', 'verifier')
     assert.equal(signIn.clientId, 'registered-client')
     const row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
-    // Kept in plain text too, for an API from before clientSealed, until the next deploy.
-    assert.equal(row.clientSecret, issuedSecret)
+    assert.equal(row.clientSecret, null, 'never written in plain text')
     assert.ok(row.clientSealed)
     assert.ok(!row.clientSealed.includes(issuedSecret))
     assert.ok(!Buffer.from(row.clientSealed, 'utf8').toString().includes('registration-secret'))
@@ -190,43 +189,92 @@ test('a client secret the server gives is kept sealed, and signs in', { skip }, 
   }
 })
 
-test('a secret kept in plain text before is read, then sealed by the job', { skip }, async () => {
-  const { prisma } = await import('../src/db.js')
-  const { mcpRedirectUri, sealMcpClients } = await import('../src/connectors/mcp.js')
-  await forget()
-  await prisma.mcpClient.create({
-    data: {
-      issuer: AUTH,
-      redirectUri: mcpRedirectUri(),
-      clientId: 'old-client',
-      clientSecret: 'old-plain-secret',
-    },
-  })
-  secretsSent = []
-  const signIn = await mcpAuthUrl(server, 'state', 'verifier')
-  assert.equal(signIn.clientId, 'old-client')
-  await exchangeMcpCode(server, 'code', 'verifier', undefined, signIn.clientId)
-  assert.deepEqual(secretsSent, ['old-plain-secret'])
-  // Reading it changes nothing: an API from before clientSealed may still read the row.
-  let row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
-  assert.equal(row.clientSecret, 'old-plain-secret')
-  assert.equal(row.clientSealed, null)
+test(
+  'a secret kept in plain text only is read, then sealed and cleared by the job',
+  { skip },
+  async () => {
+    const { prisma } = await import('../src/db.js')
+    const { mcpRedirectUri, sealMcpClients } = await import('../src/connectors/mcp.js')
+    await forget()
+    await prisma.mcpClient.create({
+      data: {
+        issuer: AUTH,
+        redirectUri: mcpRedirectUri(),
+        clientId: 'old-client',
+        clientSecret: 'old-plain-secret',
+      },
+    })
+    secretsSent = []
+    const signIn = await mcpAuthUrl(server, 'state', 'verifier')
+    assert.equal(signIn.clientId, 'old-client')
+    await exchangeMcpCode(server, 'code', 'verifier', undefined, signIn.clientId)
+    assert.deepEqual(secretsSent, ['old-plain-secret'])
 
-  assert.ok((await sealMcpClients()) >= 1)
-  row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
-  assert.ok(row.clientSealed && !row.clientSealed.includes('old-plain-secret'))
-  const sealed = row.clientSealed
-  await sealMcpClients()
-  row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
-  assert.equal(row.clientSealed, sealed, 'a sealed row is left as it is')
+    assert.ok((await sealMcpClients()) >= 1)
+    let row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
+    assert.equal(row.clientSecret, null)
+    assert.ok(row.clientSealed && !row.clientSealed.includes('old-plain-secret'))
+    const sealed = row.clientSealed
+    await sealMcpClients()
+    row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
+    assert.equal(row.clientSealed, sealed, 'a sealed row is left as it is')
 
-  // Once the plain text is cleared (the next deploy), the sealed copy signs in alone.
-  await prisma.mcpClient.update({ where: { id: row.id }, data: { clientSecret: null } })
-  secretsSent = []
-  const again = await mcpAuthUrl(server, 'state', 'verifier')
-  await exchangeMcpCode(server, 'code', 'verifier', undefined, again.clientId)
-  assert.deepEqual(secretsSent, ['old-plain-secret'])
-})
+    // The sealed copy signs in alone.
+    secretsSent = []
+    const again = await mcpAuthUrl(server, 'state', 'verifier')
+    await exchangeMcpCode(server, 'code', 'verifier', undefined, again.clientId)
+    assert.deepEqual(secretsSent, ['old-plain-secret'])
+  },
+)
+
+test(
+  'a secret kept both ways (#942) loses its plain copy, only when the sealed one matches',
+  { skip },
+  async () => {
+    const { prisma } = await import('../src/db.js')
+    const { mcpRedirectUri, sealMcpClients } = await import('../src/connectors/mcp.js')
+    const { sealShared } = await import('../src/vault.js')
+    await forget()
+    const redirectUri = mcpRedirectUri()
+    const both = sealShared('mcp-client', `${AUTH}\n${redirectUri}`, 'kept-both-ways')
+    const row = await prisma.mcpClient.create({
+      data: {
+        issuer: AUTH,
+        redirectUri,
+        clientId: 'both-client',
+        clientSecret: 'kept-both-ways',
+        clientSealed: both,
+      },
+    })
+    // Sealed for another row: it doesn't open here, so the plain copy is all there is.
+    const other = 'https://other-auth.test'
+    const wrong = await prisma.mcpClient.create({
+      data: {
+        issuer: other,
+        redirectUri,
+        clientId: 'wrong-client',
+        clientSecret: 'the-real-secret',
+        clientSealed: sealShared('mcp-client', `${AUTH}\n${redirectUri}`, 'the-real-secret'),
+      },
+    })
+    try {
+      assert.ok((await sealMcpClients()) >= 1)
+      const cleared = await prisma.mcpClient.findUniqueOrThrow({ where: { id: row.id } })
+      assert.equal(cleared.clientSecret, null)
+      assert.equal(cleared.clientSealed, both, 'the sealed copy is kept as it was')
+      const kept = await prisma.mcpClient.findUniqueOrThrow({ where: { id: wrong.id } })
+      assert.equal(kept.clientSecret, 'the-real-secret')
+
+      secretsSent = []
+      const signIn = await mcpAuthUrl(server, 'state', 'verifier')
+      assert.equal(signIn.clientId, 'both-client')
+      await exchangeMcpCode(server, 'code', 'verifier', undefined, signIn.clientId)
+      assert.deepEqual(secretsSent, ['kept-both-ways'])
+    } finally {
+      await prisma.mcpClient.deleteMany({ where: { issuer: other } })
+    }
+  },
+)
 
 test('a sealed secret opens only for the row it was sealed for', async () => {
   const { openShared, sealShared } = await import('../src/vault.js')

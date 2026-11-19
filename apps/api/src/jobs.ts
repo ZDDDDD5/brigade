@@ -161,7 +161,8 @@ export const JOBS = {
   // Hourly: guests left unsaved and unused for two weeks, with their projects (src/guests.ts),
   // a few a run: each is a whole account's deletion.
   'guest-sweep': { every: 3600, run: (_key, now) => sweepIdleGuests(now).then(() => {}) },
-  // Hourly: MCP servers' client secrets kept in plain text only, sealed (src/connectors/mcp.ts).
+  // Hourly: MCP servers' client secrets left in plain text, sealed and cleared
+  // (src/connectors/mcp.ts).
   'mcp-client-seal': { every: 3600, run: () => sealMcpClients().then(() => {}) },
 
   // One row each, when asked for (enqueue): a webhook's event kept, a received mail kept.

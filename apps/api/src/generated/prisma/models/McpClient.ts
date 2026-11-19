@@ -410,7 +410,8 @@ export type $McpClientPayload<ExtArgs extends runtime.Types.Extensions.InternalA
     clientId: string
     /**
      * Set only when the server gave the client a secret; Brigade asks for a public client.
-     * Rows written before clientSealed kept it here in plain text: read once, it moves there.
+     * No longer written: rows kept it here in plain text before clientSealed, and the job
+     * mcp-client-seal clears it (src/connectors/mcp.ts sealMcpClients). A later deploy drops it.
      */
     clientSecret: string | null
     /**
