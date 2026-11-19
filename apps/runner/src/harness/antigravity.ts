@@ -327,37 +327,86 @@ export async function antigravityEnv(options: {
 }
 
 /**
- * Google accounts being removed, or removed, whose teammate copies may still be there: in memory
- * for the work that starts meanwhile (refuseRemoved), and in a file of the runner's until each
- * copy is gone (cleanRemoved), so a cleanup that failed or that a restart cut off goes on later.
+ * Google accounts being removed, or removed: in memory, so that no work starts on one
+ * (refuseRemoved) and what runs on it stops (holdAccount); and one file each in the runner's
+ * folder until its login and every copy of it are gone (cleanRemoved), so a removal that failed,
+ * or that a restart cut off, goes on later. One file per account: two removals never write over
+ * each other's record.
  */
 const removed = new Set<string>()
-const REMOVED_FILE = () =>
-  process.env.BRIGADE_ANTIGRAVITY_REMOVED ?? join(BRIGADE_HOME, 'antigravity-removed.json')
+const REMOVED_DIR = () =>
+  process.env.BRIGADE_ANTIGRAVITY_REMOVED ?? join(BRIGADE_HOME, 'antigravity-removed')
+const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
 
-async function readRemoved(): Promise<string[]> {
+/** The removals not finished yet. A folder that cannot be read fails, never reads as none. */
+async function listRemoved(): Promise<string[]> {
   try {
-    const ids = JSON.parse(await readFile(REMOVED_FILE(), 'utf8')) as unknown
-    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []
-  } catch {
-    return []
+    return (await readdir(REMOVED_DIR())).filter((id) => SAFE_ID.test(id))
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
   }
 }
 
-async function writeRemoved(ids: string[]) {
-  await mkdir(dirname(REMOVED_FILE()), { recursive: true })
-  const temp = `${REMOVED_FILE()}.${randomUUID()}`
-  await writeFile(temp, JSON.stringify([...new Set(ids)]))
-  await rename(temp, REMOVED_FILE())
+/**
+ * Work that uses an account's login while it runs (a turn's session, a title or memory run): a
+ * removal waits for each to end before it removes the login (cleanRemoved), and aborts them.
+ */
+const holds = new Map<string, Set<AbortController>>()
+const drainedWaiters = new Map<string, Set<() => void>>()
+
+/** Hold the account while work runs on it; `signal` aborts when the account is removed. */
+export function holdAccount(accountId: string): { release: () => void; signal: AbortSignal } {
+  const controller = new AbortController()
+  if (removed.has(accountId)) controller.abort(new Error('This Google account was removed'))
+  const set = holds.get(accountId) ?? new Set()
+  set.add(controller)
+  holds.set(accountId, set)
+  let released = false
+  return {
+    signal: controller.signal,
+    release: () => {
+      if (released) return
+      released = true
+      set.delete(controller)
+      if (set.size) return
+      holds.delete(accountId)
+      for (const done of drainedWaiters.get(accountId) ?? []) done()
+      drainedWaiters.delete(accountId)
+    },
+  }
+}
+
+/** Whether every hold on the account ended within `ms`. */
+function drained(accountId: string, ms: number): Promise<boolean> {
+  if (!holds.get(accountId)?.size) return Promise.resolve(true)
+  return new Promise((resolve) => {
+    const waiters = drainedWaiters.get(accountId) ?? new Set()
+    const done = () => {
+      clearTimeout(timer)
+      resolve(true)
+    }
+    const timer = setTimeout(() => {
+      waiters.delete(done)
+      resolve(false)
+    }, ms)
+    timer.unref?.()
+    waiters.add(done)
+    drainedWaiters.set(accountId, waiters)
+  })
 }
 
 /**
- * Nothing new starts on this account from now on. On a cloud computer (`copies`), its teammates'
- * copies are to be removed (cleanRemoved), kept in the list until they are.
+ * Nothing new starts on this account from now on, and what runs on it is told to stop. Its
+ * removal is recorded (the runner's folder), until cleanRemoved finishes it.
  */
-export async function fenceRemoved(accountId: string, copies: boolean) {
+export async function fenceRemoved(accountId: string) {
+  if (!SAFE_ID.test(accountId)) throw new Error('Invalid account id')
   removed.add(accountId)
-  if (copies) await writeRemoved([...(await readRemoved()), accountId])
+  for (const controller of holds.get(accountId) ?? [])
+    controller.abort(new Error('This Google account was removed'))
+  await mkdir(REMOVED_DIR(), { recursive: true, mode: 0o700 })
+  await writeFile(join(REMOVED_DIR(), accountId), '')
 }
 
 /** Refuse work on an account being removed. */
@@ -370,20 +419,30 @@ export function refuseRemoved(account: Pick<AccountRef, 'id' | 'provider'>) {
 export const isRemoved = (accountId: string) => removed.has(accountId)
 
 /**
- * Remove the teammates' copies of each removed account (removeTeammateCopies), dropping it from
- * the list once all are gone. Throws with what could not be removed, kept for the next try.
+ * Finish each recorded removal: once no work holds the account (within `drainMs`), its login in
+ * `accountsDir`, then on a cloud computer (`copies`) the teammates' copies (removeTeammateCopies),
+ * and only then its record. Throws with what is not done yet, kept for the next try.
  */
-export async function cleanRemoved(homes = '/home') {
-  const ids = await readRemoved()
+export async function cleanRemoved(options: {
+  accountsDir: string
+  copies: boolean
+  homes?: string
+  drainMs?: number
+}) {
   const failed: string[] = []
-  for (const id of ids) {
+  for (const id of await listRemoved()) {
+    // After a restart too: nothing starts on it before it is gone.
     removed.add(id)
-    await removeTeammateCopies(id, homes).catch((error: unknown) =>
-      failed.push(`${id}: ${error instanceof Error ? error.message : String(error)}`),
-    )
+    try {
+      if (!(await drained(id, options.drainMs ?? 60_000)))
+        throw new Error('work on it has not stopped yet')
+      await rm(join(options.accountsDir, id), { recursive: true, force: true })
+      if (options.copies) await removeTeammateCopies(id, options.homes)
+      await rm(join(REMOVED_DIR(), id), { force: true })
+    } catch (error) {
+      failed.push(`${id}: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
-  const left = ids.filter((id) => failed.some((f) => f.startsWith(`${id}:`)))
-  await writeRemoved([...left, ...(await readRemoved()).filter((id) => !ids.includes(id))])
   if (failed.length) throw new Error(`Antigravity logins not removed: ${failed.join('; ')}`)
 }
 
@@ -409,9 +468,7 @@ function rmAs(user: string, path: string): Promise<void> {
  */
 export async function removeTeammateCopies(accountId: string, homes = '/home') {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(accountId)) throw new Error('Invalid account id')
-  const users = (await readdir(homes).catch(() => [] as string[])).filter((u) =>
-    /^bt-[a-z0-9]{1,28}$/.test(u),
-  )
+  const users = (await readdir(homes)).filter((u) => /^bt-[a-z0-9]{1,28}$/.test(u))
   const results = await Promise.allSettled(
     users.map((user) => rmAs(user, join(homes, user, '.accounts', accountId))),
   )

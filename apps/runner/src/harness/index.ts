@@ -128,6 +128,7 @@ import { createPiHarness, piModel, piSkills } from './pi.js'
 import {
   antigravityEnv,
   createAntigravityHarness,
+  holdAccount,
   isRemoved,
   refuseRemoved,
 } from './antigravity.js'
@@ -2596,6 +2597,20 @@ export class HarnessThread {
   private async attach(): Promise<Live> {
     if (this.live) return this.live
     const account = this.spec.account
+    if (account.provider !== 'antigravity') return this.attachHolding(account)
+    // A Google account's session holds it from its preparation to its sandbox's end: a removal
+    // waits for it, and refuses one that starts after it (holdAccount, cleanRemoved).
+    const hold = holdAccount(account.id)
+    try {
+      refuseRemoved(account)
+      return await this.attachHolding(account, hold.release)
+    } catch (error) {
+      hold.release()
+      throw error
+    }
+  }
+
+  private async attachHolding(account: AccountRef, release?: () => void): Promise<Live> {
     const env = {
       ...(await prepare(this.workDir, account, this.spec.sessionId, this.runAs)),
       ...gitEnv(this.spec.git),
@@ -2762,6 +2777,17 @@ export class HarnessThread {
       // The harness the runner before handed over, which this session attaches to: stopped with it.
       ...(adopt.length ? { adopt } : {}),
     })
+    if (release) {
+      const destroy = sandbox.destroy.bind(sandbox)
+      // Its own object (createLocalSandboxSession), whose type says its methods are read-only.
+      ;(sandbox as unknown as { destroy: () => Promise<void> }).destroy = async () => {
+        try {
+          return await destroy()
+        } finally {
+          release()
+        }
+      }
+    }
     const saved = savedResume(this.saved, this.spec, account)
     const resume = saved ? withTools(saved, tools) : undefined
     const session = await agent.createSession({
@@ -3208,6 +3234,19 @@ export async function runOnce(input: {
   usage: { kind: UsageRunKind; sessionId?: string; teammateId?: string }
 }): Promise<string> {
   const { spec, workDir, runAs, purpose = 'memory' } = input
+  // A Google account is held for the run (a removal waits for it, and stops it).
+  if (spec.account.provider !== 'antigravity') return runHolding(input, input.signal)
+  const hold = holdAccount(spec.account.id)
+  try {
+    refuseRemoved(spec.account)
+    return await runHolding(input, AbortSignal.any([input.signal, hold.signal]))
+  } finally {
+    hold.release()
+  }
+}
+
+async function runHolding(input: Parameters<typeof runOnce>[0], signal: AbortSignal) {
+  const { spec, workDir, runAs, purpose = 'memory' } = input
   const env = {
     ...(await prepare(workDir, spec.account, spec.sessionId, runAs)),
     // Its prompt is read once: a one-hour cache write costs twice the input, a five-minute one 1.25 times.
@@ -3250,7 +3289,7 @@ export async function runOnce(input: {
       if (event.type === 'message.done') text = event.text
       reportRunUsage(event, { ...input.usage, accountId: spec.account.id })
     })
-    const result = await agent.stream({ session, prompt: input.prompt, abortSignal: input.signal })
+    const result = await agent.stream({ session, prompt: input.prompt, abortSignal: signal })
     for await (const part of result.fullStream) mapper.map(part)
     if (mapper.exhausted) throw new Error('The account is out of usage')
     if (mapper.error) throw new Error(mapper.error)

@@ -16,6 +16,7 @@ import xterm from '@xterm/headless'
 import { ACCOUNTS_DIR, CLOUD, HOME as BRIGADE_HOME } from './config.js'
 import {
   cleanRemoved,
+  fenceRemoved,
   installAgy,
   keepLogin,
   machineAgyLogin,
@@ -530,12 +531,12 @@ export class Accounts {
     const dir = accountDir(account)
     if (!dir) return // never sign the member's own machine login out
     // Antigravity keeps its login in the folder alone (no sign-out command to run), and in the
-    // copies each teammate's turns made of it on a cloud computer: those that cannot be removed
-    // now stay listed, removed at the runner's next tries (cleanRemoved), and the removal fails.
+    // copies each teammate's turns made of it on a cloud computer. Its removal was recorded
+    // (fenceRemoved): it removes both once nothing runs on the account, and what it cannot do now
+    // stays recorded, for the runner's next tries (cleanRemoved), and the removal fails.
     if (account.provider === 'antigravity') {
-      await rm(dir, { recursive: true, force: true })
-      if (CLOUD) await cleanRemoved()
-      return
+      await fenceRemoved(account.id)
+      return cleanRemoved({ accountsDir: ACCOUNTS_DIR, copies: CLOUD })
     }
     await run(
       account.provider === 'codex' ? 'codex' : 'claude',

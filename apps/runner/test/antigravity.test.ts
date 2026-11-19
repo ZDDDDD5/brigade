@@ -383,55 +383,112 @@ function fakeSudo(works: boolean) {
   return bin
 }
 
+// Removals' records, in a folder of this test's.
+process.env.BRIGADE_ANTIGRAVITY_REMOVED = join(root, 'removed')
+const records = () =>
+  existsSync(process.env.BRIGADE_ANTIGRAVITY_REMOVED!)
+    ? readdirSync(process.env.BRIGADE_ANTIGRAVITY_REMOVED!).sort()
+    : []
+/** A Google account signed in through Brigade, with its login. */
+function googleAccount(id: string) {
+  const account = { id, provider: 'antigravity' as const, source: 'brigade' as const }
+  const dir = accountDir(account)!
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, agy.AGY_TOKEN_FILE), login(`refresh-${id}`), { mode: 0o600 })
+  return { account, dir }
+}
+const accountsDir = process.env.BRIGADE_ACCOUNTS_DIR!
+
+test('two removals at once each keep their record', async () => {
+  await Promise.all([agy.fenceRemoved('acct-both-1'), agy.fenceRemoved('acct-both-2')])
+  assert.ok(records().includes('acct-both-1'))
+  assert.ok(records().includes('acct-both-2'))
+  await agy.cleanRemoved({ accountsDir, copies: false })
+  assert.deepEqual(records(), [])
+})
+
+test('a removal cut off before its login went finishes it at the next try', async () => {
+  const { dir } = googleAccount('acct-restart')
+  // The runner stopped once the removal was recorded, before the login went.
+  await agy.fenceRemoved('acct-restart')
+  assert.ok(existsSync(join(dir, agy.AGY_TOKEN_FILE)))
+  await agy.cleanRemoved({ accountsDir, copies: false })
+  assert.equal(existsSync(dir), false)
+  assert.deepEqual(records(), [])
+})
+
 test('a removed account’s copies in teammates’ homes are tried again until they are gone', async () => {
   const homes = mkdtempSync(join(root, 'homes-'))
+  const { dir } = googleAccount('acct-removed')
   const copy = join(homes, 'bt-gemma', '.accounts', 'acct-removed', '.gemini')
   mkdirSync(copy, { recursive: true })
   writeFileSync(join(copy, 'antigravity-oauth-token'), login('refresh-removed'))
-  process.env.BRIGADE_ANTIGRAVITY_REMOVED = join(root, 'removed.json')
   const path = process.env.PATH
   try {
-    await agy.fenceRemoved('acct-removed', true)
+    await agy.fenceRemoved('acct-removed')
     // The teammate's copy cannot be removed: said, and kept for the next try.
     process.env.PATH = `${fakeSudo(false)}:${path}`
-    await assert.rejects(agy.cleanRemoved(homes), /acct-removed: bt-gemma: sudo: a password/)
+    await assert.rejects(
+      agy.cleanRemoved({ accountsDir, copies: true, homes }),
+      /acct-removed: bt-gemma: sudo: a password/,
+    )
     assert.ok(existsSync(copy))
-    assert.deepEqual(JSON.parse(readFileSync(process.env.BRIGADE_ANTIGRAVITY_REMOVED, 'utf8')), [
-      'acct-removed',
-    ])
-    // The next try removes it, and the account leaves the list.
+    assert.equal(existsSync(dir), false)
+    assert.deepEqual(records(), ['acct-removed'])
+    // The next try removes it, and the record goes.
     process.env.PATH = `${fakeSudo(true)}:${path}`
-    await agy.cleanRemoved(homes)
+    await agy.cleanRemoved({ accountsDir, copies: true, homes })
     assert.equal(existsSync(join(homes, 'bt-gemma', '.accounts', 'acct-removed')), false)
-    assert.deepEqual(JSON.parse(readFileSync(process.env.BRIGADE_ANTIGRAVITY_REMOVED, 'utf8')), [])
+    assert.deepEqual(records(), [])
   } finally {
     process.env.PATH = path
   }
 })
 
-test('a turn that read the login just before its account was removed starts nothing', async () => {
-  fakeCli()
-  const account = {
-    id: 'acct-fenced',
-    provider: 'antigravity' as const,
-    source: 'brigade' as const,
-  }
-  const dir = accountDir(account)!
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, agy.AGY_TOKEN_FILE), login('refresh-fenced'), { mode: 0o600 })
-  const home = mkdtempSync(join(root, 'fenced-'))
-  // The account is removed after the turn read its login, before it wrote its copy.
-  await assert.rejects(
-    agy.antigravityEnv({
-      account,
-      accountDir: dir,
-      home,
-      afterRead: () => agy.fenceRemoved(account.id, false),
-    }),
-    /was removed/,
-  )
+test('a removal waits for the work on the account, stops it, and refuses new work', async () => {
+  const { account, dir } = googleAccount('acct-held')
+  const home = mkdtempSync(join(root, 'held-'))
+  // A turn's preparation holds the account, and reads its login.
+  const hold = agy.holdAccount(account.id)
+  let removal: Promise<void> | undefined
+  const preparing = agy.antigravityEnv({
+    account,
+    accountDir: dir,
+    home,
+    // The account is removed after the read, before the copy is written.
+    afterRead: async () => {
+      await agy.fenceRemoved(account.id)
+      removal = agy.cleanRemoved({ accountsDir, copies: false })
+      await new Promise((r) => setTimeout(r, 50))
+      // It waits on the turn: the login is still there.
+      assert.ok(existsSync(join(dir, agy.AGY_TOKEN_FILE)))
+    },
+  })
+  await assert.rejects(preparing, /was removed/)
+  assert.equal(hold.signal.aborted, true)
   assert.equal(existsSync(join(dir, '.gemini')), false)
-  // And nothing later starts on it.
-  assert.equal(agy.isRemoved(account.id), true)
-  await assert.rejects(agy.antigravityEnv({ account, accountDir: dir, home }), /was removed/)
+  // Its turn ends: the removal goes on, and finishes.
+  hold.release()
+  await removal
+  assert.equal(existsSync(dir), false)
+  assert.deepEqual(records(), [])
+  // Nothing starts on it after.
+  assert.throws(() => agy.refuseRemoved(account), /was removed/)
+  assert.equal(agy.holdAccount(account.id).signal.aborted, true)
+})
+
+test('work that never stops keeps the removal recorded, for the next try', async () => {
+  const { account, dir } = googleAccount('acct-stuck')
+  const hold = agy.holdAccount(account.id)
+  await agy.fenceRemoved(account.id)
+  await assert.rejects(
+    agy.cleanRemoved({ accountsDir, copies: false, drainMs: 50 }),
+    /acct-stuck: work on it has not stopped/,
+  )
+  assert.ok(existsSync(dir))
+  assert.ok(records().includes('acct-stuck'))
+  hold.release()
+  await agy.cleanRemoved({ accountsDir, copies: false })
+  assert.equal(existsSync(dir), false)
+  assert.deepEqual(records(), [])
 })

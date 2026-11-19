@@ -41,8 +41,10 @@ user on a cloud computer, and is handed over across a runner update.
   account's own on a member's machine. A Google refresh token is not spent when used, so every
   copy stays signed in, and a copy holding the same login is left as it is. A sign-in runs in a
   folder of its own (`.signing-in`), so a failed, cancelled or repeated one never touches the
-  conversations a member's machine keeps in the account's `.gemini`. Removing the account stops
-  its sessions and removes each teammate's copy too. The account's folder is never shared with the
+  conversations a member's machine keeps in the account's `.gemini`. Removing the account is
+  recorded first (`antigravity-removed/<id>` in the runner's folder): nothing new starts on it,
+  its sessions and side runs are stopped and waited for (`holdAccount`), then its login and each
+  teammate's copy go, and only then the record, retried hourly until all are gone. The account's folder is never shared with the
   teammates' group, restored from a backup included. A member machine's own `~/.gemini` login is
   used as it is (a machine account), and said signed out once it is gone. The email comes from the
   login; the plan is not known. Project briefs are never written with a Google account.
