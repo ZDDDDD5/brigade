@@ -14,6 +14,11 @@ export type HarnessModel = {
    * (Claude Code's model config, OpenAI's model guide). Unset where they don't say.
    */
   effort?: Effort
+  /**
+   * The efforts the model takes, lowest first, where the harness can't take any (Antigravity's
+   * models each have their own thinking levels): another effort runs at the nearest of these.
+   */
+  efforts?: readonly Effort[]
 }
 
 const CLAUDE_MODELS = [
@@ -86,12 +91,33 @@ const CODEX_MODELS = [
   { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', description: 'Older fast and efficient model.' },
 ] as const satisfies readonly HarnessModel[]
 
+// Antigravity's own Gemini models, as `agy acp` names them (its session's `model` option); the
+// thinking level goes on the model's id (antigravityModelId). Only Gemini: Google offers its
+// other models only to its own and a few named editors' clients.
+const ANTIGRAVITY_MODELS = [
+  {
+    id: 'gemini-4-neon',
+    label: 'Gemini 4 Neon',
+    description: 'Google’s newest Gemini, on Google AI Pro and Ultra plans as Google opens it.',
+    effort: 'high',
+    efforts: ['low', 'medium', 'high', 'xhigh'],
+  },
+  {
+    id: 'gemini-3.8-flash',
+    label: 'Gemini 3.8 Flash',
+    description: 'Fast Gemini for everyday coding and agent work.',
+    effort: 'high',
+    efforts: ['low', 'medium', 'high'],
+  },
+] as const satisfies readonly HarnessModel[]
+
 export const HARNESS_MODELS = {
   claude_code: CLAUDE_MODELS,
   codex: CODEX_MODELS,
   // Pi calls the vendor's API itself, on the login of the model's vendor (loginOf): Claude's
   // models on a Claude login, GPT's on a ChatGPT one.
   pi: [...CLAUDE_MODELS, ...CODEX_MODELS],
+  antigravity: ANTIGRAVITY_MODELS,
 } as const satisfies Record<TeammateHarness, readonly HarnessModel[]>
 
 /** What a Pi teammate on Default runs: Pi has no account default of its own to fall back on. */
@@ -103,9 +129,53 @@ export const PI_DEFAULT_MODEL = 'claude-opus-5-5'
  */
 export const CODEX_DEFAULT_MODEL = 'gpt-6.2-sol'
 
-/** The model a turn asks for: on Default, Claude Code runs the account's own, Codex and Pi ours. */
+/**
+ * What an Antigravity teammate on Default runs: the model `agy` itself starts on, named so a
+ * thread's effort has a model to go on.
+ */
+export const ANTIGRAVITY_DEFAULT_MODEL = 'gemini-3.8-flash'
+
+/** The model a turn asks for: on Default, Claude Code runs the account's own, the others ours. */
 export const runModel = (harness: TeammateHarness, model: string | null) =>
-  model ?? (harness === 'codex' ? CODEX_DEFAULT_MODEL : harness === 'pi' ? PI_DEFAULT_MODEL : null)
+  model ??
+  (harness === 'codex'
+    ? CODEX_DEFAULT_MODEL
+    : harness === 'pi'
+      ? PI_DEFAULT_MODEL
+      : harness === 'antigravity'
+        ? ANTIGRAVITY_DEFAULT_MODEL
+        : null)
+
+/**
+ * The effort a model runs at: the one asked for where it takes it, else the nearest it takes (a
+ * tie goes to the lower), and its own when none is asked for.
+ */
+export const modelEffort = (
+  harness: TeammateHarness,
+  model: string | null,
+  effort: Effort | null,
+): Effort | null => {
+  const id = runModel(harness, model)
+  const models: readonly HarnessModel[] = HARNESS_MODELS[harness]
+  const known = models.find((m) => m.id === id)
+  const wanted = effort ?? known?.effort ?? null
+  if (!wanted || !known?.efforts?.length || known.efforts.includes(wanted)) return wanted
+  const rank = (e: Effort) => EFFORTS.findIndex((x) => x.id === e)
+  return [...known.efforts].sort(
+    (a, b) =>
+      Math.abs(rank(a) - rank(wanted)) - Math.abs(rank(b) - rank(wanted)) || rank(a) - rank(b),
+  )[0]!
+}
+
+/**
+ * What `agy acp` takes as its model (session/set_model): the model's id with its thinking level,
+ * as `agy models` lists them (gemini-3.8-flash-high).
+ */
+export const antigravityModelId = (model: string | null, effort: Effort | null) => {
+  const id = runModel('antigravity', model)!
+  const level = modelEffort('antigravity', model, effort)
+  return level ? `${id}-${level}` : id
+}
 
 /**
  * The login a teammate's turns run on: Claude Code's and Codex's own, and for Pi the login of its
@@ -116,12 +186,19 @@ export const loginOf = (harness: TeammateHarness, model: string | null): Harness
   return CODEX_MODELS.some((m) => m.id === runModel(harness, model)) ? 'codex' : 'claude_code'
 }
 
-/** A login's vendor, as people know it: Claude or Codex (ChatGPT). */
-export const loginName = (login: HarnessId) => (login === 'codex' ? 'Codex' : 'Claude')
+/** A login's vendor, as people know it: Claude, Codex (ChatGPT) or Antigravity (Google). */
+export const loginName = (login: HarnessId) =>
+  login === 'codex' ? 'Codex' : login === 'antigravity' ? 'Antigravity' : 'Claude'
 
 /** The harness as its vendor names it. */
 export const harnessName = (harness: TeammateHarness) =>
-  harness === 'codex' ? 'Codex' : harness === 'pi' ? 'Pi' : 'Claude Code'
+  harness === 'codex'
+    ? 'Codex'
+    : harness === 'pi'
+      ? 'Pi'
+      : harness === 'antigravity'
+        ? 'Antigravity'
+        : 'Claude Code'
 
 /** A teammate's model: null is Default (runModel). */
 export const isHarnessModel = (harness: TeammateHarness, model: string | null) =>

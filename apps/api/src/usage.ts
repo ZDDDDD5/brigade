@@ -501,7 +501,9 @@ export async function usageReport(
       .map((r) => ({ at: r.id ?? '', tokens: Number(r.input ?? 0) + Number(r.output ?? 0) }))
       .sort((a, b) => a.at.localeCompare(b.at)),
     previous,
-    byProvider: group(byProvider, (id) => (id === 'codex' ? 'Codex' : 'Claude')),
+    byProvider: group(byProvider, (id) =>
+      id === 'codex' ? 'Codex' : id === 'antigravity' ? 'Antigravity' : 'Claude',
+    ),
     bySource: group(bySource, (id) => id ?? ''),
     byTeammate: group(byTeammate, (id) => (id && names.teammates.get(id)) || 'Brigade'),
     byModel: group(byModel, (id) => id || 'Not reported'),

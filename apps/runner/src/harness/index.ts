@@ -4,6 +4,7 @@
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
+import { homedir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
@@ -26,6 +27,7 @@ import {
   type ThreadSpec,
   type TicketAnswer,
   type UsageRunKind,
+  antigravityModelId,
   harnessName,
   loginOf,
   runModel,
@@ -34,7 +36,7 @@ import {
 import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { ShotResult } from '../design-shot.js'
-import { accountEnv, accountToken } from '../accounts.js'
+import { accountDir, accountEnv, accountToken } from '../accounts.js'
 import { readCodexLimits } from '../codex-usage.js'
 import {
   browserMcpServer,
@@ -123,6 +125,7 @@ import { claimHandOver, type HandedOver } from '../hand-over.js'
 import { asTeammate, bridgeBrowser, threadNet } from '../thread-net.js'
 import { type PiPackage, loadPi } from '../pi-package.js'
 import { createPiHarness, piModel, piSkills } from './pi.js'
+import { antigravityEnv, createAntigravityHarness } from './antigravity.js'
 import { ReplyWatch, terminalTools } from './replies.js'
 import { declareDone, Outbox } from './outbox.js'
 import { Arrivals } from './arrivals.js'
@@ -349,11 +352,17 @@ const ALWAYS_LOADED = [
 export const machineToolsInView = (spec: Pick<ThreadSpec, 'machine'>, machine: unknown) =>
   spec.machine && machine ? ['run_on_machine'] : []
 
-/** The teammate's model for the harness; none leaves Claude Code on the account's own. */
+/**
+ * The teammate's model for the harness; none leaves Claude Code on the account's own. Antigravity
+ * takes the thread's effort on the model's id (antigravityModelId).
+ */
 function withModel(
   teammate: Pick<ThreadSpec['teammate'], 'harness' | 'model'>,
   account?: AccountRef,
+  effort: ThreadSpec['effort'] = null,
 ) {
+  if (teammate.harness === 'antigravity')
+    return { model: antigravityModelId(teammate.model, effort ?? null) }
   const model = runModel(teammate.harness, teammate.model)
   if (!model) return {}
   // Pi resolves it under the login's own provider (pi.ts), never another one with that model.
@@ -431,6 +440,7 @@ function createAgent(
   })
   const codex = spec.teammate.harness === 'codex'
   const onPi = spec.teammate.harness === 'pi'
+  const onAntigravity = spec.teammate.harness === 'antigravity'
   const chief = spec.teammate.kind === 'chief'
   // The thread's effort; none leaves each CLI on its own default.
   const effort = spec.effort ?? undefined
@@ -444,38 +454,40 @@ function createAgent(
           mcpServers,
           skills: pi.skills,
         })
-      : codex
-        ? createCodex({
-            ...settings,
-            // Codex reads 32 KiB of AGENTS.md by default; Brigade's, with memory last, is longer.
-            codexConfig: { ...CODEX_SETTINGS, project_doc_max_bytes: INSTRUCTIONS_MAX_BYTES },
-            ...(effort ? { reasoningEffort: effort } : {}),
-          })
-        : createClaudeCode({
-            ...settings,
-            ...(effort ? { effort } : {}),
-            // Never deferred behind tool search: the tools that end most turns (a ticket, a card, the
-            // thread done, a child's report) come right before the answer, with no tool load between.
-            // Each load is a model round trip of its own (about 2 s; 538 in 928 turns before these).
-            toolHints: Object.fromEntries(
-              [
-                ...ALWAYS_LOADED,
-                ...machineToolsInView(spec, machine),
-                ...(chief ? [PROPOSE_TEAM_TOOL] : []),
-                // A pass's ways out, loaded with no tool search before them.
-                ...(spec.pass && chief
-                  ? spec.pass.acts === true
-                    ? ['chief_answer', 'chief_retry', 'chief_report']
-                    : ['chief_report']
-                  : []),
-                // A big App's catalog (catalogTools): a few small tools, found then called, without a
-                // tool search before them.
-                ...Object.entries(apps)
-                  .filter(([, t]) => (t as unknown as Record<symbol, unknown>)[CATALOG_TOOL])
-                  .map(([name]) => name),
-              ].map((name) => [name, { alwaysLoad: true }]),
-            ),
-          })
+      : onAntigravity
+        ? createAntigravityHarness({ mcpServers })
+        : codex
+          ? createCodex({
+              ...settings,
+              // Codex reads 32 KiB of AGENTS.md by default; Brigade's, with memory last, is longer.
+              codexConfig: { ...CODEX_SETTINGS, project_doc_max_bytes: INSTRUCTIONS_MAX_BYTES },
+              ...(effort ? { reasoningEffort: effort } : {}),
+            })
+          : createClaudeCode({
+              ...settings,
+              ...(effort ? { effort } : {}),
+              // Never deferred behind tool search: the tools that end most turns (a ticket, a card, the
+              // thread done, a child's report) come right before the answer, with no tool load between.
+              // Each load is a model round trip of its own (about 2 s; 538 in 928 turns before these).
+              toolHints: Object.fromEntries(
+                [
+                  ...ALWAYS_LOADED,
+                  ...machineToolsInView(spec, machine),
+                  ...(chief ? [PROPOSE_TEAM_TOOL] : []),
+                  // A pass's ways out, loaded with no tool search before them.
+                  ...(spec.pass && chief
+                    ? spec.pass.acts === true
+                      ? ['chief_answer', 'chief_retry', 'chief_report']
+                      : ['chief_report']
+                    : []),
+                  // A big App's catalog (catalogTools): a few small tools, found then called, without a
+                  // tool search before them.
+                  ...Object.entries(apps)
+                    .filter(([, t]) => (t as unknown as Record<symbol, unknown>)[CATALOG_TOOL])
+                    .map(([name]) => name),
+                ].map((name) => [name, { alwaysLoad: true }]),
+              ),
+            })
   // Chief's daily pass for a person (docs/chief-answers.md): it reads its brief's items and reports
   // on them (or, with chief_acts, acts on them), and nothing else; the API gives it no App.
   const passing = !!spec.pass && chief
@@ -566,12 +578,14 @@ function createAgent(
         // Apps read and used by accessibility refs: on a Mac beside the tools above, on a cloud
         // computer in the teammate's own browser window.
         ...(desktop ? desktopTools(desktop) : {}),
-        // Claude Code asks with its own question tool; Codex's and Pi's adapters have none.
-        ...(codex || onPi ? { [ASK_USER_TOOL]: askUserTool } : {}),
+        // Claude Code asks with its own question tool; Codex's, Pi's and Antigravity's adapters have none.
+        ...(codex || onPi || onAntigravity ? { [ASK_USER_TOOL]: askUserTool } : {}),
         [OPEN_TICKET_TOOL]: openTicketTool,
         // Codex ends its turn whatever a call waits on: its asks open, return at once and are
-        // answered by a message (codex-asks.ts).
-        ...(codex ? asksWithoutWaiting(openAsk, closedApps) : {}),
+        // answered by a message (codex-asks.ts). So do Antigravity's: a turn of its frozen on a
+        // person cannot go on under a new bridge (the ACP adapter replays it only through the
+        // bridge it ran under), so it never waits on one.
+        ...(codex || onAntigravity ? asksWithoutWaiting(openAsk, closedApps) : {}),
         [SHOW_WIDGET_TOOL]: showWidgetTool,
         [WIDGET_GUIDE_TOOL]: widgetGuideTool,
         // A person's message given to the running turn, answered at once (steeredText in threads.ts).
@@ -589,7 +603,7 @@ function createAgent(
       toolApproval: Object.fromEntries(
         Object.keys(tools).map((name) => [name, 'not-applicable' as const]),
       ),
-      ...withModel(spec.teammate, spec.account),
+      ...withModel(spec.teammate, spec.account, spec.effort),
       ...(onPi
         ? {
             instructions: [pi?.instructions, spec.teammate.instructions]
@@ -599,8 +613,9 @@ function createAgent(
         : spec.teammate.instructions
           ? { instructions: spec.teammate.instructions }
           : {}),
-      // Codex cannot ask before built-in tool calls (spec, known limits).
-      permissionMode: spec.teammate.harness === 'codex' ? 'allow-all' : spec.permissionMode,
+      // Codex cannot ask before built-in tool calls (spec, known limits). Antigravity can, but a
+      // turn waiting on an approval cannot be continued once parked (asksWithoutWaiting above).
+      permissionMode: codex || onAntigravity ? 'allow-all' : spec.permissionMode,
       sandboxConfig: { workDir: '.' },
     }),
     /** Brigade's tools, by name. */
@@ -662,10 +677,10 @@ export const savedResume = (
   account: Pick<AccountRef, 'id'>,
 ) => (saved?.accountId === account.id && !harnessChanged(saved, spec) ? saved.resume : undefined)
 
-/** Codex's and Pi's harness in an agent's key; Claude Code's left out, as before Pi. */
+/** Codex's, Pi's and Antigravity's harness in an agent's key; Claude Code's left out, as before Pi. */
 const harnessKey = (spec: ThreadSpec): string[] => {
   const harness: string | undefined = spec.teammate?.harness
-  return harness === 'codex' || harness === 'pi' ? [harness] : []
+  return harness === 'codex' || harness === 'pi' || harness === 'antigravity' ? [harness] : []
 }
 
 /**
@@ -768,6 +783,17 @@ function resumable(harness: ThreadSpec['teammate']['harness'], resume: unknown):
     if (!data || !(data.entries || data.leafId)) return undefined
     const { pendingToolBatch: _pending, ...rest } = data
     return { ...base, harnessId: 'pi', data: rest }
+  }
+  // Antigravity reloads its conversation by the ACP session's id (session/load), without the bridge
+  // that ran it.
+  if (harness === 'antigravity') {
+    const state = resume as
+      | { data?: Record<string, unknown>; continueFrom?: { data?: Record<string, unknown> } }
+      | undefined
+    const data = state?.continueFrom?.data ?? state?.data
+    if (typeof data?.acpSessionId !== 'string' || !data.acpSessionId) return undefined
+    const { bridge: _bridge, ...rest } = data
+    return { ...base, harnessId: 'antigravity', data: rest }
   }
   if (harness !== 'codex') return { ...base, harnessId: 'claude-code', data: {} }
   const state = resume as
@@ -1080,9 +1106,12 @@ export class HarnessThread {
     // Frozen on the way down, the turn goes on in its conversation. A Codex turn frozen before
     // its conversation started (thread/start still under way) has none: continued without its
     // bridge, Codex would start a new one told only "Continue.", so it is told the thread instead.
+    // Antigravity's frozen turn goes on only under the bridge it ran under (gone now): it is
+    // continued from its conversation instead, below.
     if (
       !saved.inTurn &&
       frozenMidRun(saved.resume) &&
+      spec.teammate.harness !== 'antigravity' &&
       (spec.teammate.harness !== 'codex' || resumable('codex', saved.resume))
     )
       return { input: { kind: 'resume', text: unseen } }
@@ -1137,7 +1166,12 @@ export class HarnessThread {
    * its conversation lives in the runner, where no CLI can fork it.
    */
   get forkable() {
-    return this.live !== undefined && this.spec.teammate.harness !== 'pi'
+    return (
+      this.live !== undefined &&
+      this.spec.teammate.harness !== 'pi' &&
+      // Antigravity forks no conversation over ACP: a message steers its turn instead.
+      this.spec.teammate.harness !== 'antigravity'
+    )
   }
 
   /** The guess no longer matters (a new message, a stop): the answered turn's stream ends now. */
@@ -1212,7 +1246,9 @@ export class HarnessThread {
    * kept, after them. One that could not be kept never shows. Undefined for any other event.
    */
   private codexAsk(event: AgentEvent): Promise<AgentEvent[]> | undefined {
-    if (this.spec.teammate.harness !== 'codex') return undefined
+    // Antigravity's asks return at once too (createAgent).
+    if (this.spec.teammate.harness !== 'codex' && this.spec.teammate.harness !== 'antigravity')
+      return undefined
     const id =
       event.type === 'ticket.opened'
         ? event.requestId
@@ -2373,6 +2409,7 @@ export class HarnessThread {
     if (
       this.spec.teammate.harness === 'codex' ||
       this.spec.teammate.harness === 'pi' ||
+      this.spec.teammate.harness === 'antigravity' ||
       !this.saved
     )
       return false
@@ -2622,7 +2659,9 @@ export class HarnessThread {
                   this.spec.sessionId,
                 )
               : browserMcpServer(browser, tabsFile, {
-                  lazy: this.spec.teammate.harness !== 'codex',
+                  lazy:
+                    this.spec.teammate.harness !== 'codex' &&
+                    this.spec.teammate.harness !== 'antigravity',
                 }),
           }
         : {},
@@ -2696,7 +2735,9 @@ export class HarnessThread {
       // The runner, not Claude Code, asks for a reply the turn did not give (ReplyWatch). After
       // each turn, Claude Code guesses the person's next message where the thread wants it.
       env:
-        this.spec.teammate.harness === 'codex' || this.spec.teammate.harness === 'pi'
+        this.spec.teammate.harness === 'codex' ||
+        this.spec.teammate.harness === 'pi' ||
+        this.spec.teammate.harness === 'antigravity'
           ? env
           : {
               ...env,
@@ -3007,10 +3048,29 @@ export class HarnessThread {
 async function prepare(workDir: string, account: AccountRef, sessionId: string, runAs?: string) {
   if (!runAs) {
     await mkdir(workDir, { recursive: true })
-    return harnessEnv({ ...accountEnv(account), COMPOSE_PROJECT_NAME: composeProject(sessionId) })
+    return harnessEnv({
+      ...accountEnv(account),
+      ...(account.provider === 'antigravity'
+        ? await antigravityEnv({ account, accountDir: accountDir(account), home: homedir() })
+        : {}),
+      COMPOSE_PROJECT_NAME: composeProject(sessionId),
+    })
   }
   await ensureUser(runAs)
   await execFileAsync('sudo', ['-n', '-u', runAs, 'mkdir', '-p', workDir], { cwd: '/' })
+  if (account.provider === 'antigravity') {
+    // No shared bridge nor linked config folder: its login is copied into the teammate's own.
+    if (account.source !== 'brigade')
+      throw new Error('Only accounts signed in through Brigade can run on a cloud computer')
+    const home = teammateHome(runAs)
+    return harnessEnv({
+      ...(await antigravityEnv({ account, accountDir: accountDir(account), home, runAs })),
+      ...(await containerEnv(runAs, sessionId)),
+      HOME: home,
+      USER: runAs,
+      LOGNAME: runAs,
+    })
+  }
   // Its bridge from the copy all teammates share, else installed in its home as before.
   await useSharedBridge(runAs, account.provider === 'codex' ? 'codex' : 'claude-code')
   const home = teammateHome(runAs)
@@ -3142,9 +3202,12 @@ export async function runOnce(input: {
   const codex = teammate.harness === 'codex'
   const settings = { auth: {} }
   const agent = new HarnessAgent({
-    harness: codex
-      ? createCodex({ ...settings, codexConfig: CODEX_SETTINGS })
-      : createClaudeCode(settings),
+    harness:
+      teammate.harness === 'antigravity'
+        ? createAntigravityHarness({ mcpServers: {} })
+        : codex
+          ? createCodex({ ...settings, codexConfig: CODEX_SETTINGS })
+          : createClaudeCode(settings),
     tools: {},
     ...(input.noTools ? { activeTools: [] } : {}),
     ...(input.model ? { model: input.model } : withModel(teammate)),

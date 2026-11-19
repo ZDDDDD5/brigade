@@ -51,6 +51,15 @@ export default function Accounts() {
     act(api('/accounts', { body: { computerId, provider } }))
 
   const online = usableComputers(computers.data)
+  // Google accounts for Antigravity only with the antigravity_harness feature, or once one is here.
+  const providers: Account['provider'][] = [
+    'claude_code',
+    'codex',
+    ...(me.features?.includes('antigravity_harness') ||
+    (accounts.data ?? []).some((a) => a.provider === 'antigravity')
+      ? (['antigravity'] as const)
+      : []),
+  ]
   const byProvider = (provider: Account['provider']) =>
     (accounts.data ?? []).filter((a) => a.provider === provider)
 
@@ -59,10 +68,10 @@ export default function Accounts() {
       <header className="flex flex-col gap-3">
         <h1 className="text-2xl font-extrabold tracking-tight">Accounts</h1>
         <p className="max-w-prose text-muted-foreground">
-          The Claude and Codex subscriptions your teammates run on. Add several of each: when one
-          runs out of usage, threads continue on the next. Those on the cloud computer are the
-          workspace&apos;s: every member&apos;s threads there use them. Those on your own computer
-          are yours alone.
+          The Claude, Codex and other AI subscriptions your teammates run on. Add several of each:
+          when one runs out of usage, threads continue on the next. Those on the cloud computer are
+          the workspace&apos;s: every member&apos;s threads there use them. Those on your own
+          computer are yours alone.
         </p>
         <div className="flex gap-3 rounded-lg bg-accent p-4 text-sm text-accent-foreground">
           <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -74,7 +83,7 @@ export default function Accounts() {
         {error && <p className="text-sm text-destructive-text">{error}</p>}
       </header>
 
-      {(['claude_code', 'codex'] as const).map((provider) => (
+      {providers.map((provider) => (
         <section
           key={provider}
           aria-labelledby={`accounts-${provider}`}
@@ -120,7 +129,7 @@ export default function Accounts() {
           </p>
         ) : (
           <div className="flex flex-wrap gap-2">
-            {(['claude_code', 'codex'] as const).map((provider) => {
+            {providers.map((provider) => {
               const label = (
                 <>
                   <HarnessLogo harness={provider} />
@@ -146,7 +155,13 @@ export default function Accounts() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-60">
                     <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-                      Sign in with {provider === 'codex' ? 'ChatGPT' : 'Claude'} on
+                      Sign in with{' '}
+                      {provider === 'codex'
+                        ? 'ChatGPT'
+                        : provider === 'antigravity'
+                          ? 'Google'
+                          : 'Claude'}{' '}
+                      on
                     </DropdownMenuLabel>
                     {online.map((c) => (
                       <DropdownMenuItem key={c.id} onSelect={() => void add(provider, c.id)}>

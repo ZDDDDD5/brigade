@@ -456,7 +456,14 @@ export const search = new Hono<AppEnv>()
           kind: 'teammate',
           id: t.id,
           title: t.name,
-          detail: t.harness === 'codex' ? 'Codex' : t.harness === 'pi' ? 'Pi' : 'Claude',
+          detail:
+            t.harness === 'codex'
+              ? 'Codex'
+              : t.harness === 'pi'
+                ? 'Pi'
+                : t.harness === 'antigravity'
+                  ? 'Antigravity'
+                  : 'Claude',
           score: score(t.name),
         }),
       ),
@@ -532,7 +539,14 @@ export const search = new Hono<AppEnv>()
           kind: 'account',
           id: a.id,
           title: a.label,
-          detail: [a.provider === 'codex' ? 'Codex' : 'Claude', a.email]
+          detail: [
+            a.provider === 'codex'
+              ? 'Codex'
+              : a.provider === 'antigravity'
+                ? 'Antigravity'
+                : 'Claude',
+            a.email,
+          ]
             .filter(Boolean)
             .join(' · '),
           score: score(a.label),

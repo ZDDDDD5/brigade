@@ -506,12 +506,14 @@ model Runner {
   @@index([workspaceId])
 }
 
-/// What runs a teammate (Teammate.harness), and a login's CLI (Account.provider, only claude_code or
-/// codex). pi: Pi, on the login of its model's vendor (loginOf), behind the pi_harness feature.
+/// What runs a teammate (Teammate.harness), and a login's CLI (Account.provider: claude_code, codex
+/// or antigravity). pi: Pi, on the login of its model's vendor (loginOf), behind the pi_harness
+/// feature. antigravity: Google's Antigravity CLI on a Google account, behind antigravity_harness.
 enum Harness {
   claude_code
   codex
   pi
+  antigravity
 }
 
 /// chief: the teammate every workspace has one of. It sets up the team and routes work.

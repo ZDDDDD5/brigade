@@ -136,13 +136,21 @@ export * from './usage.js'
  *     goal_report as schedule.call operations, and a goal's command measurement (goal.measure, goal.measured).
  * 55: teammates on Pi (PI_PROTOCOL): ThreadSpec.teammate.harness may be `pi`, and turn.started and
  *     turn.completed carry what the Pi benchmark compares (harness, model, tool calls and errors).
+ * 56: teammates on Antigravity (ANTIGRAVITY_PROTOCOL): ThreadSpec.teammate.harness and an account's
+ *     provider may be `antigravity`, a Google account signed in with Antigravity's own `agy`.
  */
-export const PROTOCOL_VERSION = 55
+export const PROTOCOL_VERSION = 56
 /**
  * Runners from this version on run a teammate on Pi (TeammateHarness). The API starts no Pi turn on
  * an older one, whose spec would not parse: it says the computer's Brigade must update first.
  */
 export const PI_PROTOCOL = 55
+/**
+ * Runners from this version on run a teammate on Antigravity and sign in its Google accounts. The
+ * API starts no Antigravity turn or sign-in on an older one, whose messages would not parse: it says
+ * the computer's Brigade must update first.
+ */
+export const ANTIGRAVITY_PROTOCOL = 56
 /**
  * Runners from this version on run Chief's daily pass (ThreadSpec.pass) with its tools. The API
  * starts no pass on an older one: what waits on the person waits, as before.

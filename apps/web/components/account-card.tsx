@@ -268,6 +268,8 @@ export function AccountLoginSteps({
   const [email, setEmail] = useState(a.email ?? '')
   // On the cloud computer a Claude account is a token, which cannot tell whose it is.
   const asksEmail = a.provider === 'claude_code' && a.computer.kind === 'cloud'
+  // A Google sign-in for Antigravity; else Claude's.
+  const google = a.provider === 'antigravity'
   return (
     <div className={cn('flex flex-col gap-2 rounded-lg bg-muted p-4 text-sm', className)}>
       {login.state === 'starting' && (
@@ -313,11 +315,15 @@ export function AccountLoginSteps({
             1.{' '}
             <Button asChild size="sm">
               <a href={login.url} target="_blank" rel="noreferrer">
-                Open Claude sign-in
+                {google ? 'Open Google sign-in' : 'Open Claude sign-in'}
               </a>
             </Button>
           </p>
-          <p>2. Sign in to the Claude account you want to add. Claude then shows a code.</p>
+          <p>
+            {google
+              ? '2. Sign in to the Google account with your Google AI plan. Antigravity then shows a code.'
+              : '2. Sign in to the Claude account you want to add. Claude then shows a code.'}
+          </p>
           {asksEmail && (
             <div className="flex flex-col gap-1.5">
               <Label htmlFor={`email-${a.id}`}>

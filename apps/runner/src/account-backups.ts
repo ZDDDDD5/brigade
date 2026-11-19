@@ -20,12 +20,15 @@ import { chmod, lstat, mkdir, open, readdir, rename, rm } from 'node:fs/promises
 import { join } from 'node:path'
 import { ACCOUNT_LOGIN_FILES, type AccountLogin } from '@brigade/contracts'
 import { ACCOUNTS_DIR, CLOUD } from './config.js'
+import { AGY_TOKEN_FILE } from './harness/antigravity.js'
 import { shareAccount, shareLogin } from './teammates.js'
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
 const FILE_MAX = 64 * 1024
 /** Only the runner reads it (accounts.ts): written last, after the folder is shared. */
 const TOKEN_FILE = '.oauth-token'
+/** Antigravity's Google login, the runner's alone too (harness/antigravity.ts): written last. */
+const PRIVATE_FILES: readonly string[] = [TOKEN_FILE, AGY_TOKEN_FILE]
 /** What a harness rewrites in an account's folder, which its teammates must still read and write. */
 const SHARED_FILES = ['auth.json', 'auth.json.lock', '.credentials.json']
 
@@ -80,11 +83,11 @@ export async function writeLogin(dir: string, accountId: string, login: AccountL
     })
   }
   for (const file of login.files)
-    if (file.name !== TOKEN_FILE) await put(file.name, file.content, 0o660)
+    if (!PRIVATE_FILES.includes(file.name)) await put(file.name, file.content, 0o660)
   // Teammate users reach the login files through the folder's group (link-account).
   if (CLOUD) await shareAccount(accountId)
-  const token = login.files.find((file) => file.name === TOKEN_FILE)
-  if (token) await put(TOKEN_FILE, token.content, 0o600)
+  for (const file of login.files)
+    if (PRIVATE_FILES.includes(file.name)) await put(file.name, file.content, 0o600)
 }
 
 /**

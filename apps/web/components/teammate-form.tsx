@@ -5,6 +5,7 @@ import {
   isHarnessModel,
   modelLabel,
   PI_DEFAULT_MODEL,
+  ANTIGRAVITY_DEFAULT_MODEL,
   type TeammateHarness,
 } from '@brigade/contracts'
 import { TriangleAlert } from 'lucide-react'
@@ -41,13 +42,15 @@ type Harness = TeammateInput['harness']
 const DEFAULT_MODEL = 'default'
 const HARNESSES: Harness[] = ['claude_code', 'codex']
 
-/** The Default option's line: Codex's and Pi's model is Brigade's, Claude Code's the account's. */
+/** The Default option's line: Codex's, Pi's and Antigravity's model is Brigade's, Claude Code's the account's. */
 const defaultLine = (h: Harness) =>
   h === 'codex'
     ? modelLabel(h, CODEX_DEFAULT_MODEL)
     : h === 'pi'
       ? modelLabel(h, PI_DEFAULT_MODEL)
-      : 'The account’s default model'
+      : h === 'antigravity'
+        ? modelLabel(h, ANTIGRAVITY_DEFAULT_MODEL)
+        : 'The account’s default model'
 
 export function TeammateForm({
   initial,
@@ -63,10 +66,14 @@ export function TeammateForm({
 }) {
   // Pi only with the pi_harness feature (docs/harnesses.md), or for a teammate already on it.
   const { me } = useDashboard()
-  const harnesses: Harness[] =
-    me.features?.includes('pi_harness') || initial?.harness === 'pi'
-      ? [...HARNESSES, 'pi']
-      : HARNESSES
+  // Antigravity likewise, with the antigravity_harness feature.
+  const harnesses: Harness[] = [
+    ...HARNESSES,
+    ...(me.features?.includes('antigravity_harness') || initial?.harness === 'antigravity'
+      ? (['antigravity'] as const)
+      : []),
+    ...(me.features?.includes('pi_harness') || initial?.harness === 'pi' ? (['pi'] as const) : []),
+  ]
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [harness, setHarness] = useState<Harness>(initial?.harness ?? 'claude_code')
@@ -190,6 +197,16 @@ export function TeammateForm({
             <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
             Codex cannot ask before running commands or editing files, so its threads run them
             without asking.
+          </p>
+        )}
+        {harness === 'antigravity' && (
+          <p className="flex items-start gap-1.5 text-xs text-warning">
+            <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+            Antigravity runs on a Google account you sign in to under Accounts, with Google’s own
+            Antigravity CLI. Google allows other apps to drive it only while a person is in the
+            session, so it may suspend an account used by routines or background work. Its threads
+            run commands and edit files without asking, and it can’t answer a message on the side
+            while it works.
           </p>
         )}
         {harness === 'pi' && (

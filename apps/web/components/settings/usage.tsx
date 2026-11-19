@@ -183,7 +183,10 @@ function Report({ data }: { data: UsageResponse }) {
         total={total}
         name={(r) => (
           <span className="flex items-center gap-2">
-            <HarnessLogo harness={r.id === 'codex' ? 'codex' : 'claude_code'} className="size-4" />
+            <HarnessLogo
+              harness={r.id === 'codex' || r.id === 'antigravity' ? r.id : 'claude_code'}
+              className="size-4"
+            />
             {r.label}
           </span>
         )}

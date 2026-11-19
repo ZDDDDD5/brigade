@@ -976,7 +976,7 @@ async function quotaHold(sessionId: string) {
       hold = {
         until,
         reason:
-          `Your ${account.provider === 'codex' ? 'Codex' : 'Claude'} usage is at ${Math.round(w.utilization * 100)}% of its ${w.window ?? ''} window: the goal waits for it to reset, so your other threads keep theirs.`.replace(
+          `Your ${account.provider === 'codex' ? 'Codex' : account.provider === 'antigravity' ? 'Antigravity' : 'Claude'} usage is at ${Math.round(w.utilization * 100)}% of its ${w.window ?? ''} window: the goal waits for it to reset, so your other threads keep theirs.`.replace(
             'its  window',
             'its window',
           ),

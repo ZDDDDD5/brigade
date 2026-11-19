@@ -179,6 +179,7 @@ export const teammates = new Hono<AppEnv>()
     const input = await parseBody(c.req.raw, CreateTeammate)
     refuseChiefName(input.name)
     if (input.harness === 'pi') await refuseWithoutPi(c.var.scope)
+    if (input.harness === 'antigravity') await refuseWithoutAntigravity(c.var.scope)
     const row = await c.var.db.teammate.create({ data: input as never })
     await audit({
       ...c.var.scope,
@@ -262,6 +263,8 @@ export const teammates = new Hono<AppEnv>()
       if (!current) throw new HTTPException(404, { message: 'Teammate not found' })
       const harness = input.harness ?? current.harness
       if (harness === 'pi' && current.harness !== 'pi') await refuseWithoutPi(c.var.scope)
+      if (harness === 'antigravity' && current.harness !== 'antigravity')
+        await refuseWithoutAntigravity(c.var.scope)
       const model = input.model === undefined ? current.model : input.model
       // A model saved before the list existed stays until someone changes it.
       const unchanged = harness === current.harness && model === current.model
@@ -369,6 +372,12 @@ export const teammates = new Hono<AppEnv>()
 async function refuseWithoutPi(scope: { memberId: string; workspaceId: string }) {
   if (!(await featuresOfMember(scope.memberId, scope.workspaceId)).has('pi_harness'))
     throw new HTTPException(400, { message: 'Pi is not available in this workspace' })
+}
+
+/** Antigravity is a choice only where the antigravity_harness feature is open (docs/harnesses.md). */
+async function refuseWithoutAntigravity(scope: { memberId: string; workspaceId: string }) {
+  if (!(await featuresOfMember(scope.memberId, scope.workspaceId)).has('antigravity_harness'))
+    throw new HTTPException(400, { message: 'Antigravity is not available in this workspace' })
 }
 
 async function teammateComputer(db: ScopedDb, id: string) {

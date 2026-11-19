@@ -1,8 +1,17 @@
-import { AddAccount, SubmitLoginCode, UpdateAccount, type AccountRef } from '@brigade/contracts'
+import {
+  ANTIGRAVITY_PROTOCOL,
+  AddAccount,
+  SubmitLoginCode,
+  UpdateAccount,
+  loginName,
+  type AccountRef,
+  type HarnessId,
+} from '@brigade/contracts'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { isShared, mayManage, usableBy } from '../account-sharing.js'
 import { audit } from '../audit.js'
+import { featuresOfMember, requireFeature } from '../features.js'
 import type { ScopedDb } from '../db.js'
 import { hubs } from '../hub.js'
 import {
@@ -17,11 +26,15 @@ import {
 type AccountRow = { id: string; provider: string; source: 'machine' | 'brigade' }
 export const accountRef = (a: AccountRow): AccountRef => ({
   id: a.id,
-  provider: a.provider === 'codex' ? 'codex' : 'claude_code',
+  provider: loginOfRow(a.provider),
   source: a.source,
 })
 
-const providerName = (provider: string) => (provider === 'codex' ? 'Codex' : 'Claude')
+/** An account row's login: claude_code for any other value, as before Antigravity. */
+const loginOfRow = (provider: string): HarnessId =>
+  provider === 'codex' || provider === 'antigravity' ? provider : 'claude_code'
+
+const providerName = (provider: string) => loginName(loginOfRow(provider))
 
 /**
  * The accounts a member's work may run on for a harness on a computer (src/account-sharing.ts:
@@ -35,7 +48,7 @@ export async function usableAccounts(
   input: {
     memberId: string
     computerId: string
-    provider: 'claude_code' | 'codex'
+    provider: HarnessId
     preferredId?: string | null
   },
 ) {
@@ -146,6 +159,22 @@ export const accounts = new Hono<AppEnv>()
       !(await hubs.get(scope.workspaceId).isOnline(computer.id))
     ) {
       throw new HTTPException(409, { message: 'That computer is offline' })
+    }
+    // Google accounts for Antigravity: behind its feature, on a runner that signs them in.
+    if (input.provider === 'antigravity') {
+      requireFeature(
+        await featuresOfMember(scope.memberId, scope.workspaceId),
+        'antigravity_harness',
+      )
+      const protocol = await hubs
+        .get(scope.workspaceId)
+        .runnerProtocol(computer.id)
+        .catch(() => undefined)
+      if (protocol !== undefined && protocol < ANTIGRAVITY_PROTOCOL)
+        throw new HTTPException(409, {
+          message:
+            "This computer's Brigade is too old to sign in to Antigravity. It updates by itself after a quiet while; try again then.",
+        })
     }
     const count = await db.account.count({
       where: { memberId: scope.memberId, provider: input.provider },

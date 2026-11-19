@@ -19,6 +19,8 @@ const SIGNED_OUT = [
   /access token could not be refreshed/i,
   /authentication token is expired/i,
   /please (sign|log) ?in again/i,
+  // Antigravity's ACP server without a working Google login.
+  /authentication required/i,
 ]
 
 /** Whether a harness's error says its login is gone. */

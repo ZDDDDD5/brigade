@@ -11,7 +11,7 @@ import { pathKey } from '../windows.js'
 
 /** API keys never reach a harness. */
 const API_KEYS =
-  /^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|AI_GATEWAY_|VERCEL_OIDC_TOKEN$|OPENAI_API_KEY$|CODEX_API_KEY$)/
+  /^(ANTHROPIC_|CLAUDE_CODE_OAUTH_TOKEN$|AI_GATEWAY_|VERCEL_OIDC_TOKEN$|OPENAI_API_KEY$|CODEX_API_KEY$|GEMINI_API_KEY$)/
 /** The runner's own settings stay with the runner. */
 const RUNNER_ONLY = /^BRIGADE_/
 

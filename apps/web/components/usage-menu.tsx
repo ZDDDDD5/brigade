@@ -15,7 +15,7 @@ import { harnessLabel, type Account } from '@/lib/api'
 import { openSettings } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
 
-const PROVIDERS = ['claude_code', 'codex'] as const
+const PROVIDERS = ['claude_code', 'codex', 'antigravity'] as const
 
 const outOfUsage = (a: Account) => !!a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()
 

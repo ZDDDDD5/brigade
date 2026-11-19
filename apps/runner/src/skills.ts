@@ -15,8 +15,10 @@ import { SKILL_ENTRY, type ThreadSkill, type ThreadSpec, skillMarkdown } from '@
 const MANIFEST = '.brigade-skills.json'
 
 export const skillsDir = (spec: ThreadSpec) =>
-  // Pi is told where they are (harness/pi.ts, piSkills).
-  spec.teammate.harness === 'codex' || spec.teammate.harness === 'pi'
+  // Pi is told where they are (harness/pi.ts, piSkills); Antigravity reads `.agents/skills` too.
+  spec.teammate.harness === 'codex' ||
+  spec.teammate.harness === 'pi' ||
+  spec.teammate.harness === 'antigravity'
     ? join('.agents', 'skills')
     : join('.claude', 'skills')
 
