@@ -6,11 +6,13 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
+  chmod,
   copyFile,
   lstat,
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   stat,
   symlink,
@@ -26,7 +28,8 @@ process.env.BRIGADE_HOME = home
 const { seal, unseal } = await import('../src/sealed.js')
 const { Folders, pack, changedSince } = await import('../src/folders.js')
 const { threadFolder, backgroundTasks } = await import('../src/threads.js')
-const { readLogin, writeLogin } = await import('../src/account-backups.js')
+const { readLogin, writeLogin, AccountBackups, needsSharing } =
+  await import('../src/account-backups.js')
 
 test.after(() => rm(home, { recursive: true, force: true }))
 
@@ -182,6 +185,105 @@ test('a login is written back by renaming over what is there, never through a li
     ['.oauth-token', 'auth.json'],
   )
   assert.ok(!(await exists(join(dir, '.credentials.json'))))
+})
+
+/**
+ * What Codex 0.167 on does when it refreshes a login: a new file renamed over auth.json (through
+ * the teammate's link to it), mode 0600. Here the runner's own user writes it, so mode 0 stands
+ * for "the runner may not read it", as the teammate's 0600 file is for the runner's user.
+ */
+async function codexRefreshed(dir: string, content: string) {
+  const temp = join(dir, `.tmp-${randomBytes(4).toString('hex')}`)
+  await writeFile(temp, content, { mode: 0o600 })
+  await chmod(temp, 0)
+  await rename(temp, join(dir, 'auth.json'))
+}
+
+function backups(share: (accountId: string) => Promise<unknown>) {
+  const sent = new Map<string, string>()
+  const puts: { accountId: string; auth: string }[] = []
+  const store = new AccountBackups({
+    put: async (accountId, login) => {
+      const auth = login.files.find((f) => f.name === 'auth.json')
+      puts.push({ accountId, auth: Buffer.from(auth?.content ?? '', 'base64').toString() })
+    },
+    sent: (accountId) => sent.get(accountId),
+    noteSent: (accountId, sha256) => void sent.set(accountId, sha256),
+    ready: async () => {},
+    share,
+  })
+  return { store, puts }
+}
+
+const asRoot = process.getuid?.() === 0
+
+test(
+  'a Codex login refreshed by a teammate is shared again and backed up, not skipped',
+  { skip: asRoot && 'root reads any file' },
+  async () => {
+    const dir = join(home, 'accounts', 'codex-refreshed')
+    await mkdir(dir, { recursive: true })
+    await writeFile(join(dir, 'auth.json'), '{"refresh_token":"r1"}', { mode: 0o660 })
+    await chmod(join(dir, 'auth.json'), 0o660)
+    const shared: string[] = []
+    const { store, puts } = backups(async (accountId) => {
+      shared.push(accountId)
+      // share-account: the runner's again, the group's read and write back.
+      await chmod(join(home, 'accounts', accountId, 'auth.json'), 0o660)
+    })
+    await store.sync()
+    assert.deepEqual(
+      puts.filter((p) => p.accountId === 'codex-refreshed').map((p) => p.auth),
+      ['{"refresh_token":"r1"}'],
+    )
+    assert.ok(!shared.includes('codex-refreshed'), 'a shared folder is left as it is')
+
+    // The teammate's Codex refreshes: r1 is spent, and only r2 signs in from now on.
+    await codexRefreshed(dir, '{"refresh_token":"r2"}')
+    assert.ok(await needsSharing(dir))
+    await store.sync()
+    assert.ok(shared.includes('codex-refreshed'))
+    assert.equal(
+      puts.filter((p) => p.accountId === 'codex-refreshed').at(-1)?.auth,
+      '{"refresh_token":"r2"}',
+    )
+    assert.equal(await needsSharing(dir), false)
+  },
+)
+
+test(
+  'a login the runner still cannot read is said, and sent once it can be',
+  { skip: asRoot && 'root reads any file' },
+  async (t) => {
+    const dir = join(home, 'accounts', 'codex-unreadable')
+    await mkdir(dir, { recursive: true })
+    await codexRefreshed(dir, '{"refresh_token":"r3"}')
+    const warnings: string[] = []
+    t.mock.method(console, 'warn', (line: string) => void warnings.push(line))
+    const { store, puts } = backups(async () => {
+      throw new Error('sudo: a password is required')
+    })
+    await store.sync()
+    await store.sync()
+    assert.ok(!puts.some((p) => p.accountId === 'codex-unreadable'))
+    const said = warnings.filter((w) => w.includes('could not read the login of codex-unreadable'))
+    assert.equal(said.length, 1, 'said once, not at every pass')
+
+    await chmod(join(dir, 'auth.json'), 0o660)
+    await store.sync()
+    assert.equal(
+      puts.filter((p) => p.accountId === 'codex-unreadable').at(-1)?.auth,
+      '{"refresh_token":"r3"}',
+    )
+  },
+)
+
+test('a folder with a long-lived token is never shared again', async () => {
+  const dir = join(home, 'accounts', 'claude-token')
+  await mkdir(dir, { recursive: true })
+  await writeFile(join(dir, '.oauth-token'), 'sk-ant-oat01-x\n', { mode: 0o600 })
+  await writeFile(join(dir, '.credentials.json'), '{}', { mode: 0o600 })
+  assert.equal(await needsSharing(dir), false)
 })
 
 test("what a turn runs in the background, from Claude Code's task messages", () => {

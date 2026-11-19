@@ -5,9 +5,16 @@
 // sent, not a copy now and then, and only the computer the API has for the account gets them
 // back. The runner owns these folders (ACCOUNTS_DIR); teammates write in them too, so a file is
 // read without following a link, and written by renaming a new file over it.
+//
+// Codex (0.167 on) saves a refreshed login as a new file renamed over auth.json, through the
+// teammate's link to it, with mode 0600 and the user that ran it as owner: neither the runner nor
+// the account's other teammates can read it then. Such a folder is shared again (share-account,
+// as after a sign-in) before its login is read; a login still unreadable is said, never skipped
+// in silence, since the copy the API keeps would go stale and sign the account out on the next
+// computer (Nov 18: a replaced computer got a Codex login whose refresh token was already used).
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, watch } from 'node:fs'
-import { chmod, mkdir, open, readdir, rename, rm } from 'node:fs/promises'
+import { chmod, lstat, mkdir, open, readdir, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { ACCOUNT_LOGIN_FILES, type AccountLogin } from '@brigade/contracts'
 import { ACCOUNTS_DIR, CLOUD } from './config.js'
@@ -17,13 +24,23 @@ const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
 const FILE_MAX = 64 * 1024
 /** Only the runner reads it (accounts.ts): written last, after the folder is shared. */
 const TOKEN_FILE = '.oauth-token'
+/** What a harness rewrites in an account's folder, which its teammates must still read and write. */
+const SHARED_FILES = ['auth.json', 'auth.json.lock', '.credentials.json']
+
+/** A login file is there, but the runner may not read it. */
+export class LoginUnreadable extends Error {}
 
 /** An account's login files as they are now, or null without any. */
 export async function readLogin(dir: string): Promise<AccountLogin | null> {
   const files: AccountLogin['files'] = []
   for (const name of ACCOUNT_LOGIN_FILES) {
     const handle = await open(join(dir, name), constants.O_RDONLY | constants.O_NOFOLLOW).catch(
-      () => null,
+      (error: NodeJS.ErrnoException) => {
+        // Missing, or a link (never followed): not a login file.
+        if (error.code === 'EACCES' || error.code === 'EPERM')
+          throw new LoginUnreadable(`${name} cannot be read (${error.code})`)
+        return null
+      },
     )
     if (!handle) continue
     try {
@@ -69,6 +86,27 @@ export async function writeLogin(dir: string, accountId: string, login: AccountL
 }
 
 /**
+ * Whether a harness left a login file of the account's folder unshared: owned by another user, or
+ * without the group's read and write. A folder with a long-lived token is never shared again:
+ * that token is the runner's alone, and nothing rewrites its files.
+ */
+export async function needsSharing(dir: string, uid = process.getuid?.()) {
+  if (
+    await lstat(join(dir, TOKEN_FILE)).then(
+      () => true,
+      () => false,
+    )
+  )
+    return false
+  for (const name of SHARED_FILES) {
+    const info = await lstat(join(dir, name)).catch(() => null)
+    if (!info?.isFile()) continue
+    if ((info.mode & 0o060) !== 0o060 || (uid !== undefined && info.uid !== uid)) return true
+  }
+  return false
+}
+
+/**
  * Keep the API's copy of each account's login as it is here: on any change in the accounts'
  * folders (a debounced watch), and each minute in case a change went unseen.
  */
@@ -85,8 +123,13 @@ export class AccountBackups {
       noteSent: (accountId: string, sha256: string) => void
       /** Nothing is sent until this resolves: a computer putting backups back has none yet. */
       ready: () => Promise<void>
+      /** Give the account's folder back to the runner and its teammates (share-account). */
+      share?: (accountId: string) => Promise<unknown>
     },
   ) {}
+
+  /** Accounts whose login could not be read, said once until it can be again. */
+  private readonly unreadable = new Set<string>()
 
   start() {
     setInterval(() => this.soon(0), 60_000).unref()
@@ -125,8 +168,25 @@ export class AccountBackups {
     const ids = (await readdir(ACCOUNTS_DIR).catch(() => [] as string[])).filter((id) =>
       SAFE_ID.test(id),
     )
+    const share = this.options.share ?? (CLOUD ? shareAccount : undefined)
     for (const accountId of ids) {
-      const login = await readLogin(join(ACCOUNTS_DIR, accountId)).catch(() => null)
+      const dir = join(ACCOUNTS_DIR, accountId)
+      let login: AccountLogin | null
+      try {
+        if (share && (await needsSharing(dir)))
+          await share(accountId).catch((error: unknown) =>
+            console.warn(`could not share the login folder of ${accountId}: ${String(error)}`),
+          )
+        login = await readLogin(dir)
+      } catch (error) {
+        if (!this.unreadable.has(accountId))
+          console.warn(
+            `could not read the login of ${accountId}, so it is not backed up: ${String(error)}`,
+          )
+        this.unreadable.add(accountId)
+        continue
+      }
+      this.unreadable.delete(accountId)
       if (!login || this.options.sent(accountId) === login.sha256) continue
       try {
         await this.options.put(accountId, login)
