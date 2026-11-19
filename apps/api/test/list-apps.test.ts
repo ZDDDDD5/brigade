@@ -372,6 +372,38 @@ describe("a teammate's list_apps", { skip: !database && 'no database answers' },
     }
   })
 
+  test('a ticket may ask for a closed App only where an active account of it is there to grant', async () => {
+    // A starter with none of the features (src/features.ts), given as such rather than through
+    // the database's flags, which other tests change: the runner refuses a ticket for a kind the
+    // thread's spec names in closedApps.
+    const { closedAppKinds } = await import('../src/thread-spec.js')
+    const closed = async (member: string) => {
+      const id = await thread(member, member)
+      return closedAppKinds(db, { id, startedByMemberId: member }, new Set())
+    }
+    // Ada sees no Gmail account here (Bob's and Carol's are their own): neither can be granted.
+    const ada = await closed(ids.ada)
+    assert.ok(ada.includes('gmail') && ada.includes('google_drive'), ada.join(', '))
+    // Carol's own Gmail is there to grant: still askable; Drive, with no account, is not.
+    const carol = await closed(ids.carol)
+    assert.ok(!carol.includes('gmail') && carol.includes('google_drive'), carol.join(', '))
+    // An expired account can't be granted, and its Reconnect needs the feature: still closed.
+    const expired = await account({
+      key: 'gmail',
+      kind: 'gmail',
+      label: 'Gmail',
+      externalAccount: `ada-${suffix}@acme.test`,
+      by: ids.ada,
+      reach: 'mine',
+    })
+    try {
+      await db.connection.update({ where: { id: expired }, data: { status: 'needs_reauth' } })
+      assert.ok((await closed(ids.ada)).includes('gmail'))
+    } finally {
+      await db.connection.delete({ where: { id: expired } })
+    }
+  })
+
   test("another member's own account never shows, even given to the teammate", async () => {
     for (const sessionId of [
       await thread(ids.bob, ids.bob),

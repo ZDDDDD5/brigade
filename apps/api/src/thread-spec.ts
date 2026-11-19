@@ -1,5 +1,7 @@
 import {
+  APP_FEATURES,
   Effort,
+  type Feature,
   loginOf,
   PI_PROTOCOL,
   folderExceptions,
@@ -19,13 +21,14 @@ import { threadAttachments } from './attachments.js'
 import { chiefRoster } from './chief.js'
 import { prisma, type ScopedDb } from './db.js'
 import type { WorkspaceScope } from './scope.js'
+import type { ConnectorKind } from './connectors/types.js'
 import { connectors } from './connectors/index.js'
 import { threadAddress } from './connectors/email.js'
 import { threadDesignSystems } from './designs.js'
 import { threadSkills } from './skills.js'
 import { playbookAccount, threadPlaybook } from './playbooks.js'
 import { wantsMachine } from './preview-machines.js'
-import { featuresOfMember } from './features.js'
+import { appOpen, featuresOfMember } from './features.js'
 import { gitAccess } from './git.js'
 import { specItems } from './lists.js'
 import { folderRules } from './library-folders.js'
@@ -303,23 +306,21 @@ export async function specFor(
   // A machine of its own (the preview_machines feature, which its starter turned on): its preview
   // runs there, and its teammates get the tools to run heavy commands there. Not in Chief's pass.
   const machine = !passing && thread.computer.kind === 'cloud' && (await wantsMachine(thread))
+  const features = await featuresOfMember(thread.startedByMemberId, thread.workspaceId)
   // Tools (docs/tools.md): for teammates of a thread whose starter has the feature.
-  const tools =
-    !passing && (await featuresOfMember(thread.startedByMemberId, thread.workspaceId)).has('tools')
+  const tools = !passing && features.has('tools')
+  const closedApps = await closedAppKinds(db, thread, features)
   // Missions (docs/missions.md): the mission the thread works for, when its starter has the feature.
   // Not in Chief's pass nor a playbook's run, which their own briefs steer.
   const mission = passing || playbook ? null : await threadInitiative(db, thread)
-  const missions =
-    !passing &&
-    !playbook &&
-    (await featuresOfMember(thread.startedByMemberId, thread.workspaceId)).has('missions')
+  const missions = !passing && !playbook && features.has('missions')
   // Themes (docs/themes.md): the starter's own look, in a thread they started, when they have it,
   // while nobody else asks there (the API checks again at each call).
   const themes =
     !passing &&
     !playbook &&
     thread.origin === 'member' &&
-    (await featuresOfMember(thread.startedByMemberId, thread.workspaceId)).has('themes') &&
+    features.has('themes') &&
     (await shownAccounts(db, thread)).person === thread.startedByMemberId
   // An MCP connector's tools come from its server; a runner too old to know its kind gets none.
   const protocol = await hubs.get(thread.workspaceId).runnerProtocol(thread.computerId)
@@ -407,6 +408,7 @@ export async function specFor(
     // Older runners ignore them, and offer no mission tools.
     missions,
     themes,
+    closedApps,
     mission,
     playbook: playbook
       ? {
@@ -480,6 +482,31 @@ export async function askedBy(db: ScopedDb, sessionId: string): Promise<string |
  * Once another member asks, no member's own account shows, as none answers there
  * (connector-calls.ts). person: whose own accounts show; null, nobody's.
  */
+/**
+ * The App kinds behind a feature the thread's starter lacks (src/features.ts) with no active
+ * account in the workspace a ticket could grant them from (one shown in the thread, as list_apps
+ * shows them): the runner refuses an access ticket for one, which nobody could grant. An account
+ * of it already connected, such as a mailbox an owner with the feature shared, stays askable; an
+ * expired one doesn't, since a grant needs it active and its Reconnect needs the feature.
+ */
+export async function closedAppKinds(
+  db: ScopedDb,
+  thread: { id: string; startedByMemberId: string },
+  features: Set<Feature>,
+) {
+  const closed = Object.keys(APP_FEATURES).filter((kind) => !appOpen(kind, features))
+  if (!closed.length) return []
+  const [accounts, { shown }] = await Promise.all([
+    db.connection.findMany({
+      where: { status: 'active', kind: { in: closed as ConnectorKind[] } },
+      select: { kind: true, reach: true, createdByMemberId: true },
+    }),
+    shownAccounts(db, thread),
+  ])
+  const connected = new Set(accounts.filter(shown).map((c) => c.kind as string))
+  return closed.filter((kind) => !connected.has(kind))
+}
+
 export async function shownAccounts(
   db: ScopedDb,
   thread: { id: string; startedByMemberId: string },
