@@ -45,6 +45,7 @@ import { dueGoals, measureDueGoals } from './goals.js'
 import { dueActions, runDueActions } from './initiatives.js'
 import { sendAdConversions } from './google-ads.js'
 import { sweepIdleGuests } from './guests.js'
+import { sealMcpClients } from './connectors/mcp.js'
 import { dueWorkspaceCleanups, sweepDeletedWorkspaces } from './workspace-delete.js'
 
 /** One run of a job: for a workspace, for one row (an event a webhook kept), or for all (null). */
@@ -160,6 +161,8 @@ export const JOBS = {
   // Hourly: guests left unsaved and unused for two weeks, with their projects (src/guests.ts),
   // a few a run: each is a whole account's deletion.
   'guest-sweep': { every: 3600, run: (_key, now) => sweepIdleGuests(now).then(() => {}) },
+  // Hourly: MCP servers' client secrets kept in plain text only, sealed (src/connectors/mcp.ts).
+  'mcp-client-seal': { every: 3600, run: () => sealMcpClients().then(() => {}) },
 
   // One row each, when asked for (enqueue): a webhook's event kept, a received mail kept.
   'inbound-event': { run: (key) => (key ? processInbound(key) : Promise.resolve()) },

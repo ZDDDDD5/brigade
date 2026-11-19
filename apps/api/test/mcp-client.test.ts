@@ -51,6 +51,9 @@ let registrations = 0
 let approved = false
 /** The client IDs the token endpoint was asked as. */
 let exchangedAs: string[] = []
+/** The secret a registration gives, if any, and those the token endpoint was sent. */
+let issuedSecret: string | undefined
+let secretsSent: (string | null)[] = []
 
 before(() => {
   globalThis.fetch = (async (input: string | URL | Request, init: RequestInit = {}) => {
@@ -73,7 +76,11 @@ before(() => {
       })
     if (url.origin === AUTH && url.pathname === '/oauth/register') {
       registrations++
-      if (approved) return json({ client_id: 'registered-client' }, 201)
+      if (approved)
+        return json(
+          { client_id: 'registered-client', ...(issuedSecret && { client_secret: issuedSecret }) },
+          201,
+        )
       return json(
         {
           error: 'invalid_redirect_uri',
@@ -84,7 +91,9 @@ before(() => {
       )
     }
     if (url.origin === AUTH && url.pathname === '/oauth/token') {
-      exchangedAs.push(new URLSearchParams(String(init.body)).get('client_id') ?? '')
+      const form = new URLSearchParams(String(init.body))
+      exchangedAs.push(form.get('client_id') ?? '')
+      secretsSent.push(form.get('client_secret'))
       return json({ access_token: 'token', refresh_token: 'refresh', expires_in: 3600 })
     }
     return new Response(null, { status: 401 })
@@ -155,3 +164,74 @@ test(
     approved = false
   },
 )
+
+test('a client secret the server gives is kept sealed, and signs in', { skip }, async () => {
+  const { prisma } = await import('../src/db.js')
+  await forget()
+  documentSupported = true
+  approved = true
+  issuedSecret = 'the-registration-secret'
+  secretsSent = []
+  try {
+    const signIn = await mcpAuthUrl(server, 'state', 'verifier')
+    assert.equal(signIn.clientId, 'registered-client')
+    const row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
+    // Kept in plain text too, for an API from before clientSealed, until the next deploy.
+    assert.equal(row.clientSecret, issuedSecret)
+    assert.ok(row.clientSealed)
+    assert.ok(!row.clientSealed.includes(issuedSecret))
+    assert.ok(!Buffer.from(row.clientSealed, 'utf8').toString().includes('registration-secret'))
+    const { credential } = await exchangeMcpCode(server, 'code', 'v', undefined, signIn.clientId)
+    assert.deepEqual(secretsSent, ['the-registration-secret'])
+    assert.equal(credential.clientSecret, 'the-registration-secret')
+  } finally {
+    approved = false
+    issuedSecret = undefined
+  }
+})
+
+test('a secret kept in plain text before is read, then sealed by the job', { skip }, async () => {
+  const { prisma } = await import('../src/db.js')
+  const { mcpRedirectUri, sealMcpClients } = await import('../src/connectors/mcp.js')
+  await forget()
+  await prisma.mcpClient.create({
+    data: {
+      issuer: AUTH,
+      redirectUri: mcpRedirectUri(),
+      clientId: 'old-client',
+      clientSecret: 'old-plain-secret',
+    },
+  })
+  secretsSent = []
+  const signIn = await mcpAuthUrl(server, 'state', 'verifier')
+  assert.equal(signIn.clientId, 'old-client')
+  await exchangeMcpCode(server, 'code', 'verifier', undefined, signIn.clientId)
+  assert.deepEqual(secretsSent, ['old-plain-secret'])
+  // Reading it changes nothing: an API from before clientSealed may still read the row.
+  let row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
+  assert.equal(row.clientSecret, 'old-plain-secret')
+  assert.equal(row.clientSealed, null)
+
+  assert.ok((await sealMcpClients()) >= 1)
+  row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
+  assert.ok(row.clientSealed && !row.clientSealed.includes('old-plain-secret'))
+  const sealed = row.clientSealed
+  await sealMcpClients()
+  row = await prisma.mcpClient.findFirstOrThrow({ where: { issuer: AUTH } })
+  assert.equal(row.clientSealed, sealed, 'a sealed row is left as it is')
+
+  // Once the plain text is cleared (the next deploy), the sealed copy signs in alone.
+  await prisma.mcpClient.update({ where: { id: row.id }, data: { clientSecret: null } })
+  secretsSent = []
+  const again = await mcpAuthUrl(server, 'state', 'verifier')
+  await exchangeMcpCode(server, 'code', 'verifier', undefined, again.clientId)
+  assert.deepEqual(secretsSent, ['old-plain-secret'])
+})
+
+test('a sealed secret opens only for the row it was sealed for', async () => {
+  const { openShared, sealShared } = await import('../src/vault.js')
+  const sealed = sealShared('mcp-client', 'https://a.test\nhttps://cb', 'secret')
+  assert.equal(openShared('mcp-client', 'https://a.test\nhttps://cb', sealed), 'secret')
+  assert.throws(() => openShared('mcp-client', 'https://b.test\nhttps://cb', sealed))
+  assert.throws(() => openShared('another-purpose', 'https://a.test\nhttps://cb', sealed))
+})

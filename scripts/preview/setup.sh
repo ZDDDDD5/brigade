@@ -24,6 +24,8 @@ fi
 
 # The dev accounts sign in with their password, which production turns off.
 grep -q '^PASSWORD_SIGN_IN=' apps/api/.env || echo 'PASSWORD_SIGN_IN=true' >>apps/api/.env
+# Without a mail service, the codes to sign in are in the API's log; production never logs them.
+grep -q '^MAIL_CODES_IN_LOG=' apps/api/.env || echo 'MAIL_CODES_IN_LOG=true' >>apps/api/.env
 
 say "Installing dependencies"
 install_deps

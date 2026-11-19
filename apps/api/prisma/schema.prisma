@@ -1655,7 +1655,12 @@ model McpClient {
   redirectUri  String
   clientId     String
   /// Set only when the server gave the client a secret; Brigade asks for a public client.
+  /// Also kept here in plain text for now, for an API from before clientSealed; the next deploy
+  /// stops writing it and clears it, a later one drops it.
   clientSecret String?
+  /// The secret, sealed with the vault's key (src/vault.ts sealShared), bound to the issuer
+  /// and redirect URI.
+  clientSealed String?
   createdAt    DateTime @default(now())
 
   @@unique([issuer, redirectUri])

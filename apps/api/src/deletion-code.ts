@@ -14,6 +14,7 @@ import { createHash, createHmac, randomInt, timingSafeEqual } from 'node:crypto'
 import { HTTPException } from 'hono/http-exception'
 import { env } from './config.js'
 import { prisma } from './db.js'
+import { unmailedCode } from './mail/codes.js'
 import { addressOf } from './mail/names.js'
 import { resendConfigured, sendEmail } from './mail/resend.js'
 
@@ -104,8 +105,8 @@ export function deletionCodeMail(email: string, target: DeletionTarget, code: st
 /** Mail a new code for the deletion to the person. */
 export async function sendDeletionCode(email: string, target: DeletionTarget) {
   const code = await issueDeletionCode(target)
-  // Locally and in previews no mail leaves: the code is in the API's log.
-  if (!resendConfigured()) return console.log(`deletion code for ${email}: ${code}`)
+  // Locally and in previews no mail leaves: the code is in the API's log (src/mail/codes.ts).
+  if (!resendConfigured()) return unmailedCode('deletion code', email, code)
   const key = createHash('sha256')
     .update(`${identifierOf(target)}\n${code}`)
     .digest('hex')

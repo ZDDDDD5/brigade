@@ -23,6 +23,7 @@ process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
 process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
 process.env.PASSWORD_SIGN_IN = 'false'
 process.env.RESEND_API_KEY = ''
+process.env.MAIL_CODES_IN_LOG = 'true'
 process.env.POSTHOG_KEY = ''
 delete process.env.TURNSTILE_SECRET_KEY
 

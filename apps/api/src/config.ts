@@ -136,6 +136,12 @@ const Env = z.object({
    */
   PASSWORD_SIGN_IN: z.stringbool().default(false),
   /**
+   * Without a mail service (RESEND_API_KEY), sign-in and deletion codes go to the API's log
+   * instead (src/mail/codes.ts). Off by default, so production never logs one even when its
+   * mail is misconfigured; on locally and in previews (.env.example, scripts/preview/setup.sh).
+   */
+  MAIL_CODES_IN_LOG: z.stringbool().default(false),
+  /**
    * Cloudflare Turnstile's secret key: a sign-in code is mailed only after the visitor
    * passed its check (the dashboard has the widget's site key, NEXT_PUBLIC_TURNSTILE_SITE_KEY).
    * Without it, no check.

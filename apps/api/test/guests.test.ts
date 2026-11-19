@@ -22,6 +22,7 @@ process.env.DATABASE_URL ??= fromEnvFile() ?? 'postgresql://test@localhost/test'
 process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
 process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
 process.env.RESEND_API_KEY = ''
+process.env.MAIL_CODES_IN_LOG = 'true'
 // Billing on, with a key that reaches nothing: a guest is refused before Stripe is called.
 process.env.STRIPE_SECRET_KEY = 'sk_test_never_called'
 delete process.env.TURNSTILE_SECRET_KEY

@@ -23,6 +23,7 @@ process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
 process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
 process.env.PASSWORD_SIGN_IN = 'false'
 process.env.RESEND_API_KEY = ''
+process.env.MAIL_CODES_IN_LOG = 'true'
 delete process.env.TURNSTILE_SECRET_KEY
 
 async function reachable() {
@@ -213,4 +214,22 @@ test('a client-sent X-Forwarded-For does not pick the visitor', { skip }, async 
     }),
   )
   assert.equal(response.status, 429)
+})
+
+test('without a mail service, a code is logged only where allowed', { skip }, async () => {
+  const email = address('unmailed')
+  const lines: string[] = []
+  const { log, error } = console
+  console.log = console.error = (...args: unknown[]) => void lines.push(args.join(' '))
+  env.MAIL_CODES_IN_LOG = false
+  try {
+    const response = await call('/email-otp/send-verification-otp', { email, type: 'sign-in' })
+    assert.equal(response.status, 200, await response.clone().text())
+  } finally {
+    env.MAIL_CODES_IN_LOG = true
+    Object.assign(console, { log, error })
+  }
+  const line = lines.find((l) => l.startsWith(`sign-in code for ${email}`))
+  assert.equal(line, `sign-in code for ${email} not sent: no mail service (RESEND_API_KEY)`)
+  assert.ok(!lines.some((l) => /\b\d{6}\b/.test(l)), 'no code in the log')
 })
