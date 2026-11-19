@@ -3,6 +3,7 @@
 // someone who reads its mail. A code rather than a link: on an iPhone, a link in Mail opens
 // Safari, never the dashboard installed on the home screen, which a code reaches as well.
 import { createHash } from 'node:crypto'
+import { unmailedCode } from './mail/codes.js'
 import { addressOf } from './mail/names.js'
 import { resendConfigured, sendEmail } from './mail/resend.js'
 
@@ -23,8 +24,8 @@ export function signInCodeMail(email: string, code: string) {
 }
 
 export async function sendSignInCode(email: string, code: string) {
-  // Locally and in previews no mail leaves: the code is in the API's log.
-  if (!resendConfigured()) return console.log(`sign-in code for ${email}: ${code}`)
+  // Locally and in previews no mail leaves: the code is in the API's log (src/mail/codes.ts).
+  if (!resendConfigured()) return unmailedCode('sign-in code', email, code)
   const key = createHash('sha256').update(`${email}\n${code}`).digest('hex')
   await sendEmail(signInCodeMail(email, code), `brigade-sign-in-${key}`)
 }
