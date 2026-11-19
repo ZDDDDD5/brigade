@@ -300,8 +300,11 @@ async function client(
       issuer: authServer.issuer,
       redirectUri,
       clientId: data.client_id,
+      // Both, for now: an API from before clientSealed, still serving during a rollout or
+      // after a rollback, reads clientSecret. The next deploy stops writing it and clears it.
+      clientSecret: data.client_secret ?? null,
       clientSealed: data.client_secret
-        ? sealShared(MCP_CLIENT, `${authServer.issuer}\n${redirectUri}`, data.client_secret)
+        ? sealShared(MCP_CLIENT, bound(authServer.issuer, redirectUri), data.client_secret)
         : null,
     },
     update: {},
@@ -310,29 +313,51 @@ async function client(
 }
 
 const MCP_CLIENT = 'mcp-client'
+/** What a sealed secret is bound to: its row's issuer and redirect URI. */
+const bound = (issuer: string, redirectUri: string) => `${issuer}\n${redirectUri}`
 
 /**
- * A registration as Brigade signs in with it: its secret opened. One kept in plain text (rows
- * from before clientSealed) is sealed now, and the plain text cleared, unless another request
- * did it first.
+ * A registration as Brigade signs in with it: its secret opened from clientSealed, or read from
+ * clientSecret for a row sealMcpClients has not reached yet. The plain text stays for now: an
+ * API from before clientSealed reads only it.
  */
-async function registeredClient(row: {
-  id: string
+function registeredClient(row: {
   issuer: string
   redirectUri: string
   clientId: string
   clientSecret: string | null
   clientSealed: string | null
-}): Promise<McpOAuthClient> {
-  const bound = `${row.issuer}\n${row.redirectUri}`
+}): McpOAuthClient {
   if (row.clientSealed)
-    return { clientId: row.clientId, clientSecret: openShared(MCP_CLIENT, bound, row.clientSealed) }
-  if (!row.clientSecret) return { clientId: row.clientId, clientSecret: null }
-  await prisma.mcpClient.updateMany({
-    where: { id: row.id, clientSecret: row.clientSecret, clientSealed: null },
-    data: { clientSealed: sealShared(MCP_CLIENT, bound, row.clientSecret), clientSecret: null },
-  })
+    return {
+      clientId: row.clientId,
+      clientSecret: openShared(MCP_CLIENT, bound(row.issuer, row.redirectUri), row.clientSealed),
+    }
   return { clientId: row.clientId, clientSecret: row.clientSecret }
+}
+
+/**
+ * Seal the registrations kept in plain text only (rows from before clientSealed): a connection
+ * refreshes with the copy in its own vault secret and never reads its registration again, so
+ * waiting for a new sign-in could leave one in plain text for good. Safe to run twice, and
+ * beside a registration being written: each row is sealed only while still unsealed.
+ */
+export async function sealMcpClients() {
+  const rows = await prisma.mcpClient.findMany({
+    where: { clientSecret: { not: null }, clientSealed: null },
+    select: { id: true, issuer: true, redirectUri: true, clientSecret: true },
+  })
+  let sealed = 0
+  for (const row of rows) {
+    const { count } = await prisma.mcpClient.updateMany({
+      where: { id: row.id, clientSecret: row.clientSecret, clientSealed: null },
+      data: {
+        clientSealed: sealShared(MCP_CLIENT, bound(row.issuer, row.redirectUri), row.clientSecret!),
+      },
+    })
+    sealed += count
+  }
+  return sealed
 }
 
 /** A PKCE verifier, kept with the sign-in's state until the callback. */
