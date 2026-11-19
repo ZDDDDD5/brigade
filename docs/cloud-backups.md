@@ -29,7 +29,7 @@ over the shared one, mode 0600, owned by the teammate's user, which neither the 
 account's other teammates can read. Before reading an account's login, the runner shares its
 shared login files (`auth.json`, `auth.json.lock`, `.credentials.json`) again when one is another
 user's or not the group's to read and write: itself for its own files, else through the root
-helper's `share-login`, which touches only those files, never through a link, and never the
+helper's `share-login`, which changes only those files, through the file it opened (never a link, never a file with another name), and never the
 runner's `.oauth-token`. A login it still cannot read, or could not send, is logged
 (`could not read the login of …`) and fails the backup the API asks for before a replacement
 (its note says which). A backup asked for while a pass is under way waits for a pass that starts

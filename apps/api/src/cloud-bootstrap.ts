@@ -32,6 +32,40 @@ if "color_scheme2" not in theme:
         json.dump(prefs, f)
     os.replace(path + ".brigade", path)
 '
+# <accounts dir> <accountId> <user> <group> <mode> <file>...: each file of the account's folder
+# given to user:group with mode, changed through the file opened, never by its path again: a
+# teammate may rename entries of these group-writable folders at any time, so neither the folder
+# nor a file is reached through a link, and only a regular file with no other name is changed.
+SHARE_FILES='
+import grp, os, pwd, stat, sys
+root, account, user, group, mode = sys.argv[1:6]
+uid = pwd.getpwnam(user).pw_uid
+gid = grp.getgrnam(group).gr_gid
+flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+top = os.open(root, flags | os.O_DIRECTORY)
+try:
+    try:
+        here = os.open(account, flags | os.O_DIRECTORY, dir_fd=top)
+    except FileNotFoundError:
+        sys.exit(0)
+    try:
+        for name in sys.argv[6:]:
+            try:
+                fd = os.open(name, flags | os.O_NONBLOCK, dir_fd=here)
+            except OSError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                    os.fchown(fd, uid, gid)
+                    os.fchmod(fd, int(mode, 8))
+            finally:
+                os.close(fd)
+    finally:
+        os.close(here)
+finally:
+    os.close(top)
+'
 # <user>: the address of the teammate's own accessibility bus, which carries only its own apps, for
 # agent-desktop run as the teammate (the runner's desktop.ts): a session bus of its own in
 # /run/brigade-a11y/<user>, where D-Bus starts the accessibility bus on the first ask. Started with
@@ -74,19 +108,13 @@ case "\${1:-}" in
     chmod -R g+rwX,o-rwx "$D"
     find "$D" -type d -exec chmod g+s {} +
     # The long-lived token stays the runner's alone, whatever the chmod above found.
-    if [ -f "$D/.oauth-token" ] && [ ! -L "$D/.oauth-token" ]; then chmod 600 "$D/.oauth-token"; fi
+    python3 -I -c "$SHARE_FILES" "$ACCOUNTS" "$2" brigade "$GROUP" 600 .oauth-token
     ;;
   share-login) # <accountId>: a login file a harness rewrote as a teammate (0600, its owner) shared again
     id_ok "$2"
-    D="$ACCOUNTS/$2"
-    [ -d "$D" ] || exit 0
-    # Only these files, never followed through a link, never the token: nothing else changes.
-    for F in auth.json auth.json.lock .credentials.json; do
-      if [ -f "$D/$F" ] && [ ! -L "$D/$F" ]; then
-        chown brigade:"$GROUP" "$D/$F"
-        chmod 660 "$D/$F"
-      fi
-    done
+    # Only these files, never through a link, never the token: nothing else changes.
+    python3 -I -c "$SHARE_FILES" "$ACCOUNTS" "$2" brigade "$GROUP" 660 \\
+      auth.json auth.json.lock .credentials.json
     ;;
   link-account) # <user> <accountId> <provider>: a private config dir sharing only the login file
     user_ok "$2"; id_ok "$3"; F=$(cred "$4")
