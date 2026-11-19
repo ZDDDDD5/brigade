@@ -122,6 +122,13 @@ export function dockerEnv(user: string): Promise<Record<string, string>> {
 export const shareAccount = (accountId: string) => helper('share-account', accountId)
 
 /**
+ * Give the account's shared login files (auth.json, its lock, .credentials.json) back to the
+ * runner and the teammates' group, after a harness rewrote one as a teammate. Only those files:
+ * never the runner's own token (share-login).
+ */
+export const shareLogin = (accountId: string) => helper('share-login', accountId)
+
+/**
  * Free what the computer's own Docker keeps for nothing (prune-system-docker): images
  * pulled there outside the teammates' rootless Dockers. Says how much it freed.
  */

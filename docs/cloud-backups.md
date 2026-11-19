@@ -24,6 +24,19 @@ The runner encrypts bucket backups with AES-256-GCM, with a key the API derives 
 API checks the size and the header, never reads the bytes. Deleting a thread deletes its folder
 backups (they are in its files folder, late uploads included through `BucketCleanup`).
 
+A harness rewrites a login as the teammate that runs it: Codex (0.167 on) renames a new `auth.json`
+over the shared one, mode 0600, owned by the teammate's user, which neither the runner nor the
+account's other teammates can read. Before reading an account's login, the runner shares its
+shared login files (`auth.json`, `auth.json.lock`, `.credentials.json`) again when one is another
+user's or not the group's to read and write: itself for its own files, else through the root
+helper's `share-login`, which changes only those files, through the file it opened (never a link, never a file with another name), and never the
+runner's `.oauth-token`. A login it still cannot read, or could not send, is logged
+(`could not read the login of …`) and fails the backup the API asks for before a replacement
+(its note says which). A backup asked for while a pass is under way waits for a pass that starts
+after it, so it never reports the login read before a refresh. Without this, the API's copy
+stayed at the login before the refresh, whose refresh token Codex had spent, and the computer
+that replaced this one was signed out (Nov 18).
+
 ## Replacing
 
 `POST /api/computers/:id/replace` (`src/cloud-replace.ts`), steps kept on `ComputerReplacement`:

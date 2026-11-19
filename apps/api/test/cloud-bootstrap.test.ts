@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import {
+  chmodSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -667,3 +670,64 @@ test("a teammate's Chrome starts on its own accessibility bus when it has one, a
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+/**
+ * The teammate helper with its accounts folder and owner set to a temporary folder and the
+ * current user, so its share-login and share-account run here without root.
+ */
+function helperHere(accounts: string) {
+  const user = spawnSync('id', ['-un'], { encoding: 'utf8' }).stdout.trim()
+  const group = spawnSync('id', ['-gn'], { encoding: 'utf8' }).stdout.trim()
+  const script = TEAMMATE_HELPER.replace(/^ACCOUNTS=.*$/m, `ACCOUNTS=${accounts}`)
+    .replace(/^GROUP=.*$/m, `GROUP=${group}`)
+    .replaceAll('brigade "$GROUP"', `${user} "$GROUP"`)
+    .replaceAll('brigade:"$GROUP"', `${user}:"$GROUP"`)
+  return (...args: string[]) =>
+    spawnSync('sh', ['-s', '--', ...args], { input: script, encoding: 'utf8' })
+}
+
+const hasPython = spawnSync('python3', ['-c', '1']).status === 0
+
+test(
+  'share-login shares only the login files, opened, never through a link or another name',
+  { skip: !hasPython && 'no python3' },
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brigade-share-login-'))
+    try {
+      const accounts = join(dir, 'accounts')
+      const account = join(accounts, 'acct1')
+      mkdirSync(account, { recursive: true })
+      const mode = (path: string) => statSync(path).mode & 0o777
+      const file = (path: string, m: number) => {
+        writeFileSync(path, 'x')
+        chmodSync(path, m)
+      }
+      // What Codex leaves after a refresh: 0600, the teammate's.
+      file(join(account, 'auth.json'), 0o600)
+      // A teammate's links and names planted where the helper looks.
+      file(join(dir, 'outside'), 0o600)
+      symlinkSync(join(dir, 'outside'), join(account, '.credentials.json'))
+      file(join(dir, 'other-name'), 0o600)
+      linkSync(join(dir, 'other-name'), join(account, 'auth.json.lock'))
+      file(join(account, '.oauth-token'), 0o600)
+      symlinkSync(account, join(accounts, 'linked'))
+      const helper = helperHere(accounts)
+
+      const shared = helper('share-login', 'acct1')
+      assert.equal(shared.status, 0, shared.stderr)
+      assert.equal(mode(join(account, 'auth.json')), 0o660)
+      assert.equal(mode(join(dir, 'outside')), 0o600, 'a link is not followed')
+      assert.equal(mode(join(dir, 'other-name')), 0o600, 'a file with another name is left')
+      assert.equal(mode(join(account, '.oauth-token')), 0o600, 'the token is never shared')
+      assert.notEqual(helper('share-login', 'linked').status, 0, 'a linked folder is refused')
+      assert.equal(helper('share-login', 'missing').status, 0)
+
+      // After its recursive chmod, share-account gives the token back to the runner alone.
+      const all = helper('share-account', 'acct1')
+      assert.equal(all.status, 0, all.stderr)
+      assert.equal(mode(join(account, '.oauth-token')), 0o600)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+)
