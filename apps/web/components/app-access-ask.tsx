@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/select'
 import { api, isAdmin, useApi, type Connection, type ConnectionsResponse } from '@/lib/api'
 import { askedServer } from '@/lib/asked-server'
-import { onSignIn, openSignIn } from '@/lib/sign-in-window'
+import { onSignIn, openSignIn, type SignInResult } from '@/lib/sign-in-window'
 
 type AppAsk = Extract<Ask, { type: 'access' }> & {
   app: NonNullable<Extract<Ask, { type: 'access' }>['app']>
@@ -223,18 +223,12 @@ export function AppAccessAsk({
   // Signing in to an account again (its sign-in expired, or it lacks the permission asked for).
   const [reconnecting, setReconnecting] = useState(false)
   // The account the sign-in tab came back with: the same one, or another the person signed in to
-  // instead (another mailbox). Only the tab says so: the account changes with its settings too.
+  // instead (another mailbox). Only this sign-in's result says so (the account changes with its
+  // settings too): from the tab, or from the API by its attempt, as Brigade.app hears from the
+  // tab only through a brigade:// link the browser may not open.
   const [signedIn, setSignedIn] = useState<string>()
-  // What the sign-in started from: the account reconnected, whether it had expired, and the
-  // accounts already there. Brigade.app hears from the tab only through a brigade:// link the
-  // browser may not open: without word from it, the account seen active again, or one that was
-  // not there before, says the sign-in went through.
-  const [started, setStarted] = useState<{ again?: string; expired: boolean; before: string[] }>()
-  const reconnected = reconnecting
-    ? (givable.find((c) => c.id === signedIn) ??
-      givable.find((c) => started?.expired && c.id === started.again) ??
-      givable.find((c) => started && !started.before.includes(c.id)))
-    : undefined
+  const [attempt, setAttempt] = useState<string>()
+  const reconnected = reconnecting ? givable.find((c) => c.id === signedIn) : undefined
   // A permission the account lacks: its owner signs in to it again and allows it there. An
   // active account too, which the access alone would not fix.
   const permission = ask.app.permission?.trim() || undefined
@@ -278,19 +272,29 @@ export function AppAccessAsk({
     if (!waiting) return
     if (reconnecting ? reconnected : givable.length > 0) {
       setWaiting(false)
-      give(reconnected?.id ?? (givable.length === 1 || repository ? givable[0]!.id : undefined))
+      const signedInTo = givable.find((c) => c.id === signedIn)
+      give(signedInTo?.id ?? (givable.length === 1 || repository ? givable[0]!.id : undefined))
       return
     }
     const timer = setInterval(
       () => {
         void data.reload()
         if (repository) void reach.reload()
+        if (attempt)
+          void api<SignInResult>(`/connections/sign-in/${attempt}`)
+            .then(({ connected, error }) => {
+              if (error) {
+                setWaiting(false)
+                setError('The sign-in did not go through. Try again.')
+              } else if (connected) setSignedIn(connected)
+            })
+            .catch(() => {})
       },
       repository ? 3000 : 2000,
     )
     return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- polls until an account shows up, not on each reload
-  }, [waiting, givable.length, reconnected?.id])
+  }, [waiting, givable.length, reconnected?.id, attempt])
 
   /** Sign in at the provider: a new account, or the one given again (the API renews it). */
   async function connect(region?: string, again?: Connection) {
@@ -299,31 +303,34 @@ export function AppAccessAsk({
     // A key: its form, in the ticket, for a new account or the one given again.
     if (route === 'key') return setKeying({ reconnect: again?.id })
     if (!route) return
+    let started: string | undefined
     try {
       const inWindow = await openSignIn(async (returnTo) => {
         if (route === 'mcp/server') {
           // The App's own OAuth client: the same account comes back renewed.
-          const { url } = await api<{ url: string }>('/connections/mcp/server', {
-            body: { appId: again!.appId, ...(returnTo ? { returnTo } : {}) },
-          })
+          const { url, attempt } = await api<{ url: string; attempt?: string }>(
+            '/connections/mcp/server',
+            { body: { appId: again!.appId, ...(returnTo ? { returnTo } : {}) } },
+          )
+          started = attempt
           return url
         }
-        const { url } = await api<{ url: string }>(`/connections/${route}`, {
-          body: {
-            ...(route === 'github' || route === 'meta' ? {} : { kind }),
-            ...(region ? { region } : {}),
-            ...(returnTo ? { returnTo } : {}),
-            ...(route === 'mcp' && again ? { reconnect: again.id } : {}),
+        const { url, attempt } = await api<{ url: string; attempt?: string }>(
+          `/connections/${route}`,
+          {
+            body: {
+              ...(route === 'github' || route === 'meta' ? {} : { kind }),
+              ...(region ? { region } : {}),
+              ...(returnTo ? { returnTo } : {}),
+              ...(route === 'mcp' && again ? { reconnect: again.id } : {}),
+            },
           },
-        })
+        )
+        started = attempt
         return url
       })
       if (!inWindow) return
-      setStarted({
-        ...(again ? { again: again.id } : {}),
-        expired: again?.status === 'needs_reauth',
-        before: givable.map((c) => c.id),
-      })
+      setAttempt(started)
       setReconnecting(!!again)
       setSignedIn(undefined)
       setWaiting(true)
