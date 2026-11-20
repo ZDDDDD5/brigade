@@ -347,18 +347,12 @@ export async function messageThread(
       target: { type: 'thread', id: target.id },
       data: { placeId: String(place.id), fromId: session.id },
     })
-  // Not sent after all: an archived thread brought back for it is put away again, if it can be
-  // (else it stays in sight, which loses nothing).
-  const putBack = async () => {
-    if (target.archivedAt)
-      await setThreadArchived(scope, target.id, true).catch((error: unknown) =>
-        console.warn(`message_thread to ${target.id}: not put back in Archive: ${String(error)}`),
-      )
-  }
   let outcome: Awaited<ReturnType<typeof promptThread>>
   try {
     // Written in again, an archived thread is back in the sidebar, as when a person writes there.
-    // Before the message goes: failing here, nothing went, and trying again sends it once.
+    // Before the message goes: failing here, nothing went, and trying again sends it once. Not put
+    // away again if the message does not go: a person may have written there meanwhile, and a
+    // thread left in sight loses nothing.
     if (target.archivedAt) await setThreadArchived(scope, target.id, false)
     // Written on Chief's word: the work it asks for there goes on it too.
     await markOnChiefsWord(db, target.id, session)
@@ -377,12 +371,10 @@ export async function messageThread(
   } catch (error) {
     // Refused before it was taken in (a thread moving, a runner too old), or the thread could not
     // be brought back: nothing went.
-    await putBack()
     await free()
     throw error
   }
   if (outcome === 'offline') {
-    await putBack()
     await free()
     return { error: "That thread's computer is offline." }
   }
