@@ -5,6 +5,7 @@
 // thread's starter, on its computer, for whoever asked there, and says who started it and from
 // where (Session.startedFromId).
 import {
+  fromThreadComment,
   startedThreadBrief,
   threadComment,
   WAKEUPS_IN_A_ROW,
@@ -139,10 +140,50 @@ export async function startThreadFrom(
   }
 }
 
+/** Messages from other threads in a row, with no word from a person, that a thread takes. */
+export const COMMENTS_IN_A_ROW = 5
+
 /**
- * Write in a thread this one started (start_thread), headed with who wrote it and from where: its
- * teammate reads it and answers there. Or in a child of this one (messageChild), which carries
- * on and reports again. Nowhere else.
+ * Messages from other threads (threadComment) a thread was sent since a person last wrote in it:
+ * two threads writing to each other with nobody in between count up.
+ */
+async function commentsInARow(db: ScopedDb, sessionId: string) {
+  const messages = await db.sessionEvent.findMany({
+    where: { sessionId, type: 'message.user' },
+    orderBy: { seq: 'desc' },
+    take: 50,
+    select: { data: true },
+  })
+  let count = 0
+  for (const m of messages) {
+    const data = m.data as { memberId?: string | null; text?: unknown }
+    if (data.memberId) break
+    if (typeof data.text === 'string' && fromThreadComment(data.text)) count++
+  }
+  return count
+}
+
+/**
+ * A thread at the top this teammate works in, other than the caller: one a person gave it, or
+ * one it is in with another. Not a child (its parent tells it more), nor a playbook's run.
+ */
+function ownThread(db: ScopedDb, teammateId: string, threadId: string) {
+  return db.session.findFirst({
+    where: {
+      id: threadId,
+      parentId: null,
+      playbookRunId: null,
+      archivedAt: null,
+      teammates: { some: { teammateId } },
+    },
+    select: { id: true },
+  })
+}
+
+/**
+ * Write in a thread this one started (start_thread), or in a thread at the top this teammate works
+ * in too, headed with who wrote it and from where: its teammate reads it and answers there. Or in
+ * a child of this one (messageChild), which carries on and reports again. Nowhere else.
  */
 export async function messageThread(
   db: ScopedDb,
@@ -152,19 +193,36 @@ export async function messageThread(
   op: { threadId: string; text: string },
 ): Promise<object | { error: string }> {
   if (op.threadId === session.id) return { error: 'That is this thread: just reply here.' }
+  // A playbook's run writes only in its own children: what started it is untrusted.
   const started = session.playbookRunId
     ? null
     : await db.session.findFirst({
         where: { id: op.threadId, startedFromId: session.id },
         select: { id: true },
       })
-  if (!started) return messageChild(db, scope, session, teammate, op.threadId, op.text)
-  const target = await loadThread(db, started.id)
+  // A child of this thread is told more as a child (messageChild).
+  const child =
+    !started &&
+    !!(await db.session.findFirst({
+      where: { id: op.threadId, parentId: session.id },
+      select: { id: true },
+    }))
+  const mine =
+    started || child || session.playbookRunId ? null : await ownThread(db, teammate.id, op.threadId)
+  const found = started ?? mine
+  if (!found) return messageChild(db, scope, session, teammate, op.threadId, op.text)
+  const target = await loadThread(db, found.id)
   // As a message from this thread's person would: only where they may write.
   if (!(await memberMayWrite(target, session.startedByMemberId)))
     return { error: "The person in this thread may not write in that one: it is someone else's." }
   if (target.controlledByMemberId)
     return { error: 'A person has control of that thread right now. Try again later.' }
+  if ((await commentsInARow(db, target.id)) >= COMMENTS_IN_A_ROW)
+    return {
+      error:
+        `That thread was sent ${COMMENTS_IN_A_ROW} messages from other threads in a row with no word ` +
+        'from a person. Write there no more: tell the person here where things stand.',
+    }
   // Written on Chief's word: the work it asks for there goes on it too.
   await markOnChiefsWord(db, target.id, session)
   const outcome = await promptThread(db, scope, target, {
@@ -172,10 +230,12 @@ export async function messageThread(
     memberId: null,
     // Whoever asked for it here asks in that thread too.
     onBehalfOf: await askedBy(db, session.id),
-    // The teammate it was started for, while it is in it.
-    ...(target.teammates.some((t) => t.teammateId === target.teammateId)
-      ? { teammateIds: [target.teammateId] }
-      : {}),
+    // This teammate, in a thread of its own; else the one it was started for, while it is in it.
+    ...(mine
+      ? { teammateIds: [teammate.id] }
+      : target.teammates.some((t) => t.teammateId === target.teammateId)
+        ? { teammateIds: [target.teammateId] }
+        : {}),
   })
   if (outcome === 'offline') return { error: "That thread's computer is offline." }
   // New work in it: it is no longer done.

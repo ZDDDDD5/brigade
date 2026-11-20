@@ -918,7 +918,8 @@ function threadsOfTheirOwn(spec: ThreadSpec) {
         : ' (work whose result must come back here is a child thread: see Child threads)') +
       '. Its brief stands alone: it does not see this conversation. To hand it lines of a list, give the list ' +
       'and those lines: it works on them, as when a person hands them over. To add to it later, `message_thread` ' +
-      "with its id. It goes in the list's project, else this thread's; when it belongs to another project" +
+      'with its id. Word for another thread you work in (one a message or `search_workspace` names) goes there ' +
+      "with `message_thread` too: pass it on yourself, never ask the person to. It goes in the list's project, else this thread's; when it belongs to another project" +
       ((spec.projects ?? []).length > 0 ? ' (see Projects)' : '') +
       ", give `project` with that project's id.",
     // A child or a playbook's run does its part: the thread that started it plans.

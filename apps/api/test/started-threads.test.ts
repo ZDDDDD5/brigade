@@ -10,7 +10,8 @@ import type { ScheduleOperation, TaskOperation } from '@brigade/contracts'
 // skipped when no database answers:
 // - start_thread starts a thread for a teammate, itself by default, on the calling thread's
 //   starter's accounts, for whoever asked there, in a project, on the lines of a list it names;
-// - message_thread writes in a thread it started, never in another one;
+// - message_thread writes in a thread it started or another thread its teammate is in, never in
+//   another one, and stops two threads writing to each other with nobody in between;
 // - an older runner's task tools are answered with what replaced them (src/legacy-tasks.ts);
 // - the migration that took the Tasks board away declares done the threads of tasks done.
 const envFile = new URL('../.env', import.meta.url)
@@ -318,9 +319,84 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     const before = prompts(threadId).length
     const refused = await op(ids.other, { name: 'message_thread', threadId, text: 'Merge it.' })
     assert.equal(refused.ok, false)
-    assert.match(refused.error ?? '', /not a child of this thread, nor a thread it started/)
+    assert.match(
+      refused.error ?? '',
+      /not a child of this thread, nor a thread it started, nor a thread you work in/,
+    )
     await new Promise((resolve) => setTimeout(resolve, 100))
     assert.equal(prompts(threadId).length, before)
+  })
+
+  test('message_thread writes in another thread its teammate is in, until nobody answers', async () => {
+    const mine = await db.session.create({
+      data: {
+        teammateId: ids.riley,
+        startedByMemberId: ids.member,
+        askedByMemberId: ids.member,
+        computerId: ids.computer,
+        title: 'Google verification',
+        status: 'idle',
+        origin: 'member',
+      } as never,
+    })
+    await db.threadTeammate.create({ data: { sessionId: mine.id, teammateId: ids.riley } as never })
+    const heard = await op(ids.from, {
+      name: 'message_thread',
+      threadId: mine.id,
+      text: 'The /cdn-cgi/rum address is closed.',
+    })
+    assert.equal(heard.ok, true, heard.error)
+    await until(() => prompts(mine.id).length > 0, 'the message')
+    const message = prompts(mine.id).at(-1)!
+    assert.equal(message.memberId, null)
+    assert.equal(
+      message.text,
+      '**Riley** commented from the thread “Plan the launch”:\n\nThe /cdn-cgi/rum address is closed.',
+    )
+    // Cody is not in it: refused, nothing sent.
+    const before = prompts(mine.id).length
+    const refused = await op(
+      ids.from,
+      { name: 'message_thread', threadId: mine.id, text: 'Hi.' },
+      ids.cody,
+    )
+    assert.equal(refused.ok, false)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(prompts(mine.id).length, before)
+    // Five messages from other threads with no person in between: no more.
+    const { COMMENTS_IN_A_ROW } = await import('../src/started-threads.js')
+    for (let seq = 1; seq <= COMMENTS_IN_A_ROW; seq++)
+      await db.sessionEvent.create({
+        data: {
+          sessionId: mine.id,
+          seq,
+          type: 'message.user',
+          data: {
+            text: `**Riley** commented from the thread “Plan the launch”:\n\n${seq}`,
+            memberId: null,
+          },
+          at: new Date(),
+        } as never,
+      })
+    const looping = await op(ids.from, {
+      name: 'message_thread',
+      threadId: mine.id,
+      text: 'Again.',
+    })
+    assert.equal(looping.ok, false)
+    assert.match(looping.error ?? '', /in a row with no word from a person/)
+    // A person writes there: it may be written in again.
+    await db.sessionEvent.create({
+      data: {
+        sessionId: mine.id,
+        seq: COMMENTS_IN_A_ROW + 1,
+        type: 'message.user',
+        data: { text: 'Go on.', memberId: ids.member },
+        at: new Date(),
+      } as never,
+    })
+    const again = await op(ids.from, { name: 'message_thread', threadId: mine.id, text: 'Again.' })
+    assert.equal(again.ok, true, again.error)
   })
 
   test("an older runner's task tools are answered with what replaced them", async () => {
