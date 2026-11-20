@@ -1936,7 +1936,7 @@ export function ThreadConversation({
                   data-composer-frame
                   data-look="composer"
                   className={cn(
-                    'relative gap-2 rounded-xl p-2 shadow-md focus-within:border-ring',
+                    'relative gap-2 rounded-xl p-2 shadow-md',
                     drop.dragging && 'border-primary',
                   )}
                 >
