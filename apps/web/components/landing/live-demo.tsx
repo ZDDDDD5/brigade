@@ -21,11 +21,13 @@ const STORIES: { id: Story; label: string; short: string }[] = [
 /**
  * The live demo (demo.brigade.lol, docs/demo.md) under the hero: the real dashboard on a
  * sample workspace, running in a window on the page as soon as it opens, playing the story
- * picked in its tabs. Its picture shows while it loads, and on a phone, where the button opens
- * the demo on its own.
+ * picked in its tabs; on a phone, in its phone layout, in a phone. Its picture shows while it
+ * loads.
  */
 export function LiveDemo() {
-  const [wide, setWide] = useState(false)
+  // Unknown until the page runs: the demo loads once it is known, so a wide screen never
+  // loads the phone layout first.
+  const [wide, setWide] = useState<boolean | null>(null)
   const [loaded, setLoaded] = useState(false)
   const [story, setStory] = useState<Story>('bug')
   const view = useRef<HTMLDivElement>(null)
@@ -77,10 +79,11 @@ export function LiveDemo() {
             <img className={c('demo-shot light-only')} src="/landing/demo-light.webp" alt="" />
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img className={c('demo-shot dark-only')} src="/landing/demo-dark.webp" alt="" />
-            {wide ? (
+            {wide !== null && (
               <iframe
                 // ?tour=<story>: a cursor walks through a job on its own until the visitor takes
-                // over (lib/demo/tour.ts). Another story loads the demo afresh.
+                // over (lib/demo/tour.ts), in the dashboard's phone layout on a phone, where there
+                // are no tabs and it plays the first story. Another story loads the demo afresh.
                 key={story}
                 src={`${DEMO_URL}/app?tour=${story}`}
                 title="Brigade demo workspace: click around, nothing here is real"
@@ -88,17 +91,6 @@ export function LiveDemo() {
                 className={c(loaded ? 'shown' : '')}
                 onLoad={() => setLoaded(true)}
               />
-            ) : (
-              <div className={c('demo-start')}>
-                <a
-                  className={c('btn ink lg')}
-                  href={`${DEMO_URL}/app`}
-                  target="_blank"
-                  rel="noopener"
-                >
-                  Try the live demo
-                </a>
-              </div>
             )}
           </div>
         </div>

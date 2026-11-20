@@ -207,8 +207,20 @@ export async function type(stage: Stage, editor: HTMLElement, text: string) {
   await sleep(500, stage.signal)
 }
 
-/** Enter in the message box: it sends. */
+/** Enter in the message box, or its send button on a touch screen: it sends. */
 export async function send(stage: Stage, editor: HTMLElement) {
+  // A phone or tablet: its return key adds a line (components/composer.tsx), and the button
+  // sends, so the tour presses it as a person there would.
+  if (window.matchMedia('(pointer: coarse)').matches) {
+    const scope = editor.closest('form') ?? document
+    const button = [...scope.querySelectorAll<HTMLElement>('button[aria-label="Send"]')]
+      .filter(visible)
+      .at(-1)
+    if (button) {
+      await press(stage, button)
+      return
+    }
+  }
   for (const kind of ['keydown', 'keyup'] as const)
     editor.dispatchEvent(
       new KeyboardEvent(kind, {
