@@ -347,8 +347,19 @@ export async function messageThread(
       target: { type: 'thread', id: target.id },
       data: { placeId: String(place.id), fromId: session.id },
     })
+  // Not sent after all: an archived thread brought back for it is put away again, if it can be
+  // (else it stays in sight, which loses nothing).
+  const putBack = async () => {
+    if (target.archivedAt)
+      await setThreadArchived(scope, target.id, true).catch((error: unknown) =>
+        console.warn(`message_thread to ${target.id}: not put back in Archive: ${String(error)}`),
+      )
+  }
   let outcome: Awaited<ReturnType<typeof promptThread>>
   try {
+    // Written in again, an archived thread is back in the sidebar, as when a person writes there.
+    // Before the message goes: failing here, nothing went, and trying again sends it once.
+    if (target.archivedAt) await setThreadArchived(scope, target.id, false)
     // Written on Chief's word: the work it asks for there goes on it too.
     await markOnChiefsWord(db, target.id, session)
     outcome = await promptThread(db, scope, target, {
@@ -364,24 +375,22 @@ export async function messageThread(
           : {}),
     })
   } catch (error) {
-    // Refused before it was taken in (a thread moving, a runner too old): nothing went.
+    // Refused before it was taken in (a thread moving, a runner too old), or the thread could not
+    // be brought back: nothing went.
+    await putBack()
     await free()
     throw error
   }
   if (outcome === 'offline') {
+    await putBack()
     await free()
     return { error: "That thread's computer is offline." }
   }
-  // The message went: what follows is told, never undone. Failing, it must not report the send
-  // as failed, which a retry would send again.
-  try {
-    // Written in again, an archived thread is back in the sidebar, as when a person writes there.
-    if (target.archivedAt) await setThreadArchived(scope, target.id, false)
-    // New work in it: it is no longer done.
-    await reopenThread(scope, target.id)
-  } catch (error) {
-    console.warn(`message_thread to ${target.id}: sent, but not brought back: ${String(error)}`)
-  }
+  // The message went: it must not be reported as failed, which a retry would send again.
+  // New work in it: it is no longer done.
+  await reopenThread(scope, target.id).catch((error: unknown) =>
+    console.warn(`message_thread to ${target.id}: sent, but not reopened: ${String(error)}`),
+  )
   // Its audit entry is the place taken above; its analytics go now.
   trackAudit({
     ...scope,

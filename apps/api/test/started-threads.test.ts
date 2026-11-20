@@ -416,11 +416,34 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
       })
       return session.id
     }
-    // Put away by its person: written in, it is back.
+    // Put away by its person: written in, it is back. Once it fails to come back (the database
+    // refuses the write): nothing goes, it stays put away, and trying again sends it once.
     const archived = await thread('Put away', { archivedAt: new Date() })
+    await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION test_keep_archived() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'archive write refused'; END $$ LANGUAGE plpgsql`)
+    await prisma.$executeRawUnsafe(`CREATE TRIGGER test_keep_archived BEFORE UPDATE ON "Session"
+      FOR EACH ROW WHEN (OLD.id = '${archived}' AND NEW."archivedAt" IS NULL)
+      EXECUTE FUNCTION test_keep_archived()`)
+    try {
+      await assert.rejects(
+        op(ids.from, { name: 'message_thread', threadId: archived, text: 'Done.' }),
+        /archive write refused/,
+      )
+    } finally {
+      await prisma.$executeRawUnsafe('DROP TRIGGER test_keep_archived ON "Session"')
+      await prisma.$executeRawUnsafe('DROP FUNCTION test_keep_archived()')
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(prompts(archived).length, 0)
+    assert.notEqual(
+      (await db.session.findFirstOrThrow({ where: { id: archived } })).archivedAt,
+      null,
+    )
     const heard = await op(ids.from, { name: 'message_thread', threadId: archived, text: 'Done.' })
     assert.equal(heard.ok, true, heard.error)
     await until(() => prompts(archived).length > 0, 'the message')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(prompts(archived).length, 1)
     const back = await db.session.findFirstOrThrow({ where: { id: archived } })
     assert.equal(back.archivedAt, null)
     // A sub-thread of another thread: refused, saying whose.
