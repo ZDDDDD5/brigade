@@ -206,6 +206,10 @@
 /* ─── Hero ─────────────────────────────────────────────────────────────────────────── */
 
 .hero {
+  /* Above the demo window: its entrance and fade (and this title's own) each make a layer
+     of their own, which would otherwise paint the demo over the download menu. */
+  position: relative;
+  z-index: 2;
   /* The demo close under the buttons: it starts tilted back, which already sets it apart. */
   padding-block: clamp(48px, 8vw, 104px) clamp(40px, 4.5vw, 64px);
 }
