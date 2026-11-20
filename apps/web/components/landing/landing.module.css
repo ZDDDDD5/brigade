@@ -6122,11 +6122,11 @@ svg.os {
   @supports (animation-timeline: view()) {
     /* Faded under the hero, the whole window, and full as it comes up the page. By the
        page's own scroll, so it is as faded at the top of the page on any screen, and full
-       after a little over half a screen. */
+       after 40% of a screen. */
     .demo-win {
       animation: k-demo-focus ease-out both;
       animation-timeline: scroll(root);
-      animation-range: 0 55vh;
+      animation-range: 0 40vh;
     }
   }
 }

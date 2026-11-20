@@ -109,9 +109,9 @@ export function LiveDemo() {
 
 /**
  * Tells the demo in the frame when its window is ready to watch: the scroll brings it up
- * from faded to full (landing.module.css, .demo-win), and its walkthrough waits for that
- * rather than playing half seen. Full is at once without scroll-driven animations or under
- * reduced motion. It answers the frame's question, and says it again when that changes.
+ * from faded to full (landing.module.css, .demo-win), and its walkthrough waits until it is
+ * nearly full rather than playing half seen. That is at once without scroll-driven animations
+ * or under reduced motion. It answers the frame's question, and says it again when that changes.
  */
 function useFocusSignal(view: React.RefObject<HTMLDivElement | null>) {
   useEffect(() => {
@@ -122,7 +122,9 @@ function useFocusSignal(view: React.RefObject<HTMLDivElement | null>) {
     const check = () => {
       const win = view.current?.parentElement
       if (!win) return
-      const now = getComputedStyle(win).opacity === '1'
+      // Nearly full is enough: the visitor sees it, and waiting for the last of the fade
+      // leaves the window sitting still in full view.
+      const now = parseFloat(getComputedStyle(win).opacity) >= 0.85
       if (now === sharp) return
       sharp = now
       say()
