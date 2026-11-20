@@ -929,7 +929,7 @@ export function NewThread({
           data-composer-frame
           data-look="composer"
           className={cn(
-            'relative gap-2 rounded-xl p-3 shadow-md focus-within:border-ring',
+            'relative gap-2 rounded-xl p-3 shadow-md',
             drop.dragging && 'border-primary ring-[3px] ring-primary/30',
           )}
           {...drop.props}
