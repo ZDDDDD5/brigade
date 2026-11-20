@@ -1867,10 +1867,11 @@ export function startedThreadTools(
         }),
     }),
     message_thread: message(
-      'Write in another thread: one you started (start_thread), where its teammate reads it and answers there, or ' +
-        'one of your child threads (from list_children), which carries on and reports to you again. Nowhere else. ' +
-        'To talk to a person, open a ticket instead.',
-      'A thread you started, or one of your child threads',
+      'Write in another thread: one you started (start_thread) or another thread you work in (one a person gave ' +
+        'you, such as a thread a message or search_workspace names), where its teammate reads it and answers ' +
+        'there; or one of your child threads (from list_children), which carries on and reports to you again. ' +
+        'Nowhere else. To talk to a person, open a ticket instead.',
+      'A thread you started, another thread you work in, or one of your child threads',
     ),
   }
 }

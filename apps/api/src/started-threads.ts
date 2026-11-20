@@ -12,10 +12,11 @@ import {
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { memberMayWrite } from './account-sharing.js'
+import { trackAudit } from './analytics.js'
 import { audit } from './audit.js'
 import { markOnChiefsWord } from './chief-answers.js'
 import { messageChild } from './children.js'
-import type { Scope, ScopedDb } from './db.js'
+import { prisma, type Scope, type ScopedDb } from './db.js'
 import { pickLines, projectOf } from './lists.js'
 import { usableProject } from './projects.js'
 import { reopenThread } from './thread-done.js'
@@ -139,10 +140,94 @@ export async function startThreadFrom(
   }
 }
 
+/** Messages from other threads in a row, with no word from a person, that a thread takes. */
+export const COMMENTS_IN_A_ROW = 5
+/** How far back they count: a ping-pong between two threads is quick. */
+const COMMENTS_WINDOW_MS = 24 * 60 * 60 * 1000
+
 /**
- * Write in a thread this one started (start_thread), headed with who wrote it and from where: its
- * teammate reads it and answers there. Or in a child of this one (messageChild), which carries
- * on and reports again. Nowhere else.
+ * Take a place for one more message from another thread (thread.messaged in the audit log), or
+ * null when the thread was sent COMMENTS_IN_A_ROW since a person last wrote in it (in the last
+ * day): two threads writing to each other with nobody in between stop. Counted from the places
+ * taken, not from the thread's events, which its runner writes later (a message queued behind a
+ * turn is not one yet); under the thread's lock, so two sends at once cannot take the same place.
+ */
+async function takeCommentPlace(
+  scope: Scope,
+  targetId: string,
+  entry: { teammateId: string; fromId: string },
+) {
+  // The thread was found in this workspace (scoped) before: its own events and log entries.
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`comments:${targetId}`}, 0))`
+    const messages = await tx.sessionEvent.findMany({
+      where: { sessionId: targetId, type: { in: ['message.user', 'message.queued'] } },
+      orderBy: { seq: 'desc' },
+      take: 200,
+      select: { data: true, at: true },
+    })
+    type Said = { memberId?: string | null; messageId?: string }
+    const person = messages.find((m) => (m.data as Said).memberId)
+    // One word from a person counts once: its runner records it queued, then again as it is read.
+    const personId = person && (person.data as Said).messageId
+    const said = personId
+      ? Math.min(
+          ...messages
+            .filter((m) => (m.data as Said).messageId === personId)
+            .map((m) => m.at.getTime()),
+        )
+      : (person?.at.getTime() ?? 0)
+    const since = new Date(Math.max(said, Date.now() - COMMENTS_WINDOW_MS))
+    const counted = { workspaceId: scope.workspaceId, at: { gt: since }, targetId }
+    const places = await tx.auditEntry.findMany({
+      where: { ...counted, action: 'thread.messaged' },
+      select: { id: true },
+    })
+    // Places given back (not sent): the log is append-only, so each has an entry of its own.
+    const unsent = await tx.auditEntry.findMany({
+      where: { ...counted, action: 'thread.message_unsent' },
+      select: { data: true },
+    })
+    const given = new Set(unsent.map((u) => (u.data as { placeId?: string } | null)?.placeId))
+    const taken = places.filter((p) => !given.has(String(p.id))).length
+    if (taken >= COMMENTS_IN_A_ROW) return null
+    return tx.auditEntry.create({
+      data: {
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
+        actorType: 'teammate',
+        actorId: entry.teammateId,
+        action: 'thread.messaged',
+        targetType: 'thread',
+        targetId,
+        data: { fromId: entry.fromId },
+      },
+      select: { id: true },
+    })
+  })
+}
+
+/**
+ * A thread at the top this teammate works in, other than the caller: one a person gave it, or
+ * one it is in with another. Not a child (its parent tells it more), nor a playbook's run.
+ */
+function ownThread(db: ScopedDb, teammateId: string, threadId: string) {
+  return db.session.findFirst({
+    where: {
+      id: threadId,
+      parentId: null,
+      playbookRunId: null,
+      archivedAt: null,
+      teammates: { some: { teammateId } },
+    },
+    select: { id: true },
+  })
+}
+
+/**
+ * Write in a thread this one started (start_thread), or in a thread at the top this teammate works
+ * in too, headed with who wrote it and from where: its teammate reads it and answers there. Or in
+ * a child of this one (messageChild), which carries on and reports again. Nowhere else.
  */
 export async function messageThread(
   db: ScopedDb,
@@ -152,35 +237,83 @@ export async function messageThread(
   op: { threadId: string; text: string },
 ): Promise<object | { error: string }> {
   if (op.threadId === session.id) return { error: 'That is this thread: just reply here.' }
+  // A playbook's run writes only in its own children: what started it is untrusted.
   const started = session.playbookRunId
     ? null
     : await db.session.findFirst({
         where: { id: op.threadId, startedFromId: session.id },
         select: { id: true },
       })
-  if (!started) return messageChild(db, scope, session, teammate, op.threadId, op.text)
-  const target = await loadThread(db, started.id)
-  // As a message from this thread's person would: only where they may write.
-  if (!(await memberMayWrite(target, session.startedByMemberId)))
-    return { error: "The person in this thread may not write in that one: it is someone else's." }
+  // A child of this thread is told more as a child (messageChild).
+  const child =
+    !started &&
+    !!(await db.session.findFirst({
+      where: { id: op.threadId, parentId: session.id },
+      select: { id: true },
+    }))
+  const mine =
+    started || child || session.playbookRunId ? null : await ownThread(db, teammate.id, op.threadId)
+  const found = started ?? mine
+  if (!found) return messageChild(db, scope, session, teammate, op.threadId, op.text)
+  const target = await loadThread(db, found.id)
+  // As a message from this thread's person would: only where they may write. And from whoever
+  // asked for it here, when that is another (a thread shared with them): they ask there too.
+  const asker = await askedBy(db, session.id)
+  for (const memberId of new Set([session.startedByMemberId, ...(asker ? [asker] : [])]))
+    if (!(await memberMayWrite(target, memberId)))
+      return {
+        error: "The person in this thread may not write in that one: it is someone else's.",
+      }
   if (target.controlledByMemberId)
     return { error: 'A person has control of that thread right now. Try again later.' }
-  // Written on Chief's word: the work it asks for there goes on it too.
-  await markOnChiefsWord(db, target.id, session)
-  const outcome = await promptThread(db, scope, target, {
-    text: threadComment({ from: teammate.name, threadTitle: session.title, text: op.text }),
-    memberId: null,
-    // Whoever asked for it here asks in that thread too.
-    onBehalfOf: await askedBy(db, session.id),
-    // The teammate it was started for, while it is in it.
-    ...(target.teammates.some((t) => t.teammateId === target.teammateId)
-      ? { teammateIds: [target.teammateId] }
-      : {}),
+  const place = await takeCommentPlace(scope, target.id, {
+    teammateId: teammate.id,
+    fromId: session.id,
   })
-  if (outcome === 'offline') return { error: "That thread's computer is offline." }
+  if (!place)
+    return {
+      error:
+        `That thread was sent ${COMMENTS_IN_A_ROW} messages from other threads in a row with no word ` +
+        'from a person. Write there no more: tell the person here where things stand.',
+    }
+  // Not sent (refused, offline): its place is free again.
+  const free = () =>
+    audit({
+      ...scope,
+      actor: { type: 'teammate', id: teammate.id },
+      action: 'thread.message_unsent',
+      target: { type: 'thread', id: target.id },
+      data: { placeId: String(place.id), fromId: session.id },
+    })
+  let outcome: Awaited<ReturnType<typeof promptThread>>
+  try {
+    // Written on Chief's word: the work it asks for there goes on it too.
+    await markOnChiefsWord(db, target.id, session)
+    outcome = await promptThread(db, scope, target, {
+      text: threadComment({ from: teammate.name, threadTitle: session.title, text: op.text }),
+      memberId: null,
+      // Whoever asked for it here asks in that thread too.
+      onBehalfOf: asker,
+      // This teammate, in a thread of its own; else the one it was started for, while it is in it.
+      ...(mine
+        ? { teammateIds: [teammate.id] }
+        : target.teammates.some((t) => t.teammateId === target.teammateId)
+          ? { teammateIds: [target.teammateId] }
+          : {}),
+    })
+  } catch (error) {
+    // Refused before it was taken in (a thread moving, a runner too old): nothing went.
+    await free()
+    throw error
+  }
+  if (outcome === 'offline') {
+    await free()
+    return { error: "That thread's computer is offline." }
+  }
   // New work in it: it is no longer done.
   await reopenThread(scope, target.id)
-  await audit({
+  // Its audit entry is the place taken above; its analytics go now.
+  trackAudit({
     ...scope,
     actor: { type: 'teammate', id: teammate.id },
     action: 'thread.messaged',

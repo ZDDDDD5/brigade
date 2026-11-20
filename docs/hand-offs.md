@@ -19,10 +19,17 @@ hands out. It replaced the Tasks board (below).
   thread at once, and a routine handing out lines never takes the same one twice.
 - **Where it came from stays.** `Session.startedFromId` names the thread that started it: its
   details link back there (From …), and that thread may write in it later.
-- **message_thread writes in a thread it started, or a child.** Headed with who wrote it and from
-  where (`threadComment`, the words the Tasks board's comments used, so old ones read the same),
-  under the starter's rights to write there; it reopens the thread if it was done. Nowhere else:
-  threads do not write in each other's (docs/decisions.md).
+- **message_thread writes in a thread it started, a thread its teammate works in, or a child.**
+  Headed with who wrote it and from where (`threadComment`, the words the Tasks board's comments
+  used, so old ones read the same), under the starter's rights to write there; it reopens the
+  thread if it was done. A thread its teammate works in is one at the top (not a child, not a
+  playbook's run, not archived) with that teammate among its own: a teammate that left word for
+  itself in another thread ("tell it the address is closed") passes it on itself, rather than
+  asking the person to copy it there. That thread's turn goes to that teammate. Nowhere else: a
+  teammate does not write in threads it is not in.
+- **No ping-pong.** A thread takes at most `COMMENTS_IN_A_ROW` (5) messages from other threads
+  with no word from a person in between; past them, message_thread is refused and the teammate
+  tells its person where things stand.
 - **Not from a playbook's run.** What started the run is untrusted, and a thread outside it has
   none of its limits: a run starts no thread outside it and writes only in its own children.
 - **A customer's idea goes to a list.** A live playbook run keeps one with `file_idea`

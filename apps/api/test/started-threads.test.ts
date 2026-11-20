@@ -10,7 +10,8 @@ import type { ScheduleOperation, TaskOperation } from '@brigade/contracts'
 // skipped when no database answers:
 // - start_thread starts a thread for a teammate, itself by default, on the calling thread's
 //   starter's accounts, for whoever asked there, in a project, on the lines of a list it names;
-// - message_thread writes in a thread it started, never in another one;
+// - message_thread writes in a thread it started or another thread its teammate is in, never in
+//   another one, and stops two threads writing to each other with nobody in between;
 // - an older runner's task tools are answered with what replaced them (src/legacy-tasks.ts);
 // - the migration that took the Tasks board away declares done the threads of tasks done.
 const envFile = new URL('../.env', import.meta.url)
@@ -20,7 +21,7 @@ process.env.DATABASE_URL ??= 'postgresql://localhost:1/none'
 process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
 process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
 
-const { prisma, scoped } = await import('../src/db.js')
+const { Prisma, prisma, scoped } = await import('../src/db.js')
 const database = await Promise.race([
   prisma.$queryRaw`select "startedFromId" from "Session" limit 1`.then(() => true),
   new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
@@ -318,9 +319,130 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     const before = prompts(threadId).length
     const refused = await op(ids.other, { name: 'message_thread', threadId, text: 'Merge it.' })
     assert.equal(refused.ok, false)
-    assert.match(refused.error ?? '', /not a child of this thread, nor a thread it started/)
+    assert.match(
+      refused.error ?? '',
+      /not a child of this thread, nor a thread it started, nor a thread you work in/,
+    )
     await new Promise((resolve) => setTimeout(resolve, 100))
     assert.equal(prompts(threadId).length, before)
+  })
+
+  test('message_thread writes in another thread its teammate is in, until nobody answers', async () => {
+    const mine = await db.session.create({
+      data: {
+        teammateId: ids.riley,
+        startedByMemberId: ids.member,
+        askedByMemberId: ids.member,
+        computerId: ids.computer,
+        title: 'Google verification',
+        status: 'idle',
+        origin: 'member',
+      } as never,
+    })
+    await db.threadTeammate.create({ data: { sessionId: mine.id, teammateId: ids.riley } as never })
+    const heard = await op(ids.from, {
+      name: 'message_thread',
+      threadId: mine.id,
+      text: 'The /cdn-cgi/rum address is closed.',
+    })
+    assert.equal(heard.ok, true, heard.error)
+    await until(() => prompts(mine.id).length > 0, 'the message')
+    const message = prompts(mine.id).at(-1)!
+    assert.equal(message.memberId, null)
+    assert.equal(
+      message.text,
+      '**Riley** commented from the thread “Plan the launch”:\n\nThe /cdn-cgi/rum address is closed.',
+    )
+    // Cody is not in it: refused, nothing sent.
+    const before = prompts(mine.id).length
+    const refused = await op(
+      ids.from,
+      { name: 'message_thread', threadId: mine.id, text: 'Hi.' },
+      ids.cody,
+    )
+    assert.equal(refused.ok, false)
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(prompts(mine.id).length, before)
+    // Five messages from other threads with no person in between: no more. Counted as they are
+    // sent, before the thread's runner records them (it is busy: none of them is an event yet).
+    const { COMMENTS_IN_A_ROW } = await import('../src/started-threads.js')
+    const send = (text: string) => op(ids.from, { name: 'message_thread', threadId: mine.id, text })
+    // Refused while it moves to another computer: none of them takes a place.
+    await prisma.session.update({ where: { id: mine.id }, data: { move: { to: 'elsewhere' } } })
+    for (let i = 0; i <= COMMENTS_IN_A_ROW; i++)
+      await assert.rejects(send('Moving?'), /moving to another computer/)
+    await prisma.session.update({ where: { id: mine.id }, data: { move: Prisma.DbNull } })
+    for (let i = 2; i < COMMENTS_IN_A_ROW; i++) assert.equal((await send(`${i}`)).ok, true)
+    // One place left, two at once: one takes it.
+    const both = await Promise.all([send('a'), send('b')])
+    assert.deepEqual(both.map((h) => h.ok).sort(), [false, true])
+    const looping = await send('Again.')
+    assert.equal(looping.ok, false)
+    assert.match(looping.error ?? '', /in a row with no word from a person/)
+    // A person writes there: it may be written in again, five more times.
+    const said = (seq: number, type: string) =>
+      db.sessionEvent.create({
+        data: {
+          sessionId: mine.id,
+          seq,
+          type,
+          data: { text: 'Go on.', memberId: ids.member, messageId: 'go-on' },
+          at: new Date(),
+        } as never,
+      })
+    await said(1, 'message.queued')
+    for (let i = 0; i < COMMENTS_IN_A_ROW; i++) {
+      const again = await send('Again.')
+      assert.equal(again.ok, true, again.error)
+    }
+    // The same message, read later, is no new word from a person.
+    await said(2, 'message.user')
+    assert.equal((await send('Once more.')).ok, false)
+  })
+
+  test('message_thread from a thread shared with another person: only where they may write too', async () => {
+    // Bob asks in a thread of Ada's; Ada's other thread, on her own computer, is closed to him.
+    const bobUser = `user-bob-${suffix}`
+    await prisma.user.create({ data: { id: bobUser, name: 'Bob', email: `${bobUser}@test.local` } })
+    const bob = (
+      await prisma.member.create({
+        data: {
+          id: `member-bob-${suffix}`,
+          organizationId: ids.org,
+          userId: bobUser,
+          role: 'member',
+        },
+      })
+    ).id
+    try {
+      const thread = async (title: string, askedByMemberId: string) => {
+        const session = await db.session.create({
+          data: {
+            teammateId: ids.riley,
+            startedByMemberId: ids.member,
+            askedByMemberId,
+            computerId: ids.computer,
+            title,
+            status: 'idle',
+            origin: 'member',
+          } as never,
+        })
+        await db.threadTeammate.create({
+          data: { sessionId: session.id, teammateId: ids.riley } as never,
+        })
+        return session.id
+      }
+      const shared = await thread('Shared with Bob', bob)
+      const closed = await thread('Ada alone', ids.member)
+      const heard = await op(shared, { name: 'message_thread', threadId: closed, text: 'Go.' })
+      assert.equal(heard.ok, false)
+      assert.match(heard.error ?? '', /may not write in that one/)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      assert.equal(prompts(closed).length, 0)
+    } finally {
+      await prisma.member.deleteMany({ where: { id: bob } })
+      await prisma.user.deleteMany({ where: { id: bobUser } })
+    }
   })
 
   test("an older runner's task tools are answered with what replaced them", async () => {

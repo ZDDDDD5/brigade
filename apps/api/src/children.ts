@@ -1245,7 +1245,7 @@ export async function messageChild(
   if (!child)
     return {
       error:
-        'That is not a child of this thread, nor a thread it started. message_thread writes only in your child threads (list_children) and the threads you started (start_thread).',
+        'That is not a child of this thread, nor a thread it started, nor a thread you work in. message_thread writes only in your child threads (list_children), the threads you started (start_thread) and the other threads at the top you are a teammate of.',
     }
   // A review whose pull request is merged or closed: work it is asked for now is another pull
   // request's, which Brigade would show as unreviewed, with Merge. That one gets its own review.
