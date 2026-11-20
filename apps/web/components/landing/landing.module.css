@@ -101,6 +101,12 @@ svg.i {
   border-color: var(--primary);
   color: var(--primary-foreground);
 }
+/* Ink: the page's text colour as the fill (white in the dark theme, black in the light one). */
+.btn.ink {
+  background: var(--foreground);
+  border-color: var(--foreground);
+  color: var(--background);
+}
 .btn.ghost {
   background: transparent;
   border-color: transparent;
@@ -352,6 +358,29 @@ svg.i {
   stroke-width: 6.5;
   stroke-linecap: round;
 }
+/* Each letter of the word, nudged down under a landing (top, set by dancers.tsx). */
+.dn-l {
+  position: relative;
+}
+/* Its face: one set of eyes at a time, as dancers.tsx says (data-face). */
+.dn-o,
+.dn-sq,
+.dn-joy,
+.dn-open {
+  display: none;
+}
+.dn-o .dn-eye {
+  stroke-width: 5;
+}
+.dn-sq {
+  stroke-linejoin: round;
+}
+.dancer[data-face='o'] .dn-o,
+.dancer[data-face='squeeze'] .dn-sq,
+.dancer[data-face='joy'] .dn-joy,
+.dancer[data-face='open'] .dn-open {
+  display: inline;
+}
 .dn-blink {
   transform-box: fill-box;
   transform-origin: center;
@@ -411,7 +440,7 @@ svg.i {
   background: transparent;
   color: inherit;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
 }
 .split-main {
@@ -454,6 +483,10 @@ svg.os {
   border: 1px solid var(--border);
   border-radius: 16px;
   box-shadow: var(--shadow-xl);
+}
+.dl-menu.up {
+  top: auto;
+  bottom: calc(100% + 8px);
 }
 .dl-lbl {
   padding: 6px 10px 4px;
@@ -627,33 +660,74 @@ svg.os {
 .byo-copy .h2 {
   font-size: 48px;
 }
-.byo-pts {
-  margin-top: 44px;
+/* Three rows, one per part of the panel: a short claim, then the one fact behind it. */
+.byo-list {
   display: grid;
-  gap: 28px;
+  margin-top: 28px;
 }
-.byo-pts li {
-  display: flex;
-  gap: 18px;
+.byo-list > [data-say] {
+  display: grid;
+  gap: 4px;
+  padding: 16px 0;
+  border-top: 1px solid var(--border);
 }
-.byo-pts .n {
-  font: 500 13px var(--font-mono);
-  color: var(--primary);
-  letter-spacing: 0;
-  padding-top: 5px;
-  flex: none;
+.byo-list > [data-say]:last-child {
+  border-bottom: 1px solid var(--border);
 }
-.byo-pts h3 {
+.byo-list b {
   font-size: 20px;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--foreground);
+  transition: color 250ms ease;
 }
-.byo-pts p {
-  margin-top: 6px;
-  font-size: 15.5px;
+.byo-list > [data-say]:hover b {
+  color: color-mix(in oklch, var(--primary) 30%, var(--foreground));
+}
+.byo-list span {
+  font-size: 16px;
+  line-height: 1.5;
   color: var(--muted-foreground);
-  max-width: 460px;
+}
+/* What it runs on, and the one promise about money, in a quiet line under the paragraph. */
+.byo-runs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 8px;
+  margin-top: 24px;
+  font-size: 14px;
+  color: var(--muted-foreground);
+}
+.byo-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 9999px;
+  background: var(--muted);
+  color: var(--foreground);
+  font-weight: 500;
+}
+.byo-mark svg {
+  width: 15px;
+  height: 15px;
+}
+.byo-note {
+  margin-left: 8px;
+}
+/* Pointing at a sentence dims the parts of the panel it doesn't describe (data-k). */
+.byo-panel [data-k] {
+  transition:
+    opacity 300ms ease,
+    filter 300ms ease;
+}
+.byo:has([data-say='plan']:hover) .byo-panel [data-k]:not([data-k~='plan']),
+.byo:has([data-say='stack']:hover) .byo-panel [data-k]:not([data-k~='stack']),
+.byo:has([data-say='model']:hover) .byo-panel [data-k]:not([data-k~='model']) {
+  opacity: 0.3;
+  filter: saturate(0.3);
 }
 .byo-panel {
   background: var(--card);
@@ -688,54 +762,57 @@ svg.os {
 }
 .cp-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
   background: var(--secondary);
   border-bottom: 1px solid var(--border);
 }
+/* One table for accounts and teammates alike: mark, name, model, usage. The bar's color
+   carries the limit, so the rows need no status words. */
 .cp-body {
   display: grid;
-  gap: 12px;
+  grid-template-columns: 28px minmax(0, 1fr) 96px 72px;
+  gap: 14px;
+  align-items: center;
   padding: 20px 24px 24px;
 }
-.cp-relay {
-  padding-left: 4px;
-}
-.cp-sep {
-  margin-top: 8px;
-  padding-top: 20px;
-  border-top: 1px solid var(--border);
-}
-/* One account: plan, status, then the model it runs and how much usage is gone. */
-.acct {
+.cp-row {
   display: grid;
-  gap: 10px;
-  padding: 14px 18px;
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: color-mix(in oklch, var(--secondary) 40%, var(--card));
-}
-.acct-t {
-  display: flex;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
   align-items: center;
-  gap: 10px;
+}
+.cp-row > svg {
+  justify-self: center;
+}
+.cp-row b {
   font-size: 16px;
+  font-weight: 700;
   letter-spacing: -0.02em;
 }
-.acct-t b {
-  flex: 1;
-  font-weight: 700;
+.cp-model {
+  font: 500 12px var(--font-mono);
+  color: color-mix(in oklch, var(--muted-foreground) 85%, transparent);
 }
-.acct-m {
+.cp-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.cp-count {
+  color: var(--foreground);
+}
+.cp-relay {
   display: flex;
-  align-items: center;
-  gap: 16px;
-  font-size: 12px;
-  color: var(--muted-foreground);
+  gap: 8px;
+  grid-column: 2 / -1;
+  margin: -6px 0 -4px;
 }
-.acct-m .mono {
-  width: 96px;
-  flex: none;
+.cp-sep {
+  grid-column: 1 / -1;
+  margin-top: 14px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
 }
 .acct-bar {
   flex: 1;
@@ -761,16 +838,6 @@ svg.os {
 }
 .acct-f.c {
   width: 72%;
-}
-.cp-tm {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 15px;
-  font-weight: 500;
-}
-.cp-tm .cp-l {
-  margin-left: auto;
 }
 
 /* =================== Apps (apps.tsx) =================== */
@@ -959,6 +1026,16 @@ svg.os {
 }
 .sec-head.c .lead {
   margin-top: 18px;
+}
+/* Tiles: the title alone, centred over the cards, on two balanced lines. */
+.sec-head.tiles-head {
+  display: block;
+  text-align: center;
+}
+.tiles-head .h2 {
+  max-width: 13em;
+  margin-inline: auto;
+  text-wrap: balance;
 }
 
 /* =================== 3 · Message =================== */
@@ -1669,22 +1746,7 @@ svg.os {
   height: 13px;
 }
 
-/* =================== 8 · Built by =================== */
-.built .wrap {
-  display: grid;
-  grid-template-columns: 1fr 1.1fr;
-  gap: 88px;
-  align-items: center;
-}
-.built .h2 {
-  margin-bottom: 28px;
-}
-.built .lead + .lead {
-  margin-top: 18px;
-}
-.built .link {
-  margin-top: 30px;
-}
+/* Shared: a text link with a violet underline. */
 .link {
   display: inline-flex;
   align-items: center;
@@ -1696,97 +1758,6 @@ svg.os {
 .link svg {
   width: 15px;
   height: 15px;
-}
-.nums {
-  display: flex;
-  gap: 56px;
-  margin-bottom: 26px;
-}
-.nums .num {
-  font-size: 76px;
-}
-.num {
-  font-family: var(--font-mono);
-  font-size: 88px;
-  line-height: 0.9;
-  font-weight: 500;
-  letter-spacing: -0.04em;
-}
-.num .of {
-  color: var(--muted-foreground);
-}
-.num-l {
-  margin-top: 12px;
-  font: 12.5px var(--font-mono);
-  color: var(--muted-foreground);
-  letter-spacing: 0;
-}
-.log {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-md);
-  overflow: hidden;
-}
-.log-h {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--border);
-  font-size: 13.5px;
-  font-weight: 700;
-}
-.log-h .mono {
-  font-weight: 500;
-}
-.log-h .sp {
-  flex: 1;
-}
-.lgr {
-  display: grid;
-  grid-template-columns: 22px 1fr auto;
-  gap: 12px;
-  align-items: center;
-  padding: 12px 18px;
-  border-top: 1px solid var(--border);
-}
-.lgr:first-of-type {
-  border-top: 0;
-}
-.lgr .mg {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: color-mix(in oklch, var(--chart-2) 16%, transparent);
-  color: var(--primary);
-}
-.lgr .mg svg {
-  width: 12px;
-  height: 12px;
-}
-.lgr .tt {
-  font-size: 13.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lgr .mt {
-  font: 11.5px var(--font-mono);
-  color: var(--muted-foreground);
-  margin-top: 2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  letter-spacing: 0;
-}
-.lgr .tm {
-  font: 12px var(--font-mono);
-  color: var(--muted-foreground);
-  letter-spacing: 0;
 }
 /* =================== 9 · Pricing (dark band) =================== */
 .pricing {
@@ -2145,17 +2116,6 @@ svg.os {
 /* The menu-bar icon, one colour like the bar's text, as macOS draws it. */
 
 /* =================== 11 · FAQ + final =================== */
-.faq .wrap {
-  display: grid;
-  grid-template-columns: 360px 1fr;
-  gap: 80px;
-}
-.faq .h2 {
-  font-size: 44px;
-}
-.qs {
-  border-top: 2px solid var(--foreground);
-}
 :where(.page) details {
   border-bottom: 1px solid var(--border);
 }
@@ -2173,23 +2133,6 @@ svg.os {
 }
 :where(.page) summary::-webkit-details-marker {
   display: none;
-}
-:where(.page) summary .pm {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  display: grid;
-  place-items: center;
-  flex: none;
-  transition: transform 0.2s;
-}
-:where(.page) summary .pm svg {
-  width: 14px;
-  height: 14px;
-}
-:where(.page) details[open] summary .pm {
-  transform: rotate(45deg);
 }
 :where(.page) details p {
   padding: 0 64px 26px 0;
@@ -2225,11 +2168,13 @@ svg.os {
   position: relative;
   z-index: 2;
 }
-.final .btn {
+/* The hero's two buttons (components/home/hero.tsx HeroActions), at the start of the line. */
+.final .final-cta {
   margin-top: 34px;
-  align-self: flex-start;
+  justify-content: flex-start;
   position: relative;
   z-index: 2;
+  animation: none;
 }
 .final .art {
   position: absolute;
@@ -2267,14 +2212,32 @@ svg.os {
   transform: translate(var(--bx, 0), var(--by, 0)) rotate(var(--br, 0deg));
   transition: transform 3.5s cubic-bezier(0.45, 0, 0.25, 1);
 }
+/* Midnight in Brigade's violet: a deep indigo body with a violet light on it and pale lilac
+ * eyes in the dark theme, a pale lavender with deep indigo eyes in the light one, so the
+ * title and lead over it stay readable either way. */
+.final {
+  --pb-body: oklch(0.92 0.04 292);
+  --pb-eye: oklch(0.42 0.16 288);
+  --pb-light: oklch(1 0 0);
+  --pb-light-a: 0.7;
+  --pb-glow: none;
+}
+:global(.dark) .final {
+  --pb-body: oklch(0.25 0.075 285);
+  --pb-eye: oklch(0.93 0.045 300);
+  --pb-light: oklch(0.6 0.18 292);
+  --pb-light-a: 0.45;
+  --pb-glow: drop-shadow(0 0 1.2px oklch(0.82 0.13 298 / 0.9));
+}
 .pb-body > path {
-  fill: var(--foreground);
+  fill: var(--pb-body);
 }
 /* An eye, moved and narrowed along the sphere by --eNx and --eNs: a quick turn that
  * overshoots a little, as eyes do. */
 .pb-eye {
   fill: none;
-  stroke: var(--background);
+  stroke: var(--pb-eye);
+  filter: var(--pb-glow);
   stroke-width: 6;
   stroke-linecap: round;
   transform-origin: 50% 50%;
@@ -2327,11 +2290,11 @@ svg.os {
   transition: transform 0.5s cubic-bezier(0.3, 1.2, 0.6, 1);
 }
 .pb-light-in {
-  stop-color: var(--background);
-  stop-opacity: 0.16;
+  stop-color: var(--pb-light);
+  stop-opacity: var(--pb-light-a);
 }
 .pb-light-out {
-  stop-color: var(--background);
+  stop-color: var(--pb-light);
   stop-opacity: 0;
 }
 
@@ -2435,15 +2398,18 @@ svg.os {
  * the hue between the grey ink and the cool page), then set to a cool hue. */
 .foot-name span {
   /* Greys pulled a touch toward blue, like the page: a neutral grey beside a cool page reads
-   * warm, almost brown. */
+   * warm, almost brown. A footer on a tint sets its own hue and chroma (--foot-h, --foot-c). */
   --gloss-top: oklch(
-    from color-mix(in oklab, var(--foreground) 12%, var(--background)) l 0.014 265
+    from color-mix(in oklab, var(--foreground) 12%, var(--background)) l var(--foot-c, 0.014)
+      var(--foot-h, 265)
   );
   --gloss-base: oklch(
-    from color-mix(in oklab, var(--foreground) 7%, var(--background)) l 0.012 265
+    from color-mix(in oklab, var(--foreground) 7%, var(--background)) l
+      calc(var(--foot-c, 0.014) * 0.86) var(--foot-h, 265)
   );
   --gloss-shine: oklch(
-    from color-mix(in oklab, var(--foreground) 26%, var(--background)) l 0.016 265
+    from color-mix(in oklab, var(--foreground) 26%, var(--background)) l
+      calc(var(--foot-c, 0.014) * 1.14) var(--foot-h, 265)
   );
   background:
     linear-gradient(
@@ -4998,23 +4964,22 @@ svg.os {
   .byo-copy .h2 {
     font-size: 36px;
   }
-  .byo-pts {
-    margin-top: 32px;
+  .byo-list {
+    margin-top: 22px;
+  }
+  .byo-list b {
+    font-size: 18px;
   }
   .cp-head {
     padding: 14px 16px;
   }
   .cp-body {
+    grid-template-columns: 22px minmax(0, 1fr) 78px 44px;
+    column-gap: 10px;
     padding: 16px;
   }
-  .acct {
-    padding: 12px 14px;
-  }
-  .acct-t {
+  .cp-row b {
     font-size: 14.5px;
-  }
-  .acct-m .mono {
-    width: 78px;
   }
 
   .message .wrap {
@@ -5104,27 +5069,6 @@ svg.os {
     padding: 14px;
   }
 
-  .built .wrap {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 44px;
-  }
-  .nums {
-    gap: 28px;
-  }
-  .num,
-  .nums .num {
-    font-size: 50px;
-  }
-  .num-l {
-    font-size: 11.5px;
-  }
-  .lgr .tm {
-    display: none;
-  }
-  .lgr {
-    grid-template-columns: 22px minmax(0, 1fr);
-  }
-
   .pricing {
     padding: 88px 0 80px;
   }
@@ -5148,13 +5092,6 @@ svg.os {
     align-self: stretch;
   }
 
-  .faq .wrap {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 24px;
-  }
-  .faq .h2 {
-    font-size: 36px;
-  }
   :where(.page) summary {
     font-size: 17px;
     padding: 20px 0;
@@ -5181,8 +5118,8 @@ svg.os {
   .final h2 {
     font-size: 44px;
   }
-  .final .btn {
-    align-self: stretch;
+  .final .final-cta {
+    justify-content: center;
   }
 
   .foot .wrap {
@@ -6138,17 +6075,9 @@ svg.os {
 
 /* =================== Not in the design: what the code adds =================== */
 /* The iPhone card's way in is a step to take in Safari, not a link. */
-/* Rows of the merged-PR log are links to the pull requests. */
-a.lgr:hover {
-  background: var(--muted);
-}
-a.lgr:hover .tt {
-  text-decoration: underline;
-}
 /* Real links and the job tabs show the keyboard focus. */
 .page a:focus-visible,
-.tab:focus-visible,
-.qs summary:focus-visible {
+.tab:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 3px;
   border-radius: 6px;
@@ -6156,10 +6085,6 @@ a.lgr:hover .tt {
 .page a.btn:focus-visible,
 .tab:focus-visible {
   border-radius: 9999px;
-}
-.page a.lgr:focus-visible {
-  outline-offset: -3px;
-  border-radius: 0;
 }
 
 @media (max-width: 640px) {
@@ -6187,25 +6112,42 @@ a.lgr:hover .tt {
 .live-demo .wrap {
   position: relative;
 }
-.live-demo .wrap::before {
-  content: '';
-  position: absolute;
-  left: 8%;
-  right: 8%;
-  top: -140px;
-  height: 460px;
-  background: radial-gradient(
-    50% 50% at 50% 50%,
-    color-mix(in oklab, var(--primary) 50%, transparent),
-    transparent 72%
-  );
-  filter: blur(40px);
-  pointer-events: none;
+/* Its entrance. The window rises in just after the hero's lines; then, as the page scrolls,
+   it comes up from faded to full. */
+@media (prefers-reduced-motion: no-preference) {
+  .live-demo .wrap {
+    view-timeline: --demo;
+    animation: k-demo-in 1300ms cubic-bezier(0.19, 1, 0.22, 1) 380ms both;
+  }
+  @supports (animation-timeline: view()) {
+    /* Faded under the hero, the whole window, and full as it comes up the page. By the
+       page's own scroll, so it is as faded at the top of the page on any screen, and full
+       after a little over half a screen. */
+    .demo-win {
+      animation: k-demo-focus ease-out both;
+      animation-timeline: scroll(root);
+      animation-range: 0 55vh;
+    }
+  }
 }
+@keyframes k-demo-in {
+  from {
+    opacity: 0;
+    transform: translateY(72px);
+  }
+}
+/* Faded under the hero, it comes up to full as the page scrolls. Opacity alone, so the scroll
+   never has it repainted. */
+@keyframes k-demo-focus {
+  from {
+    opacity: 0.3;
+  }
+}
+
 .demo-win {
   position: relative;
   border: 1px solid var(--border);
-  border-radius: var(--radius-xl);
+  border-radius: 16px;
   background: var(--card);
   box-shadow: 0 40px 100px -40px oklch(0 0 0 / 0.35);
   overflow: hidden;
@@ -6213,18 +6155,28 @@ a.lgr:hover .tt {
 .demo-bar {
   display: flex;
   align-items: center;
-  gap: 7px;
-  height: 42px;
-  padding: 0 16px;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
-  font-size: 13px;
+  font-size: 12px;
   color: var(--muted-foreground);
 }
 .demo-bar i {
-  width: 11px;
-  height: 11px;
+  width: 9px;
+  height: 9px;
   border-radius: 50%;
   background: var(--border);
+}
+/* The window's three dots in the macOS colours: close, minimise, zoom. */
+.demo-bar i:nth-of-type(1) {
+  background: #ff5f57;
+}
+.demo-bar i:nth-of-type(2) {
+  background: #febc2e;
+}
+.demo-bar i:nth-of-type(3) {
+  background: #28c840;
 }
 .demo-url {
   position: absolute;
@@ -6232,11 +6184,12 @@ a.lgr:hover .tt {
   transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 3px 12px;
+  gap: 6px;
+  padding: 1px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--background);
+  font-size: 11px;
 }
 .demo-bar {
   position: relative;
@@ -6245,19 +6198,19 @@ a.lgr:hover .tt {
 .demo-tabs {
   display: flex;
   align-self: flex-end;
-  gap: 2px;
-  margin-left: 14px;
+  gap: 0;
+  margin-left: 10px;
   min-width: 0;
 }
 .demo-tab {
-  height: 32px;
-  padding: 0 14px;
+  height: 25px;
+  padding: 0 11px;
   border: 1px solid transparent;
   border-bottom: 0;
-  border-radius: 10px 10px 0 0;
+  border-radius: 7px 7px 0 0;
   background: none;
-  color: var(--muted-foreground);
-  font-size: 13px;
+  color: color-mix(in oklch, var(--muted-foreground) 75%, transparent);
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -6280,25 +6233,11 @@ a.lgr:hover .tt {
 .demo-tab[aria-selected='true'] {
   position: relative;
   margin-bottom: -1px;
-  height: 33px;
+  height: 26px;
   border-color: var(--border);
   background: var(--background);
   color: var(--foreground);
   cursor: default;
-}
-.demo-bar a {
-  margin-left: auto;
-  flex-shrink: 0;
-  white-space: nowrap;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  color: var(--foreground);
-}
-.demo-bar a svg.i {
-  width: 14px;
-  height: 14px;
 }
 .demo-view {
   position: relative;
@@ -6405,8 +6344,6 @@ a.lgr:hover .tt {
 @supports (animation-timeline: scroll()) {
   .it .tt,
   .it .mt,
-  .lgr .tt,
-  .lgr .mt,
   .ir b {
     text-overflow: clip;
     mask-image: linear-gradient(to right, #000 calc(100% - var(--fade-end)), transparent);
@@ -6424,4 +6361,31 @@ a.lgr:hover .tt {
   to {
     --fade-end: 2rem;
   }
+}
+
+/* The name pressed into the page (closing.tsx, CarveFilter): a flat fill a shade under the
+ * page, its inner shadow and light drawn by the filter. No gloss, no sheen. */
+.carve-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+}
+.carve-shade {
+  flood-color: var(--foreground);
+  flood-opacity: 0.32;
+}
+.carve-light {
+  flood-color: white;
+  flood-opacity: 1;
+}
+.foot-name.carved {
+  position: relative;
+  /* Room between the links and the name, as on a page with a wide bottom margin. */
+  margin-top: clamp(56px, 9vw, 160px);
+}
+.foot-name.carved span {
+  background: none;
+  color: oklch(from var(--background) calc(l - 0.06) calc(c + 0.03) h);
+  filter: url(#foot-carve);
+  animation: none;
 }

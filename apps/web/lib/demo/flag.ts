@@ -13,6 +13,12 @@ export const DEMO_THREAD = 'demo-thread-'
 /** Where the landing page shows the demo in a frame (components/landing/live-demo.tsx). */
 export const DEMO_URL = 'https://demo.brigade.lol'
 
+/** What the landing and the demo in its frame say to each other: the frame asks whether its
+ * screen is in focus yet (the landing's focus pull, live-demo.tsx), the landing answers, then
+ * says so again once it is. The walkthrough waits for it. */
+export const FOCUS_ASK = 'brigade-demo:focus?'
+export const FOCUS_SAY = 'brigade-demo:focus'
+
 /** Whether this page is in a frame: the demo shown on the landing page, which has its own sign. */
 export const framed = () => typeof window !== 'undefined' && window.self !== window.top
 

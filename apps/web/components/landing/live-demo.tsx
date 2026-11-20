@@ -1,8 +1,8 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { DEMO_URL } from '@/lib/demo/flag'
+import { useEffect, useRef, useState } from 'react'
+import { DEMO_URL, FOCUS_ASK, FOCUS_SAY } from '@/lib/demo/flag'
 import type { Story } from '@/lib/demo/tour'
-import { c, Icon } from './parts'
+import { c } from './parts'
 
 // Wide enough for the dashboard's own layout, sidebar and all: narrower, the picture and a
 // link to open the demo on its own.
@@ -28,6 +28,8 @@ export function LiveDemo() {
   const [wide, setWide] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [story, setStory] = useState<Story>('bug')
+  const view = useRef<HTMLDivElement>(null)
+  useFocusSignal(view)
   useEffect(() => {
     const query = window.matchMedia(WIDE)
     const update = () => setWide(query.matches)
@@ -69,11 +71,8 @@ export function LiveDemo() {
                 <span className={c('dot ok')}></span>demo.brigade.lol
               </span>
             )}
-            <a href={`${DEMO_URL}/app`} target="_blank" rel="noopener">
-              Open full screen <Icon name="arrow" />
-            </a>
           </div>
-          <div className={c('demo-view')}>
+          <div ref={view} className={c('demo-view')}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img className={c('demo-shot light-only')} src="/landing/demo-light.webp" alt="" />
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -92,7 +91,7 @@ export function LiveDemo() {
             ) : (
               <div className={c('demo-start')}>
                 <a
-                  className={c('btn pri lg')}
+                  className={c('btn ink lg')}
                   href={`${DEMO_URL}/app`}
                   target="_blank"
                   rel="noopener"
@@ -106,4 +105,50 @@ export function LiveDemo() {
       </div>
     </section>
   )
+}
+
+/**
+ * Tells the demo in the frame when its window is ready to watch: the scroll brings it up
+ * from faded to full (landing.module.css, .demo-win), and its walkthrough waits for that
+ * rather than playing half seen. Full is at once without scroll-driven animations or under
+ * reduced motion. It answers the frame's question, and says it again when that changes.
+ */
+function useFocusSignal(view: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const origin = new URL(DEMO_URL).origin
+    let sharp = false
+    const frame = () => view.current?.querySelector('iframe')?.contentWindow
+    const say = () => frame()?.postMessage({ type: FOCUS_SAY, sharp }, origin)
+    const check = () => {
+      const win = view.current?.parentElement
+      if (!win) return
+      const now = getComputedStyle(win).opacity === '1'
+      if (now === sharp) return
+      sharp = now
+      say()
+    }
+    const asked = (e: MessageEvent) => {
+      if (e.origin !== origin || e.source !== frame()) return
+      if ((e.data as { type?: string } | null)?.type === FOCUS_ASK) {
+        check()
+        say()
+      }
+    }
+    let raf = 0
+    const scrolled = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        check()
+      })
+    }
+    check()
+    window.addEventListener('message', asked)
+    window.addEventListener('scroll', scrolled, { passive: true })
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('message', asked)
+      window.removeEventListener('scroll', scrolled)
+    }
+  }, [view])
 }

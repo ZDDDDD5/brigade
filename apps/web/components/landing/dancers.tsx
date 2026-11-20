@@ -21,6 +21,15 @@ const GRAVITY = 34
 const PACK = 1
 // Each one's body, for bumping into the others: a circle in its box (share of its width).
 const BODY = { x: 0.5, y: 0.52, r: 0.49 }
+// When each lets go, in the order they fall (seconds after the font is in): one alone, a
+// beat, three nearly together, one more, and a last one late, which lands on a neighbour.
+const BEATS = [0.35, 1.05, 1.13, 1.2, 1.55, 2.3]
+// The letters under them: a spring each, pressed down by a landing (em per second at the
+// hardest landing), so the word takes their weight.
+const LETTER = { k: 320, damp: 13, kick: 1.1, spread: 0.35 }
+
+/** Its face: its own eyes, round in the fall, squeezed on impact, smiling once down. */
+type Face = 'open' | 'o' | 'squeeze' | 'joy'
 
 type Dancer = {
   home: number
@@ -37,6 +46,13 @@ type Dancer = {
   next: number
   // Seconds until it pops out of the word, on the way in; 0 once out.
   wait: number
+  // Whether it has landed once, and until when (the clock, seconds) its face reacts.
+  landed: boolean
+  squeeze: number
+  joy: number
+  face: Face
+  // A hop it was told to make (the bow once all are down), in px; 0 for none.
+  hop: number
 }
 
 const random = (min: number, max: number) => min + Math.random() * (max - min)
@@ -51,15 +67,26 @@ const random = (min: number, max: number) => min + Math.random() * (max - min)
  * the page and land on the letters. They sit behind the word's ink, so they never cover it.
  * It runs only while the title shows; under reduced motion they stand still on the letters.
  */
-export function Dancers() {
+export function Dancers({ word: label }: { word: string }) {
   const ref = useRef<HTMLSpanElement>(null)
+  const lettersRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
     const box = ref.current
     const word = box?.parentElement
-    const text = word?.firstChild
-    if (!box || !word || !text || text.nodeType !== Node.TEXT_NODE) return
+    const letters = lettersRef.current
+    if (!box || !word || !letters) return
     const els = [...box.children] as HTMLElement[]
+    const glyphs = [...letters.children] as HTMLElement[]
+    // Each letter's dip (px, down) and its speed, and which letter each px column is in.
+    const dip = new Float32Array(glyphs.length)
+    const dipV = new Float32Array(glyphs.length)
+    const shown = new Float32Array(glyphs.length)
+    let letterAt = new Int16Array(0)
+    let clock = 0
+    // The bow: once all are down and on their spots, they hop together once.
+    let bowed = false
+    let calm = 0
     const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
     let em = 1
@@ -78,13 +105,13 @@ export function Dancers() {
     // included, placed on the page's baseline (where the zero-height probe sits).
     const measure = () => {
       const probe = word.querySelector<HTMLElement>('[data-baseline]')
-      const chars = text.textContent ?? ''
+      const chars = letters.textContent ?? ''
       const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })
       if (!probe || !ctx || !chars) return
       const style = getComputedStyle(word)
       em = parseFloat(style.fontSize)
       const range = document.createRange()
-      range.selectNodeContents(text)
+      range.selectNodeContents(letters)
       const rect = range.getBoundingClientRect()
       const origin = box.getBoundingClientRect()
       const baseline = probe.getBoundingClientRect().top - origin.top
@@ -106,6 +133,14 @@ export function Dancers() {
       const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height)
       start = rect.left - origin.left
       tops = new Float32Array(Math.ceil(rect.width)).fill(Infinity)
+      // Which letter each column is in, the nearest one between them.
+      letterAt = new Int16Array(tops.length).fill(-1)
+      glyphs.forEach((g, i) => {
+        const r = g.getBoundingClientRect()
+        const from = Math.max(0, Math.floor(r.left - origin.left - start))
+        const to = Math.min(tops.length - 1, Math.ceil(r.right - origin.left - start))
+        for (let col = from; col <= to; col++) letterAt[col] = i
+      })
       for (let col = 0; col < tops.length; col++) {
         // The highest ink across this page pixel's two canvas columns.
         for (let row = 0; row < canvas.height; row++) {
@@ -140,7 +175,7 @@ export function Dancers() {
       const from = Math.max(0, Math.floor(x - start))
       const to = Math.min(tops.length - 1, Math.ceil(x + w - start))
       for (let col = from; col <= to; col++) {
-        const ink = tops[col]!
+        const ink = tops[col]! + (dip[letterAt[col]!] ?? 0)
         if (ink === Infinity) continue
         const u = under[Math.round(((col + start - x) / w) * SLICES)]
         if (u === undefined || u < 0) continue
@@ -173,11 +208,14 @@ export function Dancers() {
         x += w * PACK
         els[i]!.style.width = `${w}px`
         const turn = order.indexOf(i)
-        const wait = turn < 0 ? 0 : fontReady ? 0.3 + turn * 0.2 + random(0, 0.08) : Infinity
+        const wait = turn < 0 ? 0 : fontReady ? BEATS[turn]! + random(0, 0.04) : Infinity
         els[i]!.style.opacity = wait ? '0' : '1'
+        // The late one comes down a little to one side, onto a neighbour's shoulder.
+        const late = turn === DANCERS.length - 1
+        const side = i === 0 ? 1 : i === DANCERS.length - 1 ? -1 : Math.random() < 0.5 ? -1 : 1
         return {
           home,
-          x: home,
+          x: late ? home + side * 0.42 * w : home,
           // Waiting, it is above the top of the page, out of sight.
           y: wait ? -(top + w * 1.5) : rest(home, w),
           vx: 0,
@@ -189,20 +227,66 @@ export function Dancers() {
           grounded: !wait,
           next: random(0.6, 2),
           wait,
+          landed: !wait,
+          squeeze: 0,
+          joy: 0,
+          face: 'open' as Face,
+          hop: 0,
         }
       })
     }
 
-    const draw = () =>
+    const draw = () => {
       dancers.forEach((d, i) => {
         const el = els[i]
         if (!el) return
-        // Squash keeps the feet down: it scales from the bottom.
-        el.style.transform = `translate(${d.x}px, ${d.y}px) rotate(${d.lean}rad) scale(${1 + d.q}, ${1 - d.q})`
+        // Fast through the air it stretches along its fall, thinner and taller; squash keeps
+        // the feet down: it scales from the bottom.
+        const speed = d.grounded ? 0 : Math.hypot(d.vx, d.vy) / em
+        const st = Math.min(speed * 0.009, 0.2)
+        el.style.transform = `translate(${d.x}px, ${d.y}px) rotate(${d.lean}rad) scale(${1 + d.q - st * 0.5}, ${1 - d.q + st})`
+        const face: Face =
+          d.wait > 0 || still
+            ? 'open'
+            : !d.landed
+              ? 'o'
+              : clock < d.squeeze
+                ? 'squeeze'
+                : clock < d.joy
+                  ? 'joy'
+                  : 'open'
+        if (face !== d.face) {
+          d.face = face
+          el.dataset.face = face
+        }
       })
+      glyphs.forEach((g, i) => {
+        if (Math.abs(dip[i]! - shown[i]!) < 0.05) return
+        shown[i] = dip[i]!
+        g.style.top = `${dip[i]!.toFixed(2)}px`
+      })
+    }
+
+    // A landing (or a push off) at x, as hard as `impact` (em per second): the letter under it
+    // dips, its neighbours a little.
+    const press = (x: number, impact: number) => {
+      if (still || !letterAt.length) return
+      const col = Math.max(0, Math.min(letterAt.length - 1, Math.round(x - start)))
+      const at = letterAt[col]!
+      if (at < 0) return
+      const v = (Math.min(impact, 14) / 14) * LETTER.kick * em
+      dipV[at] = dipV[at]! + v
+      if (at > 0) dipV[at - 1] = dipV[at - 1]! + v * LETTER.spread
+      if (at < glyphs.length - 1) dipV[at + 1] = dipV[at + 1]! + v * LETTER.spread
+    }
 
     const step = (dt: number) => {
       const g = GRAVITY * em
+      clock += dt
+      for (let i = 0; i < glyphs.length; i++) {
+        dipV[i] = dipV[i]! + (-LETTER.k * dip[i]! - LETTER.damp * dipV[i]!) * dt
+        dip[i] = dip[i]! + dipV[i]! * dt
+      }
       for (const [i, d] of dancers.entries()) {
         if (d.wait > 0) {
           d.wait -= dt
@@ -210,6 +294,7 @@ export function Dancers() {
           // Its turn: it lets go and falls, drifting a hair to one side; gravity and the
           // landing do the rest.
           d.wait = 0
+          d.landed = false
           fallen.add(i)
           d.vy = 0
           d.vx = random(-1, 1) * 0.1 * em
@@ -222,17 +307,22 @@ export function Dancers() {
         // Off its spot (a bounce or a neighbour moved it), it hops back soon rather than slide.
         const away = d.home - d.x
         if (d.grounded && Math.abs(away) > 0.06 * em) d.next = Math.min(d.next, random(0.12, 0.35))
-        if (d.grounded && d.next <= 0) {
+        // Until the bow, one on its spot waits for the others: only hopping back is allowed.
+        const off = Math.abs(away) > 0.06 * em
+        if (d.grounded && d.next <= 0 && (bowed || d.hop > 0 || off)) {
           // Mostly small hops, a bigger one now and then. Each one aims to land near its
           // spot: back onto it when it is off, a little to either side when it is on it.
-          const h = (Math.random() < 0.2 ? random(0.35, 0.6) : random(0.08, 0.25)) * em
+          const h = d.hop || (Math.random() < 0.2 ? random(0.35, 0.6) : random(0.08, 0.25)) * em
           d.vy = -Math.sqrt(2 * g * h)
           const air = (2 * -d.vy) / g
-          const target = Math.abs(away) > 0.06 * em ? away : random(-1, 1) * 0.12 * em
+          const target = off || d.hop ? away : random(-1, 1) * 0.12 * em
           d.vx = target / air
           d.grounded = false
-          // A push off the ground stretches it a little.
-          d.qv -= 2
+          // A push off the ground stretches it a little, and presses the letter under it.
+          d.qv -= d.hop ? 3 : 2
+          press(d.x + d.size / 2, (-d.vy / em) * 0.5)
+          if (d.hop) d.joy = clock + 1.4
+          d.hop = 0
           d.next = random(0.3, 2.4)
         }
         if (!d.grounded) {
@@ -243,6 +333,13 @@ export function Dancers() {
           if (d.y >= floor && d.vy > 0) {
             d.y = floor
             const impact = d.vy / em
+            press(d.x + d.size / 2, impact)
+            // Its first landing: eyes squeezed on the impact, then a smile.
+            if (!d.landed) {
+              d.landed = true
+              d.squeeze = clock + 0.17
+              d.joy = clock + 1
+            } else if (impact > 6) d.squeeze = clock + 0.1
             // A light bounce off the letter, a smaller one after it until it settles, and a
             // squash as hard as the landing.
             d.vy = impact > 1.5 ? -d.vy * 0.28 : 0
@@ -257,7 +354,7 @@ export function Dancers() {
         }
         // The squash spring, and the lean following the sideways speed.
         d.qv += (-260 * d.q - 12 * d.qv) * dt
-        d.q = Math.max(-0.1, Math.min(0.2, d.q + d.qv * dt))
+        d.q = Math.max(-0.1, Math.min(0.26, d.q + d.qv * dt))
         d.lean += ((d.vx / em) * 0.1 - d.lean) * Math.min(1, 10 * dt)
       }
       // They never pass through each other: two bodies that overlap are pushed apart along
@@ -302,6 +399,22 @@ export function Dancers() {
           }
         }
       }
+      // All down and on their spots for a moment: they bow, a hop together, a hair apart.
+      if (
+        !bowed &&
+        !still &&
+        fallen.size === dancers.length &&
+        dancers.every((d) => d.grounded && Math.abs(d.home - d.x) < 0.06 * em)
+      ) {
+        calm += dt
+        if (calm > 0.35) {
+          bowed = true
+          dancers.forEach((d, i) => {
+            d.hop = 0.42 * em
+            d.next = i * 0.05
+          })
+        }
+      } else calm = 0
       // Nothing ends up below the letters: a push from a neighbour can't sink one into them.
       for (const d of dancers) {
         if (d.wait > 0) continue
@@ -368,14 +481,34 @@ export function Dancers() {
 
   return (
     <>
+      {/* A span a letter, so each can dip under a landing; they read as the one word. */}
+      <span ref={lettersRef}>
+        {[...label].map((ch, i) => (
+          <span key={i} className={c('dn-l')}>
+            {ch}
+          </span>
+        ))}
+      </span>
       {/* Zero-height, on the baseline: where the letters stand, for measuring them. */}
       <span className={c('dn-base')} data-baseline aria-hidden="true" />
       <span ref={ref} className={c('dancers')} aria-hidden="true">
         {DANCERS.map((d, i) => (
-          <span key={i} className={c('dancer')}>
+          <span key={i} className={c('dancer')} data-face="open">
             <svg viewBox="0 0 100 100">
               <path d={SHAPE} fill={d.fill} />
-              <g className={c('dn-blink')} style={{ animationDuration: `${3.3 + i * 0.7}s` }}>
+              <g className={c('dn-o')}>
+                <ellipse className={c('dn-eye')} cx="40.5" cy="40" rx="4" ry="5.5" />
+                <ellipse className={c('dn-eye')} cx="59.5" cy="40" rx="4" ry="5.5" />
+              </g>
+              <path className={c('dn-eye dn-sq')} d="M35 35L45 40.5L35 46M65 35L55 40.5L65 46" />
+              <path
+                className={c('dn-eye dn-joy')}
+                d="M34.5 44Q40.5 28 46.5 44M53.5 44Q59.5 28 65.5 44"
+              />
+              <g
+                className={c('dn-blink dn-open')}
+                style={{ animationDuration: `${3.3 + i * 0.7}s` }}
+              >
                 <path
                   className={c('dn-eye')}
                   d={

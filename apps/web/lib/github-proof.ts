@@ -11,7 +11,7 @@ export const REPO_URL = `https://github.com/${REPO}`
 const API = 'https://api.github.com'
 
 export type ProofNumbers = {
-  /** Pull requests merged in the last 30 days. */
+  /** Pull requests merged, all time. */
   mergedPrs: number | null
   /** Commits whose author name is Riley, a Brigade teammate. */
   rileyCommits: number | null
@@ -38,15 +38,8 @@ type PullsItem = {
   head?: { ref?: unknown }
 }
 
-/** `YYYY-MM-DD` (UTC), `days` before `now`. */
-export function daysAgo(now: Date, days: number) {
-  return new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 10)
-}
-
-/** Search query for the pull requests merged since 30 days before `now`. */
-export function mergedPrsQuery(now: Date) {
-  return `repo:${REPO} is:pr is:merged merged:>=${daysAgo(now, 30)}`
-}
+/** Search query for every pull request merged in the repository. */
+export const mergedPrsQuery = `repo:${REPO} is:pr is:merged`
 
 export const rileyCommitsQuery = `repo:${REPO} author-name:Riley`
 
@@ -159,7 +152,7 @@ const none: ProofNumbers = {
 /** Asks GitHub for the numbers. For next.config.ts, at build: never call it from a page. */
 export async function fetchProofNumbers(now = new Date()): Promise<ProofNumbers> {
   const [mergedPrs, rileyCommits, totalCommits, merges] = await Promise.all([
-    searchCount('issues', mergedPrsQuery(now)),
+    searchCount('issues', mergedPrsQuery),
     searchCount('commits', rileyCommitsQuery),
     commitCount(),
     recentMerges(),

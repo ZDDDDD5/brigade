@@ -1,11 +1,13 @@
 import type { Metadata } from 'next'
+import { Header, Hero } from '@/components/home/hero'
+import { h } from '@/components/home/parts'
 import { Apps } from '@/components/landing/apps'
-import { BuiltBy, FAQ, Faq, FinalCall, Footer } from '@/components/landing/closing'
+import { BuiltBy } from '@/components/landing/built-by'
+import { FAQ, Faq, FinalCall, Footer } from '@/components/landing/closing'
 // Hidden for now, to shorten the page; uncomment here and below to bring it back.
 // import { Control } from '@/components/landing/control'
-import { Header, Hero } from '@/components/landing/hero'
 import { LiveDemo } from '@/components/landing/live-demo'
-import { PauseOffscreen } from '@/components/landing/in-view'
+import { PauseOffscreen, Reveal } from '@/components/landing/in-view'
 import { c } from '@/components/landing/parts'
 import { Plans } from '@/components/landing/plans'
 import { Tiles } from '@/components/landing/sections'
@@ -107,27 +109,36 @@ const jsonLd = {
 export default function Landing() {
   const numbers = getProofNumbers()
   return (
-    <div className={c('page')}>
+    // The bar and the hero are the redesign (components/home); the sections under them are
+    // the landing's own (components/landing), in its own wrapper for its spacing and scale.
+    <div className={h('page')}>
       <RedirectIfSignedIn />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, '\\u003c') }}
       />
       <Header />
-      <main>
+      {/* The page is a sheet over the footer: scrolling to the end slides it up and uncovers
+          the footer, which waits underneath (home.module.css, .sheet and .under). */}
+      <main className={h('sheet')}>
         <Hero />
-        <LiveDemo />
-        <Plans />
-        <Apps />
-        <Tiles />
-        {/* "Hand off the work. Keep the decisions." Hidden for now, to shorten the page. */}
-        {/* <Control /> */}
-        <BuiltBy numbers={numbers} />
-        <Faq />
-        <FinalCall />
+        <div className={c('page')}>
+          <LiveDemo />
+          <Plans />
+          <Apps />
+          <Tiles />
+          {/* "Hand off the work. Keep the decisions." Hidden for now, to shorten the page. */}
+          {/* <Control /> */}
+          <BuiltBy numbers={numbers} />
+          <Faq />
+          <FinalCall />
+        </div>
       </main>
-      <Footer featured />
+      <div className={`${c('page')} ${h('under')}`}>
+        <Footer carved />
+      </div>
       <PauseOffscreen />
+      <Reveal />
     </div>
   )
 }

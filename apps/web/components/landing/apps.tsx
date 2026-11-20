@@ -121,7 +121,7 @@ export function Apps() {
   return (
     <section aria-labelledby="apps-title" className={c('sec apps-sec')} data-anim>
       <div className={c('wrap')}>
-        <div className={c('sec-head c apps-head')}>
+        <div className={c('sec-head c apps-head')} data-reveal="stagger">
           <h2 className={c('h2')} id="apps-title">
             Plugged into your stack.
           </h2>
@@ -131,7 +131,7 @@ export function Apps() {
           </p>
         </div>
 
-        <div className={c('apps-stage')} aria-hidden="true">
+        <div className={c('apps-stage')} aria-hidden="true" data-reveal="pop" data-reveal-delay="2">
           <svg className={c('ap-paths')} viewBox="0 0 1168 640" preserveAspectRatio="none">
             {tiles.map((t) => (
               <path key={t.kind} d={t.path} pathLength={100} />

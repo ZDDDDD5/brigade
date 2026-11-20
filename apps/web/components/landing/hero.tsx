@@ -47,8 +47,7 @@ export function Hero() {
         <div className={c('hero-copy')}>
           <h1 id="hero-title">
             <em className={c('dance-word')}>
-              AI teammates
-              <Dancers />
+              <Dancers word="AI teammates" />
             </em>{' '}
             that run your whole company
           </h1>

@@ -553,40 +553,46 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        asChild
-                        tooltip="Inbox"
-                        isActive={pathname.startsWith('/app/inbox')}
-                      >
-                        <Link href="/app/inbox">
-                          <Mail />
-                          <span>Inbox</span>
-                          {inboxWaiting > 0 && (
-                            <Hint
-                              label={`${inboxWaiting} ${inboxWaiting === 1 ? 'email' : 'emails'} waiting`}
-                            >
-                              <span className="bg-primary/15 text-primary ml-auto shrink-0 rounded-full px-1.5 text-[0.6875rem] leading-4 font-semibold tabular-nums">
-                                {inboxWaiting}
-                              </span>
-                            </Hint>
-                          )}
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                    {/* What moves across lists, threads and routines (docs/board.md); no badge: Home counts what waits. */}
-                    <SidebarMenuItem>
-                      <SidebarMenuButton
-                        asChild
-                        tooltip="Board"
-                        isActive={pathname.startsWith('/app/board')}
-                      >
-                        <Link href="/app/board">
-                          <SquareKanban />
-                          <span>Board</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
+                    {/* Not in the public demo: it shows the work teammates do, not the mail and the
+                        board around it. */}
+                    {!DEMO && (
+                      <>
+                        <SidebarMenuItem>
+                          <SidebarMenuButton
+                            asChild
+                            tooltip="Inbox"
+                            isActive={pathname.startsWith('/app/inbox')}
+                          >
+                            <Link href="/app/inbox">
+                              <Mail />
+                              <span>Inbox</span>
+                              {inboxWaiting > 0 && (
+                                <Hint
+                                  label={`${inboxWaiting} ${inboxWaiting === 1 ? 'email' : 'emails'} waiting`}
+                                >
+                                  <span className="bg-primary/15 text-primary ml-auto shrink-0 rounded-full px-1.5 text-[0.6875rem] leading-4 font-semibold tabular-nums">
+                                    {inboxWaiting}
+                                  </span>
+                                </Hint>
+                              )}
+                            </Link>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                        {/* What moves across lists, threads and routines (docs/board.md); no badge: Home counts what waits. */}
+                        <SidebarMenuItem>
+                          <SidebarMenuButton
+                            asChild
+                            tooltip="Board"
+                            isActive={pathname.startsWith('/app/board')}
+                          >
+                            <Link href="/app/board">
+                              <SquareKanban />
+                              <span>Board</span>
+                            </Link>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      </>
+                    )}
                     {/* Ongoing work delegated to teammates (docs/missions.md), behind its feature. */}
                     {data.features?.includes('missions') && (
                       <SidebarMenuItem>

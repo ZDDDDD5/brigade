@@ -1,8 +1,8 @@
 'use client'
 import { MousePointer2, RotateCcw } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { DEMO } from '@/lib/demo/flag'
-import { play, Stopped, storyOf, TOUR_PARAM } from '@/lib/demo/tour'
+import { DEMO, FOCUS_ASK, FOCUS_SAY, framed } from '@/lib/demo/flag'
+import { keepFrameStill, play, Stopped, storyOf, TOUR_PARAM } from '@/lib/demo/tour'
 
 /**
  * The demo's walkthrough (lib/demo/tour.ts), on demo.brigade.lol/app?tour: the landing page's
@@ -42,13 +42,46 @@ export function DemoTour() {
     for (const kind of kinds)
       window.addEventListener(kind, takeOver, { capture: true, passive: true })
 
+    // In the landing's frame, the screen comes into focus as the visitor scrolls: it plays
+    // once both in view and in focus. A landing that never answers (an older one) does not
+    // hold it back.
+    let inView = false
+    let sharp = true
+    let held = false
+    let started = false
+    const heard = (e: MessageEvent) => {
+      if (e.source !== window.parent) return
+      const data = e.data as { type?: string; sharp?: boolean } | null
+      if (data?.type !== FOCUS_SAY) return
+      held = true
+      sharp = Boolean(data.sharp)
+      if (inView && sharp) start()
+    }
+    if (framed()) {
+      sharp = false
+      window.addEventListener('message', heard)
+      window.parent.postMessage({ type: FOCUS_ASK }, '*')
+      window.setTimeout(() => {
+        if (held) return
+        sharp = true
+        if (inView) start()
+      }, 1500)
+    }
+    const stopListening = () => window.removeEventListener('message', heard)
+
     const start = () => {
+      if (started || abort.signal.aborted || !cursor.current || !inView || !sharp) return
+      started = true
       observer?.disconnect()
-      if (abort.signal.aborted || !cursor.current) return
+      stopListening()
       // The merge asks to confirm: the tour says yes, only while it plays.
       const confirm = window.confirm
       window.confirm = () => true
-      restore = () => (window.confirm = confirm)
+      const still = keepFrameStill()
+      restore = () => {
+        window.confirm = confirm
+        still()
+      }
       setState('playing')
       play({ signal: abort.signal, cursor: cursor.current }, story)
         .catch((e) => {
@@ -62,7 +95,8 @@ export function DemoTour() {
     // In the landing page's frame, once most of it shows (the frame's view is the page's).
     observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((e) => e.intersectionRatio >= 0.35)) start()
+        inView = entries.some((e) => e.intersectionRatio >= 0.35)
+        start()
       },
       { threshold: [0, 0.35, 0.6] },
     )
@@ -70,6 +104,7 @@ export function DemoTour() {
     return () => {
       abort.abort()
       end()
+      stopListening()
     }
   }, [])
 
@@ -89,10 +124,10 @@ export function DemoTour() {
         </span>
       </div>
       {state === 'yours' && (
-        // In the brand's violet, so it shows at once; above the message box, not over its send button.
-        <div className="bg-primary text-primary-foreground fixed right-4 bottom-24 z-50 flex items-center gap-2 rounded-full py-1.5 pr-1.5 pl-4 text-sm shadow-lg">
+        // White, lifted by its shadow; above the message box, not over its send button.
+        <div className="fixed right-4 bottom-24 z-50 flex items-center gap-2 rounded-full bg-white py-1.5 pr-1.5 pl-4 text-sm text-neutral-950 shadow-lg ring-1 ring-black/5">
           <span className="font-semibold">Your turn</span>
-          <span className="opacity-80">click around</span>
+          <span className="text-neutral-500">click around</span>
           <button
             type="button"
             // From the start, Home: a reload anywhere else would replay from where it ended.
@@ -101,7 +136,7 @@ export function DemoTour() {
                 `/app?${TOUR_PARAM}=${storyOf(new URLSearchParams(location.search).get(TOUR_PARAM))}`,
               )
             }
-            className="ml-1 inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 font-semibold transition-colors hover:bg-white/30"
+            className="ml-1 inline-flex items-center gap-1.5 rounded-full bg-neutral-950 px-3 py-1 font-semibold text-white transition-colors hover:bg-neutral-800"
           >
             <RotateCcw className="size-3.5" aria-hidden />
             Replay

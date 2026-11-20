@@ -118,9 +118,50 @@ const center = (el: Element) => {
   return { x: r.left + Math.min(r.width / 2, 60), y: r.top + r.height / 2 }
 }
 
+/**
+ * Scrolls the element into view within the app only: its nearest scrolling box, else the
+ * app's own page. Not `scrollIntoView`, which also scrolls every page around the frame the
+ * tour plays in, so the landing would move by itself.
+ */
+function reveal(el: HTMLElement) {
+  let box = el.parentElement
+  while (box) {
+    const { overflowY } = getComputedStyle(box)
+    if (/(auto|scroll|overlay)/.test(overflowY) && box.scrollHeight > box.clientHeight) break
+    box = box.parentElement
+  }
+  const r = el.getBoundingClientRect()
+  const top = box ? box.getBoundingClientRect().top : 0
+  const bottom = box ? box.getBoundingClientRect().bottom : window.innerHeight
+  const by = r.top < top ? r.top - top : r.bottom > bottom ? r.bottom - bottom : 0
+  if (!by) return
+  ;(box ?? window).scrollBy({ top: by, behavior: 'smooth' })
+}
+
+/**
+ * While the walkthrough plays, nothing in the app moves the page around its frame: focus never
+ * scrolls (a focus in a frame scrolls every page around it to the element), and scrolling an
+ * element into view scrolls only within the app. The visitor may be reading further down the
+ * landing meanwhile. Returns what puts both back.
+ */
+export function keepFrameStill() {
+  const focus = HTMLElement.prototype.focus
+  const intoView = Element.prototype.scrollIntoView
+  HTMLElement.prototype.focus = function (options?: FocusOptions) {
+    focus.call(this, { ...options, preventScroll: true })
+  }
+  Element.prototype.scrollIntoView = function () {
+    if (this instanceof HTMLElement) reveal(this)
+  }
+  return () => {
+    HTMLElement.prototype.focus = focus
+    Element.prototype.scrollIntoView = intoView
+  }
+}
+
 /** Glides the cursor to the element, scrolling it into view first. */
 export async function moveTo(stage: Stage, el: HTMLElement) {
-  el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  reveal(el)
   await sleep(250, stage.signal)
   const { x, y } = center(el)
   stage.cursor.style.transform = `translate(${x}px, ${y}px)`
@@ -157,7 +198,7 @@ export async function press(
 /** Types into the message box as a person would, a letter at a time. */
 export async function type(stage: Stage, editor: HTMLElement, text: string) {
   await press(stage, editor)
-  editor.focus()
+  editor.focus({ preventScroll: true })
   // A word at a time: the box drops letters typed faster than it renders them.
   for (const word of text.split(/(?<= )/)) {
     document.execCommand('insertText', false, word)

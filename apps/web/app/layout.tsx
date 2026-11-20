@@ -32,9 +32,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        {themeFontHrefs.map((href) => (
-          <link key={href} rel="stylesheet" href={href} />
-        ))}
+        <link rel="preconnect" href="https://cdn.fontshare.com" crossOrigin="" />
+        {/* The theme's own sans is replaced by General Sans (globals.css), so it is not loaded. */}
+        {themeFontHrefs
+          .filter((href) => !href.includes('Plus+Jakarta+Sans'))
+          .map((href) => (
+            <link key={href} rel="stylesheet" href={href} />
+          ))}
         {/* A worn theme's colours from the first paint (docs/themes.md). */}
         <script dangerouslySetInnerHTML={{ __html: THEME_FIRST_PAINT }} />
       </head>

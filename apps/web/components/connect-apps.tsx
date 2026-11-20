@@ -228,9 +228,12 @@ function Catalog({
   onConnected: () => void
 }) {
   // An App behind a feature the member lacks (docs/feature-flags.md) is not offered, unless the
-  // workspace has it already: its accounts stay in reach.
+  // workspace has it already: its accounts stay in reach. Nor one the API's catalog doesn't
+  // have: an API older than this page (they deploy apart), or the demo's recorded catalog.
   const kinds = ([...BUILT_IN, 'mcp', 'webhook'] as Kind[]).filter(
-    (kind) => !data?.hidden?.includes(kind) || added.some((a) => a.kind === kind),
+    (kind) =>
+      Boolean(data?.catalog[kind]) &&
+      (!data?.hidden?.includes(kind) || added.some((a) => a.kind === kind)),
   )
   const categories = data ? [...new Set(kinds.map((k) => data.catalog[k].category))] : []
   const q = query.trim().toLowerCase()
@@ -403,7 +406,7 @@ function Connected({
                   key={a.app.id}
                   kind={a.kind}
                   icons={a.app.mcp?.icons}
-                  name={a.app.name ?? data.catalog[a.kind].name}
+                  name={a.app.name ?? data.catalog[a.kind]?.name ?? a.kind}
                   detail={addedDetail(a)}
                   warn={reconnect}
                   status={reconnect ? 'reconnect' : 'connected'}

@@ -88,9 +88,9 @@ function noteDownload() {
  * The hero's download: a split button that names the visitor's system and downloads its
  * Brigade.app (lib/mac-app.ts, windows-app.ts, linux-app.ts), and a menu with the other builds.
  * The page is prerendered, so it reads "Download free" until the browser says which system it
- * runs on. Hidden on phones (landing.module.css), where there is nothing to install.
+ * runs on. `menuUp` opens the menu above the button, where a section would cut it off below. Hidden on phones (landing.module.css), where there is nothing to install.
  */
-export function DownloadButton() {
+export function DownloadButton({ menuUp = false }: { menuUp?: boolean } = {}) {
   const [os, setOs] = useState<Os>()
   const [open, setOpen] = useState(false)
   const box = useRef<HTMLDivElement>(null)
@@ -171,7 +171,7 @@ export function DownloadButton() {
       </div>
       {open && (
         <div
-          className={c('dl-menu')}
+          className={c(menuUp ? 'dl-menu up' : 'dl-menu')}
           role="menu"
           aria-label="Download Brigade.app"
           onKeyDown={onMenuKey}

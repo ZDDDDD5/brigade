@@ -6,16 +6,12 @@ export function Tiles() {
   return (
     <section aria-labelledby="tiles-title" className={c('sec tiles dark')} data-anim>
       <div className={c('wrap')}>
-        <div className={c('sec-head')}>
+        <div className={c('sec-head tiles-head')} data-reveal>
           <h2 className={c('h2')} id="tiles-title">
             Teammates that work the way you do.
           </h2>
-          <p className={c('lead')}>
-            They have their own computer, learn a task from watching you, keep what your team
-            decided, and start on their own.
-          </p>
         </div>
-        <div className={c('tk-grid')}>
+        <div className={c('tk-grid')} data-reveal="stagger" data-reveal-delay="1">
           <article className={c('tk')}>
             <div className={c('tk-copy')}>
               <h3>A computer of its own</h3>

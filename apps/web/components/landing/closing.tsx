@@ -1,90 +1,14 @@
 import Link from 'next/link'
-import type { CSSProperties } from 'react'
 import { BrigadeMark } from '@/components/brigade-mark'
-import { formatCount, mergeDate, type ProofNumbers, REPO, REPO_URL } from '@/lib/github-proof'
+import { HeroActions } from '@/components/home/hero'
+import { REPO_URL } from '@/lib/github-proof'
 import { AuthLink } from './auth-link'
+import f from './faq.module.css'
 import { FEATURED_ON } from './featured-on'
 import { c, Icon, SIGN_IN, SIGN_UP } from './parts'
 import { Pebble } from './pebble'
 import { OPERATOR } from './operator'
 import { PebbleRain } from './pebble-rain'
-
-/** Brigade's own team as proof: the GitHub numbers read at build (lib/github-proof.ts), and
- * the last pull requests merged. A number GitHub did not give back leaves out what needs it. */
-export function BuiltBy({ numbers }: { numbers: ProofNumbers }) {
-  const { mergedPrs, rileyCommits, totalCommits, recentMerges } = numbers
-  const commits = rileyCommits !== null && totalCommits !== null
-  // "Most" only while the numbers say so.
-  const share = commits && rileyCommits * 2 > totalCommits ? 'most' : 'much'
-  return (
-    <section className={c('sec built')} aria-labelledby="built-title">
-      <div className={c('wrap')}>
-        <div>
-          <h2 className={c('h2')} id="built-title">
-            Brigade is built by Brigade.
-          </h2>
-          <p className={c('lead')}>
-            Our own teammates write {share} of Brigade&apos;s code, and a person makes the calls
-            that matter. The whole history is public.
-          </p>
-          <a className={c('link')} href={REPO_URL}>
-            Read the code on GitHub <Icon name="arrow" />
-          </a>
-        </div>
-        <div>
-          {(mergedPrs !== null || commits) && (
-            <div className={c('nums')}>
-              {mergedPrs !== null && (
-                <div>
-                  <div className={c('num')}>{formatCount(mergedPrs)}</div>
-                  <div className={c('num-l')}>pull requests merged · last 30 days</div>
-                </div>
-              )}
-              {commits && (
-                <div>
-                  <div className={c('num')}>
-                    {formatCount(rileyCommits)}
-                    <span className={c('of')}>/{formatCount(totalCommits)}</span>
-                  </div>
-                  <div className={c('num-l')}>commits by Riley</div>
-                </div>
-              )}
-            </div>
-          )}
-          {recentMerges && (
-            <section className={c('log')} aria-label="Latest merged pull requests">
-              <div className={c('log-h')}>
-                <Icon name="github" />
-                <span className={c('mono')}>{REPO}</span>
-                <span className={c('sp')} />
-                {mergedPrs !== null && (
-                  <span className={c('badge ok')}>{formatCount(mergedPrs)} merged</span>
-                )}
-              </div>
-              {recentMerges.map((pr) => (
-                <a key={pr.number} className={c('lgr')} href={pr.url}>
-                  <span className={c('mg')} aria-hidden="true">
-                    <Icon name="merged" />
-                  </span>
-                  <div>
-                    <div className={c('tt')}>{pr.title}</div>
-                    <div className={c('mt')}>
-                      #{pr.number}
-                      {pr.branch && <> · {pr.branch}</>} · merged
-                    </div>
-                  </div>
-                  <span className={c('tm')}>
-                    <time dateTime={pr.mergedAt}>{mergeDate(pr.mergedAt)}</time>
-                  </span>
-                </a>
-              ))}
-            </section>
-          )}
-        </div>
-      </div>
-    </section>
-  )
-}
 
 /**
  * The cards at the top of /pricing, as Settings › Billing offers them
@@ -237,29 +161,48 @@ export const FAQ: { q: string; a: string }[] = [
   },
 ]
 
-/** Questions with their answers, the first open: the landing's FAQ by default. */
+/**
+ * Questions with their answers, the first open: the landing's FAQ by default, and the
+ * billing questions on /pricing. One centred column of cards on a faint dot grid; the open
+ * card gets a violet edge, its answer inside it and a minus for its plus. Native <details>,
+ * so it opens without JavaScript.
+ */
 export function Faq({
   items = FAQ,
-  title = 'Questions, answered',
+  title = 'Questions, answered.',
+  more = true,
 }: {
   items?: { q: string; a: string }[]
   title?: string
+  /** The "Still wondering?" line, pointing to the docs and GitHub. */
+  more?: boolean
 }) {
   return (
-    <section aria-labelledby="faq-title" className={c('sec faq')}>
+    <section aria-labelledby="faq-title" className={`${c('sec')} ${f.faq}`}>
       <div className={c('wrap')}>
-        <div className={c('side')}>
+        <div className={f.head} data-reveal="stagger">
           <h2 className={c('h2')} id="faq-title">
             {title}
           </h2>
+          {more && (
+            <p className={f.more}>
+              Still wondering? Read the <a href="/docs">docs</a> or ask on{' '}
+              <a href={REPO_URL}>GitHub</a>.
+            </p>
+          )}
         </div>
-        <div className={c('qs')}>
+        <div className={f.list} data-reveal="stagger" data-reveal-delay="1">
           {items.map(({ q, a }, i) => (
-            <details key={q} open={i === 0}>
+            <details key={q} className={f.card} open={i === 0}>
               <summary>
-                {q}
-                <span className={c('pm')}>
-                  <Icon name="plus" />
+                <span>{q}</span>
+                <span className={f.toggle} aria-hidden="true">
+                  <span className={f.plus}>
+                    <Icon name="plus" />
+                  </span>
+                  <span className={f.minus}>
+                    <Icon name="minus" />
+                  </span>
                 </span>
               </summary>
               <p>{a}</p>
@@ -276,11 +219,11 @@ export function FinalCall() {
     <section aria-labelledby="final-title" className={c('final')} data-anim>
       <Pebble />
       <div className={c('wrap')}>
-        <h2 id="final-title">Meet your first teammate</h2>
-        <p className={c('lead')}>He does the work. You make the calls.</p>
-        <AuthLink className={c('btn pri lg')} href={SIGN_UP}>
-          Sign up
-        </AuthLink>
+        <div data-reveal="stagger">
+          <h2 id="final-title">Meet your first teammate</h2>
+          <p className={c('lead')}>He does the work. You make the calls.</p>
+          <HeroActions className={c('final-cta')} menuUp />
+        </div>
       </div>
     </section>
   )
@@ -332,8 +275,48 @@ function Featured() {
   )
 }
 
-/** The page's footer; `featured` adds the directory badges, on the landing page only. */
-export function Footer({ featured = false }: { featured?: boolean }) {
+/**
+ * Pressed into the page: inside each letter, a soft shadow under its top edge and a thin
+ * light along its bottom one, as on a name stamped into paper. In the footer's own colors
+ * (its --foreground and --background), so it sits inside the name.
+ */
+function CarveFilter() {
+  return (
+    <svg className={c('carve-defs')} aria-hidden="true" focusable="false">
+      <filter id="foot-carve" x="-2%" y="-10%" width="104%" height="120%">
+        {/* Everything but the letters, to cast inward from their edges. */}
+        <feComponentTransfer in="SourceAlpha" result="out">
+          <feFuncA type="table" tableValues="1 0" />
+        </feComponentTransfer>
+        <feOffset in="out" dy="9" result="down" />
+        <feGaussianBlur in="down" stdDeviation="7" result="down-soft" />
+        <feFlood className={c('carve-shade')} />
+        <feComposite in2="down-soft" operator="in" />
+        <feComposite in2="SourceAlpha" operator="in" result="shade" />
+        <feOffset in="out" dy="-4" result="up" />
+        <feGaussianBlur in="up" stdDeviation="1.4" result="up-soft" />
+        <feFlood className={c('carve-light')} />
+        <feComposite in2="up-soft" operator="in" />
+        <feComposite in2="SourceAlpha" operator="in" result="light" />
+        <feMerge>
+          <feMergeNode in="SourceGraphic" />
+          <feMergeNode in="shade" />
+          <feMergeNode in="light" />
+        </feMerge>
+      </filter>
+    </svg>
+  )
+}
+
+/** The page's footer; `featured` adds the directory badges, on the landing page only;
+ * `carved` presses the large name into the page (the home page's tinted footer). */
+export function Footer({
+  featured = false,
+  carved = false,
+}: {
+  featured?: boolean
+  carved?: boolean
+}) {
   return (
     <footer className={c('foot')}>
       <div className={c('wrap')}>
@@ -357,7 +340,8 @@ export function Footer({ featured = false }: { featured?: boolean }) {
       </div>
       {featured && <Featured />}
       {/* The name, as large as the page is wide, cut by the bottom edge. */}
-      <div className={c('foot-name')} aria-hidden="true" data-anim>
+      <div className={c(carved ? 'foot-name carved' : 'foot-name')} aria-hidden="true" data-anim>
+        {carved && <CarveFilter />}
         <span>Brigade</span>
       </div>
     </footer>
