@@ -5,7 +5,6 @@
 // thread's starter, on its computer, for whoever asked there, and says who started it and from
 // where (Session.startedFromId).
 import {
-  fromThreadComment,
   startedThreadBrief,
   threadComment,
   WAKEUPS_IN_A_ROW,
@@ -13,10 +12,10 @@ import {
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { memberMayWrite } from './account-sharing.js'
-import { audit } from './audit.js'
+import { trackAudit } from './analytics.js'
 import { markOnChiefsWord } from './chief-answers.js'
 import { messageChild } from './children.js'
-import type { Scope, ScopedDb } from './db.js'
+import { prisma, type Scope, type ScopedDb } from './db.js'
 import { pickLines, projectOf } from './lists.js'
 import { usableProject } from './projects.js'
 import { reopenThread } from './thread-done.js'
@@ -142,25 +141,55 @@ export async function startThreadFrom(
 
 /** Messages from other threads in a row, with no word from a person, that a thread takes. */
 export const COMMENTS_IN_A_ROW = 5
+/** How far back they count: a ping-pong between two threads is quick. */
+const COMMENTS_WINDOW_MS = 24 * 60 * 60 * 1000
 
 /**
- * Messages from other threads (threadComment) a thread was sent since a person last wrote in it:
- * two threads writing to each other with nobody in between count up.
+ * Take a place for one more message from another thread (thread.messaged in the audit log), or
+ * null when the thread was sent COMMENTS_IN_A_ROW since a person last wrote in it (in the last
+ * day): two threads writing to each other with nobody in between stop. Counted from the places
+ * taken, not from the thread's events, which its runner writes later (a message queued behind a
+ * turn is not one yet); under the thread's lock, so two sends at once cannot take the same place.
  */
-async function commentsInARow(db: ScopedDb, sessionId: string) {
-  const messages = await db.sessionEvent.findMany({
-    where: { sessionId, type: 'message.user' },
-    orderBy: { seq: 'desc' },
-    take: 50,
-    select: { data: true },
+async function takeCommentPlace(
+  scope: Scope,
+  targetId: string,
+  entry: { teammateId: string; fromId: string },
+) {
+  // The thread was found in this workspace (scoped) before: its own events and log entries.
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`comments:${targetId}`}, 0))`
+    const messages = await tx.sessionEvent.findMany({
+      where: { sessionId: targetId, type: { in: ['message.user', 'message.queued'] } },
+      orderBy: { seq: 'desc' },
+      take: 200,
+      select: { data: true, at: true },
+    })
+    const person = messages.find((m) => (m.data as { memberId?: string | null }).memberId)
+    const since = new Date(Math.max(person?.at.getTime() ?? 0, Date.now() - COMMENTS_WINDOW_MS))
+    const taken = await tx.auditEntry.count({
+      where: {
+        workspaceId: scope.workspaceId,
+        at: { gt: since },
+        action: 'thread.messaged',
+        targetId,
+      },
+    })
+    if (taken >= COMMENTS_IN_A_ROW) return null
+    return tx.auditEntry.create({
+      data: {
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
+        actorType: 'teammate',
+        actorId: entry.teammateId,
+        action: 'thread.messaged',
+        targetType: 'thread',
+        targetId,
+        data: { fromId: entry.fromId },
+      },
+      select: { id: true },
+    })
   })
-  let count = 0
-  for (const m of messages) {
-    const data = m.data as { memberId?: string | null; text?: unknown }
-    if (data.memberId) break
-    if (typeof data.text === 'string' && fromThreadComment(data.text)) count++
-  }
-  return count
 }
 
 /**
@@ -212,12 +241,21 @@ export async function messageThread(
   const found = started ?? mine
   if (!found) return messageChild(db, scope, session, teammate, op.threadId, op.text)
   const target = await loadThread(db, found.id)
-  // As a message from this thread's person would: only where they may write.
-  if (!(await memberMayWrite(target, session.startedByMemberId)))
-    return { error: "The person in this thread may not write in that one: it is someone else's." }
+  // As a message from this thread's person would: only where they may write. And from whoever
+  // asked for it here, when that is another (a thread shared with them): they ask there too.
+  const asker = await askedBy(db, session.id)
+  for (const memberId of new Set([session.startedByMemberId, ...(asker ? [asker] : [])]))
+    if (!(await memberMayWrite(target, memberId)))
+      return {
+        error: "The person in this thread may not write in that one: it is someone else's.",
+      }
   if (target.controlledByMemberId)
     return { error: 'A person has control of that thread right now. Try again later.' }
-  if ((await commentsInARow(db, target.id)) >= COMMENTS_IN_A_ROW)
+  const place = await takeCommentPlace(scope, target.id, {
+    teammateId: teammate.id,
+    fromId: session.id,
+  })
+  if (!place)
     return {
       error:
         `That thread was sent ${COMMENTS_IN_A_ROW} messages from other threads in a row with no word ` +
@@ -229,7 +267,7 @@ export async function messageThread(
     text: threadComment({ from: teammate.name, threadTitle: session.title, text: op.text }),
     memberId: null,
     // Whoever asked for it here asks in that thread too.
-    onBehalfOf: await askedBy(db, session.id),
+    onBehalfOf: asker,
     // This teammate, in a thread of its own; else the one it was started for, while it is in it.
     ...(mine
       ? { teammateIds: [teammate.id] }
@@ -237,10 +275,15 @@ export async function messageThread(
         ? { teammateIds: [target.teammateId] }
         : {}),
   })
-  if (outcome === 'offline') return { error: "That thread's computer is offline." }
+  if (outcome === 'offline') {
+    // Not sent: its place is free again.
+    await prisma.auditEntry.deleteMany({ where: { id: place.id } })
+    return { error: "That thread's computer is offline." }
+  }
   // New work in it: it is no longer done.
   await reopenThread(scope, target.id)
-  await audit({
+  // Its audit entry is the place taken above; its analytics go now.
+  trackAudit({
     ...scope,
     actor: { type: 'teammate', id: teammate.id },
     action: 'thread.messaged',

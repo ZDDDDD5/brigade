@@ -363,40 +363,74 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     assert.equal(refused.ok, false)
     await new Promise((resolve) => setTimeout(resolve, 100))
     assert.equal(prompts(mine.id).length, before)
-    // Five messages from other threads with no person in between: no more.
+    // Five messages from other threads with no person in between: no more. Counted as they are
+    // sent, before the thread's runner records them (it is busy: none of them is an event yet).
     const { COMMENTS_IN_A_ROW } = await import('../src/started-threads.js')
-    for (let seq = 1; seq <= COMMENTS_IN_A_ROW; seq++)
-      await db.sessionEvent.create({
-        data: {
-          sessionId: mine.id,
-          seq,
-          type: 'message.user',
-          data: {
-            text: `**Riley** commented from the thread “Plan the launch”:\n\n${seq}`,
-            memberId: null,
-          },
-          at: new Date(),
-        } as never,
-      })
-    const looping = await op(ids.from, {
-      name: 'message_thread',
-      threadId: mine.id,
-      text: 'Again.',
-    })
+    const send = (text: string) => op(ids.from, { name: 'message_thread', threadId: mine.id, text })
+    for (let i = 2; i < COMMENTS_IN_A_ROW; i++) assert.equal((await send(`${i}`)).ok, true)
+    // One place left, two at once: one takes it.
+    const both = await Promise.all([send('a'), send('b')])
+    assert.deepEqual(both.map((h) => h.ok).sort(), [false, true])
+    const looping = await send('Again.')
     assert.equal(looping.ok, false)
     assert.match(looping.error ?? '', /in a row with no word from a person/)
     // A person writes there: it may be written in again.
     await db.sessionEvent.create({
       data: {
         sessionId: mine.id,
-        seq: COMMENTS_IN_A_ROW + 1,
+        seq: 1,
         type: 'message.user',
         data: { text: 'Go on.', memberId: ids.member },
         at: new Date(),
       } as never,
     })
-    const again = await op(ids.from, { name: 'message_thread', threadId: mine.id, text: 'Again.' })
+    const again = await send('Again.')
     assert.equal(again.ok, true, again.error)
+  })
+
+  test('message_thread from a thread shared with another person: only where they may write too', async () => {
+    // Bob asks in a thread of Ada's; Ada's other thread, on her own computer, is closed to him.
+    const bobUser = `user-bob-${suffix}`
+    await prisma.user.create({ data: { id: bobUser, name: 'Bob', email: `${bobUser}@test.local` } })
+    const bob = (
+      await prisma.member.create({
+        data: {
+          id: `member-bob-${suffix}`,
+          organizationId: ids.org,
+          userId: bobUser,
+          role: 'member',
+        },
+      })
+    ).id
+    try {
+      const thread = async (title: string, askedByMemberId: string) => {
+        const session = await db.session.create({
+          data: {
+            teammateId: ids.riley,
+            startedByMemberId: ids.member,
+            askedByMemberId,
+            computerId: ids.computer,
+            title,
+            status: 'idle',
+            origin: 'member',
+          } as never,
+        })
+        await db.threadTeammate.create({
+          data: { sessionId: session.id, teammateId: ids.riley } as never,
+        })
+        return session.id
+      }
+      const shared = await thread('Shared with Bob', bob)
+      const closed = await thread('Ada alone', ids.member)
+      const heard = await op(shared, { name: 'message_thread', threadId: closed, text: 'Go.' })
+      assert.equal(heard.ok, false)
+      assert.match(heard.error ?? '', /may not write in that one/)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      assert.equal(prompts(closed).length, 0)
+    } finally {
+      await prisma.member.deleteMany({ where: { id: bob } })
+      await prisma.user.deleteMany({ where: { id: bobUser } })
+    }
   })
 
   test("an older runner's task tools are answered with what replaced them", async () => {
