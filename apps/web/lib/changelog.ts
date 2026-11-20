@@ -29,6 +29,145 @@ export type ChangelogRelease = {
 
 export const RELEASES: ChangelogRelease[] = [
   {
+    slug: '2026-11-20',
+    version: '0.6.0',
+    title: 'Brigade.app everywhere, Snooze and Starter',
+    summary:
+      'Brigade.app now runs on macOS, Windows and Linux, and teammates work natively on a Windows PC. Snooze a thread until the time you pick, comment on a design right on its canvas, and plan routines on a calendar. Brigade Starter gives teammates a cloud computer for $15 a month.',
+    sections: [
+      {
+        heading: 'Highlights',
+        items: [
+          {
+            title: 'Teammates on Windows',
+            text: 'Teammates run natively on a Windows PC, with Brigade.app: install, turns, previews and computer use. Setup finds your own Claude Code or Codex login.',
+            prs: [902, 911],
+          },
+          {
+            title: 'Brigade Starter',
+            text: 'A new plan: $15 a month gives your teammates a cloud computer for 100 hours a month. Cloud is now Max, with no hour limit, and a pricing page compares Free, Starter and Max.',
+            prs: [928],
+          },
+          {
+            title: 'Snooze',
+            text: 'Do later becomes Snooze: put a thread away for an hour, three hours, until tomorrow or next Monday at 9:00, or a month, in your own time zone. It comes back unread at that time, or sooner if anything new arrives, and the sidebar’s Snoozed filter shows when each comes back. On Today, snooze a choice from its Needs you card.',
+            prs: [843, 907],
+          },
+          {
+            title: 'Design canvas',
+            text: 'Press C, or Comment beside a thread, and click an element of a design to ask for a change to it, as in a preview. Drag a selected element to move it, or nudge it with the arrow keys. A teammate’s save shows at once, and a design beside a thread stays loaded while another thread shows.',
+            prs: [909],
+          },
+          {
+            title: 'Routines calendar',
+            text: 'A Calendar view on the Routines page: drag a routine to move its runs, or click an empty slot to start a new one. Routines can also be grouped by the thread they report to.',
+            prs: [903, 859],
+          },
+          {
+            title: 'Computer use by accessibility',
+            text: 'Teammates read an app’s interface as a tree and click, type, select or scroll through it without moving your pointer or taking your keyboard, on a Mac and, on a cloud computer, in their own browser’s prompts and dialogs. Keys reach Open and Save panels, and an app opens before the teammate goes on.',
+            prs: [849, 856, 858, 874],
+          },
+        ],
+      },
+      {
+        heading: 'Improvements',
+        items: [
+          {
+            title: 'Settings over the page',
+            text: 'Settings open as a dialog over the page you are on, and their search finds each setting inside its section and scrolls to it.',
+            prs: [912, 913],
+          },
+          {
+            title: 'A calmer Inbox',
+            text: 'Newsletters, mail sent by machines and mail from senders you muted go to a new Other tab instead of To do, and no longer count in the sidebar. Mute or unmute a sender, or move a mail to To do, from the reader.',
+            prs: [924],
+          },
+          {
+            title: 'Everything shows at once',
+            text: 'A pick, an answer, Allow or Deny shows as sent the moment you click it, in the thread and in Needs you. Pin, Snooze, Mark done, Archive, ticket rows and ticks move at once too, and an answer that did not go comes back as you wrote it.',
+            prs: [864, 841],
+          },
+          {
+            title: 'Teammates',
+            text: 'A thread can have 10 sub-threads at work at once, up from 5. Teammates do a follow-up step themselves when one of their Apps or their browser can, rather than leave it to you, and no longer ask for an App you cannot add. A credential approval names the credential and why it is needed.',
+            prs: [836, 863, 939, 933],
+          },
+          {
+            title: 'Models',
+            text: 'GPT-6.2 Sol and GPT-6.2 Astra join the model list, and Codex teammates on Default run GPT-6.2 Sol. Runners move to Claude Code 2.1.327 and Codex 0.169.1.',
+            prs: [930, 936],
+          },
+          {
+            title: 'Getting started',
+            text: 'Chromebooks get their own steps to turn on Linux, the install works on Linux systems without xz, and the computer step offers Cloud in one clear button. Chief points to the docs for questions about Brigade, and the FAQ covers plans, the desktop app and self-hosting.',
+            prs: [906, 935, 927, 925],
+          },
+          {
+            title: 'Site',
+            text: 'Comparison pages set Brigade beside Manus, Relevance AI, Claude Cowork, Perplexity Teammates and others, five new guides cover AI agents, and the landing page offers the download for your system.',
+            prs: [835, 873, 861, 876, 916],
+          },
+        ],
+      },
+      {
+        heading: 'Security',
+        items: [
+          {
+            title: 'Sign-in and secrets',
+            text: 'Brigade makes codes only to sign in, and the password routes it never used are closed. Codes never reach production logs, secrets MCP servers give Brigade are kept encrypted, and dependencies with known vulnerabilities are upgraded.',
+            prs: [941, 942, 944],
+          },
+        ],
+      },
+      {
+        heading: 'Fixes',
+        items: [
+          {
+            title: 'Usage limits',
+            text: 'A thread that moves to another account after Claude’s 5-hour or weekly limit keeps running, without a red dot.',
+            prs: [893],
+          },
+          {
+            title: 'Cloud computers',
+            text: 'A cloud computer that a restart does not bring back moves to a new machine by itself, and stays signed in to Codex after a teammate refreshed its login.',
+            prs: [940, 943],
+          },
+          {
+            title: 'Sub-threads and tools',
+            text: 'A sub-thread’s report reaches its parent even when Brigade restarted as it finished. A resumed thread learns its tools’ new definitions, and on Codex, a thread granted a new App keeps its conversation and tickets no longer hold the turn.',
+            prs: [866, 862, 932, 934],
+          },
+          {
+            title: 'Display',
+            text: 'A working thread’s title stays readable on the current row of the sidebar, Markdown tables keep readable columns on narrow screens, and teammate settings stay as saved.',
+            prs: [919, 938, 931],
+          },
+        ],
+      },
+      {
+        heading: 'Brigade.app',
+        items: [
+          {
+            title: '0.4.0 to 0.4.2',
+            text: 'A new Brigade.app for macOS, Windows and Linux, which installed apps update into: it does all the menu-bar app did and opens the dashboard in a window of its own, without a title bar on macOS and Windows.',
+            prs: [844, 845, 848, 915, 904],
+          },
+          {
+            title: '0.4.3 to 0.4.5',
+            text: 'The macOS app menu holds what the menu-bar menu does, the app shows notifications itself (turn them on in Settings, Notifications), ⌘F finds in the page, and Brigade.app stays in the Dock.',
+            prs: [853, 855, 857, 860, 865],
+          },
+          {
+            title: '0.4.6 and 0.4.7',
+            text: 'Back and forward from the mouse buttons and ⌘← / ⌘→, teammates on Windows, computer use on Linux (X11 and GNOME), and a new install where your team moves in.',
+            prs: [872, 902, 908, 911],
+          },
+        ],
+      },
+    ],
+  },
+  {
     slug: '2026-11-13',
     version: '0.5.0',
     title: 'Goals, one file panel and Vercel',
