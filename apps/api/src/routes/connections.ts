@@ -135,7 +135,7 @@ type OAuthState = {
   appId?: string
   /** A built-in App with a server per data region: the region picked. */
   region?: string
-  /** The account being reconnected, when its sign-in alone cannot say which it is (Stripe's). */
+  /** The account being reconnected: it gets the sign-in, unless that names another account. */
   reconnect?: string
   /** github: the installation GitHub named, still to be checked against the person. */
   installationId?: number
@@ -540,6 +540,14 @@ export const connections = new Hono<AppEnv>()
           : (email ?? (await mcpAccount(server, signedIn))))
     // The row would show only the App's name: say so, as the provider's reply may have changed.
     if (!account) console.warn(`mcp connection of ${kind}: no account name`)
+    // Reconnect on an account (its ticket, its sheet): that account gets the new sign-in, unless
+    // the sign-in names another. Without this, a sign-in that names no account added a second,
+    // nameless row beside the expired one, which kept its access and stayed expired.
+    if (!repair && !byId && grant.reconnect && kind !== 'stripe')
+      repair = await reconnectedRow(db, scope, kind, grant.reconnect, account, {
+        mcpUrl: server.regions ? server.url : null,
+        appId: added?.id,
+      })
     const connection = await createConnection(
       scope,
       {
@@ -1473,6 +1481,37 @@ async function mcpAccount(server: McpServer, signedIn: typeof fetch | ReturnType
   } catch {
     return null
   }
+}
+
+/**
+ * The member's account a Reconnect renews: the one it was started on (`reconnect`), when it is
+ * still theirs, of this App (and region), and the sign-in names the same account or cannot say
+ * (`account` null, or a row that never had a name, which takes this one). Undefined: the person
+ * signed in to another account, which gets a row of its own.
+ */
+export async function reconnectedRow(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  kind: ConnectorKind,
+  reconnect: string,
+  account: string | null,
+  where: { mcpUrl: string | null; appId?: string | undefined },
+) {
+  const row = await db.connection.findFirst({
+    where: {
+      id: reconnect,
+      kind,
+      createdByMemberId: scope.memberId,
+      status: { not: 'removed' },
+      mcpUrl: where.mcpUrl,
+      ...(where.appId ? { appId: where.appId } : {}),
+    },
+  })
+  if (!row) return undefined
+  if (account && row.externalAccount && row.externalAccount !== account) return undefined
+  if (account && !row.externalAccount)
+    await db.connection.updateMany({ where: { id: row.id }, data: { externalAccount: account } })
+  return row.id
 }
 
 /**

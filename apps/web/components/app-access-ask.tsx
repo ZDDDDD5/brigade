@@ -225,7 +225,16 @@ export function AppAccessAsk({
   // The account the sign-in tab came back with: the same one, or another the person signed in to
   // instead (another mailbox). Only the tab says so: the account changes with its settings too.
   const [signedIn, setSignedIn] = useState<string>()
-  const reconnected = reconnecting ? givable.find((c) => c.id === signedIn) : undefined
+  // What the sign-in started from: the account reconnected, whether it had expired, and the
+  // accounts already there. Brigade.app hears from the tab only through a brigade:// link the
+  // browser may not open: without word from it, the account seen active again, or one that was
+  // not there before, says the sign-in went through.
+  const [started, setStarted] = useState<{ again?: string; expired: boolean; before: string[] }>()
+  const reconnected = reconnecting
+    ? (givable.find((c) => c.id === signedIn) ??
+      givable.find((c) => started?.expired && c.id === started.again) ??
+      givable.find((c) => started && !started.before.includes(c.id)))
+    : undefined
   // A permission the account lacks: its owner signs in to it again and allows it there. An
   // active account too, which the access alone would not fix.
   const permission = ask.app.permission?.trim() || undefined
@@ -310,6 +319,11 @@ export function AppAccessAsk({
         return url
       })
       if (!inWindow) return
+      setStarted({
+        ...(again ? { again: again.id } : {}),
+        expired: again?.status === 'needs_reauth',
+        before: givable.map((c) => c.id),
+      })
       setReconnecting(!!again)
       setSignedIn(undefined)
       setWaiting(true)

@@ -306,13 +306,13 @@ export type McpServer = {
 }
 
 /**
- * The account's organizations as a name, from a list_organizations tool's output (an array,
- * or an object holding one): the only one, or the first with how many more.
+ * The account's organizations as a name, from a list_organizations tool's output (an array, or
+ * an object holding one: Supabase's `organizations`, Neon's `data` since November 2026): the only
+ * one, or the first with how many more.
  */
 export function organizationsName(output: unknown) {
-  const list = Array.isArray(output)
-    ? output
-    : (output as { organizations?: unknown } | null)?.organizations
+  const held = output as { organizations?: unknown; data?: unknown } | null
+  const list = Array.isArray(output) ? output : (held?.organizations ?? held?.data)
   if (!Array.isArray(list)) return null
   const names = list
     .map((o) => (o as { name?: unknown } | null)?.name)
