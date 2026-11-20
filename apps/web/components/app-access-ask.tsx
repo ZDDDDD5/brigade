@@ -253,12 +253,31 @@ export function AppAccessAsk({
   const give = (connectionId: string | undefined) =>
     onReply({ type: 'access', granted: true, ...(connectionId ? { connectionId } : {}) })
 
+  // This sign-in's result from the API. A late answer for an earlier sign-in (the person
+  // started again meanwhile) is ignored: only the current attempt's counts.
+  const current = useRef<string | undefined>(undefined)
+  const checkAttempt = (id: string) =>
+    void api<SignInResult>(`/connections/sign-in/${id}`)
+      .then(({ connected, error }) => {
+        if (current.current !== id) return
+        if (error) {
+          setWaiting(false)
+          setError('The sign-in did not go through. Try again.')
+        } else if (connected) {
+          setSignedIn(connected)
+          void data.reload()
+        }
+      })
+      .catch(() => {})
   // Signing in in its own window, or changing the repositories on GitHub: once the account shows
-  // up (reaching the repository), the access goes with the answer.
+  // up (reaching the repository), the access goes with the answer. A sign-in the API tracks
+  // (attempt) is answered only with its own result: the tab's word, which any sign-in in another
+  // window may send too, only has it read now rather than at the next poll.
   useEffect(() => {
     if (!waiting) return
     return onSignIn(({ connected, error }) => {
-      if (error) {
+      if (attempt) checkAttempt(attempt)
+      else if (error) {
         setWaiting(false)
         setError('The sign-in did not go through. Try again.')
       } else if (connected) {
@@ -267,12 +286,13 @@ export function AppAccessAsk({
       }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- listens while waiting, reloads the latest data
-  }, [waiting])
+  }, [waiting, attempt])
+  // The account this sign-in connected, once the list has it.
+  const signedInTo = givable.find((c) => c.id === signedIn)
   useEffect(() => {
     if (!waiting) return
-    if (reconnecting ? reconnected : givable.length > 0) {
+    if (attempt ? signedInTo : reconnecting ? reconnected : givable.length > 0) {
       setWaiting(false)
-      const signedInTo = givable.find((c) => c.id === signedIn)
       give(signedInTo?.id ?? (givable.length === 1 || repository ? givable[0]!.id : undefined))
       return
     }
@@ -280,25 +300,19 @@ export function AppAccessAsk({
       () => {
         void data.reload()
         if (repository) void reach.reload()
-        if (attempt)
-          void api<SignInResult>(`/connections/sign-in/${attempt}`)
-            .then(({ connected, error }) => {
-              if (error) {
-                setWaiting(false)
-                setError('The sign-in did not go through. Try again.')
-              } else if (connected) setSignedIn(connected)
-            })
-            .catch(() => {})
+        if (attempt) checkAttempt(attempt)
       },
       repository ? 3000 : 2000,
     )
     return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- polls until an account shows up, not on each reload
-  }, [waiting, givable.length, reconnected?.id, attempt])
+  }, [waiting, givable.length, reconnected?.id, signedInTo?.id, attempt])
 
   /** Sign in at the provider: a new account, or the one given again (the API renews it). */
   async function connect(region?: string, again?: Connection) {
     setError(undefined)
+    // An earlier sign-in's answers, still on their way, no longer count.
+    current.current = undefined
     const route = again && customOAuth ? 'mcp/server' : SIGN_IN[kind]
     // A key: its form, in the ticket, for a new account or the one given again.
     if (route === 'key') return setKeying({ reconnect: again?.id })
@@ -330,6 +344,7 @@ export function AppAccessAsk({
         return url
       })
       if (!inWindow) return
+      current.current = started
       setAttempt(started)
       setReconnecting(!!again)
       setSignedIn(undefined)
