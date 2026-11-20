@@ -145,6 +145,38 @@ type OAuthState = {
   mcpClientId?: string
   /** The dashboard page to send the person back to; default the Connections page. */
   returnTo?: string
+  /** The page that started the sign-in reads its result by this (signInResult), on its own. */
+  attempt?: string
+}
+
+/**
+ * A sign-in's result, kept for the page that started it: it reads it by the attempt it was given
+ * (GET /connections/sign-in/:attempt), whether or not the sign-in tab's own word reaches it (in
+ * Brigade.app, a brigade:// link the browser may not open). Only for that same person, and only
+ * the account this sign-in connected, so nothing else is taken for it.
+ */
+const attemptIdentifier = (attempt: string) => `sign-in-result:${attempt}`
+const newAttempt = () => randomBytes(18).toString('base64url')
+async function keepResult(grant: OAuthState, query: string) {
+  if (!grant.attempt) return
+  const result = new URLSearchParams(query)
+  const value = {
+    userId: grant.userId,
+    ...(result.get('connected') ? { connected: result.get('connected') } : {}),
+    ...(result.get('error') ? { error: result.get('error') } : {}),
+  }
+  await prisma.verification
+    .create({
+      data: {
+        id: randomUUID(),
+        identifier: attemptIdentifier(grant.attempt),
+        value: JSON.stringify(value),
+        expiresAt: new Date(Date.now() + STATE_MS),
+      },
+    })
+    .catch((error) =>
+      console.error('sign-in result not kept:', error instanceof Error ? error.message : error),
+    )
 }
 
 /** Back to the dashboard after a connect attempt, with its result in the query. */
@@ -391,11 +423,15 @@ export const connections = new Hono<AppEnv>()
    * signed-in member and workspace; tokens go straight into the vault.
    */
   .get('/oauth/google/callback', async (c) => {
-    let back = (query: string) => c.redirect(backTo(undefined, query))
+    let back: (query: string) => Response | Promise<Response> = (query: string) =>
+      c.redirect(backTo(undefined, query))
     const taken = await takeState(stateIdentifier(c.req.query('state') ?? ''), c.var.userId)
     if (typeof taken === 'string') return back(`error=${taken}`)
     const { grant, scope } = taken
-    back = (query: string) => c.redirect(backTo(grant.returnTo, query))
+    back = async (query: string) => {
+      await keepResult(grant, query)
+      return c.redirect(backTo(grant.returnTo, query))
+    }
     if (!isGoogleKind(grant.kind)) return back('error=forbidden')
     if (c.req.query('error') || !c.req.query('code')) return back('error=declined')
 
@@ -421,11 +457,15 @@ export const connections = new Hono<AppEnv>()
    * the code for a long-lived user token, straight into the vault.
    */
   .get('/oauth/meta/callback', async (c) => {
-    let back = (query: string) => c.redirect(backTo(undefined, query))
+    let back: (query: string) => Response | Promise<Response> = (query: string) =>
+      c.redirect(backTo(undefined, query))
     const taken = await takeState(stateIdentifier(c.req.query('state') ?? ''), c.var.userId)
     if (typeof taken === 'string') return back(`error=${taken}`)
     const { grant, scope } = taken
-    back = (query: string) => c.redirect(backTo(grant.returnTo, query))
+    back = async (query: string) => {
+      await keepResult(grant, query)
+      return c.redirect(backTo(grant.returnTo, query))
+    }
     if (grant.kind !== 'meta_ads') return back('error=forbidden')
     if (c.req.query('error') || !c.req.query('code')) return back('error=declined')
 
@@ -468,11 +508,15 @@ export const connections = new Hono<AppEnv>()
    * its first account.
    */
   .get('/oauth/mcp/callback', async (c) => {
-    let back = (query: string) => c.redirect(backTo(undefined, query))
+    let back: (query: string) => Response | Promise<Response> = (query: string) =>
+      c.redirect(backTo(undefined, query))
     const taken = await takeState(stateIdentifier(c.req.query('state') ?? ''), c.var.userId)
     if (typeof taken === 'string') return back(`error=${taken}`)
     const { grant, scope } = taken
-    back = (query: string) => c.redirect(backTo(grant.returnTo, query))
+    back = async (query: string) => {
+      await keepResult(grant, query)
+      return c.redirect(backTo(grant.returnTo, query))
+    }
     const db = scoped(scope)
     // A server added by its URL, from its App; else a built-in App's.
     const added =
@@ -714,8 +758,9 @@ export const connections = new Hono<AppEnv>()
         message: `${appCatalog[kind].name} is not open to your account yet`,
       })
     const state = randomBytes(24).toString('base64url')
-    await saveState(stateIdentifier(state), { ...c.var.scope, kind, returnTo })
-    return c.json({ url: googleAuthUrl(kind, state) })
+    const attempt = newAttempt()
+    await saveState(stateIdentifier(state), { ...c.var.scope, kind, returnTo, attempt })
+    return c.json({ url: googleAuthUrl(kind, state), attempt })
   })
 
   /** Start Meta's sign-in (Facebook Login for Business) for a new Meta Ads account. */
@@ -726,8 +771,14 @@ export const connections = new Hono<AppEnv>()
     if (!appOpen('meta_ads', await featuresOfUser(c.var.userId, c.var.scope.workspaceId)))
       throw new HTTPException(403, { message: 'Meta Ads is not open to your account yet' })
     const state = randomBytes(24).toString('base64url')
-    await saveState(stateIdentifier(state), { ...c.var.scope, kind: 'meta_ads', returnTo })
-    return c.json({ url: metaAuthUrl(state) })
+    const attempt = newAttempt()
+    await saveState(stateIdentifier(state), {
+      ...c.var.scope,
+      kind: 'meta_ads',
+      returnTo,
+      attempt,
+    })
+    return c.json({ url: metaAuthUrl(state), attempt })
   })
 
   /**
@@ -814,6 +865,7 @@ export const connections = new Hono<AppEnv>()
 
     // OAuth: the provider's own sign-in page.
     const state = randomBytes(24).toString('base64url')
+    const attempt = newAttempt()
     const verifier = pkceVerifier()
     let url: string
     let mcpClientId: string
@@ -836,8 +888,9 @@ export const connections = new Hono<AppEnv>()
       returnTo: input.returnTo,
       verifier,
       mcpClientId,
+      attempt,
     })
-    return c.json({ url, appId: app.id })
+    return c.json({ url, appId: app.id, attempt })
   })
 
   /**
@@ -910,6 +963,7 @@ export const connections = new Hono<AppEnv>()
       throw new HTTPException(400, { message: `${appCatalog[kind].name} has no region ${region}` })
     }
     const state = randomBytes(24).toString('base64url')
+    const attempt = newAttempt()
     const verifier = pkceVerifier()
     let url: string
     let mcpClientId: string
@@ -928,8 +982,30 @@ export const connections = new Hono<AppEnv>()
       mcpClientId,
       ...(region ? { region } : {}),
       ...(reconnect ? { reconnect } : {}),
+      attempt,
     })
-    return c.json({ url })
+    return c.json({ url, attempt })
+  })
+
+  /**
+   * What a sign-in this person started came back with (keepResult): the account it connected,
+   * or why not; nothing while it is still going on.
+   */
+  .get('/sign-in/:attempt', async (c) => {
+    const row = await prisma.verification.findFirst({
+      where: {
+        identifier: attemptIdentifier(c.req.param('attempt')),
+        expiresAt: { gt: new Date() },
+      },
+    })
+    const result = row
+      ? (JSON.parse(row.value) as { userId: string; connected?: string; error?: string })
+      : null
+    if (!result || result.userId !== c.var.userId) return c.json({})
+    return c.json({
+      ...(result.connected ? { connected: result.connected } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    })
   })
 
   /**
