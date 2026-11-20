@@ -434,7 +434,7 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     assert.equal(prompts(sub).length, 0)
     // No such thread.
     const none = await op(ids.from, { name: 'message_thread', threadId: 'nope', text: 'Go.' })
-    assert.match(none.error ?? '', /No thread of this workspace has that id/)
+    assert.match(none.error ?? '', /not a thread you may write in/)
   })
 
   test('message_thread from a thread shared with another person: only where they may write too', async () => {
@@ -476,7 +476,38 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
       assert.match(heard.error ?? '', /may not write in that one/)
       await new Promise((resolve) => setTimeout(resolve, 100))
       assert.equal(prompts(closed).length, 0)
+      // Bob's own thread is closed to Ada: refused without a word of what it is.
+      const bobs = async (title: string, parentId?: string, startedBy = bob) => {
+        const session = await db.session.create({
+          data: {
+            teammateId: ids.riley,
+            startedByMemberId: startedBy,
+            askedByMemberId: startedBy,
+            computerId: ids.computer,
+            title,
+            status: 'idle',
+            origin: 'member',
+            ...(parentId ? { parentId } : {}),
+          } as never,
+        })
+        await db.threadTeammate.create({
+          data: { sessionId: session.id, teammateId: ids.cody } as never,
+        })
+        return session.id
+      }
+      const secret = await bobs('Bob’s secret plan')
+      const hidden = await op(ids.from, { name: 'message_thread', threadId: secret, text: 'Hi.' })
+      assert.equal(hidden.ok, false)
+      assert.match(hidden.error ?? '', /not a thread you may write in/)
+      assert.ok(!hidden.error?.includes('secret plan') && !hidden.error?.includes('Cody'))
+      // A sub-thread Ada may write in, under Bob's: its parent is not named.
+      const sub = await bobs('Ada’s part', secret, ids.member)
+      const under = await op(ids.from, { name: 'message_thread', threadId: sub, text: 'Hi.' })
+      assert.equal(under.ok, false)
+      assert.match(under.error ?? '', /another thread's sub-thread/)
+      assert.ok(!under.error?.includes(secret) && !under.error?.includes('secret plan'))
     } finally {
+      await prisma.session.deleteMany({ where: { startedByMemberId: bob } })
       await prisma.member.deleteMany({ where: { id: bob } })
       await prisma.user.deleteMany({ where: { id: bobUser } })
     }

@@ -225,7 +225,15 @@ function ownThread(db: ScopedDb, teammateId: string, threadId: string) {
   })
 }
 
-/** Why message_thread may not write in a thread: said plainly, so the teammate knows what to do. */
+const NOWHERE =
+  'message_thread writes only in your child threads (list_children), the threads you started ' +
+  '(start_thread) and the other threads at the top you are a teammate of.'
+
+/**
+ * Why message_thread may not write in a thread: said plainly, so the teammate knows what to do.
+ * Only about a thread this thread's people may write in (and a parent named only when they may
+ * write there too): of one they may not, nothing is said, not even that it exists.
+ */
 async function refusal(
   db: ScopedDb,
   session: Caller,
@@ -237,32 +245,41 @@ async function refusal(
       error:
         "A playbook's run writes only in its own child threads (list_children): that is not one of them.",
     }
+  const access = { startedByMemberId: true, othersMayPrompt: true, computerId: true } as const
   const thread = await db.session.findFirst({
     where: { id: threadId },
     select: {
+      ...access,
       parentId: true,
       playbookRunId: true,
-      parent: { select: { id: true, title: true } },
+      parent: { select: { ...access, id: true, title: true } },
       teammates: { select: { teammate: { select: { id: true, name: true } } } },
     },
   })
-  if (!thread) return { error: 'No thread of this workspace has that id.' }
+  const asker = await askedBy(db, session.id)
+  const people = [...new Set([session.startedByMemberId, ...(asker ? [asker] : [])])]
+  const open = async (t: Parameters<typeof memberMayWrite>[0]) => {
+    for (const memberId of people) if (!(await memberMayWrite(t, memberId))) return false
+    return true
+  }
+  if (!thread || !(await open(thread)))
+    return { error: `That is not a thread you may write in. ${NOWHERE}` }
   if (thread.parent)
     return {
-      error:
-        `That is a sub-thread of “${thread.parent.title}” (${thread.parent.id}): only that thread ` +
-        'tells it more. Write there instead, if you work in it.',
+      error: (await open(thread.parent))
+        ? `That is a sub-thread of “${thread.parent.title}” (${thread.parent.id}): only that ` +
+          'thread tells it more. Write there instead, if you work in it.'
+        : "That is another thread's sub-thread: only its parent tells it more.",
     }
   if (thread.playbookRunId)
     return { error: "That is a playbook's run: only the thread it reports to writes in it." }
-  const others = thread.teammates.map((t) => t.teammate.name).filter((n) => n !== teammate.name)
+  const others = thread.teammates.filter((t) => t.teammate.id !== teammate.id)
+  const names = others.map((t) => t.teammate.name)
   return {
     error:
       `You (${teammate.name}) are not a teammate of that thread` +
-      (others.length ? `: ${others.join(', ')} ${others.length > 1 ? 'are' : 'is'}. ` : '. ') +
-      'message_thread writes only in your child threads (list_children), the threads you started ' +
-      '(start_thread) and the other threads at the top you are a teammate of. Tell the person here ' +
-      'what that thread should know.',
+      (names.length ? `: ${names.join(', ')} ${names.length > 1 ? 'are' : 'is'}. ` : '. ') +
+      `${NOWHERE} Tell the person here what that thread should know.`,
   }
 }
 
@@ -355,10 +372,16 @@ export async function messageThread(
     await free()
     return { error: "That thread's computer is offline." }
   }
-  // Written in again, an archived thread is back in the sidebar, as when a person writes there.
-  if (target.archivedAt) await setThreadArchived(scope, target.id, false)
-  // New work in it: it is no longer done.
-  await reopenThread(scope, target.id)
+  // The message went: what follows is told, never undone. Failing, it must not report the send
+  // as failed, which a retry would send again.
+  try {
+    // Written in again, an archived thread is back in the sidebar, as when a person writes there.
+    if (target.archivedAt) await setThreadArchived(scope, target.id, false)
+    // New work in it: it is no longer done.
+    await reopenThread(scope, target.id)
+  } catch (error) {
+    console.warn(`message_thread to ${target.id}: sent, but not brought back: ${String(error)}`)
+  }
   // Its audit entry is the place taken above; its analytics go now.
   trackAudit({
     ...scope,
