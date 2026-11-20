@@ -19,6 +19,7 @@ import { messageChild } from './children.js'
 import { prisma, type Scope, type ScopedDb } from './db.js'
 import { pickLines, projectOf } from './lists.js'
 import { usableProject } from './projects.js'
+import { setThreadArchived } from './thread-archive.js'
 import { reopenThread } from './thread-done.js'
 import { askedBy, findTeammate, loadThread, noSuchTeammate } from './thread-spec.js'
 import { firedInARow } from './wakeups.js'
@@ -209,7 +210,8 @@ async function takeCommentPlace(
 
 /**
  * A thread at the top this teammate works in, other than the caller: one a person gave it, or
- * one it is in with another. Not a child (its parent tells it more), nor a playbook's run.
+ * one it is in with another, archived or not (written in, it comes back, as when a person writes
+ * there). Not a child (its parent tells it more), nor a playbook's run.
  */
 function ownThread(db: ScopedDb, teammateId: string, threadId: string) {
   return db.session.findFirst({
@@ -217,11 +219,68 @@ function ownThread(db: ScopedDb, teammateId: string, threadId: string) {
       id: threadId,
       parentId: null,
       playbookRunId: null,
-      archivedAt: null,
       teammates: { some: { teammateId } },
     },
     select: { id: true },
   })
+}
+
+const NOWHERE =
+  'message_thread writes only in your child threads (list_children), the threads you started ' +
+  '(start_thread) and the other threads at the top you are a teammate of.'
+
+/**
+ * Why message_thread may not write in a thread: said plainly, so the teammate knows what to do.
+ * Only about a thread this thread's people may write in (and a parent named only when they may
+ * write there too): of one they may not, nothing is said, not even that it exists.
+ */
+async function refusal(
+  db: ScopedDb,
+  session: Caller,
+  teammate: { id: string; name: string },
+  threadId: string,
+): Promise<{ error: string }> {
+  if (session.playbookRunId)
+    return {
+      error:
+        "A playbook's run writes only in its own child threads (list_children): that is not one of them.",
+    }
+  const access = { startedByMemberId: true, othersMayPrompt: true, computerId: true } as const
+  const thread = await db.session.findFirst({
+    where: { id: threadId },
+    select: {
+      ...access,
+      parentId: true,
+      playbookRunId: true,
+      parent: { select: { ...access, id: true, title: true } },
+      teammates: { select: { teammate: { select: { id: true, name: true } } } },
+    },
+  })
+  const asker = await askedBy(db, session.id)
+  const people = [...new Set([session.startedByMemberId, ...(asker ? [asker] : [])])]
+  const open = async (t: Parameters<typeof memberMayWrite>[0]) => {
+    for (const memberId of people) if (!(await memberMayWrite(t, memberId))) return false
+    return true
+  }
+  if (!thread || !(await open(thread)))
+    return { error: `That is not a thread you may write in. ${NOWHERE}` }
+  if (thread.parent)
+    return {
+      error: (await open(thread.parent))
+        ? `That is a sub-thread of “${thread.parent.title}” (${thread.parent.id}): only that ` +
+          'thread tells it more. Write there instead, if you work in it.'
+        : "That is another thread's sub-thread: only its parent tells it more.",
+    }
+  if (thread.playbookRunId)
+    return { error: "That is a playbook's run: only the thread it reports to writes in it." }
+  const others = thread.teammates.filter((t) => t.teammate.id !== teammate.id)
+  const names = others.map((t) => t.teammate.name)
+  return {
+    error:
+      `You (${teammate.name}) are not a teammate of that thread` +
+      (names.length ? `: ${names.join(', ')} ${names.length > 1 ? 'are' : 'is'}. ` : '. ') +
+      `${NOWHERE} Tell the person here what that thread should know.`,
+  }
 }
 
 /**
@@ -254,7 +313,10 @@ export async function messageThread(
   const mine =
     started || child || session.playbookRunId ? null : await ownThread(db, teammate.id, op.threadId)
   const found = started ?? mine
-  if (!found) return messageChild(db, scope, session, teammate, op.threadId, op.text)
+  if (!found)
+    return child
+      ? messageChild(db, scope, session, teammate, op.threadId, op.text)
+      : refusal(db, session, teammate, op.threadId)
   const target = await loadThread(db, found.id)
   // As a message from this thread's person would: only where they may write. And from whoever
   // asked for it here, when that is another (a thread shared with them): they ask there too.
@@ -287,6 +349,11 @@ export async function messageThread(
     })
   let outcome: Awaited<ReturnType<typeof promptThread>>
   try {
+    // Written in again, an archived thread is back in the sidebar, as when a person writes there.
+    // Before the message goes: failing here, nothing went, and trying again sends it once. Not put
+    // away again if the message does not go: a person may have written there meanwhile, and a
+    // thread left in sight loses nothing.
+    if (target.archivedAt) await setThreadArchived(scope, target.id, false)
     // Written on Chief's word: the work it asks for there goes on it too.
     await markOnChiefsWord(db, target.id, session)
     outcome = await promptThread(db, scope, target, {
@@ -302,7 +369,8 @@ export async function messageThread(
           : {}),
     })
   } catch (error) {
-    // Refused before it was taken in (a thread moving, a runner too old): nothing went.
+    // Refused before it was taken in (a thread moving, a runner too old), or the thread could not
+    // be brought back: nothing went.
     await free()
     throw error
   }
@@ -310,8 +378,11 @@ export async function messageThread(
     await free()
     return { error: "That thread's computer is offline." }
   }
+  // The message went: it must not be reported as failed, which a retry would send again.
   // New work in it: it is no longer done.
-  await reopenThread(scope, target.id)
+  await reopenThread(scope, target.id).catch((error: unknown) =>
+    console.warn(`message_thread to ${target.id}: sent, but not reopened: ${String(error)}`),
+  )
   // Its audit entry is the place taken above; its analytics go now.
   trackAudit({
     ...scope,

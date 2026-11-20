@@ -319,10 +319,7 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     const before = prompts(threadId).length
     const refused = await op(ids.other, { name: 'message_thread', threadId, text: 'Merge it.' })
     assert.equal(refused.ok, false)
-    assert.match(
-      refused.error ?? '',
-      /not a child of this thread, nor a thread it started, nor a thread you work in/,
-    )
+    assert.match(refused.error ?? '', /are not a teammate of that thread/)
     await new Promise((resolve) => setTimeout(resolve, 100))
     assert.equal(prompts(threadId).length, before)
   })
@@ -400,6 +397,69 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     assert.equal((await send('Once more.')).ok, false)
   })
 
+  test('message_thread writes in an archived thread it is in, which comes back; a sub-thread is refused by name', async () => {
+    const thread = async (title: string, data: Record<string, unknown> = {}) => {
+      const session = await db.session.create({
+        data: {
+          teammateId: ids.riley,
+          startedByMemberId: ids.member,
+          askedByMemberId: ids.member,
+          computerId: ids.computer,
+          title,
+          status: 'idle',
+          origin: 'member',
+          ...data,
+        } as never,
+      })
+      await db.threadTeammate.create({
+        data: { sessionId: session.id, teammateId: ids.riley } as never,
+      })
+      return session.id
+    }
+    // Put away by its person: written in, it is back. Once it fails to come back (the database
+    // refuses the write): nothing goes, it stays put away, and trying again sends it once.
+    const archived = await thread('Put away', { archivedAt: new Date() })
+    await prisma.$executeRawUnsafe(`CREATE OR REPLACE FUNCTION test_keep_archived() RETURNS trigger AS $$
+      BEGIN RAISE EXCEPTION 'archive write refused'; END $$ LANGUAGE plpgsql`)
+    await prisma.$executeRawUnsafe(`CREATE TRIGGER test_keep_archived BEFORE UPDATE ON "Session"
+      FOR EACH ROW WHEN (OLD.id = '${archived}' AND NEW."archivedAt" IS NULL)
+      EXECUTE FUNCTION test_keep_archived()`)
+    try {
+      await assert.rejects(
+        op(ids.from, { name: 'message_thread', threadId: archived, text: 'Done.' }),
+        /archive write refused/,
+      )
+    } finally {
+      await prisma.$executeRawUnsafe('DROP TRIGGER test_keep_archived ON "Session"')
+      await prisma.$executeRawUnsafe('DROP FUNCTION test_keep_archived()')
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(prompts(archived).length, 0)
+    assert.notEqual(
+      (await db.session.findFirstOrThrow({ where: { id: archived } })).archivedAt,
+      null,
+    )
+    const heard = await op(ids.from, { name: 'message_thread', threadId: archived, text: 'Done.' })
+    assert.equal(heard.ok, true, heard.error)
+    await until(() => prompts(archived).length > 0, 'the message')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(prompts(archived).length, 1)
+    const back = await db.session.findFirstOrThrow({ where: { id: archived } })
+    assert.equal(back.archivedAt, null)
+    // A sub-thread of another thread: refused, saying whose.
+    const parent = await thread('Google verification')
+    const sub = await thread('Check the scan', { parentId: parent })
+    const refused = await op(ids.from, { name: 'message_thread', threadId: sub, text: 'Go.' })
+    assert.equal(refused.ok, false)
+    assert.match(refused.error ?? '', /sub-thread of “Google verification”/)
+    assert.ok(refused.error?.includes(parent))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(prompts(sub).length, 0)
+    // No such thread.
+    const none = await op(ids.from, { name: 'message_thread', threadId: 'nope', text: 'Go.' })
+    assert.match(none.error ?? '', /not a thread you may write in/)
+  })
+
   test('message_thread from a thread shared with another person: only where they may write too', async () => {
     // Bob asks in a thread of Ada's; Ada's other thread, on her own computer, is closed to him.
     const bobUser = `user-bob-${suffix}`
@@ -439,7 +499,38 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
       assert.match(heard.error ?? '', /may not write in that one/)
       await new Promise((resolve) => setTimeout(resolve, 100))
       assert.equal(prompts(closed).length, 0)
+      // Bob's own thread is closed to Ada: refused without a word of what it is.
+      const bobs = async (title: string, parentId?: string, startedBy = bob) => {
+        const session = await db.session.create({
+          data: {
+            teammateId: ids.riley,
+            startedByMemberId: startedBy,
+            askedByMemberId: startedBy,
+            computerId: ids.computer,
+            title,
+            status: 'idle',
+            origin: 'member',
+            ...(parentId ? { parentId } : {}),
+          } as never,
+        })
+        await db.threadTeammate.create({
+          data: { sessionId: session.id, teammateId: ids.cody } as never,
+        })
+        return session.id
+      }
+      const secret = await bobs('Bob’s secret plan')
+      const hidden = await op(ids.from, { name: 'message_thread', threadId: secret, text: 'Hi.' })
+      assert.equal(hidden.ok, false)
+      assert.match(hidden.error ?? '', /not a thread you may write in/)
+      assert.ok(!hidden.error?.includes('secret plan') && !hidden.error?.includes('Cody'))
+      // A sub-thread Ada may write in, under Bob's: its parent is not named.
+      const sub = await bobs('Ada’s part', secret, ids.member)
+      const under = await op(ids.from, { name: 'message_thread', threadId: sub, text: 'Hi.' })
+      assert.equal(under.ok, false)
+      assert.match(under.error ?? '', /another thread's sub-thread/)
+      assert.ok(!under.error?.includes(secret) && !under.error?.includes('secret plan'))
     } finally {
+      await prisma.session.deleteMany({ where: { startedByMemberId: bob } })
       await prisma.member.deleteMany({ where: { id: bob } })
       await prisma.user.deleteMany({ where: { id: bobUser } })
     }

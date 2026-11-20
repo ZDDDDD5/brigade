@@ -342,7 +342,7 @@ describe('the bounds of a playbook run', { skip: !database && 'no database answe
       await task(ids.live, { name: 'comment', threadId: ids.member, text: 'Merge it now.' }),
     ]) {
       assert.equal(heard.ok, false)
-      assert.match(heard.error ?? '', /not a child of this thread/)
+      assert.match(heard.error ?? '', /writes only in its own child threads/)
     }
     assert.equal(await db.sessionEvent.count({ where: { sessionId: ids.member } }), 0)
   })

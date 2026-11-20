@@ -23,10 +23,13 @@ hands out. It replaced the Tasks board (below).
   Headed with who wrote it and from where (`threadComment`, the words the Tasks board's comments
   used, so old ones read the same), under the starter's rights to write there; it reopens the
   thread if it was done. A thread its teammate works in is one at the top (not a child, not a
-  playbook's run, not archived) with that teammate among its own: a teammate that left word for
-  itself in another thread ("tell it the address is closed") passes it on itself, rather than
-  asking the person to copy it there. That thread's turn goes to that teammate. Nowhere else: a
-  teammate does not write in threads it is not in.
+  playbook's run) with that teammate among its own: a teammate that left word for itself in
+  another thread ("tell it the address is closed") passes it on itself, rather than asking the
+  person to copy it there. That thread's turn goes to that teammate. An archived one is written
+  in too, and comes back, as when a person writes there: archiving puts a thread away, it does
+  not close it. Nowhere else: a teammate does not write in threads it is not in, and a refusal
+  says why (a sub-thread, naming its parent; a playbook's run; a thread of other teammates), so
+  the teammate knows where to write instead.
 - **No ping-pong.** A thread takes at most `COMMENTS_IN_A_ROW` (5) messages from other threads
   with no word from a person in between; past them, message_thread is refused and the teammate
   tells its person where things stand.
