@@ -319,10 +319,7 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     const before = prompts(threadId).length
     const refused = await op(ids.other, { name: 'message_thread', threadId, text: 'Merge it.' })
     assert.equal(refused.ok, false)
-    assert.match(
-      refused.error ?? '',
-      /not a child of this thread, nor a thread it started, nor a thread you work in/,
-    )
+    assert.match(refused.error ?? '', /are not a teammate of that thread/)
     await new Promise((resolve) => setTimeout(resolve, 100))
     assert.equal(prompts(threadId).length, before)
   })
@@ -398,6 +395,46 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     // The same message, read later, is no new word from a person.
     await said(2, 'message.user')
     assert.equal((await send('Once more.')).ok, false)
+  })
+
+  test('message_thread writes in an archived thread it is in, which comes back; a sub-thread is refused by name', async () => {
+    const thread = async (title: string, data: Record<string, unknown> = {}) => {
+      const session = await db.session.create({
+        data: {
+          teammateId: ids.riley,
+          startedByMemberId: ids.member,
+          askedByMemberId: ids.member,
+          computerId: ids.computer,
+          title,
+          status: 'idle',
+          origin: 'member',
+          ...data,
+        } as never,
+      })
+      await db.threadTeammate.create({
+        data: { sessionId: session.id, teammateId: ids.riley } as never,
+      })
+      return session.id
+    }
+    // Put away by its person: written in, it is back.
+    const archived = await thread('Put away', { archivedAt: new Date() })
+    const heard = await op(ids.from, { name: 'message_thread', threadId: archived, text: 'Done.' })
+    assert.equal(heard.ok, true, heard.error)
+    await until(() => prompts(archived).length > 0, 'the message')
+    const back = await db.session.findFirstOrThrow({ where: { id: archived } })
+    assert.equal(back.archivedAt, null)
+    // A sub-thread of another thread: refused, saying whose.
+    const parent = await thread('Google verification')
+    const sub = await thread('Check the scan', { parentId: parent })
+    const refused = await op(ids.from, { name: 'message_thread', threadId: sub, text: 'Go.' })
+    assert.equal(refused.ok, false)
+    assert.match(refused.error ?? '', /sub-thread of “Google verification”/)
+    assert.ok(refused.error?.includes(parent))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(prompts(sub).length, 0)
+    // No such thread.
+    const none = await op(ids.from, { name: 'message_thread', threadId: 'nope', text: 'Go.' })
+    assert.match(none.error ?? '', /No thread of this workspace has that id/)
   })
 
   test('message_thread from a thread shared with another person: only where they may write too', async () => {

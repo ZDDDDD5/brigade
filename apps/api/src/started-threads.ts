@@ -19,6 +19,7 @@ import { messageChild } from './children.js'
 import { prisma, type Scope, type ScopedDb } from './db.js'
 import { pickLines, projectOf } from './lists.js'
 import { usableProject } from './projects.js'
+import { setThreadArchived } from './thread-archive.js'
 import { reopenThread } from './thread-done.js'
 import { askedBy, findTeammate, loadThread, noSuchTeammate } from './thread-spec.js'
 import { firedInARow } from './wakeups.js'
@@ -209,7 +210,8 @@ async function takeCommentPlace(
 
 /**
  * A thread at the top this teammate works in, other than the caller: one a person gave it, or
- * one it is in with another. Not a child (its parent tells it more), nor a playbook's run.
+ * one it is in with another, archived or not (written in, it comes back, as when a person writes
+ * there). Not a child (its parent tells it more), nor a playbook's run.
  */
 function ownThread(db: ScopedDb, teammateId: string, threadId: string) {
   return db.session.findFirst({
@@ -217,11 +219,51 @@ function ownThread(db: ScopedDb, teammateId: string, threadId: string) {
       id: threadId,
       parentId: null,
       playbookRunId: null,
-      archivedAt: null,
       teammates: { some: { teammateId } },
     },
     select: { id: true },
   })
+}
+
+/** Why message_thread may not write in a thread: said plainly, so the teammate knows what to do. */
+async function refusal(
+  db: ScopedDb,
+  session: Caller,
+  teammate: { id: string; name: string },
+  threadId: string,
+): Promise<{ error: string }> {
+  if (session.playbookRunId)
+    return {
+      error:
+        "A playbook's run writes only in its own child threads (list_children): that is not one of them.",
+    }
+  const thread = await db.session.findFirst({
+    where: { id: threadId },
+    select: {
+      parentId: true,
+      playbookRunId: true,
+      parent: { select: { id: true, title: true } },
+      teammates: { select: { teammate: { select: { id: true, name: true } } } },
+    },
+  })
+  if (!thread) return { error: 'No thread of this workspace has that id.' }
+  if (thread.parent)
+    return {
+      error:
+        `That is a sub-thread of “${thread.parent.title}” (${thread.parent.id}): only that thread ` +
+        'tells it more. Write there instead, if you work in it.',
+    }
+  if (thread.playbookRunId)
+    return { error: "That is a playbook's run: only the thread it reports to writes in it." }
+  const others = thread.teammates.map((t) => t.teammate.name).filter((n) => n !== teammate.name)
+  return {
+    error:
+      `You (${teammate.name}) are not a teammate of that thread` +
+      (others.length ? `: ${others.join(', ')} ${others.length > 1 ? 'are' : 'is'}. ` : '. ') +
+      'message_thread writes only in your child threads (list_children), the threads you started ' +
+      '(start_thread) and the other threads at the top you are a teammate of. Tell the person here ' +
+      'what that thread should know.',
+  }
 }
 
 /**
@@ -254,7 +296,10 @@ export async function messageThread(
   const mine =
     started || child || session.playbookRunId ? null : await ownThread(db, teammate.id, op.threadId)
   const found = started ?? mine
-  if (!found) return messageChild(db, scope, session, teammate, op.threadId, op.text)
+  if (!found)
+    return child
+      ? messageChild(db, scope, session, teammate, op.threadId, op.text)
+      : refusal(db, session, teammate, op.threadId)
   const target = await loadThread(db, found.id)
   // As a message from this thread's person would: only where they may write. And from whoever
   // asked for it here, when that is another (a thread shared with them): they ask there too.
@@ -310,6 +355,8 @@ export async function messageThread(
     await free()
     return { error: "That thread's computer is offline." }
   }
+  // Written in again, an archived thread is back in the sidebar, as when a person writes there.
+  if (target.archivedAt) await setThreadArchived(scope, target.id, false)
   // New work in it: it is no longer done.
   await reopenThread(scope, target.id)
   // Its audit entry is the place taken above; its analytics go now.
