@@ -13,6 +13,7 @@ import {
 import { HTTPException } from 'hono/http-exception'
 import { memberMayWrite } from './account-sharing.js'
 import { trackAudit } from './analytics.js'
+import { audit } from './audit.js'
 import { markOnChiefsWord } from './chief-answers.js'
 import { messageChild } from './children.js'
 import { prisma, type Scope, type ScopedDb } from './db.js'
@@ -165,16 +166,30 @@ async function takeCommentPlace(
       take: 200,
       select: { data: true, at: true },
     })
-    const person = messages.find((m) => (m.data as { memberId?: string | null }).memberId)
-    const since = new Date(Math.max(person?.at.getTime() ?? 0, Date.now() - COMMENTS_WINDOW_MS))
-    const taken = await tx.auditEntry.count({
-      where: {
-        workspaceId: scope.workspaceId,
-        at: { gt: since },
-        action: 'thread.messaged',
-        targetId,
-      },
+    type Said = { memberId?: string | null; messageId?: string }
+    const person = messages.find((m) => (m.data as Said).memberId)
+    // One word from a person counts once: its runner records it queued, then again as it is read.
+    const personId = person && (person.data as Said).messageId
+    const said = personId
+      ? Math.min(
+          ...messages
+            .filter((m) => (m.data as Said).messageId === personId)
+            .map((m) => m.at.getTime()),
+        )
+      : (person?.at.getTime() ?? 0)
+    const since = new Date(Math.max(said, Date.now() - COMMENTS_WINDOW_MS))
+    const counted = { workspaceId: scope.workspaceId, at: { gt: since }, targetId }
+    const places = await tx.auditEntry.findMany({
+      where: { ...counted, action: 'thread.messaged' },
+      select: { id: true },
     })
+    // Places given back (not sent): the log is append-only, so each has an entry of its own.
+    const unsent = await tx.auditEntry.findMany({
+      where: { ...counted, action: 'thread.message_unsent' },
+      select: { data: true },
+    })
+    const given = new Set(unsent.map((u) => (u.data as { placeId?: string } | null)?.placeId))
+    const taken = places.filter((p) => !given.has(String(p.id))).length
     if (taken >= COMMENTS_IN_A_ROW) return null
     return tx.auditEntry.create({
       data: {
@@ -261,23 +276,38 @@ export async function messageThread(
         `That thread was sent ${COMMENTS_IN_A_ROW} messages from other threads in a row with no word ` +
         'from a person. Write there no more: tell the person here where things stand.',
     }
-  // Written on Chief's word: the work it asks for there goes on it too.
-  await markOnChiefsWord(db, target.id, session)
-  const outcome = await promptThread(db, scope, target, {
-    text: threadComment({ from: teammate.name, threadTitle: session.title, text: op.text }),
-    memberId: null,
-    // Whoever asked for it here asks in that thread too.
-    onBehalfOf: asker,
-    // This teammate, in a thread of its own; else the one it was started for, while it is in it.
-    ...(mine
-      ? { teammateIds: [teammate.id] }
-      : target.teammates.some((t) => t.teammateId === target.teammateId)
-        ? { teammateIds: [target.teammateId] }
-        : {}),
-  })
+  // Not sent (refused, offline): its place is free again.
+  const free = () =>
+    audit({
+      ...scope,
+      actor: { type: 'teammate', id: teammate.id },
+      action: 'thread.message_unsent',
+      target: { type: 'thread', id: target.id },
+      data: { placeId: String(place.id), fromId: session.id },
+    })
+  let outcome: Awaited<ReturnType<typeof promptThread>>
+  try {
+    // Written on Chief's word: the work it asks for there goes on it too.
+    await markOnChiefsWord(db, target.id, session)
+    outcome = await promptThread(db, scope, target, {
+      text: threadComment({ from: teammate.name, threadTitle: session.title, text: op.text }),
+      memberId: null,
+      // Whoever asked for it here asks in that thread too.
+      onBehalfOf: asker,
+      // This teammate, in a thread of its own; else the one it was started for, while it is in it.
+      ...(mine
+        ? { teammateIds: [teammate.id] }
+        : target.teammates.some((t) => t.teammateId === target.teammateId)
+          ? { teammateIds: [target.teammateId] }
+          : {}),
+    })
+  } catch (error) {
+    // Refused before it was taken in (a thread moving, a runner too old): nothing went.
+    await free()
+    throw error
+  }
   if (outcome === 'offline') {
-    // Not sent: its place is free again.
-    await prisma.auditEntry.deleteMany({ where: { id: place.id } })
+    await free()
     return { error: "That thread's computer is offline." }
   }
   // New work in it: it is no longer done.

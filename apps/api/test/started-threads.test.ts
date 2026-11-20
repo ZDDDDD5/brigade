@@ -21,7 +21,7 @@ process.env.DATABASE_URL ??= 'postgresql://localhost:1/none'
 process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
 process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
 
-const { prisma, scoped } = await import('../src/db.js')
+const { Prisma, prisma, scoped } = await import('../src/db.js')
 const database = await Promise.race([
   prisma.$queryRaw`select "startedFromId" from "Session" limit 1`.then(() => true),
   new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
@@ -367,6 +367,11 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     // sent, before the thread's runner records them (it is busy: none of them is an event yet).
     const { COMMENTS_IN_A_ROW } = await import('../src/started-threads.js')
     const send = (text: string) => op(ids.from, { name: 'message_thread', threadId: mine.id, text })
+    // Refused while it moves to another computer: none of them takes a place.
+    await prisma.session.update({ where: { id: mine.id }, data: { move: { to: 'elsewhere' } } })
+    for (let i = 0; i <= COMMENTS_IN_A_ROW; i++)
+      await assert.rejects(send('Moving?'), /moving to another computer/)
+    await prisma.session.update({ where: { id: mine.id }, data: { move: Prisma.DbNull } })
     for (let i = 2; i < COMMENTS_IN_A_ROW; i++) assert.equal((await send(`${i}`)).ok, true)
     // One place left, two at once: one takes it.
     const both = await Promise.all([send('a'), send('b')])
@@ -374,18 +379,25 @@ describe('threads a teammate starts', { skip: !database && 'no database answers'
     const looping = await send('Again.')
     assert.equal(looping.ok, false)
     assert.match(looping.error ?? '', /in a row with no word from a person/)
-    // A person writes there: it may be written in again.
-    await db.sessionEvent.create({
-      data: {
-        sessionId: mine.id,
-        seq: 1,
-        type: 'message.user',
-        data: { text: 'Go on.', memberId: ids.member },
-        at: new Date(),
-      } as never,
-    })
-    const again = await send('Again.')
-    assert.equal(again.ok, true, again.error)
+    // A person writes there: it may be written in again, five more times.
+    const said = (seq: number, type: string) =>
+      db.sessionEvent.create({
+        data: {
+          sessionId: mine.id,
+          seq,
+          type,
+          data: { text: 'Go on.', memberId: ids.member, messageId: 'go-on' },
+          at: new Date(),
+        } as never,
+      })
+    await said(1, 'message.queued')
+    for (let i = 0; i < COMMENTS_IN_A_ROW; i++) {
+      const again = await send('Again.')
+      assert.equal(again.ok, true, again.error)
+    }
+    // The same message, read later, is no new word from a person.
+    await said(2, 'message.user')
+    assert.equal((await send('Once more.')).ok, false)
   })
 
   test('message_thread from a thread shared with another person: only where they may write too', async () => {
