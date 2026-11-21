@@ -86,6 +86,9 @@ export function activeIn(base: string) {
   return validKey(key) && isDir(join(homesDir(base), key)) ? key : BASE
 }
 
+/** The link of the workspace the runner runs for; undefined while this computer runs none. */
+export const activeLinkIn = (base: string) => readLink(base, activeIn(base))
+
 export function setActiveIn(base: string, key: string) {
   try {
     mkdirSync(base, { recursive: true })
@@ -133,6 +136,8 @@ export const all = () => allIn(home())
 /** The key of the workspace the runner runs for. */
 export const active = () => activeIn(home())
 export const setActive = (key: string) => setActiveIn(home(), key)
+/** The workspace the runner runs for, when this computer is linked to one. */
+export const activeLink = () => activeLinkIn(home())
 /** The runner home of a workspace. */
 export const homeOf = (key: string) => homeIn(home(), key)
 export const homeForLink = (id: string | undefined, api: string) => homeForLinkIn(home(), id, api)

@@ -23,6 +23,19 @@ export async function guestOffered() {
   return !!data?.available
 }
 
+/**
+ * Whether Brigade.app runs another workspace on this computer, or is linking one now: a guest
+ * then starts only when the person asks, since its own link would stop that workspace's
+ * teammates (docs/guests.md). Asked now: the bridge's `info` is read once, as the page loads.
+ */
+export async function computerTaken(): Promise<{ linked?: string; linking: boolean }> {
+  const bridge = desktopBridge()
+  try {
+    if (bridge?.computer) return await bridge.computer()
+  } catch {}
+  return { ...(bridge?.info.linked && { linked: bridge.info.linked }), linking: false }
+}
+
 const slug = () => `my-workspace-${Math.random().toString(36).slice(2, 8)}`
 
 /** Become a guest, with a first workspace, ready for onboarding's next step. */

@@ -11,6 +11,13 @@ import { parseLink } from './link.js'
 import { takeProviderSignIn } from './provider-sign-in.js'
 import { updateSettings } from './settings.js'
 import { bringUp, dashboardContents, dashboardWindow } from './windows.js'
+import { activeLink } from './workspaces.js'
+
+/** Links asked about or connecting now: while one is, the computer is not free for a guest. */
+let linking = 0
+
+/** Whether a link is being asked about or connected now (the bridge's `linked`, ipc.ts). */
+export const linkInProgress = () => linking > 0
 
 export async function openLink(raw: string) {
   const link = parseLink(raw)
@@ -36,21 +43,45 @@ export async function openLink(raw: string) {
       'Brigade runs teammates on macOS, Windows and Linux. Connect one of those, or use Brigade Cloud.',
       'warning',
     )
-  const host = new URL(link.api).host
-  // A link alone never connects this computer: its teammates would run commands here.
-  const confirmed = await confirm({
-    title: 'Connect this computer to Brigade?',
-    message: `AI teammates of the workspace at ${host} will run on this computer: they read and change files, run commands and can use your apps when you allow it.\n\nOnly connect a workspace you trust.`,
-    ok: 'Connect',
-    type: 'warning',
-  })
-  if (!confirmed) return
-  const error = await ctx.supervisor.connect(link.api, link.code, link.workspace)
-  if (error) return alert('Could not connect', error, 'error')
-  if (link.dashboard)
-    updateSettings((settings) => {
-      settings.dashboardUrl = link.dashboard
+  // One link at a time: a second one (a guest's onboarding while the first still installs)
+  // would queue a switch away from the workspace the first one links.
+  if (linking > 0)
+    return alert(
+      'Brigade is still connecting this computer',
+      'Wait until the workspace it connects is ready, then try again.',
+      'warning',
+    )
+  linking++
+  try {
+    const host = new URL(link.api).host
+    // One workspace runs here at a time: a link to another one stops the teammates of the
+    // workspace running now (a guest's link once took a Mac from the account that linked it).
+    // A link from an older API names no workspace and goes to the running one's home.
+    const running = activeLink()
+    const replaces = !running
+      ? ''
+      : link.workspace === undefined
+        ? `\n\nThis computer runs the teammates of "${running.name}" now. This link replaces that workspace here: link it again from its dashboard to bring it back.`
+        : running.id !== link.workspace
+          ? `\n\nThis computer runs the teammates of "${running.name}" now. They stop here until you switch back to it in the Workspace menu.`
+          : ''
+    // A link alone never connects this computer: its teammates would run commands here.
+    const confirmed = await confirm({
+      title: 'Connect this computer to Brigade?',
+      message: `AI teammates of the workspace at ${host} will run on this computer: they read and change files, run commands and can use your apps when you allow it.${replaces}\n\nOnly connect a workspace you trust.`,
+      ok: 'Connect',
+      type: 'warning',
     })
-  // What's left to set up, the workspace now checked.
-  setup.show()
+    if (!confirmed) return
+    const error = await ctx.supervisor.connect(link.api, link.code, link.workspace)
+    if (error) return alert('Could not connect', error, 'error')
+    if (link.dashboard)
+      updateSettings((settings) => {
+        settings.dashboardUrl = link.dashboard
+      })
+    // What's left to set up, the workspace now checked.
+    setup.show()
+  } finally {
+    linking--
+  }
 }

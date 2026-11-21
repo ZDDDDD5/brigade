@@ -15,6 +15,19 @@ Linux, where its runner runs teammates. The website's sign-up is unchanged.
   window someone was ever signed in to (the `brigade_known` cookie, kept through signing out,
   `lib/signed-in.ts`) shows the sign-in instead, with **Start without an account** as a button:
   signing out never makes a guest on its own.
+- **A computer that runs a workspace already, or is linking one** starts no guest either. The
+  page asks the app when it decides (`computerTaken()` in `lib/guest.ts`, the bridge's
+  `computer()`, `brigade:computer` in apps/desktop/src/ipc.ts): the name of the workspace its
+  runner runs for (`activeLink()` in apps/desktop/src/workspaces.ts), or `linking` while a
+  `brigade://link` is asked about or installs (`linkInProgress()` in links.ts), since a page can
+  load before the first link has a workspace in it. An app before it gives `info.linked`, read
+  once as the page loads. There, the sign-in page says which workspace runs here and offers **Sign in
+  with your browser** first, with **Start without an account instead** below. Nor does a page
+  bringing back a browser sign-in (`?desktop_code=`). This is the website's path: someone signs
+  up there, downloads the app and links it from onboarding's **Open in Brigade**, then the app's
+  window opens with no session of its own. Before, it made a guest at once, whose own link took
+  the computer from the account (one runner runs at a time): the account's first thread never
+  ran, and the person worked on as a guest (Nov 21). An app before it sends no `linked`.
 - **Their name**: Brigade.app reads its account's full name on this computer (macOS's `id -F`,
   Linux's GECOS field; never the login's short name, an address or a generic name such as
   `admin`: apps/desktop/src/system-name.ts) and gives it to the page as the bridge's
@@ -34,8 +47,11 @@ Linux, where its runner runs teammates. The website's sign-up is unchanged.
 - **Their workspace** is made by the page as onboarding makes one, named `My Workspace`, then
   onboarding goes on from its computer step. There, in Brigade.app, the computer is this one:
   **Link this Mac** asks for a link code and opens its `brigade://link`, which the app takes
-  itself after asking (apps/desktop/src/links.ts). A guest's link starts on its own, once. A
-  guest is not offered Brigade Cloud.
+  itself after asking (apps/desktop/src/links.ts). A guest's link starts on its own, once,
+  unless this computer runs or is linking another workspace already (`computerTaken()`); the app
+  takes one link at a time, refusing a second while the first is asked about or installs; and its
+  question says which workspace's teammates would stop here (also for a link from an older API,
+  which names no workspace and goes to the running one's home). A guest is not offered Brigade Cloud.
 - **What waits for the account to be saved** answers 403 (`requireSavedAccount`): inviting
   someone (`POST /api/members/invitations`) and Brigade Cloud's Checkout
   (`POST /api/billing/checkout`). What costs Brigade comes with Brigade Cloud only, which a guest

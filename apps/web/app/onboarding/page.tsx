@@ -47,6 +47,7 @@ import {
 } from '@/lib/api'
 import { authClient } from '@/lib/auth-client'
 import { inDesktopApp } from '@/lib/brigade-app'
+import { computerTaken } from '@/lib/guest'
 import { detectDevice, type Device } from '@/lib/device'
 import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
 import { MAC_APP_URL } from '@/lib/mac-app'
@@ -605,12 +606,16 @@ function ConnectAI({
   // Once they set up their own machine, Brigade Cloud steps back to one line.
   const cloudCompact = planNeeded && (!!link || !!machine)
 
-  // A guest chose to start here: this computer links at once, once.
+  // A guest chose to start here: this computer links at once, once. Not when it runs another
+  // workspace's teammates already: the link would stop them, so the guest links by the button,
+  // which the app asks about first (docs/guests.md).
   const linkedHere = useRef(false)
   useEffect(() => {
     if (!guest || !inApp || !computers.data || machine || linkedHere.current) return
     linkedHere.current = true
-    void linkHere()
+    void computerTaken().then((taken) => {
+      if (!taken.linked && !taken.linking) void linkHere()
+    })
   }, [guest, inApp, computers.data, machine, linkHere])
 
   // On Chromebooks the command is the way in: show it straight away.

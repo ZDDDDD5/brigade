@@ -12,6 +12,8 @@ export type DesktopBridge = {
     frame?: 'mac' | 'overlay' | 'native'
     /** The computer's account's full name, for a guest's account; older apps leave it out. */
     userName?: string
+    /** The workspace this computer already runs teammates for (docs/guests.md); older apps leave it out. */
+    linked?: string
   }
   captures: {
     list: () => Promise<string[]>
@@ -23,6 +25,8 @@ export type DesktopBridge = {
     onShown: (handle: () => void) => () => void
   }
   signInWithBrowser: () => Promise<void>
+  /** The workspace this computer runs now, or `linking` while a link is asked about or installs (docs/guests.md); older apps leave it out. */
+  computer?: () => Promise<{ linked?: string; linking: boolean }>
   setBadge: (count: number) => void
   frame?: {
     onFullscreen: (handle: (fullscreen: boolean) => void) => () => void
