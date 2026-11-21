@@ -344,18 +344,47 @@ export function setAnswersScope(scope: string | undefined) {
  * dashboard socket message of a type in `live`, and each time that socket is back after dropping.
  * Opens on the path's last answer in this tab, when there is one, while it asks again.
  */
-export function useApi<T>(path: string | null, live?: readonly ApiToBrowser['type'][]) {
-  const [data, setState] = useState<T | undefined>(() => (path ? keptAnswer<T>(path) : undefined))
+/**
+ * A path's answer, from the request `preload` sent ahead when `opening` and there is one: an
+ * ApiError when `accept` says it is not of the shape asked for (`{}` or `{ items }` for a list),
+ * so it never replaces, or is kept as, the last answer that was.
+ */
+export async function answerOf<T>(
+  path: string,
+  { opening = false, accept }: { opening?: boolean; accept?: (value: unknown) => boolean } = {},
+): Promise<T> {
+  const value = await ((opening ? preloaded<T>(path) : undefined) ?? api<T>(path))
+  if (accept && !accept(value)) throw new ApiError('The reply is not what was asked for', 200)
+  return value
+}
+
+/** For `useApi`'s `accept`: the answer is a list (an array). */
+export const isList = (value: unknown): value is unknown[] => Array.isArray(value)
+
+export function useApi<T>(
+  path: string | null,
+  live?: readonly ApiToBrowser['type'][],
+  /** Whether an answer has the shape asked for: one that has not is an error (`answerOf`). */
+  accept?: (value: unknown) => boolean,
+) {
+  // A kept answer of another shape (kept by a page that asked for it without `accept`) is none.
+  const keptFor = (at: string | null) => {
+    const kept = at ? keptAnswer<T>(at) : undefined
+    return kept !== undefined && (!accept || accept(kept)) ? kept : undefined
+  }
+  const [data, setState] = useState<T | undefined>(() => keptFor(path))
   const [error, setError] = useState<ApiError | undefined>()
   // Another path: its kept answer shows at once, when there is one.
   const [shown, setShown] = useState(path)
   if (shown !== path) {
     setShown(path)
-    const kept = path ? keptAnswer<T>(path) : undefined
+    const kept = keptFor(path)
     if (kept !== undefined) setState(kept)
   }
   const pathRef = useRef(path)
   pathRef.current = path
+  const acceptRef = useRef(accept)
+  acceptRef.current = accept
   const setData = useCallback((next: SetStateAction<T | undefined>) => {
     setState((current) => {
       const value =
@@ -371,7 +400,7 @@ export function useApi<T>(path: string | null, live?: readonly ApiToBrowser['typ
       // Asked for one person in one workspace: kept and shown only if still theirs once it is in.
       const keep = askingNow()
       try {
-        const value = await ((opening ? preloaded<T>(path) : undefined) ?? api<T>(path))
+        const value = await answerOf<T>(path, { opening, accept: acceptRef.current })
         if (!keep(path, value)) return
         if (pathRef.current === path) setState(value)
         setError(undefined)

@@ -47,7 +47,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 import { shortWakeTime } from '@/components/wakeup-icon'
-import { api, useApi, type ThreadSummary } from '@/lib/api'
+import { api, isList, useApi, type ThreadSummary } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 /** What changes a mission: its threads, tickets and routines. */
@@ -633,7 +633,11 @@ function MissionDialog({
   onSaved: () => void
 }) {
   const { teammates, me } = useDashboard()
-  const recent = useApi<ThreadSummary[]>(open ? '/threads?limit=100&sort=activity' : null)
+  const recent = useApi<ThreadSummary[]>(
+    open ? '/threads?limit=100&sort=activity' : null,
+    undefined,
+    isList,
+  )
   const [title, setTitle] = useState('')
   const [objective, setObjective] = useState('')
   const [teammateId, setTeammateId] = useState<string>()

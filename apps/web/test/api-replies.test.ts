@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, test } from 'node:test'
-import { api, ApiError } from '../lib/api'
+import { answerOf, api, ApiError, isList, preload } from '../lib/api'
 
 // What `api` gives for a reply: its JSON, or an ApiError. A reply it cannot read is an error,
 // never `{}` taken for the list asked for ("(x ?? []) is not iterable" on the dashboard).
@@ -54,4 +54,25 @@ test('an error reply keeps its message and body, readable or not', async () => {
   )
   answer('oops', 502)
   await assert.rejects(api('/threads/x'), (e) => e instanceof ApiError && e.status === 502)
+})
+
+// What `useApi` sets and keeps goes through `answerOf`: a list asked for (`isList`) that comes
+// back as anything else is an error, so it replaces nothing and is not kept.
+
+test('a list asked for that comes back as an object or empty is an error', async () => {
+  for (const body of ['{"items":[]}', '{}', '']) {
+    answer(body)
+    await assert.rejects(answerOf('/threads', { accept: isList }), ApiError)
+  }
+  answer('[{"id":"t1"}]')
+  assert.deepEqual(await answerOf('/threads', { accept: isList }), [{ id: 't1' }])
+  // Without `accept`, any JSON goes, as before.
+  answer('{"items":[]}')
+  assert.deepEqual(await answerOf('/threads'), { items: [] })
+})
+
+test('the request sent ahead is checked too', async () => {
+  answer('{}')
+  preload('/threads?ahead')
+  await assert.rejects(answerOf('/threads?ahead', { opening: true, accept: isList }), ApiError)
 })

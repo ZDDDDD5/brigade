@@ -54,6 +54,7 @@ import { Hint } from '@/components/ui/tooltip'
 import {
   api,
   computerName,
+  isList,
   preload,
   preloadSettled,
   teammateModelLabel,
@@ -130,6 +131,8 @@ function RecentThreads({
 }) {
   const threads = useApi<ThreadSummary[]>(
     `/threads?teammateId=${teammate.id}&limit=5&sort=activity`,
+    undefined,
+    isList,
   )
   return (
     <>
