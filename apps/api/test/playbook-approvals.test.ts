@@ -185,24 +185,23 @@ async function run(title: string) {
 }
 
 /** A reply the run's teammate wants to send, waiting for a person (connector-calls.ts). */
+const approvalData = (r: { runId: string; threadId: string }, to = 'jane@acme.test') => ({
+  sessionId: r.threadId,
+  type: 'approval' as const,
+  title: `Sam: gmail send (email to ${to}: "Your refund")`,
+  payload: {
+    connectionId: 'connection',
+    connection: 'support@brigade.test',
+    operation: 'gmail_send',
+    target: `email to ${to}: "Your refund"`,
+    input: { to: [to], subject: 'Your refund', body: 'Hello,\n\nIt is on its way.' },
+    playbookInstallationId: installationId,
+    playbookActionKey: 'reply',
+    playbookRunId: r.runId,
+  },
+})
 const approval = (r: { runId: string; threadId: string }, to = 'jane@acme.test') =>
-  db().ticket.create({
-    data: {
-      sessionId: r.threadId,
-      type: 'approval',
-      title: `Sam: gmail send (email to ${to}: "Your refund")`,
-      payload: {
-        connectionId: 'connection',
-        connection: 'support@brigade.test',
-        operation: 'gmail_send',
-        target: `email to ${to}: "Your refund"`,
-        input: { to: [to], subject: 'Your refund', body: 'Hello,\n\nIt is on its way.' },
-        playbookInstallationId: installationId,
-        playbookActionKey: 'reply',
-        playbookRunId: r.runId,
-      },
-    } as never,
-  })
+  db().ticket.create({ data: approvalData(r, to) as never })
 
 /** The call a write that asks keeps with its ticket (src/held-calls.ts), as a live call has. */
 const hold = (ticket: { id: string; sessionId: string | null }) =>
@@ -517,9 +516,13 @@ test(
         createdAt: new Date(Date.now() - (204 - i) * 1_000),
       })) as never,
     })
-    // An archived thread's approval waits on no one: not counted.
+    // An archived thread's approval waits on no one: not counted. Asked before the thread was
+    // put away, so written without the scoped write hooks: a new open ticket brings its thread
+    // back (src/thread-archive.ts) in the background, which could land after the archive below.
     const shelved = await run('Shelved')
-    await approval(shelved)
+    await prisma.ticket.create({
+      data: { ...approvalData(shelved), organizationId, workspaceId } as never,
+    })
     await db().session.updateMany({
       where: { id: shelved.threadId },
       data: { archivedAt: new Date() },
