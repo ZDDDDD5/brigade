@@ -340,11 +340,6 @@ export function setAnswersScope(scope: string | undefined) {
 }
 
 /**
- * Fetch on mount (taking the request sent ahead, if any); `reload` refetches, and so does each
- * dashboard socket message of a type in `live`, and each time that socket is back after dropping.
- * Opens on the path's last answer in this tab, when there is one, while it asks again.
- */
-/**
  * A path's answer, from the request `preload` sent ahead when `opening` and there is one: an
  * ApiError when `accept` says it is not of the shape asked for (`{}` or `{ items }` for a list),
  * so it never replaces, or is kept as, the last answer that was.
@@ -361,6 +356,11 @@ export async function answerOf<T>(
 /** For `useApi`'s `accept`: the answer is a list (an array). */
 export const isList = (value: unknown): value is unknown[] => Array.isArray(value)
 
+/**
+ * Fetch on mount (taking the request sent ahead, if any); `reload` refetches, and so does each
+ * dashboard socket message of a type in `live`, and each time that socket is back after dropping.
+ * Opens on the path's last answer in this tab, when there is one, while it asks again.
+ */
 export function useApi<T>(
   path: string | null,
   live?: readonly ApiToBrowser['type'][],
