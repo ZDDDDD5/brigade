@@ -34,7 +34,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link rel="preconnect" href="https://cdn.fontshare.com" crossOrigin="" />
         {/* The theme's own sans is replaced by Geist and General Sans (globals.css), so it is not loaded. */}
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap" />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap"
+        />
         {themeFontHrefs
           .filter((href) => !href.includes('Plus+Jakarta+Sans'))
           .map((href) => (
