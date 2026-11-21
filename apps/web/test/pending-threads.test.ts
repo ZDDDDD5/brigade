@@ -114,3 +114,13 @@ test('not started, it leaves the list at once and its message is kept for the me
   assert.match(back?.error ?? '', /offline/)
   keptMessages.drop(id)
 })
+
+test('an answer that is not a list is read as no list, with or without threads just sent', () => {
+  // What the dashboard once took for the list: `{}`, which then failed to iterate.
+  const odd = {} as unknown as ThreadSummary[]
+  assert.equal(withUnlisted(odd, []), undefined)
+  assert.equal(withUnlisted({ items: [] } as unknown as ThreadSummary[], []), undefined)
+  const id = send()
+  assert.deepEqual(ids(withUnlisted(odd, unlistedThreads())), [id])
+  pendingThreads.failed(id, 'gone')
+})

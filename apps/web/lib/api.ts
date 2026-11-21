@@ -64,14 +64,29 @@ export async function api<T = unknown>(
     body: init.body === undefined ? null : JSON.stringify(init.body),
   })
   if (response.status === 204) return undefined as T
-  const body = await response.json().catch(() => ({}))
+  const body = await readBody(response)
   if (!response.ok)
     throw new ApiError(
-      (body as { error?: string }).error ?? response.statusText,
+      (body as { error?: string } | undefined)?.error ?? response.statusText,
       response.status,
-      body,
+      body ?? {},
     )
+  // A reply that came cut off, or that is not JSON (a page some proxy answered with): an error,
+  // never `{}` taken for what was asked, where a list then fails to iterate.
+  if (body === undefined) throw new ApiError('The reply could not be read', response.status)
   return body as T
+}
+
+/** A reply's JSON body: `{}` when it is empty, undefined when it cannot be read or parsed. */
+async function readBody(response: Response): Promise<unknown> {
+  const text = await response.text().catch(() => undefined)
+  if (text === undefined) return undefined
+  if (!text.trim()) return {}
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    return undefined
+  }
 }
 
 /**

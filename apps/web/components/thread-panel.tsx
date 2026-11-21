@@ -374,7 +374,7 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
   const unlisted = useUnlistedThreads()
   const threadList = useMemo(() => withUnlisted(threads.data, unlisted), [threads.data, unlisted])
   useEffect(() => {
-    if (threads.data) pendingThreads.listed(new Set(threads.data.map((t) => t.id)))
+    if (Array.isArray(threads.data)) pendingThreads.listed(new Set(threads.data.map((t) => t.id)))
   }, [threads.data])
   const startedUnlisted = unlisted.flatMap((u) => (u.startedAt ? [u.row.id] : [])).join(' ')
   useEffect(() => {
