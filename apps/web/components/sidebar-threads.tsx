@@ -81,7 +81,9 @@ import {
 } from '@/components/ui/sidebar'
 import { Hint } from '@/components/ui/tooltip'
 import {
+  answerOf,
   api,
+  isList,
   useApi,
   type PinnedList,
   type ProjectSummary,
@@ -935,7 +937,10 @@ export function SidebarWork({
   const [archived, setArchived] = useState<ThreadSummary[]>()
   const loadArchived = () => {
     setLater(false)
-    return api<ThreadSummary[]>('/threads?archived=1').then(setArchived, () => setArchived([]))
+    return answerOf<ThreadSummary[]>('/threads?archived=1', { accept: isList }).then(
+      setArchived,
+      () => setArchived([]),
+    )
   }
   // Whether the list shows the threads this member snoozed instead (the filter's Snoozed).
   // They are in the panel's list, all of them, out of the usual one.
@@ -1286,7 +1291,7 @@ export function SidebarWork({
   useEffect(() => {
     if (!openId || inView || loaded) return
     let current = true
-    api<ThreadSummary[]>(`/threads?id=${openId}`).then(
+    answerOf<ThreadSummary[]>(`/threads?id=${openId}`, { accept: isList }).then(
       ([t]) =>
         current &&
         setFetched(t && holds(t, openId) ? withAsks([t], needsYou, openId).all[0] : undefined),
