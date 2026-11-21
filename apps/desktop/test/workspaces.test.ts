@@ -3,7 +3,15 @@ import { mkdirSync, mkdtempSync, writeFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { activeIn, allIn, BASE, homeForLinkIn, setActiveIn, validKey } from '../src/workspaces.js'
+import {
+  activeIn,
+  activeLinkIn,
+  allIn,
+  BASE,
+  homeForLinkIn,
+  setActiveIn,
+  validKey,
+} from '../src/workspaces.js'
 
 const temp = () => mkdtempSync(join(tmpdir(), 'brigade-workspaces-'))
 
@@ -78,4 +86,20 @@ test('lists and activates workspaces', () => {
   assert.equal(activeIn(base), BASE)
   setActiveIn(base, 'w9')
   assert.equal(activeIn(base), BASE)
+})
+
+test('the workspace this computer runs for, which a guest must not take over unasked', () => {
+  const base = temp()
+  // Linked to nothing yet: a guest may start and link it.
+  assert.equal(activeLinkIn(base), undefined)
+  link(base, 'Acme', { apiUrl: 'https://api.test', workspaceId: 'ws_a' })
+  link(join(base, 'workspaces', 'w1'), 'Beta', { apiUrl: 'https://api.test', workspaceId: 'ws_b' })
+  assert.equal(activeLinkIn(base)?.name, 'Acme')
+  setActiveIn(base, 'w1')
+  assert.deepEqual(activeLinkIn(base), {
+    key: 'w1',
+    name: 'Beta',
+    api: 'https://api.test',
+    id: 'ws_b',
+  })
 })

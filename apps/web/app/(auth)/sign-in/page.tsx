@@ -11,6 +11,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { authClient } from '@/lib/auth-client'
 import { inCaptureWindow, inDesktopApp, signInWithBrowser } from '@/lib/brigade-app'
 import { guestOffered, startAsGuest } from '@/lib/guest'
+import { desktopBridge } from '@/lib/desktop-bridge'
 import { afterSignIn, markSignedIn, signedInBefore } from '@/lib/signed-in'
 
 export default function SignIn() {
@@ -22,6 +23,10 @@ export default function SignIn() {
   // In Brigade.app, with guests open (docs/guests.md): a window nobody ever signed in to starts
   // as a guest at once ('starting'); one someone signed out of offers it ('offered').
   const [guest, setGuest] = useState<'offered' | 'starting'>()
+  // The workspace Brigade.app already runs teammates for (its bridge's `linked`): an account
+  // linked this computer, often from the website's onboarding a moment ago. Its window signs in
+  // to it rather than starting a guest, whose own link would stop that workspace's teammates.
+  const [linked, setLinked] = useState<string>()
   // 'Already have an account?' while it starts: the sign-in stays, whatever the start does.
   const signingIn = useRef(false)
   // Back from Google with ?error=: the API names what went wrong. With ?signed, signed in
@@ -37,15 +42,20 @@ export default function SignIn() {
     if (failed) setError(`Could not sign in with Google (${failed.replaceAll('_', ' ')})`)
     if (!inDesktopApp()) return
     setApp('browser')
+    const code = query.get('desktop_code')
+    const verifier = query.get('verifier')
+    const linkedHere = desktopBridge()?.info.linked
+    if (linkedHere) setLinked(linkedHere)
     void guestOffered()
       .then((offered) => {
         if (!offered) return
-        if (signedInBefore()) return setGuest((was) => was ?? 'offered')
+        // Offered, never started on its own: someone was signed in here, a sign-in is coming
+        // back from the browser, or this computer runs another workspace already.
+        if (signedInBefore() || (code && verifier) || linkedHere)
+          return setGuest((was) => was ?? 'offered')
         void startWithoutAccount()
       })
       .catch(() => {})
-    const code = query.get('desktop_code')
-    const verifier = query.get('verifier')
     if (!code || !verifier) return
     history.replaceState(null, '', '/sign-in')
     void authClient
@@ -122,7 +132,14 @@ export default function SignIn() {
         ) : app === 'browser' || app === 'waiting' ? (
           <Card>
             <CardContent className="flex flex-col gap-5">
-              {guest && (
+              {linked && (
+                <p className="text-sm text-muted-foreground">
+                  This computer already runs the teammates of{' '}
+                  <span className="font-medium text-foreground">{linked}</span>. Sign in to its
+                  account to see them.
+                </p>
+              )}
+              {guest && !linked && (
                 <>
                   <Button
                     size="lg"
@@ -145,7 +162,7 @@ export default function SignIn() {
               )}
               <Button
                 size="lg"
-                variant={guest ? 'outline' : 'default'}
+                variant={guest && !linked ? 'outline' : 'default'}
                 className="w-full"
                 onClick={browser}
               >
@@ -164,6 +181,16 @@ export default function SignIn() {
               >
                 Sign in here instead
               </button>
+              {guest && linked && (
+                <button
+                  type="button"
+                  disabled={guest === 'starting'}
+                  onClick={() => void startWithoutAccount()}
+                  className="self-center text-sm text-muted-foreground underline-offset-4 hover:underline"
+                >
+                  {guest === 'starting' ? 'Starting…' : 'Start without an account instead'}
+                </button>
+              )}
             </CardContent>
           </Card>
         ) : (

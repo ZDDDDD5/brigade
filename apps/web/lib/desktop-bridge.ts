@@ -12,6 +12,8 @@ export type DesktopBridge = {
     frame?: 'mac' | 'overlay' | 'native'
     /** The computer's account's full name, for a guest's account; older apps leave it out. */
     userName?: string
+    /** The workspace this computer already runs teammates for (docs/guests.md); older apps leave it out. */
+    linked?: string
   }
   captures: {
     list: () => Promise<string[]>

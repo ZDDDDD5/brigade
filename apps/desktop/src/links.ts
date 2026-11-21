@@ -11,6 +11,7 @@ import { parseLink } from './link.js'
 import { takeProviderSignIn } from './provider-sign-in.js'
 import { updateSettings } from './settings.js'
 import { bringUp, dashboardContents, dashboardWindow } from './windows.js'
+import { activeLink } from './workspaces.js'
 
 export async function openLink(raw: string) {
   const link = parseLink(raw)
@@ -37,10 +38,17 @@ export async function openLink(raw: string) {
       'warning',
     )
   const host = new URL(link.api).host
+  // One workspace runs here at a time: a link to another one stops the teammates of the
+  // workspace running now (Xavier's Mac, Nov 21: a guest's link took it from his account).
+  const running = activeLink()
+  const replaces =
+    running && link.workspace !== undefined && running.id !== link.workspace
+      ? `\n\nThis computer runs the teammates of "${running.name}" now. They stop here until you switch back to it in the Workspace menu.`
+      : ''
   // A link alone never connects this computer: its teammates would run commands here.
   const confirmed = await confirm({
     title: 'Connect this computer to Brigade?',
-    message: `AI teammates of the workspace at ${host} will run on this computer: they read and change files, run commands and can use your apps when you allow it.\n\nOnly connect a workspace you trust.`,
+    message: `AI teammates of the workspace at ${host} will run on this computer: they read and change files, run commands and can use your apps when you allow it.${replaces}\n\nOnly connect a workspace you trust.`,
     ok: 'Connect',
     type: 'warning',
   })

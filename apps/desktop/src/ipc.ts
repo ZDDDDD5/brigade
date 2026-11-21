@@ -8,6 +8,7 @@ import * as notifications from './notifications.js'
 import { startProviderSignIn } from './provider-sign-in.js'
 import { onDashboard } from './settings.js'
 import { accountFullName } from './system-name.js'
+import { activeLink } from './workspaces.js'
 import { dashboardFrame, kindOf, setFrameColors, setNarrow, type WindowKind } from './windows.js'
 
 /** The bridge's version: the dashboard checks it before using what came later. */
@@ -17,6 +18,16 @@ function from(event: IpcMainEvent | IpcMainInvokeEvent): WindowKind | undefined 
   const frame = event.senderFrame
   if (!frame || frame !== event.sender.mainFrame || !onDashboard(frame.url)) return undefined
   return kindOf(event.sender)
+}
+
+/** `linked`: the name of the workspace the runner runs for, when there is one. */
+function linkedName(): { linked?: string } {
+  try {
+    const name = activeLink()?.name
+    return name ? { linked: name } : {}
+  } catch {
+    return {}
+  }
 }
 
 export function registerBridge() {
@@ -38,6 +49,9 @@ export function registerBridge() {
           bridge: BRIDGE_VERSION,
           // The computer's account's full name, for a guest's account (docs/guests.md).
           ...(kind === 'main' && userName && { userName }),
+          // The workspace this computer already runs teammates for, read now (a link changes
+          // it): the window then signs in to it rather than starting a guest (docs/guests.md).
+          ...(kind === 'main' && linkedName()),
         }
       : null
   })
