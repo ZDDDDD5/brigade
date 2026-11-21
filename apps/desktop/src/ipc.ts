@@ -9,6 +9,8 @@ import { startProviderSignIn } from './provider-sign-in.js'
 import { onDashboard } from './settings.js'
 import { accountFullName } from './system-name.js'
 import { activeLink } from './workspaces.js'
+import { ctx } from './context.js'
+import { linkInProgress } from './links.js'
 import { dashboardFrame, kindOf, setFrameColors, setNarrow, type WindowKind } from './windows.js'
 
 /** The bridge's version: the dashboard checks it before using what came later. */
@@ -28,6 +30,16 @@ function linkedName(): { linked?: string } {
   } catch {
     return {}
   }
+}
+
+/** Whether this computer is taken, asked when it matters: `info` is read once, as a page
+ * loads, and a link still installing has no workspace in it yet. */
+function computerState() {
+  let installing = false
+  try {
+    installing = ctx.supervisor.status.kind === 'installing'
+  } catch {}
+  return { ...linkedName(), linking: linkInProgress() || installing }
 }
 
 export function registerBridge() {
@@ -82,6 +94,12 @@ export function registerBridge() {
     'brigade:window:hide',
     captureOnly(() => capture.hide()),
   )
+
+  // The workspace this computer runs, or one being linked now (docs/guests.md).
+  ipcMain.handle('brigade:computer', (event) => {
+    if (from(event) !== 'main') throw new Error('Not allowed.')
+    return computerState()
+  })
 
   ipcMain.handle('brigade:sign-in', async (event) => {
     const kind = from(event)

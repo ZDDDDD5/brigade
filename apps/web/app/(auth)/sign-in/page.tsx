@@ -10,8 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { authClient } from '@/lib/auth-client'
 import { inCaptureWindow, inDesktopApp, signInWithBrowser } from '@/lib/brigade-app'
-import { guestOffered, startAsGuest } from '@/lib/guest'
-import { desktopBridge } from '@/lib/desktop-bridge'
+import { computerTaken, guestOffered, startAsGuest } from '@/lib/guest'
 import { afterSignIn, markSignedIn, signedInBefore } from '@/lib/signed-in'
 
 export default function SignIn() {
@@ -27,6 +26,8 @@ export default function SignIn() {
   // linked this computer, often from the website's onboarding a moment ago. Its window signs in
   // to it rather than starting a guest, whose own link would stop that workspace's teammates.
   const [linked, setLinked] = useState<string>()
+  // A link of this computer is being asked about or installing: the same, before it has a name.
+  const [linking, setLinking] = useState(false)
   // 'Already have an account?' while it starts: the sign-in stays, whatever the start does.
   const signingIn = useRef(false)
   // Back from Google with ?error=: the API names what went wrong. With ?signed, signed in
@@ -44,14 +45,14 @@ export default function SignIn() {
     setApp('browser')
     const code = query.get('desktop_code')
     const verifier = query.get('verifier')
-    const linkedHere = desktopBridge()?.info.linked
-    if (linkedHere) setLinked(linkedHere)
-    void guestOffered()
-      .then((offered) => {
+    void Promise.all([guestOffered(), computerTaken()])
+      .then(([offered, taken]) => {
+        if (taken.linked) setLinked(taken.linked)
+        else if (taken.linking) setLinking(true)
         if (!offered) return
         // Offered, never started on its own: someone was signed in here, a sign-in is coming
-        // back from the browser, or this computer runs another workspace already.
-        if (signedInBefore() || (code && verifier) || linkedHere)
+        // back from the browser, or this computer runs or is linking a workspace already.
+        if (signedInBefore() || (code && verifier) || taken.linked || taken.linking)
           return setGuest((was) => was ?? 'offered')
         void startWithoutAccount()
       })
@@ -132,14 +133,21 @@ export default function SignIn() {
         ) : app === 'browser' || app === 'waiting' ? (
           <Card>
             <CardContent className="flex flex-col gap-5">
-              {linked && (
+              {linked ? (
                 <p className="text-sm text-muted-foreground">
                   This computer already runs the teammates of{' '}
                   <span className="font-medium text-foreground">{linked}</span>. Sign in to its
                   account to see them.
                 </p>
+              ) : (
+                linking && (
+                  <p className="text-sm text-muted-foreground">
+                    This computer is being connected to a workspace. Sign in to its account to see
+                    its teammates.
+                  </p>
+                )
               )}
-              {guest && !linked && (
+              {guest && !linked && !linking && (
                 <>
                   <Button
                     size="lg"
@@ -162,7 +170,7 @@ export default function SignIn() {
               )}
               <Button
                 size="lg"
-                variant={guest && !linked ? 'outline' : 'default'}
+                variant={guest && !linked && !linking ? 'outline' : 'default'}
                 className="w-full"
                 onClick={browser}
               >
@@ -181,7 +189,7 @@ export default function SignIn() {
               >
                 Sign in here instead
               </button>
-              {guest && linked && (
+              {guest && (linked || linking) && (
                 <button
                   type="button"
                   disabled={guest === 'starting'}

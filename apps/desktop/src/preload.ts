@@ -94,6 +94,8 @@ if (info)
       onShown: (handle: () => void) => listen('brigade:capture-shown', () => handle()),
     },
     signInWithBrowser: () => ipcRenderer.invoke('brigade:sign-in'),
+    /** The workspace this computer runs now, or `linking` while a link is asked about or installs. */
+    computer: () => ipcRenderer.invoke('brigade:computer'),
     setBadge: (count: number) => ipcRenderer.send('brigade:badge', count),
     frame: {
       /** The window went full screen (macOS hides the traffic lights) or came back. */

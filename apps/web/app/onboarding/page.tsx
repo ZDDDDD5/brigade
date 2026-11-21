@@ -47,7 +47,7 @@ import {
 } from '@/lib/api'
 import { authClient } from '@/lib/auth-client'
 import { inDesktopApp } from '@/lib/brigade-app'
-import { desktopBridge } from '@/lib/desktop-bridge'
+import { computerTaken } from '@/lib/guest'
 import { detectDevice, type Device } from '@/lib/device'
 import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
 import { MAC_APP_URL } from '@/lib/mac-app'
@@ -612,9 +612,10 @@ function ConnectAI({
   const linkedHere = useRef(false)
   useEffect(() => {
     if (!guest || !inApp || !computers.data || machine || linkedHere.current) return
-    if (desktopBridge()?.info.linked) return
     linkedHere.current = true
-    void linkHere()
+    void computerTaken().then((taken) => {
+      if (!taken.linked && !taken.linking) void linkHere()
+    })
   }, [guest, inApp, computers.data, machine, linkHere])
 
   // On Chromebooks the command is the way in: show it straight away.
