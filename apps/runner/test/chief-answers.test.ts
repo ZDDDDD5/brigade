@@ -176,10 +176,14 @@ test('a pass that only recommends is told so, answers nothing, and has its repor
   })
 })
 
-test('Chief reads Brigade’s docs for questions about Brigade; other teammates are not told', () => {
-  const text = write(spec({}, 'chief'))
-  assert.match(text, /### Questions about Brigade itself/)
-  assert.match(text, /You run inside Brigade \(https:\/\/www\.brigade\.lol\)/)
-  assert.match(text, /read its docs at https:\/\/www\.brigade\.lol\/docs/)
-  assert.ok(!write(spec()).includes('Questions about Brigade itself'))
+test('Chief and every other teammate check Brigade’s docs and code for questions about Brigade', () => {
+  for (const text of [write(spec({}, 'chief')), write(spec())]) {
+    assert.match(text, /## Questions about Brigade itself/)
+    assert.match(text, /You run inside Brigade \(https:\/\/www\.brigade\.lol\)/)
+    assert.match(text, /its docs at https:\/\/www\.brigade\.lol\/docs/)
+    assert.match(
+      text,
+      /the code and the `docs\/` folder of the gmpetrov\/brigade repository are the truth/,
+    )
+  }
 })

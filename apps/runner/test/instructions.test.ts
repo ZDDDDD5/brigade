@@ -338,3 +338,37 @@ test('a thread’s list items come with the files under them, and a document’s
     ),
   )
 })
+
+test('the instructions name the harnesses Brigade runs teammates on, beyond the teammate’s own', () => {
+  const base = testSpec('')
+  const text = (spec: ThreadSpec) =>
+    instructions(
+      spec,
+      threadMemory(spec, { workspace: '', teammate: '', lines: {} }, '/t', now),
+      '/library',
+      {
+        ready: true,
+      },
+    )
+  // An older API sends no harnesses: Claude Code and Codex.
+  const older = text(base)
+  assert.match(
+    older,
+    /Claude Code \(on a Claude account\) or Codex \(on a ChatGPT account\)\. You run on Claude Code, which says nothing of the others\./,
+  )
+  assert.ok(!older.includes('also Pi'))
+  // Features open to the starter add theirs; a teammate on Codex is told it runs on Codex.
+  const opened = text(
+    ThreadSpec.parse({
+      ...base,
+      teammate: { ...base.teammate, harness: 'codex' },
+      harnesses: ['claude_code', 'codex', 'pi', 'antigravity'],
+    }),
+  )
+  assert.match(
+    opened,
+    /also Pi and Antigravity\. You run on Codex, which says nothing of the others\./,
+  )
+  assert.match(opened, /never answer from memory, nor from what you see of your own setup/)
+  assert.match(opened, /behind a flag or not released yet: say so when you mention it/)
+})

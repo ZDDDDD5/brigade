@@ -25,6 +25,7 @@ import {
   PROPOSE_SKILL_TOOL,
   REVIEW_LOOKS,
   SHOW_WIDGET_TOOL,
+  type TeammateHarness,
   type ThreadSkill,
   type ThreadSpec,
   WIDGET_GUIDE_TOOL,
@@ -139,6 +140,7 @@ export function instructions(
     WINDOWS && !CLOUD && windowsComputer(spec),
     spec.project && project(spec.project, libraryDir),
     projects(spec),
+    brigadeItself(spec),
     spec.teammate.kind === 'chief' && chief(spec),
     visuals(spec),
     replies(spec),
@@ -392,15 +394,47 @@ function projects(spec: ThreadSpec) {
   ].join('\n\n')
 }
 
+/** How the instructions name each harness. */
+const HARNESS_NAMES: Record<TeammateHarness, string> = {
+  claude_code: 'Claude Code',
+  codex: 'Codex',
+  pi: 'Pi',
+  antigravity: 'Antigravity',
+}
+
 /**
- * Where the chief stands, for questions about Brigade itself: the docs are the source of truth, so
- * the chief reads them rather than answering from its instructions or from memory.
+ * Questions about Brigade itself, for every teammate: checked, never guessed. A teammate takes
+ * what it sees of its own setup (its harness, its instructions) for what Brigade offers; Chief
+ * once told a member teammates run only on Claude Code. So the harnesses its starter may use are
+ * named, and the sources go by the question: the public docs for what a person can use, the
+ * repository's code and docs/ for how Brigade works inside, or work on Brigade's own code.
  */
-const BRIGADE_ITSELF =
-  '### Questions about Brigade itself\n\n' +
-  'You run inside Brigade (https://www.brigade.lol), the product this workspace uses. When someone asks how ' +
-  'Brigade works (plans, the desktop app, computers, self-hosting), read its docs at https://www.brigade.lol/docs ' +
-  '(their index: https://www.brigade.lol/docs/llms.txt) and answer from them, with a link, never from memory.'
+export function brigadeItself(spec: ThreadSpec) {
+  const open: TeammateHarness[] =
+    spec.harnesses.length > 0 ? spec.harnesses : ['claude_code', 'codex']
+  const more = open.filter((h) => h !== 'claude_code' && h !== 'codex').map((h) => HARNESS_NAMES[h])
+  return (
+    '## Questions about Brigade itself\n\n' +
+    'You run inside Brigade (https://www.brigade.lol), the product this workspace uses. Each teammate runs on ' +
+    'the harness of the model picked on its profile: Claude Code (on a Claude account) or Codex (on a ChatGPT ' +
+    'account)' +
+    (more.length > 0
+      ? `, and for the person this thread works for also ${more.join(' and ')}`
+      : '') +
+    `. You run on ${HARNESS_NAMES[spec.teammate.harness]}, which says nothing of the others.\n\n` +
+    'When someone asks about Brigade (what it can do, plans, settings, the desktop app, computers, ' +
+    'self-hosting), never answer from memory, nor from what you see of your own setup: your harness, your ' +
+    'instructions and your tools say what this thread has, not what Brigade offers. Check first, and say ' +
+    'where you checked:\n' +
+    '- What a person can use: its docs at https://www.brigade.lol/docs (their index: ' +
+    'https://www.brigade.lol/docs/llms.txt), with a link. Its code shows more, but some of it is behind a ' +
+    'flag or not released yet: say so when you mention it, and never offer it as available.\n' +
+    "- How Brigade works inside, or work on Brigade's own code: the code and the `docs/` folder of the " +
+    'gmpetrov/brigade repository are the truth and go further than the public docs; where they disagree, ' +
+    'the code wins.\n' +
+    '- When neither answers, say you could not check rather than guess.'
+  )
+}
 
 /** The chief: sets up the team, then answers or routes what people ask it. */
 function chief(spec: ThreadSpec) {
@@ -444,7 +478,6 @@ function chief(spec: ThreadSpec) {
       "- Do not do a teammate's work yourself. When nobody fits, do it if it is small, else propose the teammate " +
         'it needs.',
     ].join('\n'),
-    BRIGADE_ITSELF,
     rulesForChief(spec.rulesAct === true),
     roster.length > 0
       ? `### The team\n\n${roster.map((t) => `- ${t.name}${t.role ? `: ${t.role}` : ''}`).join('\n')}`

@@ -9,6 +9,7 @@ import {
   folderExceptions,
   libraryAccessFor,
   MCP_PROTOCOL,
+  type TeammateHarness,
   type ThreadSpec,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
@@ -338,6 +339,13 @@ export async function specFor(
   // Tools (docs/tools.md): for teammates of a thread whose starter has the feature.
   const tools = !passing && features.has('tools')
   const closedApps = await closedAppKinds(db, thread, features)
+  // The harnesses its teammates may run on, named in the instructions (Questions about Brigade).
+  const harnesses: TeammateHarness[] = [
+    'claude_code',
+    'codex',
+    ...(features.has('pi_harness') ? (['pi'] as const) : []),
+    ...(features.has('antigravity_harness') ? (['antigravity'] as const) : []),
+  ]
   // Missions (docs/missions.md): the mission the thread works for, when its starter has the feature.
   // Not in Chief's pass nor a playbook's run, which their own briefs steer.
   const mission = passing || playbook ? null : await threadInitiative(db, thread)
@@ -437,6 +445,8 @@ export async function specFor(
     missions,
     themes,
     closedApps,
+    // Older runners ignore it.
+    harnesses,
     mission,
     playbook: playbook
       ? {
