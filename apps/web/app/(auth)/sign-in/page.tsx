@@ -45,8 +45,11 @@ export default function SignIn() {
     setApp('browser')
     const code = query.get('desktop_code')
     const verifier = query.get('verifier')
-    void Promise.all([guestOffered(), computerTaken()])
-      .then(([offered, taken]) => {
+    // The computer is asked last, once guests are known to be open: a link can start while
+    // that request is out, and the answer must be the state the decision is made on.
+    void guestOffered()
+      .then(async (offered) => {
+        const taken = await computerTaken()
         if (taken.linked) setLinked(taken.linked)
         else if (taken.linking) setLinking(true)
         if (!offered) return

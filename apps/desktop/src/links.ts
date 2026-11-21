@@ -58,10 +58,13 @@ export async function openLink(raw: string) {
     // workspace running now (a guest's link once took a Mac from the account that linked it).
     // A link from an older API names no workspace and goes to the running one's home.
     const running = activeLink()
-    const replaces =
-      running && (link.workspace === undefined || running.id !== link.workspace)
-        ? `\n\nThis computer runs the teammates of "${running.name}" now. They stop here until you switch back to it in the Workspace menu.`
-        : ''
+    const replaces = !running
+      ? ''
+      : link.workspace === undefined
+        ? `\n\nThis computer runs the teammates of "${running.name}" now. This link replaces that workspace here: link it again from its dashboard to bring it back.`
+        : running.id !== link.workspace
+          ? `\n\nThis computer runs the teammates of "${running.name}" now. They stop here until you switch back to it in the Workspace menu.`
+          : ''
     // A link alone never connects this computer: its teammates would run commands here.
     const confirmed = await confirm({
       title: 'Connect this computer to Brigade?',
