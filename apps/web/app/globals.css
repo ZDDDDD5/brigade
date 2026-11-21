@@ -11,11 +11,15 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Brigade's typeface: General Sans (Indian Type Foundry, free under the ITF Free Font
- * License) in place of the theme's Plus Jakarta Sans, for the dashboard and every public
- * page. Its files come from Fontshare's CDN (the CSP allows fonts from any https host, but
- * stylesheets only from Google Fonts, so the faces are declared here). A worn theme
- * (docs/themes.md) still sets its own --font-sans over this. */
+/* Brigade's typefaces, in place of the theme's Plus Jakarta Sans.
+ * - Geist (Vercel, SIL Open Font License) is the dashboard's text face: neutral and calm for
+ *   long replies. Its stylesheet comes from Google Fonts (app/layout.tsx).
+ * - General Sans (Indian Type Foundry, free under the ITF Free Font License) is the brand's
+ *   voice: every public page (components/landing, components/home set it as their
+ *   --font-sans) and a few branded spots in the dashboard (`font-brand`: the loader, the
+ *   workspace name). Its files come from Fontshare's CDN (the CSP allows fonts from any https
+ *   host, but stylesheets only from Google Fonts, so the faces are declared here).
+ * A worn theme (docs/themes.md) still sets its own --font-sans over the dashboard's. */
 @font-face {
   font-family: 'General Sans';
   src: url('https://cdn.fontshare.com/wf/MFQT7HFGCR2L5ULQTW6YXYZXXHMPKLJ3/YWQ244D6TACUX5JBKATPOW5I5MGJ3G73/7YY3ZAAE3TRV2LANYOLXNHTPHLXVWTKH.woff2')
@@ -58,7 +62,11 @@
 }
 :root,
 .dark {
-  --font-sans: 'General Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-brand: 'General Sans', ui-sans-serif, system-ui, sans-serif;
+  /* Geist is set for text at its own spacing: the theme's -0.025em cramps it. The public
+   * pages keep the tighter spacing they were drawn with (components/landing, components/home). */
+  --tracking-normal: 0em;
 }
 
 /* Brigade status colors: not part of a shadcn theme, so they live here. */
@@ -111,6 +119,7 @@
   --color-sidebar-ring: var(--sidebar-ring);
 
   --font-sans: var(--font-sans);
+  --font-brand: var(--font-brand);
   --font-mono: var(--font-mono);
   --font-serif: var(--font-serif);
 

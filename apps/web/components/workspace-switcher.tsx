@@ -137,7 +137,7 @@ export function SetupWorkspaceSwitcher({ me }: { me: Me }) {
           ) : (
             <Building2 className="size-4 shrink-0 text-muted-foreground" />
           )}
-          <span className="truncate">{workspace?.name ?? organization?.name}</span>
+          <span className="truncate font-brand">{workspace?.name ?? organization?.name}</span>
           <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
         </DropdownMenuTrigger>
         <WorkspaceMenuContent me={me} />

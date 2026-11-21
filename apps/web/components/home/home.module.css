@@ -13,6 +13,8 @@
   --ease-out: cubic-bezier(0.19, 1, 0.22, 1);
   --ease-snap: cubic-bezier(0.16, 1, 0.3, 1);
 
+  /* The brand's face, not the dashboard's (globals.css). */
+  --font-sans: var(--font-brand);
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
