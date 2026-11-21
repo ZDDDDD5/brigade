@@ -44,6 +44,7 @@ import { editable, OPEN_LAYER } from '@/components/side-panel'
 import {
   api,
   computerName,
+  isList,
   useApi,
   type Account,
   type ComputersResponse,
@@ -80,7 +81,7 @@ export async function findThreads(query: string, exclude?: string): Promise<Foun
 export function useMentionOptions(threadId?: string): Option[] {
   const { teammates, projects } = useDashboard()
   const connections = useApi<ConnectionsResponse>('/connections', ['connections.updated'])
-  const threads = useApi<ThreadSummary[]>('/threads')
+  const threads = useApi<ThreadSummary[]>('/threads', undefined, isList)
   const computers = useApi<ComputersResponse>('/computers')
   const credentials = useApi<Credential[]>('/credentials')
   const repositories = useApi<RepositoryOption[]>('/repositories')

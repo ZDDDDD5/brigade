@@ -30,7 +30,9 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  answerOf,
   api,
+  isList,
   ApiError,
   subscribeToCloud,
   useApi,
@@ -493,7 +495,9 @@ function ConnectAI({
         }
         const account = ready.find((a) => works(a) && a.provider === chief?.harness)
         if (chief && account) {
-          const started = await api<ThreadSummary[]>(`/threads?teammateId=${chief.id}`)
+          const started = await answerOf<ThreadSummary[]>(`/threads?teammateId=${chief.id}`, {
+            accept: isList,
+          })
           if (started.length === 0) {
             const listLines = await setupLine()
             const thread = await api<{ id: string }>('/threads', {

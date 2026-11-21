@@ -233,7 +233,12 @@ const NONE: Unlisted[] = []
  * The list with the threads not in it yet first, as the sidebar shows them; the list itself
  * while there are none.
  */
-export function withUnlisted(list: ThreadSummary[] | undefined, rows: readonly Unlisted[]) {
+export function withUnlisted(
+  answer: ThreadSummary[] | undefined,
+  rows: readonly Unlisted[],
+): ThreadSummary[] | undefined {
+  // Read as a list whatever the API answered: anything else is no list yet.
+  const list = Array.isArray(answer) ? answer : undefined
   if (!rows.length) return list
   const ids = new Set(list?.map((t) => t.id))
   const missing = rows.filter((r) => !ids.has(r.row.id)).map((r) => r.row)

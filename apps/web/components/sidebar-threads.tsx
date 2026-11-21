@@ -81,7 +81,9 @@ import {
 } from '@/components/ui/sidebar'
 import { Hint } from '@/components/ui/tooltip'
 import {
+  answerOf,
   api,
+  isList,
   useApi,
   type PinnedList,
   type ProjectSummary,
@@ -935,7 +937,10 @@ export function SidebarWork({
   const [archived, setArchived] = useState<ThreadSummary[]>()
   const loadArchived = () => {
     setLater(false)
-    return api<ThreadSummary[]>('/threads?archived=1').then(setArchived, () => setArchived([]))
+    return answerOf<ThreadSummary[]>('/threads?archived=1', { accept: isList }).then(
+      setArchived,
+      () => setArchived([]),
+    )
   }
   // Whether the list shows the threads this member snoozed instead (the filter's Snoozed).
   // They are in the panel's list, all of them, out of the usual one.
@@ -1031,7 +1036,9 @@ export function SidebarWork({
     if (!threads) return
     const ids = farKey ? farKey.split('\n') : []
     deliverFar(
-      ids.length ? fetchFar(ids, (path) => api<ThreadSummary[]>(path)) : Promise.resolve([]),
+      ids.length
+        ? fetchFar(ids, (path) => answerOf<ThreadSummary[]>(path, { accept: isList }))
+        : Promise.resolve([]),
     )
   }, [threads, farKey, deliverFar])
 
@@ -1233,8 +1240,9 @@ export function SidebarWork({
     const oldest = matching[matching.length - 1]
     setLoadingOlder(true)
     try {
-      const page = await api<ThreadSummary[]>(
+      const page = await answerOf<ThreadSummary[]>(
         `/threads?limit=${OLDER_PAGE}&sort=activity${query}${oldest ? `&before=${oldest.id}` : ''}`,
+        { accept: isList },
       )
       setOlder((o) => {
         const ids = new Set(o.map((t) => t.id))
@@ -1286,7 +1294,7 @@ export function SidebarWork({
   useEffect(() => {
     if (!openId || inView || loaded) return
     let current = true
-    api<ThreadSummary[]>(`/threads?id=${openId}`).then(
+    answerOf<ThreadSummary[]>(`/threads?id=${openId}`, { accept: isList }).then(
       ([t]) =>
         current &&
         setFetched(t && holds(t, openId) ? withAsks([t], needsYou, openId).all[0] : undefined),

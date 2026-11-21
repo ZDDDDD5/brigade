@@ -10,7 +10,7 @@ import { useDashboard } from '@/components/dashboard'
 import { DesktopScreen } from '@/components/desktop-preview'
 import { useThreadPanel } from '@/components/thread-panel'
 import { isNarrow } from '@/lib/platform'
-import { useApi, type Teammate, type Thread, type ThreadSummary } from '@/lib/api'
+import { isList, useApi, type Teammate, type Thread, type ThreadSummary } from '@/lib/api'
 import { useControlled } from '@/lib/control'
 import { useLive } from '@/lib/use-live'
 
@@ -19,7 +19,7 @@ const BUSY = new Set(['starting', 'running'])
 export function TeammateComputer({ teammate }: { teammate: Teammate }) {
   const { me } = useDashboard()
   const panel = useThreadPanel()
-  const threads = useApi<ThreadSummary[]>(`/threads?teammateId=${teammate.id}`)
+  const threads = useApi<ThreadSummary[]>(`/threads?teammateId=${teammate.id}`, undefined, isList)
   // Closed, the thread stays docked: still the one control goes through.
   const beside = panel.threadId
   // The thread beside it, even when the list leaves it out (a child thread's), once it shows

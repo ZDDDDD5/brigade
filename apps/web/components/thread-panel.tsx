@@ -52,9 +52,10 @@ import { ThreadChannel } from '@/components/thread-list'
 import { Button } from '@/components/ui/button'
 import { Hint } from '@/components/ui/tooltip'
 import {
+  answerOf,
   api,
   preload,
-  preloaded,
+  isList,
   useApi,
   type ProjectRef,
   type Teammate,
@@ -363,18 +364,18 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
 
   // Every thread, for what each teammate is doing and what waits; live. A pull request's
   // change moves its thread in the sidebar (waiting on a person to merge, or not).
-  const threads = useApi<ThreadSummary[]>('/threads', [
-    'thread.updated',
-    'pulls.updated',
-    'lists.updated',
-  ])
+  const threads = useApi<ThreadSummary[]>(
+    '/threads',
+    ['thread.updated', 'pulls.updated', 'lists.updated'],
+    isList,
+  )
   const reloadThreads = threads.reload
   // Threads just sent, listed before the API has them (lib/pending-threads.ts): first, until
   // the list has them, which is asked for again once they have started.
   const unlisted = useUnlistedThreads()
   const threadList = useMemo(() => withUnlisted(threads.data, unlisted), [threads.data, unlisted])
   useEffect(() => {
-    if (threads.data) pendingThreads.listed(new Set(threads.data.map((t) => t.id)))
+    if (Array.isArray(threads.data)) pendingThreads.listed(new Set(threads.data.map((t) => t.id)))
   }, [threads.data])
   const startedUnlisted = unlisted.flatMap((u) => (u.startedAt ? [u.row.id] : [])).join(' ')
   useEffect(() => {
@@ -923,9 +924,7 @@ function useThreadChannel(teammateId: string) {
         // The newest, as many as are shown (up to the API's most): replies and states change.
         const limit = Math.min(Math.max(loaded.current, PAGE), 100)
         const url = `${path}&limit=${limit}`
-        const request =
-          (opening ? preloaded<ThreadSummary[]>(url) : undefined) ?? api<ThreadSummary[]>(url)
-        const page = (await request).reverse()
+        const page = (await answerOf<ThreadSummary[]>(url, { opening, accept: isList })).reverse()
         // Whether there are earlier ones: the first page says; after it, earlier pages do.
         if (loaded.current === 0) setMore(page.length === limit)
         const ids = new Set(page.map((t) => t.id))
@@ -957,7 +956,9 @@ function useThreadChannel(teammateId: string) {
       loading.current = true
       setLoadingOlder(true)
       try {
-        const page = await api<ThreadSummary[]>(`${path}&limit=${PAGE}&before=${oldest.id}`)
+        const page = await answerOf<ThreadSummary[]>(`${path}&limit=${PAGE}&before=${oldest.id}`, {
+          accept: isList,
+        })
         before()
         setThreads((shown) => {
           // Never twice: a thread already shown stays where it is.

@@ -40,7 +40,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Hint } from '@/components/ui/tooltip'
-import { api, documentFileUrl, useApi, type ThreadSummary } from '@/lib/api'
+import { api, documentFileUrl, isList, useApi, type ThreadSummary } from '@/lib/api'
 import { handToThread } from '@/lib/hand-off'
 import type { RecentDay } from '@/lib/recently-done'
 import { groupOf } from '@/lib/sub-threads'
@@ -317,7 +317,7 @@ function HandOffDialog({
 }) {
   const { teammates } = useDashboard()
   const { openThread } = useThreadPanel()
-  const threads = useApi<ThreadSummary[]>('/threads')
+  const threads = useApi<ThreadSummary[]>('/threads', undefined, isList)
   const [teammateId, setTeammateId] = useState(defaultTeammate?.id ?? teammates[0]?.id ?? '')
   const count = picked.lines.length
   const [mode, setMode] = useState<Mode>('together')
