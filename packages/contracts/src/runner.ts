@@ -297,6 +297,12 @@ export const ThreadSpec = z.object({
    * grant. Older APIs leave it out: none closed.
    */
   closedApps: z.array(z.string()).default([]),
+  /**
+   * The harnesses teammates may run on for its starter: Claude Code and Codex, and those their
+   * features open (pi_harness, antigravity_harness). The instructions name them, so a teammate
+   * never takes its own harness for the only one. Older APIs leave it out: Claude Code and Codex.
+   */
+  harnesses: z.array(TeammateHarness).default([]),
   mission: z
     .object({
       id: z.string(),
