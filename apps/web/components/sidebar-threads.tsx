@@ -1036,7 +1036,9 @@ export function SidebarWork({
     if (!threads) return
     const ids = farKey ? farKey.split('\n') : []
     deliverFar(
-      ids.length ? fetchFar(ids, (path) => api<ThreadSummary[]>(path)) : Promise.resolve([]),
+      ids.length
+        ? fetchFar(ids, (path) => answerOf<ThreadSummary[]>(path, { accept: isList }))
+        : Promise.resolve([]),
     )
   }, [threads, farKey, deliverFar])
 
@@ -1238,8 +1240,9 @@ export function SidebarWork({
     const oldest = matching[matching.length - 1]
     setLoadingOlder(true)
     try {
-      const page = await api<ThreadSummary[]>(
+      const page = await answerOf<ThreadSummary[]>(
         `/threads?limit=${OLDER_PAGE}&sort=activity${query}${oldest ? `&before=${oldest.id}` : ''}`,
+        { accept: isList },
       )
       setOlder((o) => {
         const ids = new Set(o.map((t) => t.id))
