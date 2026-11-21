@@ -10,7 +10,7 @@ export function AppLoader({ note }: { note?: string }) {
       <div
         role="status"
         aria-label="Loading Brigade"
-        className="loader-blur inline-flex px-2 py-1 font-sans text-[26px] font-extrabold tracking-[-0.045em]"
+        className="loader-blur inline-flex px-2 py-1 font-brand text-[26px] font-extrabold tracking-[-0.045em]"
       >
         {[...'Brigade'].map((letter, i) => (
           <span key={i} aria-hidden="true">
