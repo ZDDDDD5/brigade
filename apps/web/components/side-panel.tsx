@@ -41,7 +41,7 @@ function maxWidth() {
   return Math.max(MIN_PANEL, (page?.width ?? window.innerWidth) - MIN_PAGE)
 }
 
-function setWidth(px: number | null) {
+function setWidth(px: number | null, max = maxWidth()) {
   const root = document.documentElement.style
   if (px === null) {
     root.removeProperty('--desktop-w')
@@ -50,8 +50,13 @@ function setWidth(px: number | null) {
     } catch {}
     return
   }
-  const width = Math.round(Math.min(maxWidth(), Math.max(MIN_PANEL, px)))
+  const width = Math.round(Math.min(max, Math.max(MIN_PANEL, px)))
   root.setProperty('--desktop-w', `${width}px`)
+  return width
+}
+
+function saveWidth(width: number | undefined) {
+  if (width === undefined) return
   try {
     localStorage.setItem(WIDTH_KEY, String(width))
   } catch {}
@@ -64,7 +69,7 @@ function useSavedWidth() {
     try {
       saved = Number(localStorage.getItem(WIDTH_KEY)) || undefined
     } catch {}
-    if (saved) setWidth(saved)
+    if (saved) saveWidth(setWidth(saved))
   }, [])
 }
 
@@ -82,8 +87,28 @@ export function PanelResizeHandle() {
     const handle = e.currentTarget
     handle.setPointerCapture(e.pointerId)
     document.body.classList.add('select-none', 'cursor-col-resize')
-    const move = (m: PointerEvent) => setWidth(window.innerWidth - m.clientX)
+    // Measured once: reading the layout on each move, right after the last
+    // move changed the width, forced a whole-page layout per pointer event.
+    const max = maxWidth()
+    let x = e.clientX
+    let frame = 0
+    let width: number | undefined
+    // At most one width per frame, however often the pointer reports.
+    const move = (m: PointerEvent) => {
+      x = m.clientX
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0
+          width = setWidth(window.innerWidth - x, max)
+        })
+    }
     const up = () => {
+      if (frame) {
+        cancelAnimationFrame(frame)
+        frame = 0
+        width = setWidth(window.innerWidth - x, max)
+      }
+      saveWidth(width)
       handle.removeEventListener('pointermove', move)
       handle.removeEventListener('pointerup', up)
       handle.removeEventListener('pointercancel', up)
@@ -98,7 +123,7 @@ export function PanelResizeHandle() {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
     e.preventDefault()
     const current = panel.current?.parentElement?.getBoundingClientRect().width ?? MIN_PANEL
-    setWidth(current + (e.key === 'ArrowLeft' ? 32 : -32))
+    saveWidth(setWidth(current + (e.key === 'ArrowLeft' ? 32 : -32)))
   }
 
   return (

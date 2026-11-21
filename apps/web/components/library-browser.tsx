@@ -100,6 +100,13 @@ export { contentUrl }
 const DRAG_TYPE = 'application/x-brigade-library'
 type Dragged = { kind: 'file'; id: string; path: string } | { kind: 'folder'; path: string }
 
+/**
+ * A row lays out only once near the screen. Recent lists every file of the library,
+ * hundreds of rows each with fading names (truncate): without this, resizing the side
+ * panel beside it laid all of them out again on each frame of the drag.
+ */
+const LAZY_ROW = '[content-visibility:auto] [contain-intrinsic-size:auto_4rem]'
+
 const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
 const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1)
 export const join = (folder: string, name: string) => (folder ? `${folder}/${name}` : name)
@@ -356,7 +363,7 @@ export function LibraryBrowser({
     const isSet = set.length > 0
     const Icon = toolRow ? Wrench : isDesign || isSet ? Palette : guarded ? FolderLock : Folder
     return (
-      <div key={f.path}>
+      <div key={f.path} className={LAZY_ROW}>
         <div
           {...draggable({ kind: 'folder', path: f.path })}
           {...dropTarget(f.path)}
@@ -488,7 +495,7 @@ export function LibraryBrowser({
       <div
         key={f.id}
         id={where === 'list' ? `library-file-${f.id}` : undefined}
-        className={cn('scroll-mt-20', (f.id === focus || isOpen) && 'bg-primary/5')}
+        className={cn(LAZY_ROW, 'scroll-mt-20', (f.id === focus || isOpen) && 'bg-primary/5')}
       >
         <div
           {...draggable({ kind: 'file', id: f.id, path: f.path })}
