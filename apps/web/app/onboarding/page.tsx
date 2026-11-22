@@ -51,7 +51,7 @@ import { computerTaken } from '@/lib/guest'
 import { detectDevice, type Device } from '@/lib/device'
 import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
 import { MAC_APP_URL } from '@/lib/mac-app'
-import { useWindowsAppReady, WINDOWS_APP_URL } from '@/lib/windows-app'
+import { useWindowsAppReady, WINDOWS_APP_URL, WINDOWS_UNSIGNED_HINT } from '@/lib/windows-app'
 import { markSignedIn, markSignedOut } from '@/lib/signed-in'
 import { useLive } from '@/lib/use-live'
 import { cn } from '@/lib/utils'
@@ -957,6 +957,9 @@ function ConnectAI({
                   >
                     Download again
                   </a>
+                  {device === 'windows' && (
+                    <span className="text-xs text-muted-foreground">{WINDOWS_UNSIGNED_HINT}</span>
+                  )}
                 </span>
               </li>
               <li className="flex gap-3">
