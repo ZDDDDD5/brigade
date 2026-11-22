@@ -898,6 +898,29 @@ fingerprint>"`, sending the page `no-store`, and adds a bridge script first in i
 - **Root setup on cloud computers.** The helper and the library folder are one versioned setup script
   (`setupScript` in `cloud-bootstrap.ts`). A cloud runner reports the setup it has on connect; the API reapplies the
   current one through the provider when they differ. This replaces reinstalling the helper by hand.
+- **Threads' namespaces and boat's restore** (`lazy_gone` and `sync_holder` in the thread helper,
+  `syncHoldersAfterRestore` in `apps/runner/src/thread-net.ts`). While boat restores a resumed computer's disk, its
+  system folders (`/home/*`, `/opt/brigade`, `/var/lib/brigade`…) are `ascii-lazyfs` FUSE mounts over the disk; once
+  their files are all there, boat moves each aside on the host (it "retires" them) and may cut one off later. A
+  thread's holder has a mount namespace of its own: one started during the restore kept those mounts, as a move reaches
+  no other namespace (with private or slave propagation alike, checked on a VM), and when boat cut one off on Nov 22,
+  17 minutes after the restore, every command of the thread failed ("can't cd to" its own folder) until the holder was
+  taken down. So `enter` first brings a holder in line with the host when they differ: the lazyfs mounts the host no
+  longer has at the same place are unmounted in it lazily, as the host did, and its `/tmp` and `/var/tmp`, bound from
+  one of them, get the thread's folders on the disk bound over them (never unmounted first, so they are never the
+  host's for a moment). A mount detached under a running process breaks it all the same: the path of its folder no
+  longer resolves (`getcwd` fails) and new clients no longer find the sockets it listens on in `/tmp`. So while the
+  thread runs anything besides its holder (a preview, a turn), only the mounts that were cut off ("not connected") are
+  dropped (`sync_plan`); one that merely stalls is kept and tried again by the next command. The rest go once it runs
+  nothing, as its next turn starts. Every command entering a holder not in line waits for the helper's lock and keeps
+  it until it is in the holder's PID namespace, where that check sees it: a watcher on the host lets go of it once
+  `nsenter` has forked the command (`handoff`), not the command itself, whose first step a stalled mount in the thread
+  could hold, and the global lock with it. An idle holder that cannot be mended in place (its `/tmp` folder deleted
+  under it) is started again, with nothing in it to lose. That also mends a holder whose mount was cut off already. The
+  runner does the same for every holder (`brigade-thread sync`) a minute and five minutes after boat says the disk is
+  restored, and once after it starts, so a quiet thread nobody enters lets go of them too. Starting every holder again
+  instead would kill what runs in them, and holding namespaces back until the restore ends would leave threads without
+  their own `/tmp` and processes for up to an hour.
 - **Files in a thread.** A file path in a teammate's reply (inline code such as `faq/support.md` or `src/a.ts:42`, or a
   relative Markdown link) opens in a panel beside the thread, in the desktop panel's place (a bottom sheet on narrow
   screens). `GET /api/threads/:id/file` serves a library path from the library, so it opens while the computer is

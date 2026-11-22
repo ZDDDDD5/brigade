@@ -2,7 +2,12 @@ import { execFileSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 import { dirname } from 'node:path'
 import { test } from 'node:test'
-import { asTeammate, dockerSocket, netWithTries } from '../src/thread-net.js'
+import {
+  asTeammate,
+  dockerSocket,
+  netWithTries,
+  syncHoldersAfterRestore,
+} from '../src/thread-net.js'
 
 // What runs as a teammate finds the runner's Node first: sudo's PATH has only the system's.
 const withNode = [
@@ -94,4 +99,52 @@ test("a thread's network is tried again when the helper fails, and never left to
     ),
     /own network could not be set up on the computer \(brigade-thread: no address left\)/,
   )
+})
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test("the threads' holders are brought in line once boat has restored the disk, not while it does", async () => {
+  // Restoring for the first checks, then restored.
+  let restoringFor = 3
+  const syncs: number[] = []
+  const started = Date.now()
+  const stop = syncHoldersAfterRestore(
+    async () => restoringFor-- > 0,
+    async () => void syncs.push(Date.now() - started),
+    { everyMs: 10, afterMs: [20, 60], forMs: 1000 },
+  )
+  await pause(25)
+  assert.equal(syncs.length, 0, 'nothing while the disk is restored')
+  await pause(150)
+  stop()
+  // Once some time after, and once more later: boat retires its mounts after saying so.
+  assert.equal(syncs.length, 2)
+  assert.ok(syncs[1]! - syncs[0]! >= 30)
+})
+
+test('a runner that starts after the restore brings the holders in line once, and only once', async () => {
+  let syncs = 0
+  const stop = syncHoldersAfterRestore(
+    async () => false,
+    async () => void syncs++,
+    { everyMs: 5, afterMs: [10], forMs: 1000 },
+  )
+  await pause(80)
+  stop()
+  assert.equal(syncs, 1)
+})
+
+test('a failing check counts as restored, and stopping cancels what was planned', async () => {
+  let syncs = 0
+  const stop = syncHoldersAfterRestore(
+    async () => {
+      throw new Error('no restore files')
+    },
+    async () => void syncs++,
+    { everyMs: 5, afterMs: [40], forMs: 1000 },
+  )
+  await pause(15)
+  stop()
+  await pause(50)
+  assert.equal(syncs, 0)
 })

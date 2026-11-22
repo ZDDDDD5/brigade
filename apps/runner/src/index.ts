@@ -71,6 +71,8 @@ import { MachineRuns } from './machine-runs.js'
 import { Previews } from './previews.js'
 import { processGroups } from './process-groups.js'
 import { teammateUser } from './teammates.js'
+import { syncHoldersAfterRestore } from './thread-net.js'
+import { restoring } from './disk.js'
 import { Threads, threadFolder } from './threads.js'
 import { prefetch, sweep } from './repos.js'
 import { Updater } from './updater.js'
@@ -926,6 +928,8 @@ async function start() {
   setInterval(cleanAgy, 60 * 60_000).unref()
   // On a cloud computer, archive the folders of the threads quiet longest when the disk fills up.
   folders.start()
+  // Once boat has restored the disk, the threads' namespaces let go of its restore's mounts.
+  if (CLOUD) syncHoldersAfterRestore(() => restoring())
   // And back up what lives only on this cloud computer's disk, now and then.
   backups?.start()
   // Once connected: what turns spent while the runner was away, then every few minutes.

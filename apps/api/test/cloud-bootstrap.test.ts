@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
@@ -472,6 +472,100 @@ test(
     assert.match(stop.log, /^netns bt-cmthread2 -t nat -D OUTPUT -j BD-1500$/m)
   },
 )
+
+test("a thread's holder drops the restore's mounts that boat retired on the host, and only those", () => {
+  const lazyGone = /^lazy_gone\(\) \{[\s\S]*?^\}$/m.exec(THREAD_HELPER)?.[0]
+  assert.ok(lazyGone)
+  const dir = mkdtempSync(join(tmpdir(), 'lazy-gone-'))
+  // The host, once boat restored the disk: its mounts of /home/bt-x, /home/user and
+  // /var/lib/brigade moved aside (retired), the one of /home/bt-y still there.
+  writeFileSync(
+    join(dir, 'host'),
+    [
+      '30 1 253:1 / / rw,relatime shared:1 - ext4 /dev/vda1 rw',
+      '1034 30 253:1 /home /home rw,relatime shared:2 - ext4 /dev/vda1 rw',
+      '1640 1034 253:1 /home/bt-x /home/bt-x rw,relatime - ext4 /dev/vda1 rw',
+      '1642 1034 253:1 /home/bt-y /home/bt-y rw,relatime - ext4 /dev/vda1 rw',
+      '1643 1642 0:79 / /home/bt-y rw,nosuid,nodev,relatime - fuse ascii-lazyfs-sys rw,user_id=0',
+      '1658 30 253:1 /var/lib/brigade /var/lib/brigade rw,relatime - ext4 /dev/vda1 rw',
+      '1797 30 0:64 / /var/lib/ascii-lazy/retired/home/bt-x rw,relatime - fuse ascii-lazyfs-sys rw',
+      '1798 30 0:31 / /tmp rw,nosuid,nodev - tmpfs tmpfs rw',
+      '',
+    ].join('\n'),
+  )
+  // The holder, started while boat restored it: its own copy of the restore's mounts, its /tmp
+  // and /var/tmp bound from one of them.
+  writeFileSync(
+    join(dir, 'holder'),
+    [
+      '600 590 253:1 / / rw,relatime - ext4 /dev/vda1 rw',
+      '601 600 253:1 /home /home rw,relatime - ext4 /dev/vda1 rw',
+      '602 601 253:1 /home/bt-x /home/bt-x rw,relatime - ext4 /dev/vda1 rw',
+      '603 602 0:64 / /home/bt-x rw,nosuid,nodev,relatime - fuse ascii-lazyfs-sys rw,user_id=0',
+      '604 601 253:1 /home/bt-y /home/bt-y rw,relatime - ext4 /dev/vda1 rw',
+      '605 604 0:79 / /home/bt-y rw,nosuid,nodev,relatime - fuse ascii-lazyfs-sys rw,user_id=0',
+      '606 601 0:56 / /home/user rw,nosuid,nodev,relatime - fuse ascii-lazyfs rw,user_id=0',
+      '607 600 253:1 /var/lib/brigade /var/lib/brigade rw,relatime - ext4 /dev/vda1 rw',
+      '608 607 0:67 / /var/lib/brigade rw,nosuid,nodev,relatime - fuse ascii-lazyfs-sys rw',
+      '609 600 0:67 /thread-tmp/cmthread1/tmp /tmp rw,relatime - fuse ascii-lazyfs-sys rw',
+      '610 600 0:67 /thread-tmp/cmthread1/var-tmp /var/tmp rw,relatime - fuse ascii-lazyfs-sys rw',
+      '611 600 0:90 / /dev/shm rw,nosuid,nodev - tmpfs tmpfs rw',
+      '612 600 0:91 / /proc rw - proc proc rw',
+      '',
+    ].join('\n'),
+  )
+  const gone = (host: string, holder: string) =>
+    spawnSync('sh', ['-c', `${lazyGone}\nlazy_gone "$1" "$2"`, 'sh', host, holder], {
+      encoding: 'utf8',
+    }).stdout
+  // Topmost first; /home/bt-y kept (not retired yet), /tmp and /var/tmp left to sync_holder.
+  assert.equal(
+    gone(join(dir, 'host'), join(dir, 'holder')),
+    '/var/lib/brigade\n/home/user\n/home/bt-x\n',
+  )
+  // A holder started after the restore: nothing to drop.
+  assert.equal(gone(join(dir, 'host'), join(dir, 'host')), '')
+  // Every command entering a holder not in line waits for the lock: none enters while it is done.
+  assert.match(THREAD_HELPER, /elif holder_stale "\$2" "\$P"; then\n(\s*#.*\n)*\s*lock\n/)
+  // A running thread keeps what it uses until it was cut off, and its /tmp is bound over the old
+  // one, never unmounted first: not for a moment the host's.
+  assert.match(THREAD_HELPER, /if holder_busy "\$2"; then\n\s*G=\$\(holder_cut "\$2" \$G\)/)
+  assert.doesNotMatch(THREAD_HELPER, /umount -l \/(var\/)?tmp/)
+  // The command enters with the lock held (handoff), and without the lock's file.
+  assert.match(THREAD_HELPER, /could not be brought in line" >&2\n.*\n\s*handoff\n/)
+  assert.match(THREAD_HELPER, /"\$@" 9>&-\n/)
+})
+
+test("enter's lock is let go once nsenter has forked the command, not before", async () => {
+  const handoff = /^handoff\(\) \{[\s\S]*?^\}$/m.exec(THREAD_HELPER)?.[0]
+  assert.ok(handoff)
+  const dir = mkdtempSync(join(tmpdir(), 'handoff-'))
+  const lockFile = join(dir, 'lock')
+  const free = () => spawnSync('flock', ['-n', lockFile, 'true']).status === 0
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  // As enter does: the lock taken, the watcher started, then this process becomes the one that
+  // forks the command (a shell that runs sleep as a child, as nsenter does), or one that does not.
+  const enter = (then: string) => {
+    const child = spawn('sh', [
+      '-c',
+      `${handoff}\nexec 9>"$1"; flock 9; handoff; exec sh -c '${then}' 9>&-`,
+      'sh',
+      lockFile,
+    ])
+    return new Promise((resolve) => child.on('exit', resolve))
+  }
+  const forks = enter('sleep 1; true')
+  await pause(500)
+  assert.ok(free(), 'let go once the command was forked')
+  await forks
+  const forksNot = enter('exec sleep 1')
+  await pause(500)
+  assert.ok(!free(), 'held while no command was forked')
+  await forksNot
+  await pause(300)
+  assert.ok(free(), 'let go once it is gone')
+  rmSync(dir, { recursive: true, force: true })
+})
 
 test("each thread's containers publish on a loopback address of its own", () => {
   const loopAddr = /^loop_addr\(\) \{.*\}$/m.exec(THREAD_HELPER)?.[0]
