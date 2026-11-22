@@ -155,6 +155,14 @@ test("an admin's login never takes the Chief from the owner's", { skip }, async 
   assert.equal(await w.harness(), 'claude_code')
 })
 
+test("an admin's login found before the owner's moves nothing either", { skip }, async () => {
+  // The admin's Codex first, the owner with no login yet: a Chief on Codex would be the owner's
+  // to run, and their Claude, found later, would not bring it back.
+  const w = await workspace('claude_code', ['codex'], admin)
+  assert.equal(await alignChief(w.workspaceId, admin), false)
+  assert.equal(await w.harness(), 'claude_code')
+})
+
 test('a Chief whose login is there stays, even with the other one too', { skip }, async () => {
   const w = await workspace('claude_code', ['claude_code', 'codex'])
   assert.equal(await alignChief(w.workspaceId, owner), false)
