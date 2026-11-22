@@ -214,16 +214,19 @@ export default function SignIn() {
             </CardContent>
           </Card>
         )}
-        <p className="text-center text-sm text-muted-foreground">
-          New here?{' '}
-          <AuthLink
-            passOn
-            href="/sign-up"
-            className="font-semibold text-primary underline-offset-4 hover:underline"
-          >
-            Create an account
-          </AuthLink>
-        </p>
+        {/* In Brigade.app, an account is made in the browser too: its sign-in page offers it. */}
+        {!app && (
+          <p className="text-center text-sm text-muted-foreground">
+            New here?{' '}
+            <AuthLink
+              passOn
+              href="/sign-up"
+              className="font-semibold text-primary underline-offset-4 hover:underline"
+            >
+              Create an account
+            </AuthLink>
+          </p>
+        )}
       </div>
     </main>
   )
