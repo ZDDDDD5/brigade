@@ -538,29 +538,40 @@ holder_busy() { # <pid>
   done
   return 1
 }
-# Whether a mount of the holder no longer answers: cut off (lazyfs aborted it) or hung.
-holder_dead() { # <pid> <mount point>
-  ! timeout -s KILL 3 stat -f -c %t "/proc/$1/root$2" >/dev/null 2>&1
+# Which of the holder's mounts were cut off: those that answer "not connected", as when lazyfs
+# aborted them. One that does not answer in time (a stall, a hang) or fails otherwise is kept: a
+# stall may pass, a hang lazyfs ends by cutting it off, and the next command tries again. All at
+# once first, then one by one when that fails.
+holder_cut() { # <pid> <mount point>...
+  Q=$1
+  shift
+  [ "$#" -gt 0 ] || return 0
+  W=""
+  for M in "$@"; do W="$W /proc/$Q/root$M"; done
+  LC_ALL=C timeout -s KILL 3 stat -f -c %t $W >/dev/null 2>&1 && return 0
+  for M in "$@"; do
+    case "$(LC_ALL=C timeout -s KILL 3 stat -f -c %t "/proc/$Q/root$M" 2>&1 >/dev/null)" in
+      *"not connected"*) echo "$M" ;;
+    esac
+  done
 }
 # What sync_holder does for the holder, in G (the mounts to unmount) and B (/tmp or /var/tmp to bind
 # again), without taking from a running process what it still uses: a process keeps a mount
 # detached under it, but the path of its folder no longer resolves (getcwd fails) and a new client
 # no longer finds the sockets it listens on in /tmp. So while the thread runs something (its
-# preview, a turn), only what no longer answers anyway; once it runs nothing (as its next turn
-# starts), all of it. Whether there is anything to do.
+# preview, a turn), only what was cut off (holder_cut), which no process can use anyway; once it
+# runs nothing (as its next turn starts), all of it. Under the lock, which every command entering
+# a holder not in line takes (enter): nothing enters between the plan and what sync_holder does.
+# Whether there is anything to do.
 sync_plan() { # <thread> <pid>
   G=$(lazy_gone /proc/self/mountinfo "/proc/$2/mountinfo")
   B=""
+  I=""
   if holder_busy "$2"; then
-    K=""
-    for M in $G; do
-      if holder_dead "$2" "$M"; then K="$K $M"; fi
-    done
-    G=$K
-    for V in /tmp /var/tmp; do
-      if holder_dead "$2" "$V"; then B="$B $V"; fi
-    done
+    G=$(holder_cut "$2" $G)
+    B=$(holder_cut "$2" /tmp /var/tmp)
   else
+    I=1
     same "/proc/$2/root/tmp" "$TMPS/$1/tmp" || B=/tmp
     same "/proc/$2/root/var/tmp" "$TMPS/$1/var-tmp" || B="$B /var/tmp"
   fi
@@ -569,8 +580,11 @@ sync_plan() { # <thread> <pid>
 # The holder's mounts brought in line with the host's (sync_plan), under the lock: what the host
 # retired unmounted in it too, lazily as the host did; then the thread's /tmp and /var/tmp from the
 # disk bound over the old ones, which stay beneath, out of reach, until the holder ends: never for
-# a moment the host's. The holder's PID namespace too, for its /proc, which umount reads. Fails when
-# /tmp or /var/tmp is not the thread's on the disk after.
+# a moment the host's. The holder's PID namespace too, for its /proc, which umount reads. An idle
+# holder that this leaves out of line (its /tmp folder was deleted under it: nothing can be bound
+# over a deleted folder) is started again instead, with nothing running in it to lose (its pid
+# changes), once those folders are there. Fails when /tmp or /var/tmp is not the thread's on the
+# disk after.
 sync_holder() { # <thread> <pid>
   holder_stale "$1" "$2" && sync_plan "$1" "$2" || return 0
   X=0
@@ -580,7 +594,7 @@ sync_holder() { # <thread> <pid>
     E=0
     for V in $2; do
       if [ "$V" = /tmp ]; then S=$0/tmp; else S=$0/var-tmp; fi
-      mount --bind "$S" "$V" || E=1
+      mount --bind "$S" "$V" 2>/dev/null || E=1
     done
     exit $E
   ' "$TMPS/$1" "$G" "$B" || X=1
@@ -588,6 +602,8 @@ sync_holder() { # <thread> <pid>
     if [ "$V" = /tmp ]; then same "/proc/$2/root/tmp" "$TMPS/$1/tmp" || X=1
     else same "/proc/$2/root/var/tmp" "$TMPS/$1/var-tmp" || X=1; fi
   done
+  [ "$X" = 0 ] || [ -z "$I" ] || [ ! -d "$TMPS/$1/tmp" ] || [ ! -d "$TMPS/$1/var-tmp" ] ||
+    ! start_holder "$1" || X=0
   return "$X"
 }
 
@@ -645,11 +661,13 @@ case "\${1:-}" in
       [ -f "$STATE/$2" ] && [ -e "/run/netns/bt-$2" ] || make_net "$2"
       P=$(holder "$2") || { start_holder "$2" && P=$(holder "$2"); } || fail "the holder of thread $2 did not start"
       exec 9>&-
-    elif holder_stale "$2" "$P" && sync_plan "$2" "$P"; then
+    elif holder_stale "$2" "$P"; then
       # Started while boat restored the disk: in line with the host first (sync_holder), under the
-      # lock only when there is something to do. A command that fails to be goes on as before.
+      # lock even when nothing can be done yet, so that no command enters while it is done (by sync,
+      # or another command). A command that fails to be goes on as before.
       lock
       sync_holder "$2" "$P" || echo "brigade-thread: the holder of thread $2 could not be brought in line" >&2
+      P=$(holder "$2") || { start_holder "$2" && P=$(holder "$2"); } || fail "the holder of thread $2 did not start"
       exec 9>&-
     fi
     U=$3

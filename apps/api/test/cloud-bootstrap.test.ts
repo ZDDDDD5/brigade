@@ -525,10 +525,11 @@ test("a thread's holder drops the restore's mounts that boat retired on the host
   )
   // A holder started after the restore: nothing to drop.
   assert.equal(gone(join(dir, 'host'), join(dir, 'host')), '')
-  assert.match(THREAD_HELPER, /elif holder_stale "\$2" "\$P" && sync_plan "\$2" "\$P"; then\n/)
-  // A running thread keeps what it uses until it no longer answers, and its /tmp is bound over the
-  // old one, never unmounted first: not for a moment the host's.
-  assert.match(THREAD_HELPER, /if holder_busy "\$2"; then\n[^]*?holder_dead "\$2" "\$M"/)
+  // Every command entering a holder not in line waits for the lock: none enters while it is done.
+  assert.match(THREAD_HELPER, /elif holder_stale "\$2" "\$P"; then\n(\s*#.*\n)*\s*lock\n/)
+  // A running thread keeps what it uses until it was cut off, and its /tmp is bound over the old
+  // one, never unmounted first: not for a moment the host's.
+  assert.match(THREAD_HELPER, /if holder_busy "\$2"; then\n\s*G=\$\(holder_cut "\$2" \$G\)/)
   assert.doesNotMatch(THREAD_HELPER, /umount -l \/(var\/)?tmp/)
 })
 

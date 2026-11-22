@@ -910,9 +910,11 @@ fingerprint>"`, sending the page `no-store`, and adds a bridge script first in i
   one of them, get the thread's folders on the disk bound over them (never unmounted first, so they are never the
   host's for a moment). A mount detached under a running process breaks it all the same: the path of its folder no
   longer resolves (`getcwd` fails) and new clients no longer find the sockets it listens on in `/tmp`. So while the
-  thread runs anything besides its holder (a preview, a turn), only the mounts that no longer answer are dropped
-  (`sync_plan`); the rest go once it runs nothing, as its next turn starts. That also mends a holder whose mount was cut
-  off already. The runner does the same for every holder (`brigade-thread sync`) a minute and five minutes after boat
+  thread runs anything besides its holder (a preview, a turn), only the mounts that were cut off ("not connected") are
+  dropped (`sync_plan`); one that merely stalls is kept and tried again by the next command. The rest go once it runs
+  nothing, as its next turn starts. Every command entering a holder not in line waits for the helper's lock, so none
+  enters between that check and the change. An idle holder that cannot be mended in place (its `/tmp` folder deleted
+  under it) is started again, with nothing in it to lose. That also mends a holder whose mount was cut off already. The runner does the same for every holder (`brigade-thread sync`) a minute and five minutes after boat
   says the disk is restored, and once after it starts, so a quiet thread nobody enters lets go of them too. Starting
   holders again instead would kill what runs in them, and holding namespaces back until the restore ends would leave
   threads without their own `/tmp` and processes for up to an hour.
