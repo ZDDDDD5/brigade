@@ -49,7 +49,9 @@ Accessibility to Brigade itself.
 ### On Windows: Brigade for Windows
 
 1. In onboarding, or in **Settings → Computers**, choose **Download Brigade for Windows** (Windows 10 or 11, 64-bit)
-   and run `Brigade-Setup.exe`. It installs for your Windows account only, with no administrator.
+   and run `Brigade-Setup.exe`. It installs for your Windows account only, with no administrator. The installer isn't
+   code-signed yet, so your browser may ask whether to keep it (keep it), and Windows may say it protected your PC:
+   choose **More info**, then **Run anyway**.
 2. Open it, then choose **Open in Brigade** on the page. Brigade asks before it installs anything, then sets itself
    up in a few minutes the first time: the runner, Node.js and Git for Windows, all in `%USERPROFILE%\.brigade`.
    Nothing else to install, and no WSL. It lives in the system tray, opens at login and updates itself.

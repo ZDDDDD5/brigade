@@ -27,7 +27,7 @@ import { useSettingsParams } from '@/lib/settings-dialog'
 import { detectDevice } from '@/lib/device'
 import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
 import { MAC_APP_URL } from '@/lib/mac-app'
-import { useWindowsAppReady, WINDOWS_APP_URL } from '@/lib/windows-app'
+import { useWindowsAppReady, WINDOWS_APP_URL, WINDOWS_UNSIGNED_HINT } from '@/lib/windows-app'
 import { clickSettings } from '@/lib/settings-dialog'
 
 type LinkCode = { code: string; expiresAt: string; command: string; appLink?: string }
@@ -339,7 +339,7 @@ export default function Computers() {
                 {link
                   ? `${
                       app && link.appLink
-                        ? `Install Brigade for ${app.os}, then open this link in it.`
+                        ? `Install Brigade for ${app.os}, then open this link in it.${windows ? ` ${WINDOWS_UNSIGNED_HINT}` : ''}`
                         : 'Run this in a terminal on your Mac or Linux machine.'
                     } The code works once and expires at ${new Date(link.expiresAt).toLocaleTimeString()}.`
                   : 'A teammate there acts as you and asks before each write or command'}

@@ -6,6 +6,13 @@ import { useEffect, useState } from 'react'
 export const WINDOWS_APP_URL =
   'https://github.com/gmpetrov/brigade/releases/latest/download/Brigade-Setup.exe'
 
+/**
+ * What to do when the browser or SmartScreen warns about the installer, which is not code-signed
+ * yet (.github/workflows/desktop-release.yml): without it, a person can stop at that warning.
+ */
+export const WINDOWS_UNSIGNED_HINT =
+  "Your browser or Windows may warn about the installer, as it isn't signed yet: keep the file, then choose More info and Run anyway."
+
 /** The first Brigade.app that runs teammates on Windows: those before only show the dashboard. */
 export const WINDOWS_RUNNER_SINCE = '0.4.6'
 
