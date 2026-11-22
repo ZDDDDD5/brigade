@@ -912,8 +912,10 @@ fingerprint>"`, sending the page `no-store`, and adds a bridge script first in i
   longer resolves (`getcwd` fails) and new clients no longer find the sockets it listens on in `/tmp`. So while the
   thread runs anything besides its holder (a preview, a turn), only the mounts that were cut off ("not connected") are
   dropped (`sync_plan`); one that merely stalls is kept and tried again by the next command. The rest go once it runs
-  nothing, as its next turn starts. Every command entering a holder not in line waits for the helper's lock, so none
-  enters between that check and the change. An idle holder that cannot be mended in place (its `/tmp` folder deleted
+  nothing, as its next turn starts. Every command entering a holder not in line waits for the helper's lock and keeps
+  it until it is in the holder's PID namespace, where that check sees it: a watcher on the host lets go of it once
+  `nsenter` has forked the command (`handoff`), not the command itself, whose first step a stalled mount in the thread
+  could hold, and the global lock with it. An idle holder that cannot be mended in place (its `/tmp` folder deleted
   under it) is started again, with nothing in it to lose. That also mends a holder whose mount was cut off already. The
   runner does the same for every holder (`brigade-thread sync`) a minute and five minutes after boat says the disk is
   restored, and once after it starts, so a quiet thread nobody enters lets go of them too. Starting every holder again

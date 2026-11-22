@@ -577,19 +577,34 @@ sync_plan() { # <thread> <pid>
   fi
   [ -n "$G$B" ]
 }
+# The lock (enter's) let go once the command is in the thread's namespaces, where sync_plan sees
+# it: by a watcher on the host, which shares the lock's open file (flock -u lets go of it for both),
+# once nsenter (this process, which it becomes) has forked the command, or once it is gone, or after
+# 10 seconds. Not by the command itself, whose first step in the thread a stalled mount there could
+# hold, and the lock with it.
+handoff() {
+  sh -c 'I=0
+    while [ "$I" -lt 100 ] && [ -d "/proc/$1" ]; do
+      for C in $(cat "/proc/$1/task/$1/children" 2>/dev/null); do [ "$C" = $$ ] || break 2; done
+      sleep 0.1
+      I=$((I + 1))
+    done
+    flock -u 9' sh "$$" </dev/null >/dev/null 2>&1 &
+}
 # The holder's mounts brought in line with the host's (sync_plan), under the lock: what the host
 # retired unmounted in it too, lazily as the host did; then the thread's /tmp and /var/tmp from the
 # disk bound over the old ones, which stay beneath, out of reach, until the holder ends: never for
-# a moment the host's. The holder's PID namespace too, for its /proc, which umount reads. An idle
-# holder that this leaves out of line (its /tmp folder was deleted under it: nothing can be bound
-# over a deleted folder) is started again instead, with nothing running in it to lose (its pid
-# changes), once those folders are there. Fails when /tmp or /var/tmp is not the thread's on the
-# disk after.
+# a moment the host's. The holder's PID namespace too, for its /proc, which umount reads; for 20
+# seconds at most, and without the lock's file (its sh, mount and umount are the holder's, which a
+# stalled mount could hold). An idle holder that this leaves out of line (its /tmp folder was
+# deleted under it: nothing can be bound over a deleted folder) is started again instead, with
+# nothing running in it to lose (its pid changes), once those folders are there. Fails when /tmp
+# or /var/tmp is not the thread's on the disk after.
 sync_holder() { # <thread> <pid>
   holder_stale "$1" "$2" && sync_plan "$1" "$2" || return 0
   X=0
   [ -z "$B" ] || install -d -m 1777 "$TMPS/$1/tmp" "$TMPS/$1/var-tmp" || { X=1; B=""; }
-  nsenter --target "$2" --mount --pid -- sh -c '
+  timeout -s KILL 20 nsenter --target "$2" --mount --pid -- sh -c '
     for M in $1; do umount -l "$M" 2>/dev/null || true; done
     E=0
     for V in $2; do
@@ -597,7 +612,7 @@ sync_holder() { # <thread> <pid>
       mount --bind "$S" "$V" 2>/dev/null || E=1
     done
     exit $E
-  ' "$TMPS/$1" "$G" "$B" || X=1
+  ' "$TMPS/$1" "$G" "$B" 9>&- || X=1
   for V in $B; do
     if [ "$V" = /tmp ]; then same "/proc/$2/root/tmp" "$TMPS/$1/tmp" || X=1
     else same "/proc/$2/root/var/tmp" "$TMPS/$1/var-tmp" || X=1; fi
@@ -660,20 +675,22 @@ case "\${1:-}" in
       host_rules
       [ -f "$STATE/$2" ] && [ -e "/run/netns/bt-$2" ] || make_net "$2"
       P=$(holder "$2") || { start_holder "$2" && P=$(holder "$2"); } || fail "the holder of thread $2 did not start"
-      exec 9>&-
+      handoff
     elif holder_stale "$2" "$P"; then
       # Started while boat restored the disk: in line with the host first (sync_holder), under the
-      # lock even when nothing can be done yet, so that no command enters while it is done (by sync,
-      # or another command). A command that fails to be goes on as before.
+      # lock even when nothing can be done yet, and until the command is in (handoff), so that none
+      # enters while it is done (by sync, or another command) nor is left out of what that sees.
+      # A command that fails to be goes on as before.
       lock
       sync_holder "$2" "$P" || echo "brigade-thread: the holder of thread $2 could not be brought in line" >&2
       P=$(holder "$2") || { start_holder "$2" && P=$(holder "$2"); } || fail "the holder of thread $2 did not start"
-      exec 9>&-
+      handoff
     fi
     U=$3
     shift 3
+    # Without the lock's file: the command could take the lock itself.
     exec nsenter --target "$P" --net --mount --ipc --pid -- \\
-      setpriv --reuid="$U" --regid="$U" --init-groups --inh-caps=-all -- env USER="$U" LOGNAME="$U" "$@"
+      setpriv --reuid="$U" --regid="$U" --init-groups --inh-caps=-all -- env USER="$U" LOGNAME="$U" "$@" 9>&-
     ;;
   sync) # [<thread>]: sync_holder for that thread's holder, else for every thread's: the runner's, once
     # boat has restored the disk, so a quiet thread nobody enters lets go of its mounts too

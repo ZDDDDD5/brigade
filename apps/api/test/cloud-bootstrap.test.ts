@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
@@ -531,6 +531,40 @@ test("a thread's holder drops the restore's mounts that boat retired on the host
   // one, never unmounted first: not for a moment the host's.
   assert.match(THREAD_HELPER, /if holder_busy "\$2"; then\n\s*G=\$\(holder_cut "\$2" \$G\)/)
   assert.doesNotMatch(THREAD_HELPER, /umount -l \/(var\/)?tmp/)
+  // The command enters with the lock held (handoff), and without the lock's file.
+  assert.match(THREAD_HELPER, /could not be brought in line" >&2\n.*\n\s*handoff\n/)
+  assert.match(THREAD_HELPER, /"\$@" 9>&-\n/)
+})
+
+test("enter's lock is let go once nsenter has forked the command, not before", async () => {
+  const handoff = /^handoff\(\) \{[\s\S]*?^\}$/m.exec(THREAD_HELPER)?.[0]
+  assert.ok(handoff)
+  const dir = mkdtempSync(join(tmpdir(), 'handoff-'))
+  const lockFile = join(dir, 'lock')
+  const free = () => spawnSync('flock', ['-n', lockFile, 'true']).status === 0
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  // As enter does: the lock taken, the watcher started, then this process becomes the one that
+  // forks the command (a shell that runs sleep as a child, as nsenter does), or one that does not.
+  const enter = (then: string) => {
+    const child = spawn('sh', [
+      '-c',
+      `${handoff}\nexec 9>"$1"; flock 9; handoff; exec sh -c '${then}' 9>&-`,
+      'sh',
+      lockFile,
+    ])
+    return new Promise((resolve) => child.on('exit', resolve))
+  }
+  const forks = enter('sleep 1; true')
+  await pause(500)
+  assert.ok(free(), 'let go once the command was forked')
+  await forks
+  const forksNot = enter('exec sleep 1')
+  await pause(500)
+  assert.ok(!free(), 'held while no command was forked')
+  await forksNot
+  await pause(300)
+  assert.ok(free(), 'let go once it is gone')
+  rmSync(dir, { recursive: true, force: true })
 })
 
 test("each thread's containers publish on a loopback address of its own", () => {
