@@ -53,7 +53,11 @@ function quietHarness(parts: Record<string, unknown>[], played: { emit?: Emit })
   }
 }
 
-async function quietTurn(parts: Record<string, unknown>[], signal = new AbortController().signal) {
+async function quietTurn(
+  parts: Record<string, unknown>[],
+  signal = new AbortController().signal,
+  callSchedule: (call: unknown) => Promise<unknown> = async () => ({}),
+) {
   const dir = await mkdtemp(join(tmpdir(), 'brigade-stall-'))
   const events: AgentEvent[] = []
   const played: { emit?: Emit } = {}
@@ -72,7 +76,7 @@ async function quietTurn(parts: Record<string, unknown>[], signal = new AbortCon
     (event) => events.push(event),
     async () => ({ output: null, attachments: [] }),
     async () => null,
-    { callSchedule: async () => ({}) } as never,
+    { callSchedule } as never,
   )
   const agent = new HarnessAgent({
     harness: quietHarness(parts, played) as never,
@@ -181,6 +185,37 @@ test(
     } finally {
       stop.abort()
       await t.outcome
+      await t.cleanup()
+    }
+  },
+)
+
+test(
+  "a done block's call, refused, is over: the quiet after it still stalls the turn",
+  { timeout: 20_000 },
+  async () => {
+    // The reply declares the thread done; Brigade refuses (a pull request still open), and the
+    // model then sends nothing more. That call finishes through the outbox, not the mapper.
+    const t = await quietTurn(
+      [
+        { type: 'text-start', id: 'r' },
+        { type: 'text-delta', id: 'r', delta: 'Merged.\n\n```done\nCSV export merged\n```' },
+        { type: 'text-end', id: 'r' },
+      ],
+      undefined,
+      async () => {
+        throw new Error('A pull request of this thread is still open')
+      },
+    )
+    try {
+      const outcome = await t.outcome
+      assert.ok(
+        t.events.some((e) => e.type === 'tool.finished' && e.toolName === 'complete_thread'),
+        'the refusal went out',
+      )
+      assert.equal(outcome.status, 'failed')
+      assert.deepEqual(t.errors(), [stalledMessage(STALL_MS)])
+    } finally {
       await t.cleanup()
     }
   },

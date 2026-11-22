@@ -823,6 +823,11 @@ export class HarnessThread {
   private readonly reasoning = new Map<string, string>()
   /** Built-in tool calls waiting for a person's approval, by approval id. */
   private readonly approvals = new Map<string, { toolName: string; input: unknown }>()
+  /**
+   * The turn's tool calls still open, by id, as their events went out: quiet is expected while
+   * one runs (a command, a sub-agent, a ticket waiting on a person), StallWatch in turn().
+   */
+  private readonly openCalls = new Set<string>()
   /** Kept answers handed out to go in (answersToGive), by call id, until their turn takes them. */
   private readonly given = new Set<string>()
   /** The teammate's browser is being started for this thread (browserUsed). */
@@ -1813,9 +1818,9 @@ export class HarnessThread {
     let mayAnswer = false
     let early = false
     let drained: () => void = () => {}
-    // The turn's tool calls still open, by id: quiet is expected while one runs (a command, a
-    // sub-agent, a ticket waiting on a person).
-    const open = new Set<string>()
+    // A call of a turn before this one waits on nothing now (an answer is this turn's input).
+    this.openCalls.clear()
+    const open = this.openCalls
     const watch = new StallWatch({
       busy: () =>
         early ||
@@ -1884,8 +1889,6 @@ export class HarnessThread {
     }
     const mapper = new EventMapper(
       (event) => {
-        if (event.type === 'tool.started') open.add(event.toolCallId)
-        if (event.type === 'tool.finished') open.delete(event.toolCallId)
         // Stopped for its quiet, the stream's own error on the way out is not the turn's.
         if (watch.stalled && event.type === 'error') return
         // Parked, what is left is done again; handed over, it is up to where the next runner goes on.
@@ -3037,6 +3040,10 @@ export class HarnessThread {
    * went out before it, held ones (a done block's call) included.
    */
   private out(event: AgentEvent) {
+    // Tracked as events go out, held ones included: a done block's call and Codex's asks finish
+    // through the outbox, never through the turn's mapper.
+    if (event.type === 'tool.started') this.openCalls.add(event.toolCallId)
+    if (event.type === 'tool.finished') this.openCalls.delete(event.toolCallId)
     if (event.type === 'tool.finished') {
       this.toolStats.calls++
       if (event.isError) this.toolStats.errors++

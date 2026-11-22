@@ -31,6 +31,7 @@ const {
   eventsWaitingProblems,
   silentTurnProblems,
   silentFor,
+  onConnectedRunners,
   backlogMatters,
   backlogProblem,
   BACKLOG_AGE_MS,
@@ -214,6 +215,39 @@ describe('alerts on what waits', () => {
       silentFor({ ...thread(at('00:29')), connectedAt: undefined }, at('00:29')),
       90 * MIN,
     )
+  })
+
+  test("the check reads the runner's connection from its hub: a reconnect starts the count again", async () => {
+    const { fakeRunner } = await import('./in-hub.js')
+    const scope = { organizationId: `org-${randomUUID()}`, workspaceId: `ws-${randomUUID()}` }
+    const thread = {
+      id: 's1',
+      title: 'Mission',
+      computerId: 'mac',
+      workspaceId: scope.workspaceId,
+      lastAt: new Date(Date.now() - 3 * 60 * MIN),
+    }
+    const names = new Map([['mac', 'Mac (Acme, mac)']])
+    // Connected for two hours, the thread silent for three: it alerts.
+    const first = await fakeRunner(scope, 'mac')
+    const { localHub } = await import('../src/hub/memory-host.js')
+    localHub(scope.workspaceId).runners.get('mac')!.connectedAt = Date.now() - 2 * 60 * MIN
+    const connected = await onConnectedRunners([thread])
+    assert.deepEqual(connected.computerIds, ['mac'])
+    assert.equal(silentTurnProblems(connected.silent, names, Date.now()).length, 1)
+    // Its runner drops: not a silent turn of a connected runner (the computer's own alert).
+    first.close()
+    assert.deepEqual((await onConnectedRunners([thread])).silent, [])
+    // Back a minute later, on a new connection: not raised again.
+    const second = await fakeRunner(scope, 'mac')
+    try {
+      const back = await onConnectedRunners([thread])
+      assert.equal(back.silent.length, 1)
+      assert.ok(Date.now() - back.silent[0]!.connectedAt!.getTime() < MIN)
+      assert.deepEqual(silentTurnProblems(back.silent, names, Date.now()), [])
+    } finally {
+      second.close()
+    }
   })
 
   test('a backlog of commands: by count, or by the age of the oldest', () => {

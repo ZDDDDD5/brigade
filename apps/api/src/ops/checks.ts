@@ -531,6 +531,27 @@ export function silentTurnProblems(
 }
 
 /**
+ * The running threads whose computer's runner is connected now, each with since when it has
+ * been connected without a break, as the computer's hub says (WorkspaceHub.connectedSince).
+ */
+export async function onConnectedRunners(
+  running: (SilentThread & { workspaceId: string })[],
+): Promise<{ silent: SilentThread[]; computerIds: string[] }> {
+  const online = new Map<string, number | null>()
+  const silent: SilentThread[] = []
+  for (const thread of running) {
+    if (!online.has(thread.computerId))
+      online.set(
+        thread.computerId,
+        await hubs.get(thread.workspaceId).connectedSince(thread.computerId),
+      )
+    const since = online.get(thread.computerId)
+    if (since != null) silent.push({ ...thread, connectedAt: new Date(since) })
+  }
+  return { silent, computerIds: [...online.keys()] }
+}
+
+/**
  * Threads running, with their last event's time (heavy events stored apart have none here: the
  * thread's last change stands for it), on computers whose runner is connected: one whose runner
  * is away is the computer's alert (checkComputers).
@@ -544,18 +565,7 @@ async function checkSilentTurns(now: number) {
       AND COALESCE(e.at, s."updatedAt") < ${new Date(now - SILENT_TURN_MS)}
     ORDER BY "lastAt"
     LIMIT 100`
-  const online = new Map<string, number | null>()
-  const silent: SilentThread[] = []
-  for (const thread of running) {
-    if (!online.has(thread.computerId))
-      online.set(
-        thread.computerId,
-        await hubs.get(thread.workspaceId).connectedSince(thread.computerId),
-      )
-    const since = online.get(thread.computerId)
-    if (since != null) silent.push({ ...thread, connectedAt: new Date(since) })
-  }
-  const ids = [...online.keys()]
+  const { silent, computerIds: ids } = await onConnectedRunners(running)
   const computers = ids.length
     ? await prisma.computer.findMany({
         where: { id: { in: ids } },
