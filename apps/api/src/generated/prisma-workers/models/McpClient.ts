@@ -31,6 +31,7 @@ export type McpClientMinAggregateOutputType = {
   redirectUri: string | null
   clientId: string | null
   clientSecret: string | null
+  clientSealed: string | null
   createdAt: Date | null
 }
 
@@ -40,6 +41,7 @@ export type McpClientMaxAggregateOutputType = {
   redirectUri: string | null
   clientId: string | null
   clientSecret: string | null
+  clientSealed: string | null
   createdAt: Date | null
 }
 
@@ -49,6 +51,7 @@ export type McpClientCountAggregateOutputType = {
   redirectUri: number
   clientId: number
   clientSecret: number
+  clientSealed: number
   createdAt: number
   _all: number
 }
@@ -60,6 +63,7 @@ export type McpClientMinAggregateInputType = {
   redirectUri?: true
   clientId?: true
   clientSecret?: true
+  clientSealed?: true
   createdAt?: true
 }
 
@@ -69,6 +73,7 @@ export type McpClientMaxAggregateInputType = {
   redirectUri?: true
   clientId?: true
   clientSecret?: true
+  clientSealed?: true
   createdAt?: true
 }
 
@@ -78,6 +83,7 @@ export type McpClientCountAggregateInputType = {
   redirectUri?: true
   clientId?: true
   clientSecret?: true
+  clientSealed?: true
   createdAt?: true
   _all?: true
 }
@@ -160,6 +166,7 @@ export type McpClientGroupByOutputType = {
   redirectUri: string
   clientId: string
   clientSecret: string | null
+  clientSealed: string | null
   createdAt: Date
   _count: McpClientCountAggregateOutputType | null
   _min: McpClientMinAggregateOutputType | null
@@ -190,6 +197,7 @@ export type McpClientWhereInput = {
   redirectUri?: Prisma.StringFilter<"McpClient"> | string
   clientId?: Prisma.StringFilter<"McpClient"> | string
   clientSecret?: Prisma.StringNullableFilter<"McpClient"> | string | null
+  clientSealed?: Prisma.StringNullableFilter<"McpClient"> | string | null
   createdAt?: Prisma.DateTimeFilter<"McpClient"> | Date | string
 }
 
@@ -199,6 +207,7 @@ export type McpClientOrderByWithRelationInput = {
   redirectUri?: Prisma.SortOrder
   clientId?: Prisma.SortOrder
   clientSecret?: Prisma.SortOrderInput | Prisma.SortOrder
+  clientSealed?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
 }
 
@@ -212,6 +221,7 @@ export type McpClientWhereUniqueInput = Prisma.AtLeast<{
   redirectUri?: Prisma.StringFilter<"McpClient"> | string
   clientId?: Prisma.StringFilter<"McpClient"> | string
   clientSecret?: Prisma.StringNullableFilter<"McpClient"> | string | null
+  clientSealed?: Prisma.StringNullableFilter<"McpClient"> | string | null
   createdAt?: Prisma.DateTimeFilter<"McpClient"> | Date | string
 }, "id" | "issuer_redirectUri">
 
@@ -221,6 +231,7 @@ export type McpClientOrderByWithAggregationInput = {
   redirectUri?: Prisma.SortOrder
   clientId?: Prisma.SortOrder
   clientSecret?: Prisma.SortOrderInput | Prisma.SortOrder
+  clientSealed?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   _count?: Prisma.McpClientCountOrderByAggregateInput
   _max?: Prisma.McpClientMaxOrderByAggregateInput
@@ -236,6 +247,7 @@ export type McpClientScalarWhereWithAggregatesInput = {
   redirectUri?: Prisma.StringWithAggregatesFilter<"McpClient"> | string
   clientId?: Prisma.StringWithAggregatesFilter<"McpClient"> | string
   clientSecret?: Prisma.StringNullableWithAggregatesFilter<"McpClient"> | string | null
+  clientSealed?: Prisma.StringNullableWithAggregatesFilter<"McpClient"> | string | null
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"McpClient"> | Date | string
 }
 
@@ -245,6 +257,7 @@ export type McpClientCreateInput = {
   redirectUri: string
   clientId: string
   clientSecret?: string | null
+  clientSealed?: string | null
   createdAt?: Date | string
 }
 
@@ -254,6 +267,7 @@ export type McpClientUncheckedCreateInput = {
   redirectUri: string
   clientId: string
   clientSecret?: string | null
+  clientSealed?: string | null
   createdAt?: Date | string
 }
 
@@ -263,6 +277,7 @@ export type McpClientUpdateInput = {
   redirectUri?: Prisma.StringFieldUpdateOperationsInput | string
   clientId?: Prisma.StringFieldUpdateOperationsInput | string
   clientSecret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  clientSealed?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -272,6 +287,7 @@ export type McpClientUncheckedUpdateInput = {
   redirectUri?: Prisma.StringFieldUpdateOperationsInput | string
   clientId?: Prisma.StringFieldUpdateOperationsInput | string
   clientSecret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  clientSealed?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -281,6 +297,7 @@ export type McpClientCreateManyInput = {
   redirectUri: string
   clientId: string
   clientSecret?: string | null
+  clientSealed?: string | null
   createdAt?: Date | string
 }
 
@@ -290,6 +307,7 @@ export type McpClientUpdateManyMutationInput = {
   redirectUri?: Prisma.StringFieldUpdateOperationsInput | string
   clientId?: Prisma.StringFieldUpdateOperationsInput | string
   clientSecret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  clientSealed?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -299,6 +317,7 @@ export type McpClientUncheckedUpdateManyInput = {
   redirectUri?: Prisma.StringFieldUpdateOperationsInput | string
   clientId?: Prisma.StringFieldUpdateOperationsInput | string
   clientSecret?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  clientSealed?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -313,6 +332,7 @@ export type McpClientCountOrderByAggregateInput = {
   redirectUri?: Prisma.SortOrder
   clientId?: Prisma.SortOrder
   clientSecret?: Prisma.SortOrder
+  clientSealed?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
 }
 
@@ -322,6 +342,7 @@ export type McpClientMaxOrderByAggregateInput = {
   redirectUri?: Prisma.SortOrder
   clientId?: Prisma.SortOrder
   clientSecret?: Prisma.SortOrder
+  clientSealed?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
 }
 
@@ -331,6 +352,7 @@ export type McpClientMinOrderByAggregateInput = {
   redirectUri?: Prisma.SortOrder
   clientId?: Prisma.SortOrder
   clientSecret?: Prisma.SortOrder
+  clientSealed?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
 }
 
@@ -342,6 +364,7 @@ export type McpClientSelect<ExtArgs extends runtime.Types.Extensions.InternalArg
   redirectUri?: boolean
   clientId?: boolean
   clientSecret?: boolean
+  clientSealed?: boolean
   createdAt?: boolean
 }, ExtArgs["result"]["mcpClient"]>
 
@@ -351,6 +374,7 @@ export type McpClientSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Ext
   redirectUri?: boolean
   clientId?: boolean
   clientSecret?: boolean
+  clientSealed?: boolean
   createdAt?: boolean
 }, ExtArgs["result"]["mcpClient"]>
 
@@ -360,6 +384,7 @@ export type McpClientSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Ext
   redirectUri?: boolean
   clientId?: boolean
   clientSecret?: boolean
+  clientSealed?: boolean
   createdAt?: boolean
 }, ExtArgs["result"]["mcpClient"]>
 
@@ -369,10 +394,11 @@ export type McpClientSelectScalar = {
   redirectUri?: boolean
   clientId?: boolean
   clientSecret?: boolean
+  clientSealed?: boolean
   createdAt?: boolean
 }
 
-export type McpClientOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "issuer" | "redirectUri" | "clientId" | "clientSecret" | "createdAt", ExtArgs["result"]["mcpClient"]>
+export type McpClientOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "issuer" | "redirectUri" | "clientId" | "clientSecret" | "clientSealed" | "createdAt", ExtArgs["result"]["mcpClient"]>
 
 export type $McpClientPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "McpClient"
@@ -384,8 +410,15 @@ export type $McpClientPayload<ExtArgs extends runtime.Types.Extensions.InternalA
     clientId: string
     /**
      * Set only when the server gave the client a secret; Brigade asks for a public client.
+     * No longer written: rows kept it here in plain text before clientSealed, and the job
+     * mcp-client-seal clears it (src/connectors/mcp.ts sealMcpClients). A later deploy drops it.
      */
     clientSecret: string | null
+    /**
+     * The secret, sealed with the vault's key (src/vault.ts sealShared), bound to the issuer
+     * and redirect URI.
+     */
+    clientSealed: string | null
     createdAt: Date
   }, ExtArgs["result"]["mcpClient"]>
   composites: {}
@@ -815,6 +848,7 @@ export interface McpClientFieldRefs {
   readonly redirectUri: Prisma.FieldRef<"McpClient", 'String'>
   readonly clientId: Prisma.FieldRef<"McpClient", 'String'>
   readonly clientSecret: Prisma.FieldRef<"McpClient", 'String'>
+  readonly clientSealed: Prisma.FieldRef<"McpClient", 'String'>
   readonly createdAt: Prisma.FieldRef<"McpClient", 'DateTime'>
 }
     

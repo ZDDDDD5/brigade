@@ -1,0 +1,148 @@
+'use client'
+// ⌥↑ / ⌥↓ (Alt elsewhere) through the sidebar, and Enter on a row that folds others
+// (lib/sidebar-keys.ts says which). The rows that are stops carry `data-nav-stop`: "link"
+// opens, as a click on it does; "toggle" (a folded section, a "+N more") is only focused, and
+// Enter unfolds it. Only the rows showing count: a folded section's rows are no stops.
+// On the row open, one with a caret (`data-nav-caret`: a list, a thread with sub-threads),
+// Enter folds or unfolds what is under it, as the caret does.
+// The keys work outside fields and in the composer, as in a chat app; another field keeps
+// its own ⌥↑ / ⌥↓, and so do menus, dialogs, a remote screen and a terminal.
+import { useEffect } from 'react'
+import { editable, OPEN_LAYER } from '@/components/side-panel'
+import { enterAt, stepTo, walkKey, type Relation } from '@/lib/sidebar-keys'
+
+const SIDEBAR = '[data-sidebar="sidebar"]'
+const STOPS = `${SIDEBAR} [data-nav-stop]`
+const MODIFIERS = new Set(['Alt', 'AltGraph', 'Control', 'Meta', 'Shift'])
+
+/** Where `stop` is from `from`, in the page's order; inside it counts as after it. */
+function relation(stop: Element, from: Element): Relation {
+  if (stop === from || stop.contains(from)) return 'same'
+  if (from.contains(stop)) return 'after'
+  return from.compareDocumentPosition(stop) & Node.DOCUMENT_POSITION_FOLLOWING ? 'after' : 'before'
+}
+
+/** The stops showing now, in the sidebar's order (a hidden one has no box). */
+const shownStops = () =>
+  [...document.querySelectorAll<HTMLElement>(STOPS)].filter((s) => s.getClientRects().length)
+
+/** The caret of a row that folds rows under it: a list, a thread with sub-threads. */
+const caretOf = (row: Element) => row.querySelector<HTMLElement>('[data-nav-caret]')
+
+/** Whether Enter folds or unfolds on that row: a folded section, a "+N more", a caret's row. */
+const folds = (row: Element) => row.matches('[data-nav-stop="toggle"]') || !!caretOf(row)
+
+/** Whether the keys belong to something else: a field, a menu, a dialog, a remote screen. */
+function elsewhere(focus: Element | null) {
+  if (document.querySelector(OPEN_LAYER)) return true
+  if (!focus) return false
+  if (focus.closest('[data-keyboard]')) return true
+  return editable(focus) && !focus.closest('[data-composer]')
+}
+
+export function useSidebarKeys() {
+  useEffect(() => {
+    // The row the walk goes on from while the member presses these keys in a row: the page it
+    // opened takes the focus (its composer) and marks its row active a moment later. Any other
+    // key or a pointer ends the run; then the focus in the sidebar, else the active row, says.
+    let held: Element | null = null
+    // The row the walk is on, marked (`data-nav-at`) so a folded one shows where the walk is
+    // even when the page it opened took the focus (globals.css).
+    function hold(row: Element | null) {
+      if (held !== row) held?.removeAttribute('data-nav-at')
+      held = row
+      held?.setAttribute('data-nav-at', '')
+    }
+
+    function from(stops: HTMLElement[]): Element | null {
+      if (held?.isConnected) return held
+      const focus = document.activeElement
+      if (focus && focus.closest(SIDEBAR)) return focus
+      return stops.find((s) => s.getAttribute('data-active') === 'true') ?? null
+    }
+
+    function go(stop: HTMLElement) {
+      if (stop.dataset.navStop === 'link') stop.click()
+      stop.focus({ preventScroll: true })
+      stop.scrollIntoView({ block: 'nearest' })
+      hold(stop)
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (MODIFIERS.has(e.key)) return
+      const focus = document.activeElement
+      const dir = walkKey(e)
+      if (dir) {
+        if (!held?.isConnected) hold(null)
+        if (e.defaultPrevented || e.isComposing || elsewhere(focus)) return
+        const stops = shownStops()
+        if (!stops.length) return
+        const start = from(stops)
+        const to = start
+          ? stepTo(stops, (s) => relation(s, start), dir)
+          : enterAt(stops, (s) => s.hasAttribute('data-nav-top'), dir)
+        // At either end, nothing; the composer's caret does not move either.
+        e.preventDefault()
+        if (to) go(to)
+        return
+      }
+      const plain = !e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey
+      // Enter acts on the row focused in the sidebar, else on the row the walk is on when it
+      // folds others: the page the walk opened may have taken the focus since (its composer,
+      // which Safari and the Mac app give it back to), and no key was typed there since.
+      const row =
+        focus instanceof HTMLElement && focus.matches(STOPS)
+          ? focus
+          : held instanceof HTMLElement && held.isConnected && folds(held) && !elsewhere(focus)
+            ? held
+            : null
+      if (e.key === 'Enter' && plain && !e.repeat && !e.defaultPrevented && !e.isComposing && row) {
+        // A folded row unfolds; the next ⌥↓ goes to the first row it showed, which comes right
+        // after the stop above it.
+        if (row.dataset.navStop === 'toggle') {
+          e.preventDefault()
+          e.stopPropagation()
+          const above = stepTo(shownStops(), (s) => relation(s, row), -1)
+          row.click()
+          hold(above ?? null)
+          return
+        }
+        // The row open, with a caret: what is under it folds or unfolds, and the next ⌥↓ goes
+        // to the first row it showed. Another row's Enter opens it, as a link's does.
+        const caret = caretOf(row)
+        if (caret && (row === held || row.getAttribute('data-active') === 'true')) {
+          e.preventDefault()
+          e.stopPropagation()
+          caret.click()
+          hold(row)
+          return
+        }
+      }
+      hold(null)
+    }
+    const onPointerDown = () => hold(null)
+    // A page the walk opened focuses its composer once it has loaded: on a row Enter folds or
+    // unfolds (a folded row, or the one it opened with a caret), the focus goes back to that
+    // row, so Enter does that rather than going to the composer. Typing ends the run first
+    // (and the composer takes the keys typed), so the composer keeps the focus then.
+    const onFocusIn = (e: FocusEvent) => {
+      if (
+        held instanceof HTMLElement &&
+        held.isConnected &&
+        folds(held) &&
+        e.target instanceof Element &&
+        e.target.closest('[data-composer]')
+      )
+        held.focus({ preventScroll: true })
+    }
+    // Before the composer's editor, which would move its caret on ⌥↑ / ⌥↓.
+    window.addEventListener('keydown', onKeyDown, true)
+    window.addEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('focusin', onFocusIn, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      window.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('focusin', onFocusIn, true)
+    }
+  }, [])
+}

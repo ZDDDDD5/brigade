@@ -1,10 +1,15 @@
 // Computer use on a member's Mac, through Brigade Computer Use.app
 // (apps/computer-use-macos). The app holds Screen Recording and Accessibility
 // itself: started with `open`, macOS treats it as its own app, not as part of
-// the runner or the terminal that started it. It listens on a Unix socket in
+// the runner or the terminal that started it. A command it starts (run) gets
+// them too, which a command in a teammate's own shell does not. It listens on a Unix socket in
 // ~/.brigade/computer-use and checks the token it writes beside it.
-import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+//
+// On a member's Linux computer, Brigade.app answers on the same socket itself (apps/desktop
+// src/linux): no permission to hold there, but the pill with Stop and the input that Wayland lets
+// no other process send. It writes the path that starts it to ~/.brigade/computer-use/app.
+import { execFile, spawn } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { homedir } from 'node:os'
@@ -19,6 +24,8 @@ const DIR = join(homedir(), '.brigade', 'computer-use')
 const LAUNCH_MS = 15_000
 /** Longest a request waits; opening an app can take a while. */
 const REQUEST_MS = 60_000
+/** Longest a command waits for the one before it to end, in the runner's line for the helper. */
+export const QUEUE_MS = 120_000
 
 export class ComputerUseError extends Error {
   constructor(
@@ -30,11 +37,22 @@ export class ComputerUseError extends Error {
 }
 
 /**
- * The installed helper app, on macOS only: $BRIGADE_COMPUTER_USE_APP (Brigade.app sets it), the
- * one inside Brigade.app (for a runner started in a terminal), ~/Applications or /Applications.
+ * The installed helper app: $BRIGADE_COMPUTER_USE_APP (Brigade.app sets it), the one inside
+ * Brigade.app (for a runner started in a terminal), ~/Applications or /Applications. On Linux,
+ * Brigade.app's own executable, as it last wrote it.
  */
-export function computerUseApp(): string | undefined {
-  if (process.platform !== 'darwin') return
+export function computerUseApp(platform = process.platform): string | undefined {
+  if (platform === 'linux') {
+    const fromApp = (() => {
+      try {
+        return readFileSync(join(DIR, 'app'), 'utf8').trim()
+      } catch {
+        return undefined
+      }
+    })()
+    return [process.env.BRIGADE_COMPUTER_USE_APP, fromApp].find((path) => path && existsSync(path))
+  }
+  if (platform !== 'darwin') return
   const candidates = [
     process.env.BRIGADE_COMPUTER_USE_APP,
     join('/Applications/Brigade.app/Contents/Resources', COMPUTER_USE_APP),
@@ -45,13 +63,73 @@ export function computerUseApp(): string | undefined {
   return candidates.find((path) => path && existsSync(path))
 }
 
-/** Whether the app is not running (no socket, or nothing listening on it). */
-const notRunning = (error: unknown) =>
-  ['ENOENT', 'ECONNREFUSED', 'ECONNRESET'].includes((error as NodeJS.ErrnoException).code ?? '')
+/**
+ * Whether the app is not running (no socket, or nothing listening on it). A reset connection
+ * counts too, unless `once`: the request may have reached the app before it went away.
+ */
+const notRunning = (error: unknown, once = false) =>
+  ['ENOENT', 'ECONNREFUSED', ...(once ? [] : ['ECONNRESET'])].includes(
+    (error as NodeJS.ErrnoException).code ?? '',
+  )
+
+export type RequestOptions = {
+  /** The longest the reply may take, in ms, for a request that lasts (run). */
+  wait?: number
+  /** Never sent twice: for a request that must not be repeated (run). */
+  once?: boolean
+}
+
+/**
+ * One at a time, in the order asked: the helper runs one command at a time and refuses another
+ * while one runs ("busy"), which made a teammate's two calls in parallel (a snapshot beside an
+ * action) fail for nothing. A caller waits its turn here instead; one that gives up (its turn was
+ * interrupted) or waited `max` ms leaves the line without running.
+ */
+export class Line {
+  private last: Promise<void> = Promise.resolve()
+
+  constructor(private readonly max = QUEUE_MS) {}
+
+  async run<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    const before = this.last
+    let done!: () => void
+    const mine = new Promise<void>((resolve) => (done = resolve))
+    this.last = before.then(() => mine)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) return reject(new Error('aborted'))
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', aborted)
+          reject(
+            new ComputerUseError(
+              'busy',
+              `Another command has been running through Brigade Computer Use for over ${Math.round(this.max / 1000)} seconds. Try again once it has ended.`,
+            ),
+          )
+        }, this.max)
+        const aborted = () => {
+          clearTimeout(timer)
+          reject(new Error('aborted'))
+        }
+        signal?.addEventListener('abort', aborted, { once: true })
+        void before.then(() => {
+          clearTimeout(timer)
+          signal?.removeEventListener('abort', aborted)
+          resolve()
+        })
+      })
+      return await work()
+    } finally {
+      done()
+    }
+  }
+}
 
 export class ComputerUseClient {
   private launching: Promise<void> | undefined
   private nextId = 1
+  /** Commands (run), one after the other. */
+  private readonly commands = new Line()
 
   constructor(private readonly app: string) {}
 
@@ -59,20 +137,35 @@ export class ComputerUseClient {
     method: string,
     params: Record<string, unknown> = {},
     signal?: AbortSignal,
+    options: RequestOptions = {},
+  ): Promise<unknown> {
+    if (method === 'run')
+      return this.commands.run(() => this.attempt(method, params, signal, options), signal)
+    return this.attempt(method, params, signal, options)
+  }
+
+  private async attempt(
+    method: string,
+    params: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    { wait = REQUEST_MS, once = false }: RequestOptions,
   ): Promise<unknown> {
     try {
-      return await this.send(method, params, signal)
+      return await this.send(method, params, signal, wait)
     } catch (error) {
-      if (!notRunning(error)) throw error
+      if (!notRunning(error, once)) throw error
       await this.launch()
-      return this.send(method, params, signal)
+      return this.send(method, params, signal, wait)
     }
   }
 
   private launch() {
     this.launching ??= (async () => {
+      if (process.platform === 'linux')
+        // Brigade.app, which serves computer use as it starts (a second launch goes to the first).
+        spawn(this.app, ['--computer-use'], { detached: true, stdio: 'ignore' }).unref()
       // -g: in the background, without taking the person's focus.
-      await execFileAsync('open', ['-g', '-a', this.app])
+      else await execFileAsync('open', ['-g', '-a', this.app])
       const until = Date.now() + LAUNCH_MS
       for (;;) {
         try {
@@ -90,7 +183,12 @@ export class ComputerUseClient {
     return this.launching
   }
 
-  private async send(method: string, params: Record<string, unknown>, signal?: AbortSignal) {
+  private async send(
+    method: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+    wait = REQUEST_MS,
+  ) {
     const token = (await readFile(join(DIR, 'token'), 'utf8')).trim()
     const id = this.nextId++
     return new Promise<unknown>((resolve, reject) => {
@@ -106,7 +204,7 @@ export class ComputerUseClient {
       const aborted = () => finish(new Error('aborted'))
       const timer = setTimeout(
         () => finish(new Error(`${COMPUTER_USE_APP} did not answer ${method} in time`)),
-        REQUEST_MS,
+        wait,
       )
       signal?.addEventListener('abort', aborted, { once: true })
       socket.on('error', (error) => finish(error))
@@ -136,7 +234,8 @@ export class ComputerUseClient {
 
 let shared: ComputerUseClient | undefined
 
-/** One client for the runner's threads, when the app is installed on this Mac. */
+/** One client for the runner's threads, when the app is installed on this Mac (or Brigade.app on
+ * this Linux computer). */
 export function computerUseClient(): ComputerUseClient | undefined {
   const app = computerUseApp()
   if (!app) return

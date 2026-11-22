@@ -1,7 +1,9 @@
 // Notifications: web push to the dashboard, installed as an app or open in a
-// browser. Sparse by design. A push says something waits on the member (the
-// Needs you items that are theirs); with a preset, also each finished task or
-// merged pull request, and replies in threads they started. Nothing else.
+// browser, and Brigade.app, which has no push service: what would be pushed to it is
+// queued for it to fetch (DesktopMessage, routes/desktop-notifications.ts). Sparse by design. A push says something waits on the member (the
+// Needs you items that are theirs); with a preset, also each thread its teammate
+// declared done and each merged pull request, and replies in threads they started.
+// Nothing else.
 //
 // A sweep every half minute compares what should notify each member with what
 // did (PushNotice), so every rule lives in one place:
@@ -25,11 +27,14 @@ import {
   type PlaybookManifest,
   type PushMessage,
 } from '@brigade/contracts'
+import { CHOICE_DAYS, CHOICE_THREAD, choicesWaitingAmong } from './choices-waiting.js'
 import { env } from './config.js'
-import { prisma } from './db.js'
-import { isLooking } from './hub.js'
+import { prisma, scoped, type Scope } from './db.js'
+import { FAILED_THREAD, failedWaitingAmong, failingRoutines, RECENT_FAILURES } from './failed.js'
+import { hubs } from './hub.js'
+import { laterKey, latersIn } from './later.js'
 import { waitingNow } from './pull-requests.js'
-import { columnOf } from './tasks.js'
+import { rootOf } from './thread-root.js'
 import { sendPush, type Vapid } from './web-push.js'
 
 const SWEEP_MS = 30_000
@@ -44,6 +49,12 @@ const PUSHES_PER_HOUR = 4
 const FRESH_MS = 15 * 60_000
 /** What was sent is kept this long once over: past the cap's hour and the news window. */
 const KEEP_MS = 2 * 60 * 60_000
+/** Brigade.app fetches every 20 s: one that has not for this long is not running. */
+export const DESKTOP_ONLINE_MS = 2 * 60_000
+/** A queued push older than this is no longer news: the app came back too late for it. */
+export const DESKTOP_MESSAGE_MS = 15 * 60_000
+/** An app that has not fetched for this long is gone (uninstalled, another account). */
+const DESKTOP_GONE_MS = 30 * 24 * 60 * 60_000
 
 export const vapid = (): Vapid | null =>
   env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY
@@ -82,6 +93,7 @@ type OpenTicket = {
     id: string
     title: string
     startedByMemberId: string
+    parentId: string | null
     teammate: { name: string }
   } | null
 }
@@ -133,8 +145,30 @@ const ASKS: Record<string, string> = {
 const threadUrl = (workspaceId: string, threadId: string) =>
   `/app/threads/${threadId}?workspace=${workspaceId}`
 
+/** Who wrote each thread's latest person's message, of the last day. */
+async function latestAskers(sessionIds: string[], now: Date) {
+  const askers = new Map<string, string>()
+  if (!sessionIds.length) return askers
+  const messages = await prisma.sessionEvent.findMany({
+    where: {
+      sessionId: { in: sessionIds },
+      type: 'message.user',
+      at: { gt: new Date(now.getTime() - 24 * 60 * 60_000) },
+    },
+    select: { sessionId: true, data: true },
+    orderBy: { seq: 'desc' },
+  })
+  for (const { sessionId, data } of messages) {
+    const memberId = (data as { memberId?: string | null } | null)?.memberId
+    if (memberId && !askers.has(sessionId)) askers.set(sessionId, memberId)
+  }
+  return askers
+}
+
 /** What each member of an organization may be notified of in one workspace. */
-async function workspaceItems(workspaceId: string, members: Recipient[], now: Date) {
+export async function workspaceItems(scope: Scope, members: Recipient[], now: Date) {
+  const { workspaceId } = scope
+  const db = scoped(scope)
   const fresh = new Date(now.getTime() - FRESH_MS)
   const wantsFinished = members.some((m) => m.notify !== 'needed')
   const wantsReplies = members.some((m) => m.notify === 'everything')
@@ -143,10 +177,14 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
       id: true,
       title: true,
       startedByMemberId: true,
+      parentId: true,
+      // A child's review: its root is its parent's parent (src/thread-root.ts).
+      parent: { select: { parentId: true } },
       teammate: { select: { name: true } },
     },
   }
-  const [tickets, tasks, waitingPulls, done, merged, turns] = await Promise.all([
+  const [laters, tickets, waitingPulls, finished, merged, turns] = await Promise.all([
+    latersIn(workspaceId),
     prisma.ticket.findMany({
       // Not those of an archived thread: put away, they no longer wait on anyone.
       where: {
@@ -157,29 +195,7 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
       select: { id: true, type: true, title: true, payload: true, session: thread },
       orderBy: { createdAt: 'asc' },
     }),
-    prisma.task.findMany({
-      where: {
-        workspaceId,
-        archivedAt: null,
-        trashedAt: null,
-        completedAt: null,
-        session: { isNot: null },
-      },
-      select: {
-        id: true,
-        title: true,
-        completedAt: true,
-        session: {
-          select: {
-            ...thread.select,
-            status: true,
-            _count: { select: { tickets: { where: { status: 'open' as const } } } },
-            pullRequests: { select: { state: true } },
-          },
-        },
-      },
-    }),
-    // Pull requests waiting on a person, as Home lists them, whether or not a task is behind them.
+    // Pull requests waiting on a person, as Home lists them.
     prisma.pullRequest.findMany({
       where: { workspaceId, ...waitingNow },
       select: {
@@ -197,10 +213,17 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
       },
       orderBy: { createdAt: 'asc' },
     }),
+    // Threads their teammate declared done (docs/board.md), at the top, out of no one's sidebar.
     wantsFinished
-      ? prisma.task.findMany({
-          where: { workspaceId, completedAt: { gt: fresh }, trashedAt: null },
-          select: { id: true, title: true, createdByMemberId: true, session: thread },
+      ? prisma.session.findMany({
+          where: {
+            workspaceId,
+            doneAt: { gt: fresh },
+            doneByType: 'teammate',
+            parentId: null,
+            OR: [{ playbookRunId: null, quiet: false }, { surfacedAt: { not: null } }],
+          },
+          select: { ...thread.select, doneAt: true, doneSummary: true },
         })
       : [],
     wantsFinished
@@ -212,7 +235,7 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
             number: true,
             title: true,
             requestedByMemberId: true,
-            session: { select: { ...thread.select, task: { select: { completedAt: true } } } },
+            session: thread,
           },
         })
       : [],
@@ -226,7 +249,7 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
             at: { gt: fresh },
             session: {
               parentId: null,
-              OR: [{ playbookRunId: null }, { surfacedAt: { not: null } }],
+              OR: [{ playbookRunId: null, quiet: false }, { surfacedAt: { not: null } }],
             },
           },
           select: {
@@ -234,7 +257,6 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
             session: {
               select: {
                 ...thread.select,
-                taskId: true,
                 reads: { select: { memberId: true, seenAt: true } },
               },
             },
@@ -243,8 +265,48 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
         })
       : [],
   ])
+  // Failed threads that may wait on whoever started them (src/failed.ts), lately active,
+  // routines waiting on their owner, and threads that may stop on choices nobody picked
+  // (src/choices-waiting.ts).
+  const [failed, routines, idle] = await Promise.all([
+    prisma.session.findMany({
+      where: {
+        workspaceId,
+        ...FAILED_THREAD,
+        updatedAt: { gte: new Date(now.getTime() - RECENT_FAILURES) },
+      },
+      select: thread.select,
+    }),
+    failingRoutines(db, {}, now),
+    prisma.session.findMany({
+      where: {
+        workspaceId,
+        ...CHOICE_THREAD,
+        updatedAt: { gte: new Date(now.getTime() - CHOICE_DAYS * 24 * 60 * 60_000) },
+      },
+      select: thread.select,
+    }),
+  ])
+  // Which of those failed threads wait on a person.
+  const [failing, choosing] = await Promise.all([
+    failedWaitingAmong(
+      db,
+      failed.map((t) => t.id),
+      now,
+    ),
+    choicesWaitingAmong(
+      db,
+      idle.map((t) => t.id),
+      now,
+    ),
+  ])
 
   const items = new Map<string, Item[]>(members.map((m) => [m.id, []]))
+  /** The member put the thread away for later: nothing in it waits on them (src/later.ts). */
+  const putAway = (
+    m: { id: string },
+    s: { id: string; parentId: string | null; parent?: { parentId: string | null } | null } | null,
+  ) => !!s && laters.has(laterKey(m.id, rootOf(s)))
   /** Added once per key: a thread with several tickets is one item. */
   const add = (memberId: string, item: Item) => {
     const list = items.get(memberId)!
@@ -263,7 +325,7 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
     }
     const key = t.session ? `needs:${t.session.id}` : `needs:ticket:${t.id}`
     for (const m of members) {
-      if (!waitsOn(t, m)) continue
+      if (!waitsOn(t, m) || putAway(m, t.session)) continue
       counted.get(m.id)!.add(key)
       if (!isFor(t, m)) continue
       add(m.id, {
@@ -313,25 +375,56 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
     }
   }
 
-  // Tasks in Needs you: every member's sidebar shows them; the thread's starter is told,
-  // unless it is there for a ticket, which says whose it is.
-  for (const task of tasks) {
-    const s = task.session!
-    if (columnOf({ completedAt: task.completedAt, session: s }) !== 'needs_you') continue
+  // Failed threads: their starter's, as Home and the sidebar count them; told to them.
+  for (const s of failed) {
+    if (!failing.has(s.id) || !items.has(s.startedByMemberId)) continue
+    if (putAway({ id: s.startedByMemberId }, s)) continue
     const key = `needs:${s.id}`
-    for (const m of members) counted.get(m.id)!.add(key)
-    if (s._count.tickets > 0 || !items.has(s.startedByMemberId)) continue
-    const review = s.status !== 'waiting'
+    counted.get(s.startedByMemberId)!.add(key)
     add(s.startedByMemberId, {
       key,
       workspaceId,
       needs: true,
-      title: review
-        ? `${s.teammate.name} opened a pull request for you to review`
-        : `${s.teammate.name} needs you`,
-      body: task.title,
+      title: `${s.teammate.name}'s thread failed`,
+      body: s.title,
       url: threadUrl(workspaceId, s.id),
       tag: s.id,
+    })
+  }
+
+  // Choices nobody picked: their thread's starter's, as Home and the sidebar count them; told to
+  // them, with what the choices ask. A ticket open in the thread was added first, by the same
+  // key: it says whose it is.
+  for (const s of idle) {
+    const choice = choosing.get(s.id)
+    if (!choice || !items.has(s.startedByMemberId)) continue
+    if (putAway({ id: s.startedByMemberId }, s)) continue
+    const key = `needs:${s.id}`
+    counted.get(s.startedByMemberId)!.add(key)
+    add(s.startedByMemberId, {
+      key,
+      workspaceId,
+      needs: true,
+      title: `${s.teammate.name} needs you to pick one`,
+      body: choice.question,
+      url: threadUrl(workspaceId, s.id),
+      tag: s.id,
+    })
+  }
+
+  // Routines whose last firing could not start or whose latest run failed: their owner's.
+  for (const r of routines) {
+    if (!items.has(r.ownerMemberId)) continue
+    const key = `routine:${r.scheduleId}`
+    counted.get(r.ownerMemberId)!.add(key)
+    add(r.ownerMemberId, {
+      key,
+      workspaceId,
+      needs: true,
+      title: r.couldNotStart ? `Routine ${r.title} could not start` : `Routine ${r.title} failed`,
+      body: r.error ?? 'Its last run failed',
+      url: r.runId ? threadUrl(workspaceId, r.runId) : `/app/routines?workspace=${workspaceId}`,
+      tag: r.runId ?? r.scheduleId,
     })
   }
 
@@ -341,9 +434,9 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
   for (const pr of waitingPulls) {
     const s = pr.session
     const key = s ? `needs:${s.id}` : `needs:pull:${pr.id}`
-    for (const m of members) counted.get(m.id)!.add(key)
+    for (const m of members) if (!putAway(m, s)) counted.get(m.id)!.add(key)
     const who = pr.requestedByMemberId ?? s?.startedByMemberId
-    if (!who || !items.has(who) || (s && s._count.tickets > 0)) continue
+    if (!who || !items.has(who) || (s && s._count.tickets > 0) || putAway({ id: who }, s)) continue
     add(who, {
       key,
       workspaceId,
@@ -359,26 +452,25 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
 
   const finishedFor = (memberId: string | null | undefined) =>
     memberId && members.find((m) => m.id === memberId && m.notify !== 'needed')
-  for (const task of done) {
-    const who = task.session?.startedByMemberId ?? task.createdByMemberId
-    if (!finishedFor(who)) continue
-    add(who, {
-      key: `done:${task.id}`,
+  for (const s of finished) {
+    if (!finishedFor(s.startedByMemberId) || putAway({ id: s.startedByMemberId }, s)) continue
+    add(s.startedByMemberId, {
+      // Done again after a reopen is news again.
+      key: `done:${s.id}:${s.doneAt!.getTime()}`,
       workspaceId,
       needs: false,
-      title: task.session ? `${task.session.teammate.name} finished a task` : 'Task done',
-      body: task.title,
-      url: task.session
-        ? threadUrl(workspaceId, task.session.id)
-        : `/app/tasks?workspace=${workspaceId}`,
-      tag: task.session?.id ?? task.id,
+      title: `${s.teammate.name} finished`,
+      body: s.doneSummary ?? s.title,
+      url: threadUrl(workspaceId, s.id),
+      tag: s.id,
     })
   }
   for (const pr of merged) {
-    // Its task is done with it: that says it.
-    if (pr.session?.task?.completedAt) continue
     const who = pr.requestedByMemberId ?? pr.session?.startedByMemberId
     if (!who || !finishedFor(who)) continue
+    // Its thread's done, told to them in this same push, says it.
+    const s = pr.session
+    if (s && items.get(who)!.some((i) => i.key.startsWith(`done:${s.id}:`))) continue
     add(who, {
       key: `merged:${pr.id}`,
       workspaceId,
@@ -393,47 +485,56 @@ async function workspaceItems(workspaceId: string, members: Recipient[], now: Da
   }
   // A thread's latest turn only: one notification per thread.
   const latest = new Map(turns.map((turn) => [turn.session.id, turn]))
+  // In a thread others write in, the reply is also news for whoever asked for it last.
+  const askers = await latestAskers([...latest.keys()], now)
   for (const turn of latest.values()) {
     const s = turn.session
-    const m = members.find((r) => r.id === s.startedByMemberId && r.notify === 'everything')
-    if (!m || counted.get(m.id)!.has(`needs:${s.id}`)) continue
-    // Read since: they saw it.
-    const seen = s.reads.find((r) => r.memberId === m.id)?.seenAt
-    if (seen && seen >= turn.at) continue
-    // A task's thread says when it is done, not each turn on the way.
-    if (s.taskId) continue
-    add(m.id, {
-      key: `reply:${s.id}:${turn.at.getTime()}`,
-      workspaceId,
-      needs: false,
-      title: `${s.teammate.name} replied`,
-      body: s.title,
-      url: threadUrl(workspaceId, s.id),
-      tag: s.id,
-    })
+    for (const id of new Set([s.startedByMemberId, askers.get(s.id)])) {
+      const m = members.find((r) => r.id === id && r.notify === 'everything')
+      if (!m || counted.get(m.id)!.has(`needs:${s.id}`)) continue
+      // Its teammate declared it done in that reply: the done says it.
+      if (items.get(m.id)!.some((i) => i.key.startsWith(`done:${s.id}:`))) continue
+      // Read since: they saw it.
+      const seen = s.reads.find((r) => r.memberId === m.id)?.seenAt
+      if (seen && seen >= turn.at) continue
+      add(m.id, {
+        key: `reply:${s.id}:${turn.at.getTime()}`,
+        workspaceId,
+        needs: false,
+        title: `${s.teammate.name} replied`,
+        body: s.title,
+        url: threadUrl(workspaceId, s.id),
+        tag: s.id,
+      })
+    }
   }
 
   return { items, counted }
 }
 
-let sweeping = false
-
-export function watchNotifications() {
-  setInterval(() => {
-    if (sweeping || !vapid()) return
-    sweeping = true
-    void sweep()
-      .catch((error) => console.warn(`notification sweep failed: ${String(error)}`))
-      .finally(() => (sweeping = false))
-  }, SWEEP_MS)
-}
-
-/** One pass over every member with a device that receives pushes (in one organization: tests). */
+/**
+ * One pass over every member with a device that receives pushes (in one organization: tests),
+ * every SWEEP_MS (src/jobs.ts).
+ */
 export async function sweep(now = new Date(), organizationId?: string) {
   const keys = vapid()
-  if (!keys) return
+  const at = now.getTime()
+  // Brigade.app's leftovers: pushes it did not fetch in time, and apps long gone. Everyone's,
+  // so only in the sweep of every organization (a test's sweep keeps to its own).
+  if (!organizationId) {
+    await prisma.desktopMessage.deleteMany({
+      where: { createdAt: { lt: new Date(at - DESKTOP_MESSAGE_MS) } },
+    })
+    await prisma.desktopDevice.deleteMany({
+      where: { lastSeenAt: { lt: new Date(at - DESKTOP_GONE_MS) } },
+    })
+  }
+  const devices = [
+    ...(keys ? [{ pushDevices: { some: {} } }] : []),
+    { desktopDevices: { some: { lastSeenAt: { gt: new Date(at - DESKTOP_ONLINE_MS) } } } },
+  ]
   const members = await prisma.member.findMany({
-    where: { ...(organizationId ? { organizationId } : {}), user: { pushDevices: { some: {} } } },
+    where: { ...(organizationId ? { organizationId } : {}), user: { OR: devices } },
     select: { id: true, organizationId: true, role: true, notify: true, userId: true },
   })
   const byOrganization = new Map<string, typeof members>()
@@ -447,14 +548,15 @@ export async function sweep(now = new Date(), organizationId?: string) {
     const items = new Map<string, Item[]>(orgMembers.map((m) => [m.id, []]))
     const badges = new Map<string, number>(orgMembers.map((m) => [m.id, 0]))
     for (const w of workspaces) {
-      const found = await workspaceItems(w.id, orgMembers, now)
+      const found = await workspaceItems({ organizationId, workspaceId: w.id }, orgMembers, now)
       for (const m of orgMembers) {
         items.get(m.id)!.push(...found.items.get(m.id)!)
         badges.set(m.id, badges.get(m.id)! + found.counted.get(m.id)!.size)
       }
     }
+    const ids = workspaces.map((w) => w.id)
     for (const m of orgMembers)
-      await settle(keys, m, organizationId, items.get(m.id)!, badges.get(m.id)!, now).catch(
+      await settle(keys, m, organizationId, ids, items.get(m.id)!, badges.get(m.id)!, now).catch(
         (error) => console.warn(`notifications for ${m.id} failed: ${String(error)}`),
       )
   }
@@ -462,9 +564,11 @@ export async function sweep(now = new Date(), organizationId?: string) {
 
 /** Bring a member's notices up to date with what is, and send what is due. */
 async function settle(
-  keys: Vapid,
+  keys: Vapid | null,
   member: { id: string; userId: string },
   organizationId: string,
+  /** The organization's workspaces: a dashboard of any of them in view counts. */
+  workspaceIds: string[],
   items: Item[],
   badge: number,
   now: Date,
@@ -540,7 +644,10 @@ async function settle(
   if (!due.length && !remind.length) return
 
   // In front of them: what is due counts as seen, never sent. Reminders wait.
-  if (isLooking(member.id, LOOKING_MS)) {
+  const looking = await Promise.all(
+    workspaceIds.map((id) => hubs.get(id).isLooking(member.id, LOOKING_MS)),
+  )
+  if (looking.some(Boolean)) {
     if (due.length)
       await prisma.pushNotice.updateMany({
         where: { memberId: member.id, key: { in: due.map((i) => i.key) }, sentAt: null },
@@ -573,10 +680,10 @@ async function settle(
     .filter((tag) => !items.some((i) => i.tag === tag))
   const message = compose([...due, ...remind], badge, [...new Set(close)])
 
-  const devices = await prisma.pushDevice.findMany({ where: { userId: member.userId } })
-  let delivered = false
+  const devices = keys ? await prisma.pushDevice.findMany({ where: { userId: member.userId } }) : []
+  let delivered = (await queueDesktop(member.userId, message, now)) > 0
   for (const device of devices) {
-    const result = await sendPush(keys, device, message, {
+    const result = await sendPush(keys!, device, message, {
       topic: message.tag,
       urgency: due.some((i) => i.needs) || remind.length ? 'high' : 'normal',
     })
@@ -602,7 +709,23 @@ async function settle(
   })
 }
 
-/** The tag of a notice's notification, from its key: a thread's id, else the ticket's, playbook's, task's or pull request's. */
+/**
+ * Queues a push for each Brigade.app of the user's that is running (fetched lately): it shows
+ * it at its next fetch. How many took it.
+ */
+export async function queueDesktop(userId: string, message: PushMessage, now = new Date()) {
+  const running = await prisma.desktopDevice.findMany({
+    where: { userId, lastSeenAt: { gt: new Date(now.getTime() - DESKTOP_ONLINE_MS) } },
+    select: { id: true },
+  })
+  if (running.length)
+    await prisma.desktopMessage.createMany({
+      data: running.map((d) => ({ deviceId: d.id, message, createdAt: now })),
+    })
+  return running.length
+}
+
+/** The tag of a notice's notification, from its key: a thread's id, else the ticket's, playbook's or pull request's. */
 const tagOf = (key: string) => {
   const [, id, more] = key.split(':')
   return key.startsWith('needs:ticket:') || key.startsWith('needs:playbook:') ? more! : id!
@@ -630,7 +753,8 @@ export function compose(items: Item[], badge: number, close: string[]): PushMess
   return {
     title,
     body: items.length > 3 ? `${body} · +${items.length - 3}` : body,
-    url: workspaces.size === 1 ? `/app/tasks?workspace=${workspaceId}` : '/app/tasks',
+    // Today, whose Needs you lists them.
+    url: workspaces.size === 1 ? `/app?workspace=${workspaceId}` : '/app',
     tag: 'brigade',
     badge,
     close,
@@ -643,22 +767,25 @@ export function compose(items: Item[], badge: number, close: string[]): PushMess
  */
 export async function sendTest(userId: string) {
   const keys = vapid()
-  if (!keys)
+  const message = {
+    title: 'Notifications are on',
+    body: 'Brigade will tell you here when something needs you.',
+    url: '/app',
+    tag: 'brigade-test',
+    close: [],
+  } satisfies PushMessage
+  const devices = keys ? await prisma.pushDevice.findMany({ where: { userId } }) : []
+  const apps = await prisma.desktopDevice.count({ where: { userId } })
+  if (!keys && !apps)
     return { devices: 0, sent: 0, errors: ['Notifications are not set up on this Brigade'] }
-  const devices = await prisma.pushDevice.findMany({ where: { userId } })
-  let sent = 0
+  let sent = await queueDesktop(userId, message)
   const errors: string[] = []
+  if (sent < apps) errors.push('Brigade.app isn’t running on one of your computers')
   for (const device of devices) {
     const result = await sendPush(
-      keys,
+      keys!,
       device,
-      {
-        title: 'Notifications are on',
-        body: 'Brigade will tell you here when something needs you.',
-        url: '/app',
-        tag: 'brigade-test',
-        close: [],
-      } satisfies PushMessage,
+      message,
       // A topic as real pushes have one: Apple refused those alone (BadWebPushTopic).
       { topic: 'brigade-test', ttlSeconds: 60, urgency: 'high' },
     )
@@ -666,5 +793,5 @@ export async function sendTest(userId: string) {
     if (result.status === 'sent') sent++
     if (result.status === 'failed') errors.push(result.detail)
   }
-  return { devices: devices.length, sent, errors }
+  return { devices: devices.length + apps, sent, errors }
 }

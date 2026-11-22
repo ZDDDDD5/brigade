@@ -1,11 +1,28 @@
 'use client'
-import { CalendarClock, MoreHorizontal, Pencil, Play, Plus, Trash2 } from 'lucide-react'
+import {
+  ChevronRight,
+  History,
+  MessageSquare,
+  MoreHorizontal,
+  Pause,
+  Pencil,
+  Play,
+  Plus,
+  RotateCw,
+  Trash2,
+} from 'lucide-react'
 import Link from 'next/link'
-import { useState } from 'react'
-import { isAdmin, StatusBadge, TeammateAvatar, timeAgo, useDashboard } from '@/components/dashboard'
-import { PlaybookList } from '@/components/playbooks'
-import { ProjectFilter, ProjectTag } from '@/components/projects'
-import { describeCron, ScheduleDialog, scheduleTime, zoneName } from '@/components/schedules'
+import { useEffect, useState } from 'react'
+import { isAdmin, timeAgo, useDashboard } from '@/components/dashboard'
+import { ProjectFilter } from '@/components/projects'
+import { RoutineCalendar } from '@/components/routine-calendar'
+import {
+  describeCron,
+  localTimezone,
+  OUTCOME,
+  ScheduleDialog,
+  zoneName,
+} from '@/components/schedules'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -15,154 +32,288 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Switch } from '@/components/ui/switch'
 import { api, projectQuery, useApi, type Schedule } from '@/lib/api'
+import { agendaOf, agendaTime, byThread, nextRunShort } from '@/lib/routine-agenda'
+import { cn } from '@/lib/utils'
 import { useLive } from '@/lib/use-live'
 
+/** Its latest runs as dots, oldest first: each opens its thread. */
+function RunDots({ runs, className }: { runs: Schedule['recentRuns']; className?: string }) {
+  if (!runs.length) return null
+  return (
+    <span className={cn('items-center gap-1', className)}>
+      {runs.map((run) => (
+        <Link
+          key={run.id}
+          href={`/app/threads/${run.id}`}
+          title={`${OUTCOME[run.outcome].label} · ${timeAgo(run.createdAt)}`}
+          aria-label={`Run ${timeAgo(run.createdAt)}: ${OUTCOME[run.outcome].label}`}
+          className="flex size-3 items-center justify-center rounded-full"
+        >
+          <span className={cn('size-2 rounded-full', OUTCOME[run.outcome].dot)} />
+        </Link>
+      ))}
+    </span>
+  )
+}
+
+const clock = (iso: string) =>
+  new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date(iso))
+
+/**
+ * One routine of the agenda: its time, its name and rhythm, its latest runs; on hover, Run now
+ * and its menu in their place.
+ */
 function ScheduleRow({
   schedule,
   onEdit,
   onChanged,
   showProject,
+  view,
 }: {
   schedule: Schedule
   onEdit: () => void
   onChanged: () => void
   showProject: boolean
+  /** By thread, its section names the thread and its time column says the day too. */
+  view: RoutinesView
 }) {
   const { me } = useDashboard()
   const [error, setError] = useState<string>()
   const [note, setNote] = useState<string>()
   const [confirm, setConfirm] = useState(false)
+  const [menu, setMenu] = useState(false)
   const owner = schedule.ownerMemberId === me.memberId
   const manager = owner || isAdmin(me)
   const active = !schedule.pausedAt
+  const running = schedule.recentRuns.findLast((r) => r.outcome === 'running')
+  const zone = schedule.timezone !== localTimezone() ? ` (${zoneName(schedule.timezone)})` : ''
+  // Actions stay out of the way until the row is pointed at, unless in use or on a touch screen.
+  const pinned = menu || confirm
 
   async function act(path: string, init: { method?: string; body?: unknown } = {}) {
     setError(undefined)
     setNote(undefined)
     try {
-      const result = await api<{ threadId?: string }>(`/schedules/${schedule.id}${path}`, {
-        method: 'POST',
-        body: {},
-        ...init,
-      })
+      await api(`/schedules/${schedule.id}${path}`, { method: 'POST', body: {}, ...init })
       if (path === '/run') setNote('Started')
       onChanged()
-      return result
     } catch (e) {
       setError((e as Error).message)
     }
   }
 
+  const meta: React.ReactNode[] = []
+  if (running)
+    meta.push(
+      <Link
+        key="running"
+        href={`/app/threads/${running.id}`}
+        className="font-semibold text-primary hover:underline"
+      >
+        Running since {clock(running.createdAt)}
+      </Link>,
+    )
+  else if (!active) meta.push(<span key="paused">Paused</span>)
+  else if (!schedule.nextRunAt) meta.push(<span key="over">No more runs</span>)
+  meta.push(<span key="cron">{describeCron(schedule.cron) + zone}</span>)
+  if (view === 'time' && schedule.parentSession)
+    meta.push(
+      <Link
+        key="thread"
+        href={`/app/threads/${schedule.parentSession.id}`}
+        className="hover:text-foreground hover:underline"
+      >
+        in {schedule.parentSession.title}
+      </Link>,
+    )
+  meta.push(<span key="teammate">{schedule.teammate.name}</span>)
+  if (showProject && schedule.project) meta.push(<span key="project">{schedule.project.name}</span>)
+  if (!owner) meta.push(<span key="owner">on {schedule.owner.user.name}&apos;s accounts</span>)
+
   return (
-    <li className="flex flex-col gap-3 rounded-xl border bg-card p-4 sm:flex-row sm:items-center">
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate font-semibold">{schedule.title}</span>
-          {!active && <StatusBadge status="paused" />}
-          {schedule.lastError && <StatusBadge status="failed" label="couldn't start" />}
-        </div>
-        <p className="text-sm">
-          {describeCron(schedule.cron)}{' '}
-          <span className="text-muted-foreground">({zoneName(schedule.timezone)})</span>
-        </p>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <TeammateAvatar teammate={schedule.teammate} className="size-4" />
-            <span className="font-medium text-foreground">{schedule.teammate.name}</span>
-          </span>
-          <span>
-            on {owner ? 'your' : `${schedule.owner.user.name}'s`} accounts
-            {schedule.createdByTeammate && `, set up by ${schedule.createdByTeammate.name}`}
-          </span>
-          {showProject && <ProjectTag project={schedule.project} />}
-          {schedule.parentSession && (
-            <Link href={`/app/threads/${schedule.parentSession.id}`} className="hover:underline">
-              Reports in “{schedule.parentSession.title}”
-            </Link>
-          )}
-          {active && schedule.nextRunAt && (
-            <span>Next {scheduleTime(schedule.nextRunAt, schedule.timezone)}</span>
-          )}
-          {schedule.lastRun && (
-            <Link href={`/app/threads/${schedule.lastRun.id}`} className="hover:underline">
-              Last run {timeAgo(schedule.lastRun.createdAt)} · {schedule.lastRun.status}
-            </Link>
-          )}
-        </div>
+    <li className="group flex items-center gap-3 border-t px-4 py-3 first:border-t-0">
+      <span className="w-12 shrink-0 font-mono text-xs text-muted-foreground">
+        {active && schedule.nextRunAt
+          ? (view === 'thread' ? nextRunShort : agendaTime)(schedule.nextRunAt)
+          : '—'}
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className={cn('truncate font-semibold', !active && 'text-muted-foreground')}>
+          {schedule.title}
+        </span>
+        <span className="truncate text-xs text-muted-foreground">
+          {meta.flatMap((part, i) => (i ? [<span key={`sep-${i}`}> · </span>, part] : [part]))}
+        </span>
         {schedule.lastError && (
-          <p className="text-xs text-destructive-text">{schedule.lastError}</p>
+          <span className="text-xs text-destructive-text">
+            Couldn&apos;t start: {schedule.lastError}
+          </span>
         )}
-        {error && <p className="text-xs text-destructive-text">{error}</p>}
-        {note && <p className="text-xs text-success">{note}</p>}
+        {error && <span className="text-xs text-destructive-text">{error}</span>}
+        {note && <span className="text-xs text-success">{note}</span>}
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
-        {confirm ? (
-          <>
-            <span className="text-sm text-muted-foreground">Delete? Its threads stay.</span>
-            <Button
-              size="sm"
-              variant="destructive"
-              onClick={() => void act('', { method: 'DELETE', body: undefined })}
+      {confirm ? (
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <span className="text-sm text-muted-foreground">Delete? Its threads stay.</span>
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={() => void act('', { method: 'DELETE', body: undefined })}
+          >
+            Delete
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setConfirm(false)}>
+            Keep it
+          </Button>
+        </div>
+      ) : (
+        <div className="flex shrink-0 items-center gap-2">
+          {/* The actions take the dots' place; the menu still opens the last run. */}
+          <RunDots
+            runs={schedule.recentRuns}
+            className={cn(
+              'flex',
+              manager &&
+                (pinned
+                  ? '[@media(hover:hover)]:hidden'
+                  : '[@media(hover:hover)]:group-focus-within:hidden [@media(hover:hover)]:group-hover:hidden'),
+            )}
+          />
+          {manager && (
+            <div
+              className={cn(
+                'items-center gap-1',
+                pinned
+                  ? 'flex'
+                  : 'flex [@media(hover:hover)]:hidden [@media(hover:hover)]:group-focus-within:flex [@media(hover:hover)]:group-hover:flex',
+              )}
             >
-              Delete
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setConfirm(false)}>
-              Keep it
-            </Button>
-          </>
-        ) : (
-          <>
-            <Switch
-              checked={active}
-              disabled={!manager}
-              onCheckedChange={(on) => void act(on ? '/resume' : '/pause')}
-              aria-label={active ? 'Pause schedule' : 'Resume schedule'}
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!manager}
-              onClick={() => void act('/run')}
-            >
-              <Play aria-hidden />
-              Run now
-            </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="icon-sm" variant="ghost" aria-label="More" disabled={!manager}>
-                  <MoreHorizontal aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem disabled={!owner} onSelect={onEdit}>
-                  <Pencil aria-hidden />
-                  Edit
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={() => setConfirm(true)}>
-                  <Trash2 aria-hidden />
-                  Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
-        )}
-      </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="[@media(hover:none)]:hidden"
+                onClick={() => void act('/run')}
+              >
+                <Play aria-hidden />
+                Run now
+              </Button>
+              <DropdownMenu open={menu} onOpenChange={setMenu}>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon-sm" variant="ghost" aria-label="More">
+                    <MoreHorizontal aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => void act('/run')}>
+                    <Play aria-hidden />
+                    Run now
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => void act(active ? '/pause' : '/resume')}>
+                    {active ? <Pause aria-hidden /> : <RotateCw aria-hidden />}
+                    {active ? 'Pause' : 'Resume'}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled={!owner} onSelect={onEdit}>
+                    <Pencil aria-hidden />
+                    Edit
+                  </DropdownMenuItem>
+                  {schedule.lastRun && (
+                    <DropdownMenuItem asChild>
+                      <Link href={`/app/threads/${schedule.lastRun.id}`}>
+                        <History aria-hidden />
+                        Open last run
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
+                  {schedule.parentSession && (
+                    <DropdownMenuItem asChild>
+                      <Link href={`/app/threads/${schedule.parentSession.id}`}>
+                        <MessageSquare aria-hidden />
+                        <span className="truncate">
+                          Reports in “{schedule.parentSession.title}”
+                        </span>
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem variant="destructive" onSelect={() => setConfirm(true)}>
+                    <Trash2 aria-hidden />
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
+        </div>
+      )}
     </li>
   )
 }
 
+type RoutinesView = 'time' | 'thread' | 'calendar'
+
+const VIEWS: { value: RoutinesView; label: string }[] = [
+  { value: 'time', label: 'By time' },
+  { value: 'thread', label: 'By thread' },
+  { value: 'calendar', label: 'Calendar' },
+]
+
+/** How this browser last showed the page. */
+const VIEW_KEY = 'brigade:routines-view'
+
+function useRoutinesView() {
+  const [view, setView] = useState<RoutinesView>('time')
+  useEffect(() => {
+    const saved = localStorage.getItem(VIEW_KEY)
+    if (saved === 'thread' || saved === 'calendar') setView(saved)
+  }, [])
+  return [
+    view,
+    (next: RoutinesView) => {
+      setView(next)
+      localStorage.setItem(VIEW_KEY, next)
+    },
+  ] as const
+}
+
+function AgendaSection({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h2 className="truncate text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        {label}
+      </h2>
+      <ul className="rounded-xl border bg-card">{children}</ul>
+    </section>
+  )
+}
+
+/** The fold's name: what the routines that are not coming up are. */
+function restLabel(rest: Schedule[]) {
+  const paused = rest.filter((s) => s.pausedAt).length
+  if (paused === rest.length) return 'Paused'
+  if (paused === 0) return 'No more runs'
+  return 'Paused or finished'
+}
+
 /**
- * Routines: the playbooks installed, then schedules that prompt a teammate at set times. In a
- * project, its own.
+ * Routines: schedules that prompt a teammate at set times, as an agenda: each once, under the
+ * day of its next run (lib/routine-agenda.ts). In a project, its own. Playbooks have their own
+ * page.
  */
-export function ScheduleList({ projectId }: { projectId?: string }) {
-  const [filter, setFilter] = useState('')
+export function ScheduleList({
+  projectId,
+  initialFilter = '',
+}: {
+  projectId?: string
+  /** The project filter it opens with, e.g. from `?project=` (a project's page links there). */
+  initialFilter?: string
+}) {
+  const [filter, setFilter] = useState(initialFilter)
   const schedules = useApi<Schedule[]>(`/schedules${projectQuery(projectId ?? filter)}`)
   const [editing, setEditing] = useState<Schedule | 'new' | null>(null)
+  /** A new routine's cron, from a slot clicked in the calendar. */
+  const [newCron, setNewCron] = useState<string>()
   const reload = schedules.reload
   // A run's thread changing status changes the row's last run.
   useLive((message) => {
@@ -170,7 +321,46 @@ export function ScheduleList({ projectId }: { projectId?: string }) {
   })
 
   const list = schedules.data ?? []
-  const active = list.filter((s) => !s.pausedAt).length
+  const { groups, rest } = agendaOf(list)
+  const [showRest, setShowRest] = useState(false)
+  const [view, setView] = useRoutinesView()
+  const row = (s: Schedule) => (
+    <ScheduleRow
+      key={s.id}
+      schedule={s}
+      onEdit={() => setEditing(s)}
+      onChanged={() => void reload()}
+      showProject={!projectId}
+      view={view}
+    />
+  )
+
+  const viewSwitch = (
+    <div
+      role="radiogroup"
+      aria-label="Group routines"
+      className={cn(
+        'flex w-fit gap-0.5 rounded-full bg-secondary p-[3px]',
+        view !== 'calendar' && '-mb-2',
+      )}
+    >
+      {VIEWS.map((v) => (
+        <button
+          key={v.value}
+          type="button"
+          role="radio"
+          aria-checked={view === v.value}
+          onClick={() => setView(v.value)}
+          className={cn(
+            'flex h-7 items-center rounded-full px-3 text-[13px] font-medium text-muted-foreground',
+            view === v.value && 'bg-card font-semibold text-foreground shadow-xs',
+          )}
+        >
+          {v.label}
+        </button>
+      ))}
+    </div>
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -179,61 +369,102 @@ export function ScheduleList({ projectId }: { projectId?: string }) {
           <div className="flex flex-col gap-1">
             <h1 className="text-3xl font-extrabold tracking-tight">Routines</h1>
             <p className="max-w-prose text-muted-foreground">
-              Work your teammates do on their own: playbooks, and schedules that run in a fresh
-              thread each time. Ask a teammate in a thread, or add a schedule yourself.
+              Work your teammates do on a schedule, in a fresh thread each time. Ask a teammate in a
+              thread, or add a schedule yourself.
             </p>
           </div>
         )}
         <div className="ml-auto flex flex-wrap gap-2">
           {!projectId && <ProjectFilter value={filter} onChange={setFilter} />}
-          <Button onClick={() => setEditing('new')}>
+          <Button
+            onClick={() => {
+              setNewCron(undefined)
+              setEditing('new')
+            }}
+          >
             <Plus aria-hidden />
             New schedule
           </Button>
         </div>
       </header>
 
-      <PlaybookList projectId={projectId} filter={filter} />
+      {list.length > 0 && view !== 'calendar' && viewSwitch}
 
-      <section aria-labelledby="schedules" className="flex flex-col gap-3">
-        <h2 id="schedules" className="flex items-center gap-2 text-sm font-bold">
-          <CalendarClock className="size-4 text-muted-foreground" aria-hidden />
-          Schedules
-          {schedules.data && (
-            <span className="font-mono text-xs font-normal text-muted-foreground">
-              {active} active{list.length > active && ` · ${list.length - active} paused`}
-            </span>
+      {!schedules.data ? (
+        <Skeleton className="h-24 w-full" />
+      ) : list.length === 0 ? (
+        <p className="rounded-xl border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+          No schedules yet. Try &ldquo;Every weekday at 9:00, summarize yesterday&rsquo;s new
+          issues&rdquo;.
+        </p>
+      ) : view === 'calendar' ? (
+        <RoutineCalendar
+          schedules={list}
+          toolbar={viewSwitch}
+          onEdit={setEditing}
+          onNew={(cron) => {
+            setNewCron(cron)
+            setEditing('new')
+          }}
+          onChanged={() => void reload()}
+        />
+      ) : view === 'thread' ? (
+        byThread(list).map((group) => (
+          <AgendaSection
+            key={group.thread?.id ?? 'own'}
+            label={
+              group.thread ? (
+                <Link
+                  href={`/app/threads/${group.thread.id}`}
+                  className="text-[13px] tracking-normal text-foreground normal-case hover:underline"
+                >
+                  {group.thread.title}
+                </Link>
+              ) : (
+                <span className="text-[13px] tracking-normal normal-case">
+                  In threads of their own
+                </span>
+              )
+            }
+          >
+            {group.items.map(row)}
+          </AgendaSection>
+        ))
+      ) : (
+        <>
+          {groups.map((group) => (
+            <AgendaSection key={group.key} label={group.label}>
+              {group.items.map(row)}
+            </AgendaSection>
+          ))}
+          {rest.length > 0 && (
+            <section className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => setShowRest((open) => !open)}
+                aria-expanded={showRest}
+                className="flex items-center gap-1 self-start rounded-sm text-sm text-muted-foreground hover:text-foreground"
+              >
+                {restLabel(rest)} · {rest.length}
+                <ChevronRight
+                  className={cn('size-3.5 transition-transform', showRest && 'rotate-90')}
+                  aria-hidden
+                />
+              </button>
+              {showRest && <ul className="rounded-xl border bg-card">{rest.map(row)}</ul>}
+            </section>
           )}
-        </h2>
-        {!schedules.data ? (
-          <Skeleton className="h-24 w-full" />
-        ) : list.length === 0 ? (
-          <p className="rounded-xl border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-            No schedules yet. Try &ldquo;Every weekday at 9:00, summarize yesterday&rsquo;s new
-            issues&rdquo;.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {list.map((s) => (
-              <ScheduleRow
-                key={s.id}
-                schedule={s}
-                onEdit={() => setEditing(s)}
-                onChanged={() => void reload()}
-                showProject={!projectId}
-              />
-            ))}
-          </ul>
-        )}
-        {schedules.error && (
-          <p className="text-sm text-destructive-text">{schedules.error.message}</p>
-        )}
-      </section>
+        </>
+      )}
+      {schedules.error && (
+        <p className="text-sm text-destructive-text">{schedules.error.message}</p>
+      )}
 
       <ScheduleDialog
         open={editing !== null}
         onOpenChange={(open) => !open && setEditing(null)}
         schedule={editing && editing !== 'new' ? editing : undefined}
+        cron={newCron}
         onSaved={() => void reload()}
         projectId={projectId ?? (filter && filter !== 'none' ? filter : undefined)}
       />

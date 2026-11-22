@@ -8,19 +8,33 @@ import {
   pickedChoice,
   pickedDesignPath,
   bareToolName,
+  COMPLETE_THREAD_TOOL,
   asksParallel,
   childNote,
   fromParent,
   forPeople,
-  noteThreads,
   formatMention,
+  handbackNote,
   mentionsToText,
   OFFER_CHOICES_TOOL,
   PREVIEW_REPLACED,
   PROPOSE_TEAM_TOOL,
+  mergedPull,
+  resolveConflictsNote,
   SHOW_WIDGET_TOOL,
+  splitPreviewElements,
+  STORED_FILE,
+  STORED_FILE_NAME,
   SUGGEST_REPLIES_TOOL,
   THREAD_NOTE_SOURCE,
+  TURN_NEXT_SOURCE,
+  TURN_PREPARING_SOURCE,
+  TURN_MEMORY_SOURCE,
+  TURN_WAITING_SOURCE,
+  type TurnNext,
+  type TurnPreparing,
+  type TurnWaiting,
+  type TurnWaitingMemory,
   hasVisibleText,
   SuggestedReplies,
   safeChoices,
@@ -33,16 +47,26 @@ import {
   type LibraryFile,
   type AgentEvent,
   type Ask,
+  type ChiefDecisionView,
   type AskReply,
+  type CredentialKind,
+  type Handback,
   type MessageAttachment,
   type Question,
   type QuestionAnswer,
   type ReplyTo,
   type SequencedEvent,
   type TicketAnswer,
+  handedEmail,
+  signedOut,
+  triggerEmail,
+  snoozeOptions,
+  triggerEvent,
+  type TriggerEmail,
+  type TriggerEventMessage,
 } from '@brigade/contracts'
 import {
-  AppWindow,
+  Globe,
   ChevronDown,
   Check,
   ChevronRight,
@@ -52,28 +76,58 @@ import {
   CircleDot,
   CircleHelp,
   ClipboardList,
+  Clock,
   EllipsisVertical,
   Copy,
+  FileText,
   Hand,
   LayoutTemplate,
   ListChecks,
   LoaderCircle,
   Monitor,
   Plus,
+  Pencil,
+  ArrowUp,
   RefreshCw,
   Reply,
+  RotateCcw,
   ShieldAlert,
+  X,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { MediaPreview, MessageAttachments } from '@/components/attachments'
+import { Fragment, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { MediaPreview, MessageAttachments, SentAttachments } from '@/components/attachments'
+import { notThrough, notThroughText, type Outgoing } from '@/components/queued-messages'
+import { PdfPreview } from '@/components/file-preview'
 import { APP_NAMES, AppAccessAsk } from '@/components/app-access-ask'
 import { CredentialForm } from '@/components/credential-form'
-import { TeammateAvatar } from '@/components/dashboard'
+import { SignedOutError } from '@/components/thread-sign-in'
+import { signInCards } from '@/lib/thread-sign-in'
+import {
+  BrigadeNoteLine,
+  brigadeNote,
+  handOffNote,
+  type BrigadeNote,
+} from '@/components/brigade-notes'
+import { MarkWrong } from '@/components/mark-wrong'
+import { CredentialAskPreview } from '@/components/credential-ask'
+import { credentialAsked } from '@/lib/credential-ask'
+import {
+  EditableEmailPreview,
+  isEmailSend,
+  ReceivedEmailCard,
+  ToolInputPreview,
+  type EditedEmail,
+} from '@/components/email-cards'
+import { TeammateAvatar, useDashboard } from '@/components/dashboard'
 import { FileLinksProvider, useFileLinks } from '@/components/file-links'
 import { contentUrl } from '@/components/library-browser'
 import { CommandChip, startingCommand, useSkillCommands } from '@/components/composer'
 import { CodeSnippet, CopyableCode, Markdown, MessageWithCode } from '@/components/markdown'
 import { credentialHint } from '@/components/mention'
+import { PebbleAvatar, pebbleInk, type PebbleExpression } from '@/components/pebble-avatar'
+import { PreviewElementChips } from '@/components/preview-elements'
 import { endedText } from '@/components/preview-panel'
 import { VariablesAsk } from '@/components/preview-variables'
 import { PullMergeButton } from '@/components/pull-action'
@@ -94,6 +148,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
@@ -106,10 +161,49 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { Hint } from '@/components/ui/tooltip'
 import { WidgetFrame } from '@/components/widget-frame'
-import { ReportedThread, StartedChild } from '@/components/thread-children'
-import { threadImageUrl, useApi, type Credential, type ThreadChild } from '@/lib/api'
+import {
+  ChildrenWorking,
+  isChildWorking,
+  ReportedThread,
+  reportNote,
+  StartedChild,
+  SubThreadsWorking,
+} from '@/components/thread-children'
+import { AsideGroup } from '@/components/aside-group'
+import { runningAsides } from '@/lib/aside-layout'
+import {
+  answeredSinceStep,
+  closeLine,
+  closingStep,
+  quickReplies,
+  type ChatEntry,
+  type ClosingCall,
+} from '@/lib/chat-turn'
+import { commandSummary } from '@/lib/command-summary'
+import { SideReply, type SideAction, type SideState } from '@/components/side-reply'
+import {
+  attachmentUrl,
+  storedFileUrl,
+  threadImageUrl,
+  useApi,
+  type Credential,
+  type ThreadChild,
+} from '@/lib/api'
+import { useTicketReplies } from '@/lib/ticket-replies'
+import { turnWait } from '@/lib/turn-wait'
+import { nextShownUntil } from '@/lib/next-up'
+import { inGap, type EventGap } from '@/lib/use-thread-events'
+import { messageRuns, runPlace, type RunEntry } from '@/lib/message-runs'
+import { revealSeq } from '@/lib/reveal'
+import { closeOpenMarkdown, useSmoothText } from '@/lib/stream-text'
+import { pauseLabel, pauses } from '@/lib/thread-times'
+import { useMemberNames } from '@/lib/member-names'
 import { cn } from '@/lib/utils'
+import { wakeLabel } from '@/lib/snooze'
+import { choiceLabel } from '@/lib/choice-label'
+import { themeChange, ThemeChangeCard } from '@/components/theme-card'
 
 export type Item =
   | {
@@ -118,26 +212,55 @@ export type Item =
       /** Where it is in the thread: a reply names it by this. */
       seq: number
       text: string
+      /** The member who wrote it; null for Brigade's own words. */
+      memberId: string | null
       attachments: MessageAttachment[]
       /** The earlier message it replies to. */
       replyTo?: ReplyTo
       /** Given to this teammate during its running turn. */
       steeredTo?: string
+      /** When it was shown, or given to the running turn. */
+      at: number
       /** Written by Brigade about child threads, not by a person: a child's work, or reports for its parent. */
       brigade?: NonNullable<ReturnType<typeof childNote>>
+      /** An email a trigger received, shown as a mail rather than as the teammate's prompt. */
+      email?: { event: TriggerEventMessage; email: TriggerEmail }
+      /** An email the person handed over from the Inbox: their note as their message, the mail as a card below it. */
+      handed?: {
+        note: string
+        event: TriggerEventMessage
+        email: TriggerEmail
+        item: string | null
+      }
+      /** Anything else Brigade wrote (a wake-up, a schedule's run…): a line rather than a person's bubble. */
+      note?: BrigadeNote
+      /** Lines of a list a person handed over with a note: the note as their bubble, the lines as a line below it. */
+      lines?: { said: string; note: BrigadeNote }
+      /** A person handed the thread back: their note and what they did, as a card rather than the teammate's prompt. */
+      handback?: Handback & { commands: string[] }
+      /** Written during its teammate's turn and answered on the side (message.side): that answer, under it. */
+      side?: SideState
     }
   | {
       kind: 'assistant'
       key: string
       seq: number
+      /** When its first piece came: one that came in moments ago is revealed as it is written. */
+      at: number
       text: string
       done: boolean
       teammateId?: string
+      /** The person's message it answers, given to the running turn (answer_message): it stays in sight. */
+      answers?: string
+      /** The images it shows, kept with the thread (message.images): by path, as it writes it. */
+      images?: Record<string, string>
     }
   | { kind: 'thinking'; key: string; text: string }
   | {
       kind: 'tool'
       key: string
+      /** Its tool.started event: a choices card dismissed up to there is closed. */
+      seq?: number
       toolName: string
       input: unknown
       output?: unknown
@@ -154,6 +277,7 @@ export type Item =
       /** A credential: may also be allowed for good. */
       always?: boolean
       resolved?: { approved: boolean }
+      teammateId?: string
     }
   | {
       kind: 'question'
@@ -176,12 +300,45 @@ export type Item =
   | { kind: 'image'; key: string; path: string; teammateId?: string; prompt?: string }
   /** Where a teammate's turn begins: what it did until its turn ends folds under one line. */
   | { kind: 'start'; key: string; at: number; teammateId?: string }
+  /**
+   * The turn only waited on work it left in the background, and a report from that work
+   * set the teammate going again, no message steered in: what came before answered.
+   */
+  | { kind: 'woke'; key: string; at: number }
+  /**
+   * A turn waits for a free slot on its computer, all of them taken by other turns; or, with
+   * `memory`, for its computer to have memory for it.
+   */
+  | {
+      kind: 'slot'
+      key: string
+      at: number
+      teammateId: string
+      running: number
+      memory?: true
+    }
+  /** Its turn gets the thread's files ready on its computer (after a move, say) before it starts. */
+  | { kind: 'preparing'; key: string; at: number; teammateId: string }
+  /** Its files are ready and no turn followed (a thread taken back that waits on a person). */
+  | { kind: 'prepared'; key: string }
   | { kind: 'turn'; key: string; finishReason: string; startedAt?: number; at: number }
-  | { kind: 'error'; key: string; message: string }
+  /** Events not loaded here, after the timeline jumped past them: they load as it comes near. */
+  | { kind: 'gap'; key: string; gap: EventGap }
+  /** signedOutAccountId: the failed turn's account, whose login is gone (signedOut). */
+  | { kind: 'error'; key: string; message: string; signedOutAccountId?: string }
   /** settles: something happened that the buttons asked before it no longer fit (thread.note). */
   | { kind: 'note'; key: string; text: string; settles?: true }
-  /** A person at the computer: taking over, handing back, a command in the shell. */
-  | { kind: 'control'; key: string; change: 'took' | 'handed' | 'command'; command?: string }
+  /**
+   * A person at the computer: taking over, handing back, a command in the shell. Handing
+   * back holds the commands run since taking over, for its card.
+   */
+  | {
+      kind: 'control'
+      key: string
+      change: 'took' | 'handed' | 'command'
+      command?: string
+      commands?: string[]
+    }
   | {
       kind: 'preview'
       key: string
@@ -228,49 +385,157 @@ const ASKS = new Set<Item['kind']>(['approval', 'question', 'ticket'])
 /**
  * Fold the event log into what a person reads: messages, tool calls, approvals.
  * Events before `firstSeq` (the context of a thread opened by its latest page)
- * count for its state but do not show, but for asks still open.
+ * count for its state but do not show, but for asks still open; so do those in `gaps`,
+ * each of which shows as a line where it is.
  */
-export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
+export function useThreadItems(events: SequencedEvent[], firstSeq = 1, gaps: EventGap[] = NO_GAPS) {
   return useMemo(() => {
     const items: Item[] = []
     const byKey = new Map<string, Item>()
+    // complete_thread calls waiting for their result: shown only if it refused (closingStep).
+    const closing = new Map<string, ClosingCall>()
     let limits: Limits | undefined
+    // Teammates whose turns wait to answer after another's, in order (TURN_NEXT_SOURCE).
+    let next: string[] = []
     // Messages still queued, and every message id the thread has seen (queued, read or cancelled).
     const queued = new Map<string, QueuedMessage>()
     const seen = new Set<string>()
+    // Messages answered on the side, by id (message.side), and what each said while queued.
+    const sides = new Map<string, SideState>()
+    const sideItems = new Map<string, Item>()
+    const asked = new Map<string, Extract<AgentEvent, { type: 'message.queued' }>>()
     let turnTeammate: string | undefined
+    // The account the turn under way runs on (turn.started, or a switch since).
+    let turnAccount: string | undefined
+    // The turn under way failed (an error): a turn starting after it is a new one (Try again),
+    // not that turn resumed, though no turn.completed ended it.
+    let turnFailed = false
     let turnStartedAt: number | undefined
     let lastPreview: { previewId: string; status: string } | undefined
     // The running turn's background work, by task id: Claude Code sends every one still running at each change.
     let background = new Map<string, BackgroundTask>()
+    // The running turn only waits on that work: 'steered' once a message went in.
+    let idle: 'waiting' | 'steered' | undefined
     let shown = true
+    // Since a person took over: the commands they ran, then their hand back, until its message comes.
+    let commands: Extract<Item, { kind: 'control' }>[] = []
+    let handed: Extract<Item, { kind: 'control' }> | undefined
     const add = (item: Item) => {
       if (shown || ASKS.has(item.kind)) items.push(item)
       byKey.set(item.key, item)
     }
+    /**
+     * The merge of the same pull request, told just before: its line again (an API from before
+     * one merge was told once), or the wake-up that asks its teammate to close the thread.
+     */
+    const toldMerge = (text: string) => {
+      const pull = mergedPull(text)
+      const last = items.at(-1)
+      const before = last?.kind === 'note' && last.settles ? mergedPull(last.text) : null
+      return !!pull && pull.number === before?.number && pull.repository === before.repository
+    }
+    let nextGap = 0
     for (const { seq, event: e } of events) {
-      shown = seq >= firstSeq
+      // Past a gap: its line, and what was open before it closes, as unknown.
+      while (nextGap < gaps.length && gaps[nextGap]!.to <= seq) {
+        const gap = gaps[nextGap++]!
+        items.push({ kind: 'gap', key: `g${gap.from}`, gap })
+        turnStartedAt = undefined
+        idle = undefined
+        commands = []
+        handed = undefined
+      }
+      shown = seq >= firstSeq && !inGap(gaps, seq)
       switch (e.type) {
-        case 'message.user':
+        case 'message.user': {
           if (e.messageId) {
             seen.add(e.messageId)
             queued.delete(e.messageId)
           }
+          // Answered on the side, it shows where that began: settled there, or steered from there.
+          const side = e.messageId ? sides.get(e.messageId) : undefined
+          if (side && side.status !== 'failed' && (e.side || e.steered)) {
+            if (e.steered) {
+              side.steered = true
+              if (idle) idle = 'steered'
+            }
+            // A page that starts between its aside and this: it shows here.
+            const item = sideItems.get(side.messageId)
+            if (item && shown && !items.includes(item)) items.push(item)
+            break
+          }
+          // Its aside began before what was loaded: what its reading carries shows it here.
+          if (!side && e.side && e.messageId) {
+            const made: SideState = {
+              messageId: e.messageId,
+              status: 'answered',
+              text: e.side.text,
+              route: e.side.route,
+              ...(e.steered ? { steered: true } : {}),
+            }
+            sides.set(e.messageId, made)
+            if (e.steered && idle) idle = 'steered'
+            add({
+              kind: 'user',
+              key: `u${seq}`,
+              seq,
+              text: e.text,
+              memberId: e.memberId,
+              attachments: e.attachments ?? [],
+              at: Date.parse(e.at),
+              ...(e.replyTo ? { replyTo: e.replyTo } : {}),
+              ...(turnTeammate ? { steeredTo: turnTeammate } : {}),
+              side: made,
+            })
+            break
+          }
+          // A merge's wake-up says again what its line just said: its turn shows, not the note.
+          if (e.memberId === null && toldMerge(e.text)) {
+            if (!e.steered) turnStartedAt = undefined
+            else if (idle) idle = 'steered'
+            break
+          }
           // Not steered into a turn: one still open never ended.
           if (!e.steered) turnStartedAt = undefined
+          else if (idle) idle = 'steered'
+          // Brigade wrote it, even when sent in the name of the person who asked (resolving a
+          // pull request's conflicts did, before it was sent as Brigade's).
+          const fromBrigade = e.memberId === null || resolveConflictsNote(e.text) !== null
+          const handback = e.memberId !== null ? handbackNote(e.text) : null
+          const handedOver = e.memberId !== null ? handedEmail(e.text) : null
+          const handOff = e.memberId !== null ? handOffNote(e.text) : null
+          // Its card takes the place of the hand back's line, and of what that line held.
+          if (handback && handed && items.includes(handed)) items.splice(items.indexOf(handed), 1)
           add({
             kind: 'user',
             key: `u${seq}`,
             seq,
             text: e.text,
+            memberId: fromBrigade ? null : e.memberId,
             attachments: e.attachments ?? [],
+            at: Date.parse(e.at),
             ...(e.replyTo ? { replyTo: e.replyTo } : {}),
             ...(e.steered && turnTeammate ? { steeredTo: turnTeammate } : {}),
             ...(e.memberId === null && childNote(e.text) ? { brigade: childNote(e.text)! } : {}),
+            ...(e.memberId === null ? receivedEmail(e.text) : {}),
+            ...userNote(e.text, fromBrigade),
+            ...(handOff
+              ? handOff.said
+                ? { lines: { said: handOff.said, note: handOff.note } }
+                : { note: handOff.note }
+              : {}),
+            ...(handback ? { handback: { ...handback, commands: handed?.commands ?? [] } } : {}),
+            ...(handedOver ? { handed: handedOver } : {}),
           })
+          handed = undefined
           break
-        case 'message.queued':
+        }
+        case 'message.queued': {
           seen.add(e.messageId)
+          asked.set(e.messageId, e)
+          // Settled on the side, then sent again by its sender to run after all.
+          const settled = sides.get(e.messageId)
+          if (settled?.route === 'answer') settled.route = 'queue'
           queued.set(e.messageId, {
             messageId: e.messageId,
             text: e.text,
@@ -280,6 +545,39 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
             ...(e.note ? { note: e.note } : {}),
           })
           break
+        }
+        case 'message.side': {
+          seen.add(e.messageId)
+          let side = sides.get(e.messageId)
+          if (!side) {
+            const message = asked.get(e.messageId)
+            if (!message || e.status === 'failed') break
+            side = { messageId: e.messageId, status: e.status }
+            sides.set(e.messageId, side)
+            // The person's message, where its side reply began: it came during the turn, as a
+            // steered message does.
+            const item: Item = {
+              kind: 'user',
+              key: `s${seq}`,
+              seq,
+              text: message.text,
+              memberId: message.memberId,
+              attachments: message.attachments ?? [],
+              at: Date.parse(e.at),
+              ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+              ...(turnTeammate ? { steeredTo: turnTeammate } : {}),
+              side,
+            }
+            sideItems.set(e.messageId, item)
+            add(item)
+          }
+          side.status = e.status
+          side.teammateId = e.teammateId
+          side.text = e.text
+          side.route = e.route
+          side.steerAt = e.steerAt
+          break
+        }
         case 'message.cancelled': {
           seen.add(e.messageId)
           const message = queued.get(e.messageId)
@@ -294,9 +592,14 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
           break
         }
         case 'turn.started':
+          next = next.filter((id) => id !== e.teammateId)
           turnTeammate = e.teammateId
+          turnAccount = e.accountId
           // A turn resumed (after a restart, say) starts again before it ends: still the same turn.
-          turnStartedAt ??= Date.parse(e.at)
+          if (turnFailed) turnStartedAt = Date.parse(e.at)
+          else turnStartedAt ??= Date.parse(e.at)
+          turnFailed = false
+          idle = undefined
           add({ kind: 'start', key: `s${seq}`, at: turnStartedAt, teammateId: e.teammateId })
           break
         // Ids come from each teammate's own harness: keyed by teammate too.
@@ -309,6 +612,7 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
               kind: 'assistant',
               key,
               seq,
+              at: Date.parse(e.at),
               text: e.text,
               done: false,
               teammateId: e.teammateId,
@@ -318,31 +622,50 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
         case 'message.done': {
           const key = `m${e.teammateId ?? ''}:${e.id}`
           const item = byKey.get(key)
-          if (item?.kind === 'assistant') Object.assign(item, { text: e.text, done: true })
+          const answers = e.answers ? { answers: e.answers } : {}
+          if (item?.kind === 'assistant')
+            Object.assign(item, { text: e.text, done: true, ...answers })
           else
             add({
               kind: 'assistant',
               key,
               seq,
+              at: Date.parse(e.at),
               text: e.text,
               done: true,
               teammateId: e.teammateId,
+              ...answers,
             })
           break
         }
-        case 'tool.started':
-          // The same call started twice (repeated by the harness): one card.
-          if (byKey.has(`t${e.teammateId ?? ''}:${e.toolCallId}`)) break
-          add({
-            kind: 'tool',
-            key: `t${e.teammateId ?? ''}:${e.toolCallId}`,
-            toolName: e.toolName,
-            input: e.input,
-            finished: false,
-          })
+        case 'message.images': {
+          const item = byKey.get(`m${e.teammateId ?? ''}:${e.id}`)
+          if (item?.kind === 'assistant') item.images = { ...item.images, ...e.images }
           break
+        }
+        case 'tool.started': {
+          const key = `t${e.teammateId ?? ''}:${e.toolCallId}`
+          // Declaring the thread done shows as its Done line, not as a step: it waits for its
+          // result, and shows only when refused (closingStep).
+          if (bareToolName(e.toolName) === COMPLETE_THREAD_TOOL) {
+            closing.set(key, { seq, toolName: e.toolName, input: e.input })
+            break
+          }
+          // The same call started twice (repeated by the harness): one card.
+          if (byKey.has(key)) break
+          add({ kind: 'tool', key, seq, toolName: e.toolName, input: e.input, finished: false })
+          break
+        }
         case 'tool.finished': {
-          const item = byKey.get(`t${e.teammateId ?? ''}:${e.toolCallId}`)
+          const key = `t${e.teammateId ?? ''}:${e.toolCallId}`
+          const call = closing.get(key)
+          if (call) {
+            closing.delete(key)
+            const step = closingStep(call, e.output, e.isError)
+            if (step && !byKey.has(key)) add({ kind: 'tool', key, ...step })
+            break
+          }
+          const item = byKey.get(key)
           if (item?.kind === 'tool')
             Object.assign(item, { output: e.output, isError: e.isError, finished: true })
           break
@@ -356,6 +679,7 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
             input: e.input,
             ...(e.reason ? { reason: e.reason } : {}),
             ...(e.always ? { always: true } : {}),
+            ...(e.teammateId ? { teammateId: e.teammateId } : {}),
           })
           break
         case 'approval.resolved': {
@@ -419,20 +743,57 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
           })
           turnStartedAt = undefined
           background = new Map()
+          idle = undefined
           break
         case 'error':
-          add({ kind: 'error', key: `e${seq}`, message: e.message })
+          add({
+            kind: 'error',
+            key: `e${seq}`,
+            message: e.message,
+            ...(turnAccount && signedOut(e.message) ? { signedOutAccountId: turnAccount } : {}),
+          })
+          turnFailed = true
+          // The turns queued behind it are not told to go on: nobody answers next now.
+          next = []
           break
         case 'raw':
           if (e.source === 'reasoning' && typeof e.value === 'string')
             add({ kind: 'thinking', key: `r${seq}`, text: e.value })
           else if (e.source === 'runner' && typeof e.value === 'string')
             add({ kind: 'note', key: `n${seq}`, text: e.value })
-          else if (e.source === THREAD_NOTE_SOURCE && typeof e.value === 'string')
-            add({ kind: 'note', key: `n${seq}`, text: e.value, settles: true })
-          else if (e.source === 'harness') background = backgroundTasks(background, e.value)
+          else if (e.source === THREAD_NOTE_SOURCE && typeof e.value === 'string') {
+            if (!toldMerge(e.value))
+              add({ kind: 'note', key: `n${seq}`, text: e.value, settles: true })
+          } else if (e.source === TURN_WAITING_SOURCE) {
+            const { teammateId, running } = e.value as TurnWaiting
+            add({ kind: 'slot', key: `q${seq}`, at: Date.parse(e.at), teammateId, running })
+          } else if (e.source === TURN_MEMORY_SOURCE) {
+            const { teammateId } = e.value as TurnWaitingMemory
+            add({
+              kind: 'slot',
+              key: `q${seq}`,
+              at: Date.parse(e.at),
+              teammateId,
+              running: 0,
+              memory: true,
+            })
+          } else if (e.source === TURN_NEXT_SOURCE) {
+            next = (e.value as TurnNext).teammateIds
+          } else if (e.source === TURN_PREPARING_SOURCE) {
+            const { teammateId, done } = e.value as TurnPreparing
+            // Ready, and no turn followed: the wait is over all the same.
+            if (done) add({ kind: 'prepared', key: `q${seq}` })
+            else add({ kind: 'preparing', key: `q${seq}`, at: Date.parse(e.at), teammateId })
+          } else if (e.source === 'harness') {
+            background = backgroundTasks(background, e.value)
+            const waiting = backgroundWait(e.value)
+            if (waiting === false && idle === 'waiting')
+              add({ kind: 'woke', key: `b${seq}`, at: Date.parse(e.at) })
+            if (waiting !== undefined) idle = waiting ? 'waiting' : undefined
+          }
           break
         case 'account.switched':
+          if (e.toAccountId) turnAccount = e.toAccountId
           add({
             kind: 'note',
             key: `n${seq}`,
@@ -443,9 +804,17 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
               : `Paused: all your accounts for this agent are out of usage${e.resetsAt ? ` until ${new Date(e.resetsAt).toLocaleString()}` : ''}. Send a message to try again, for example after upgrading your plan, or add an account.`,
           })
           break
-        case 'terminal.command':
-          add({ kind: 'control', key: `n${seq}`, change: 'command', command: e.command })
+        case 'terminal.command': {
+          const command = {
+            kind: 'control',
+            key: `n${seq}`,
+            change: 'command',
+            command: e.command,
+          } as const
+          commands.push(command)
+          add(command)
           break
+        }
         case 'preview.changed': {
           // Starting and checking show in the panel and the teammate's tool calls; what came of them here.
           const status =
@@ -481,11 +850,25 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
           break
         }
         case 'control.changed':
-          add({
+          if (e.controller === 'human') {
+            commands = []
+            handed = undefined
+            add({ kind: 'control', key: `n${seq}`, change: 'took' })
+            break
+          }
+          // The commands go in the hand back's card, rather than in lines of their own.
+          for (const command of commands) {
+            const at = items.indexOf(command)
+            if (at >= 0) items.splice(at, 1)
+          }
+          handed = {
             kind: 'control',
             key: `n${seq}`,
-            change: e.controller === 'human' ? 'took' : 'handed',
-          })
+            change: 'handed',
+            commands: commands.flatMap((c) => c.command ?? []),
+          }
+          commands = []
+          add(handed)
           break
       }
     }
@@ -495,16 +878,33 @@ export function useThreadItems(events: SequencedEvent[], firstSeq = 1) {
     )?.event
     const turnId = lastTurn?.type === 'turn.started' ? lastTurn.turnId : undefined
     return {
-      // A message of only zero-width characters shows nothing: no empty bubble for it.
-      items: items.filter((i) => i.kind !== 'assistant' || hasVisibleText(i.text)),
+      // A message of only zero-width characters shows nothing: no empty bubble for it. One whose
+      // side reply never came waits in the queue, as any message does.
+      items: items.filter(
+        (i) =>
+          (i.kind !== 'assistant' || hasVisibleText(i.text)) &&
+          !(i.kind === 'user' && i.side?.status === 'failed'),
+      ),
       limits,
-      queued: [...queued.values()],
+      next,
+      // While its side reply is under way, or about to give it to the turn, it shows in the
+      // conversation instead.
+      queued: [...queued.values()].filter((q) => {
+        const side = sides.get(q.messageId)
+        return (
+          !side ||
+          side.status === 'failed' ||
+          (side.status === 'answered' && side.route !== 'steer')
+        )
+      }),
       seen,
       turnId,
       background: [...background.values()],
     }
-  }, [events, firstSeq])
+  }, [events, firstSeq, gaps])
 }
+
+const NO_GAPS: EventGap[] = []
 
 /** The background work after one of Claude Code's task messages. */
 function backgroundTasks(tasks: Map<string, BackgroundTask>, value: unknown) {
@@ -538,6 +938,12 @@ function backgroundTasks(tasks: Map<string, BackgroundTask>, value: unknown) {
   return tasks
 }
 
+/** The bridge's word on whether the turn only waits on its background work now, from a harness event. */
+function backgroundWait(value: unknown) {
+  const msg = value as { type?: string; subtype?: string; waiting?: unknown } | null
+  if (msg?.type === 'system' && msg.subtype === 'brigade_waiting') return msg.waiting === true
+}
+
 const clipText = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)}…` : text
 
@@ -566,7 +972,7 @@ function MessageActions({ text, onReply }: { text: string; onReply?: () => void 
           })
         }
         aria-label={copied ? 'Copied' : 'Copy'}
-        title={copied ? 'Copied' : 'Copy'}
+        tooltip={copied ? 'Copied' : 'Copy'}
       >
         {copied ? (
           <Check className="size-3.5" aria-hidden />
@@ -582,7 +988,7 @@ function MessageActions({ text, onReply }: { text: string; onReply?: () => void 
           className={button}
           onClick={onReply}
           aria-label="Reply"
-          title="Reply"
+          tooltip="Reply"
         >
           <Reply className="size-3.5" aria-hidden />
         </Button>
@@ -591,34 +997,237 @@ function MessageActions({ text, onReply }: { text: string; onReply?: () => void 
   )
 }
 
+/** How tall a person's message shows before the rest folds under Show more (about 16 lines). */
+const FOLDED_HEIGHT = 416
+
+/**
+ * A person's message bubble: a long one (a pasted page, a log) folds to its first lines,
+ * fading out, with Show more to unfold it in place. `side`: written on the side during a turn,
+ * in its Aside, paler than one to the turn.
+ */
+export function MessageBubble({ text, side = false }: { text: string; side?: boolean }) {
+  const [open, setOpen] = useState(false)
+  // Fold only when there is clearly more to show than a few lines.
+  const [long, setLong] = useState(false)
+  const bubble = useRef<HTMLDivElement>(null)
+  const body = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = body.current
+    if (!el) return
+    const measure = () => setLong(el.scrollHeight > FOLDED_HEIGHT + 80)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [text])
+  const folded = long && !open
+  return (
+    <div
+      ref={bubble}
+      data-look="person-message"
+      className={cn(
+        'min-w-0 rounded-2xl rounded-br-md leading-relaxed wrap-anywhere whitespace-pre-wrap',
+        side
+          ? 'bg-primary/25 px-3.5 py-2 text-foreground'
+          : 'bg-primary px-4 py-2.5 text-primary-foreground',
+      )}
+    >
+      <div
+        ref={body}
+        className={cn(folded && 'overflow-hidden')}
+        style={
+          folded
+            ? {
+                maxHeight: FOLDED_HEIGHT,
+                maskImage: 'linear-gradient(to bottom, black 70%, transparent)',
+              }
+            : undefined
+        }
+      >
+        <MessageWithCode text={text} />
+      </div>
+      {long && (
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => {
+            setOpen(!open)
+            // Folding a message read far down brings its start back into view.
+            if (open && bubble.current && bubble.current.getBoundingClientRect().top < 0)
+              bubble.current.scrollIntoView({ block: 'start' })
+          }}
+          className={cn(
+            'mt-1.5 flex items-center gap-1 text-xs font-medium whitespace-normal',
+            side
+              ? 'text-muted-foreground hover:text-foreground'
+              : 'text-primary-foreground/80 hover:text-primary-foreground',
+          )}
+        >
+          {open ? 'Show less' : 'Show more'}
+          <ChevronDown className={cn('size-3.5', open && 'rotate-180')} aria-hidden />
+        </button>
+      )}
+    </div>
+  )
+}
+
 /** The message a person's message replies to, above it: a click scrolls to it. */
 function ReplyQuote({ reply, author }: { reply: ReplyTo; author?: string }) {
   return (
-    <button
-      type="button"
-      className="flex max-w-full items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-      title="Show the message it replies to"
-      onClick={() =>
-        document
-          .querySelector(`[data-seq="${reply.seq}"]`)
-          ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-    >
-      <Reply className="size-3.5 shrink-0" aria-hidden />
-      <span className="truncate">
-        {author && <span className="font-medium">{author}: </span>}“
-        {mentionsToText(reply.text).replace(/\s+/g, ' ')}”
-      </span>
-    </button>
+    <Hint label="Show the message it replies to">
+      <button
+        type="button"
+        className="flex max-w-full items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+        onClick={() => {
+          // Folded away (a turn's Aside), it opens where it is.
+          revealSeq(reply.seq)
+          document
+            .querySelector(`[data-seq="${reply.seq}"]`)
+            ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        }}
+      >
+        <Reply className="size-3.5 shrink-0" aria-hidden />
+        <span className="truncate">
+          {author && <span className="font-medium">{author}: </span>}“
+          {mentionsToText(reply.text).replace(/\s+/g, ' ')}”
+        </span>
+      </button>
+    </Hint>
   )
+}
+
+/**
+ * A message the person just sent, in the thread at once, as the thread will show it once its
+ * computer has it (the user item in ThreadItems): it then takes this one's place. One that did
+ * not get through stays, marked, to send again or edit.
+ */
+export function OutgoingMessage({
+  message: m,
+  teammates,
+  onRetry,
+  onEdit,
+  onDiscard,
+}: {
+  message: Outgoing
+  teammates: { id: string; name: string }[]
+  onRetry: () => void
+  onEdit: () => void
+  onDiscard: () => void
+}) {
+  const skillNames = useSkillCommands().map((s) => s.name)
+  const { text: written, elements } = splitPreviewElements(forPeople(m.text))
+  const pictureOf = (name?: string) => (name ? m.uploads.find((u) => u.name === name) : undefined)
+  const pictures = new Set(elements.flatMap((e) => pictureOf(e.image)?.key ?? []))
+  const files = m.uploads.filter((u) => !pictures.has(u.key))
+  const asked = startingCommand(written, skillNames)
+  const text = asked ? asked.rest : written
+  const failed = notThrough(m)
+  const replyTo = m.with.replyTo
+  return (
+    <div
+      data-outgoing={m.messageId}
+      className="flex max-w-[85%] animate-in flex-col items-end gap-1.5 self-end duration-150 ease-out fade-in slide-in-from-bottom-1 motion-reduce:animate-none"
+    >
+      {replyTo && (
+        <ReplyQuote
+          reply={replyTo}
+          author={
+            replyTo.teammateId
+              ? teammates.find((t) => t.id === replyTo.teammateId)?.name
+              : undefined
+          }
+        />
+      )}
+      {asked && <CommandChip command={asked.command} />}
+      <PreviewElementChips
+        elements={elements.map((element) => {
+          const picture = pictureOf(element.image)?.preview
+          return { element, ...(picture && { picture }) }
+        })}
+        className="justify-end"
+      />
+      {text && <MessageBubble text={text} />}
+      {files.length > 0 && <SentAttachments uploads={files} className="justify-end" />}
+      {failed && (
+        <div role="alert" className="flex flex-col items-end gap-1">
+          <span className="text-right text-xs text-destructive-text">{notThroughText(m)}</span>
+          <div className="flex items-center gap-1">
+            <Button type="button" variant="outline" size="xs" onClick={onRetry}>
+              <RotateCcw aria-hidden />
+              Retry
+            </Button>
+            <Button type="button" variant="ghost" size="xs" onClick={onEdit}>
+              <Pencil aria-hidden />
+              Edit
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              onClick={onDiscard}
+              aria-label="Discard message"
+              tooltip="Discard"
+            >
+              <X aria-hidden />
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** What else Brigade wrote, once child notes and emails, which have cards of their own, are told apart. */
+function userNote(text: string, fromBrigade: boolean) {
+  if (!fromBrigade || childNote(text) || receivedEmail(text).email) return {}
+  const note = brigadeNote(text, true)
+  return note ? { note } : {}
+}
+
+/** A trigger's email in a message Brigade wrote (memberId null), for its card. */
+function receivedEmail(text: string) {
+  const event = triggerEvent(text)
+  const email = event && triggerEmail(event)
+  return email ? { email: { event, email } } : {}
 }
 
 const json = (value: unknown) =>
   typeof value === 'string' ? value : JSON.stringify(value, null, 2)
 
+/** A theme tool call that changed the look (docs/themes.md), for its card. */
+const themeChanged = (item: {
+  toolName: string
+  input: unknown
+  output?: unknown
+  finished: boolean
+  isError?: boolean
+}) =>
+  themeChange({
+    ...item,
+    bareName: bareToolName(item.toolName),
+    outputText: json(item.output ?? ''),
+  })
+
+/** An approval's question in words, for the writes people meet most: its tool name otherwise. */
+function approvalAsk(toolName: string) {
+  const name = bareToolName(toolName)
+  if (isEmailSend(toolName)) return 'Allow sending this email?'
+  if (/^github_merge_pull_request(_|$)/.test(name)) return 'Allow merging this pull request?'
+  return null
+}
+
 function toolSummary(toolName: string, input: unknown) {
   const i = (input ?? {}) as Record<string, unknown>
-  const value = i.command ?? i.file_path ?? i.path ?? i.pattern ?? i.url ?? i.query ?? i.description
+  // An App catalog's call (<app>_run) reads as the operation it calls.
+  const value =
+    i.command ??
+    i.file_path ??
+    i.path ??
+    i.pattern ??
+    i.url ??
+    i.query ??
+    i.operation ??
+    i.description
   return typeof value === 'string' ? value : ''
 }
 
@@ -646,7 +1255,7 @@ function startedChild(item: { toolName: string; input: unknown; output?: unknown
   const found = json(item.output ?? '').match(/"threadId"\s*:\s*"([^"\\]+)"/)
   if (!found) return null
   const title = (item.input as { title?: unknown } | null)?.title
-  return { threadId: found[1]!, title: typeof title === 'string' ? title : 'Child thread' }
+  return { threadId: found[1]!, title: typeof title === 'string' ? title : 'Sub-thread' }
 }
 
 /** The team a propose_team call put up, once it went through. */
@@ -704,10 +1313,6 @@ function shownWidget(item: Extract<Item, { kind: 'tool' }>) {
   return Widget.safeParse(item.input).data ?? null
 }
 
-/** Raw JSON or text under a tool call, an approval or a thought. */
-const preClass =
-  'max-h-80 overflow-auto rounded-md bg-muted px-3 py-2 font-mono text-xs whitespace-pre-wrap wrap-anywhere'
-
 /** A small uppercase label heading a card in the thread. */
 function CardLabel({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
@@ -736,27 +1341,28 @@ function ThreadImage({
   const src = threadImageUrl(threadId, item.path, item.teammateId)
   if (failed)
     return (
-      <div className="pl-11 text-sm text-muted-foreground">
+      <div className="text-sm text-muted-foreground">
         Made <code className="font-mono text-xs text-foreground">{item.path}</code>, which can't be
         shown while the computer is offline.
       </div>
     )
   return (
-    <div className="pl-11">
-      <button
-        type="button"
-        className="block cursor-zoom-in overflow-hidden rounded-lg border bg-muted"
-        title={item.prompt ?? name}
-        onClick={() => setOpen(true)}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={src}
-          alt={item.prompt ?? name ?? 'A generated image'}
-          className="max-h-96 max-w-full object-contain"
-          onError={() => setFailed(true)}
-        />
-      </button>
+    <div>
+      <Hint label={item.prompt ?? name}>
+        <button
+          type="button"
+          className="block cursor-zoom-in overflow-hidden rounded-lg border bg-muted"
+          onClick={() => setOpen(true)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt={item.prompt ?? name ?? 'A generated image'}
+            className="max-h-96 max-w-full object-contain"
+            onError={() => setFailed(true)}
+          />
+        </button>
+      </Hint>
       <MediaPreview
         media={open ? { name: name ?? item.path, src, kind: 'image' } : undefined}
         onClose={() => setOpen(false)}
@@ -767,17 +1373,28 @@ function ThreadImage({
 
 type ActivityItem = Extract<Item, { kind: 'thinking' | 'tool' | 'file' }>
 
-/** A step on a teammate's way to its answer: steps in a row fold under one line saying what they were. */
-const isActivity = (item: Item): item is ActivityItem =>
-  item.kind === 'thinking' ||
-  item.kind === 'file' ||
-  (item.kind === 'tool' &&
-    !offeredChoices(item) &&
-    !suggestedReplies(item) &&
-    !shownWidget(item) &&
-    !proposedTeam(item) &&
-    !playbookCard(item) &&
-    !(item.finished && !item.isError && (openedPull(item) || startedChild(item))))
+/**
+ * A step on a teammate's way to its answer: steps in a row fold under one line saying what they were.
+ * Asked of each item many times as a thread lays out, a tool's by parsing its input: known once per
+ * item (useThreadItems makes new ones whenever what they hold changes, and never changes them after).
+ */
+const activities = new WeakMap<Item, boolean>()
+const isActivity = (item: Item): item is ActivityItem => {
+  if (item.kind !== 'tool') return item.kind === 'thinking' || item.kind === 'file'
+  let known = activities.get(item)
+  if (known === undefined) {
+    known =
+      !offeredChoices(item) &&
+      !suggestedReplies(item) &&
+      !shownWidget(item) &&
+      !proposedTeam(item) &&
+      !playbookCard(item) &&
+      !themeChanged(item) &&
+      !(item.finished && !item.isError && (openedPull(item) || startedChild(item)))
+    activities.set(item, known)
+  }
+  return known
+}
 
 /**
  * A step that does no work: thinking, loading a tool, a card refused and called
@@ -818,20 +1435,43 @@ function actionsLast(items: Item[], is: number[]) {
 /** What a long turn's "Worked for" line folds away: its steps and the messages between them. */
 const FOLDS = new Set<Item['kind']>(['thinking', 'tool', 'file', 'assistant', 'plan', 'note'])
 
-/** A turn quicker than this just answers: its steps fold, without a "Worked for" line. */
-const QUICK_TURN_MS = 30_000
+/** A person's message answered on the side during a turn: it shows in its turn's Aside. */
+const isSide = (item: Item) => item.kind === 'user' && !!item.side
+
+/** A message given to the running turn (steered in), not answered on the side. */
+const isSteered = (item: Item) => item.kind === 'user' && !!item.steeredTo && !item.side
+
+/** What an item is in a turn a person wrote into (lib/chat-turn.ts). */
+const chatEntry = (item: Item): ChatEntry =>
+  isSteered(item)
+    ? 'steered'
+    : item.kind === 'assistant'
+      ? item.answers
+        ? 'answer'
+        : 'message'
+      : isActivity(item) && !isAside(item)
+        ? 'step'
+        : 'other'
 
 type Node =
   | { type: 'item'; i: number }
+  /**
+   * The asides of one turn, together; `live` while that turn runs, `quiet` once the turn wrote
+   * after the last of them.
+   */
+  | { type: 'asides'; is: number[]; live: boolean; quiet?: boolean }
   | { type: 'activity'; is: number[]; live: boolean }
   | { type: 'control'; is: number[] }
-  | { type: 'worked'; key: string; ms: number; inner: Node[] }
+  | { type: 'worked'; key: string; ms: number; steps: number; inner: Node[] }
 
 /**
  * How the thread reads: steps in a row fold together, and a long turn that ended
  * folds everything before its last message under how long it worked. What a person
  * must see (asks, pull requests, pictures, choices, team proposals, errors) stays out of the fold.
- * `running` is when the turn still running began.
+ * A message steered into a turn ends what came before it the same way, as a turn of its own,
+ * and so does a report from its background work that sets the teammate going again.
+ * A turn's asides read together, in one Aside before its work, and never end it.
+ * `running` is when the turn still running began, or the message steered into it last.
  */
 function layoutThread(items: Item[], working: boolean) {
   const group = (is: number[]): Node[] => {
@@ -839,9 +1479,16 @@ function layoutThread(items: Item[], working: boolean) {
     for (const i of actionsLast(items, is)) {
       const last = nodes.at(-1)
       // Taking over, handing back and shell commands in a row fold the same way.
-      const type = isActivity(items[i]!)
+      // A hand back is a card of its own.
+      const item = items[i]!
+      if (isSide(item)) {
+        if (last?.type === 'asides') last.is.push(i)
+        else nodes.push({ type: 'asides', is: [i], live: false })
+        continue
+      }
+      const type = isActivity(item)
         ? 'activity'
-        : items[i]!.kind === 'control'
+        : item.kind === 'control' && item.change !== 'handed'
           ? 'control'
           : undefined
       if (!type) nodes.push({ type: 'item', i })
@@ -850,14 +1497,19 @@ function layoutThread(items: Item[], working: boolean) {
     }
     // A single step needs no line over it.
     return nodes.map((n) =>
-      n.type !== 'item' && n.type !== 'worked' && n.is.length === 1
+      n.type !== 'item' && n.type !== 'worked' && n.type !== 'asides' && n.is.length === 1
         ? { type: 'item', i: n.is[0]! }
         : n,
     )
   }
-  const fold = (turn: number[], end: Extract<Item, { kind: 'turn' }>): Node[] => {
-    const ms = end.startedAt === undefined ? 0 : end.at - end.startedAt
-    if (ms < QUICK_TURN_MS) return group(turn)
+  /** A turn that worked for `ms`, keyed by the item it ends at; `steered` when that is a message steered into it. */
+  const fold = (all: number[], ms: number, end: string, steered = false): Node[] => {
+    // Its asides read together, before its work.
+    const sides = all.filter((i) => isSide(items[i]!))
+    const head = group(sides)
+    let turn = all.filter((i) => !isSide(items[i]!))
+    // However quick, a turn that worked ends on its line, where its Working line was: nothing
+    // above its answer moves as it ends.
     turn = actionsLast(items, turn)
     // The answer: every message after its last step, and a long one before that step when only a line follows.
     const { first: final, messages } = turnAnswer(
@@ -866,12 +1518,18 @@ function layoutThread(items: Item[], working: boolean) {
         if (item.kind === 'assistant') return { kind: 'message', chars: visibleChars(item.text) }
         return isActivity(item) && !isAside(item) ? { kind: 'step' } : { kind: 'other' }
       }),
+      steered,
     )
     const answer = new Set(messages)
+    // A reply right after a message steered in answers it: it stays, as the answer does.
+    const quick = quickReplies(turn.map((i) => chatEntry(items[i]!)))
     const folded = turn.filter((i, at) => {
       const item = items[i]!
       return (
         !answer.has(at) &&
+        !quick.has(at) &&
+        // An answer to a person's message (answer_message) stays in sight, under what it answers.
+        !(item.kind === 'assistant' && item.answers) &&
         (final < 0 || at < final || isAside(item)) &&
         (FOLDS.has(item.kind) ||
           // A preview's earlier outcomes: the last one says where it stands.
@@ -879,46 +1537,86 @@ function layoutThread(items: Item[], working: boolean) {
         (item.kind !== 'tool' || isActivity(item))
       )
     })
-    if (!folded.some((i) => isActivity(items[i]!))) return group(turn)
-    const first = turn.indexOf(folded[0]!)
-    const kept = (from: number, to: number) =>
-      turn.slice(from, to).filter((i) => !folded.includes(i))
+    if (!folded.some((i) => isActivity(items[i]!))) return [...head, ...group(turn)]
+    const steps = folded.filter((i) => {
+      const item = items[i]!
+      return isActivity(item) && !isAside(item) && item.kind !== 'thinking'
+    }).length
+    // Its line goes after all it shows, under its answer: where its Working line was, so nothing
+    // moves as the turn ends. It opens there, to the steps and the messages it folds.
+    // Keyed by its end: an older page loading above does not close it.
     return [
-      ...group(kept(0, first)),
-      // Keyed by its end: an older page loading above does not close it.
-      { type: 'worked', key: `w${end.key}`, ms, inner: group(folded) },
-      ...group(kept(first, turn.length)),
+      ...head,
+      ...group(turn.filter((i) => !folded.includes(i))),
+      { type: 'worked', key: `w${end}`, ms, steps, inner: group(folded) },
     ]
   }
   const nodes: Node[] = []
   let running: number | undefined
-  // Since the last turn began or ended.
+  // Where the running turn began.
+  let runningFrom = -1
+  // When the last message steered into the running turn was given to it, or a report woke it.
+  let steered: number | undefined
+  // Since the last turn began or ended, or a message was steered into it, or a report woke it.
   let since: number[] = []
+  const worked = (to: number, from?: number) => (from === undefined ? 0 : to - from)
   items.forEach((item, i) => {
+    // What came before a gap stands on its own: its turn's end, if any, is in the gap.
+    if (item.kind === 'gap') {
+      nodes.push(...group(since), { type: 'item', i })
+      since = []
+      running = steered = undefined
+      return
+    }
+    // Answered on the side, it belongs to the turn it was written during, which goes on.
+    if (isSide(item)) {
+      since.push(i)
+      return
+    }
     // A turn starting again before it ended (resumed) goes on.
     if (item.kind === 'start' && running === undefined) {
       nodes.push(...group(since))
       since = [i]
       running = item.at
+      runningFrom = i
+      steered = undefined
       return
     }
     // A message not steered into it: the turn before never ended.
     if (item.kind === 'user' && !item.steeredTo && running !== undefined) {
       nodes.push(...group(since))
       since = []
-      running = undefined
+      running = steered = undefined
+    }
+    // Steered into the turn, such as one that only waited on a server it left running, or woken
+    // there by a report from that work: what came before answers the message before, and keeps
+    // its answer out of the fold.
+    // A message steered in while the turn works goes on with it, as in a chat: one line of work,
+    // not a fold at each message. Only a turn that answered since its last step (one that just
+    // waited on its background work), or one a report woke, starts afresh there.
+    if ((item.kind === 'user' && item.steeredTo) || item.kind === 'woke') {
+      if (item.kind === 'woke' || answeredSinceStep(since.map((j) => chatEntry(items[j]!)))) {
+        nodes.push(...fold(since, worked(item.at, steered ?? running), item.key, true))
+        since = []
+        // Its work counts from here; otherwise from where the turn, or its last fold, began.
+        steered = item.at
+      }
     }
     since.push(i)
     if (item.kind === 'turn') {
-      nodes.push(...fold(since, item))
+      nodes.push(...fold(since, worked(item.at, steered ?? running ?? item.startedAt), item.key))
       since = []
-      running = undefined
+      running = steered = undefined
     }
   })
-  nodes.push(...group(since))
+  // The running turn's steps fold under its Working line, below its messages and cards.
+  const live = working && running !== undefined ? since.filter((i) => isActivity(items[i]!)) : []
+  nodes.push(...group(live.length ? since.filter((i) => !live.includes(i)) : since))
   const last = nodes.at(-1)
   if (working && last?.type === 'activity') last.live = true
-  return Object.assign(nodes, { running })
+  // The running turn's asides read as one card, at its end, above its Working line.
+  const laid = working && running !== undefined ? runningAsides(nodes, items, runningFrom) : nodes
+  return Object.assign(laid, { running: steered ?? running, live })
 }
 
 /** "45s", "1m 52s", "2h 5m". */
@@ -980,11 +1678,106 @@ function activityLabel(group: ActivityItem[]) {
   return text[0]!.toUpperCase() + text.slice(1)
 }
 
+/**
+ * What a step's line says it did: a shell command by what it does (commandSummary), not with
+ * every path and fallback; an approval card still shows the whole of it (toolSummary).
+ */
+function stepSummary(toolName: string, input: unknown) {
+  const command = (input as { command?: unknown } | null)?.command
+  return typeof command === 'string' ? commandSummary(command) : toolSummary(toolName, input)
+}
+
 /** The step happening now, under a live group's line. */
 function stepText(item: ActivityItem) {
   if (item.kind === 'thinking') return 'Thinking'
   if (item.kind === 'file') return `Changed ${item.path}`
-  return `${item.toolName} ${toolSummary(item.toolName, item.input)}`.trim()
+  const mail = mailStep(item.toolName, item.input)
+  if (mail) return mail.label
+  return `${item.toolName} ${stepSummary(item.toolName, item.input)}`.trim()
+}
+
+const DOING: Record<ReturnType<typeof toolKind>, string> = {
+  command: 'Running',
+  read: 'Reading',
+  edit: 'Editing',
+  search: 'Searching',
+  web: 'Searching the web',
+  browser: 'Using the browser',
+  other: 'Using',
+}
+
+/** A path as its file's name: the line has room for little. */
+const fileName = (text: string) =>
+  /^[^\s]*\/[^\s/]+$/.test(text) ? text.slice(text.lastIndexOf('/') + 1) : text
+
+/** The step happening now, on the Working line: "Reading thread-view.tsx", "Running the tests". */
+function liveStepText(item: ActivityItem) {
+  if (item.kind === 'thinking') return 'Thinking'
+  if (item.kind === 'file') return `Editing ${fileName(item.path)}`
+  const mail = mailStep(item.toolName, item.input)
+  if (mail) return mail.label
+  const kind = toolKind(item.toolName)
+  if (kind === 'browser') return DOING.browser
+  if (kind === 'other')
+    return `${DOING.other} ${bareToolName(item.toolName).replace(/_/g, ' ')}`.trim()
+  const summary = fileName(stepSummary(item.toolName, item.input))
+  if (kind === 'web') return summary ? `Searching the web for ${summary}` : DOING.web
+  return `${DOING[kind]} ${summary}`.trim()
+}
+
+/** What the Working pebble's eyes do on a step: read a file, think, squint at a command's
+ * work, light up on an edit, look around while searching, raise a brow at anything else. */
+function stepExpression(item: ActivityItem | undefined): PebbleExpression {
+  if (!item || item.kind === 'thinking') return 'think'
+  if (item.kind === 'file') return 'aha'
+  const kind = toolKind(item.toolName)
+  if (kind === 'read') return 'read'
+  if (kind === 'edit') return 'aha'
+  if (kind === 'command') return 'focus'
+  if (kind === 'search' || kind === 'web') return 'glance'
+  return 'curious'
+}
+
+/** How long a step shows at least: steps a teammate takes in a burst would flicker past. */
+const STEP_SHOWS_MS = 1_000
+
+/**
+ * The step happening now, the next one coming up from below as the last goes up. Each shows a
+ * second at least; of steps that came meanwhile, the latest shows next, the others skipped.
+ */
+function StepTicker({ label }: { label: string }) {
+  const [shown, setShown] = useState({ label, previous: undefined as string | undefined, n: 0 })
+  const since = useRef(0)
+  useEffect(() => {
+    since.current = Date.now()
+  }, [])
+  useEffect(() => {
+    if (label === shown.label) return
+    const show = () => {
+      since.current = Date.now()
+      setShown((s) => (s.label === label ? s : { label, previous: s.label, n: s.n + 1 }))
+    }
+    const timer = setTimeout(show, Math.max(0, since.current + STEP_SHOWS_MS - Date.now()))
+    return () => clearTimeout(timer)
+  }, [label, shown.label])
+  return (
+    <span className="relative block min-w-0 overflow-hidden" title={shown.label}>
+      {/* Moving, cut and shimmering on three nested spans: `truncate` fades a cut end with an
+          animation of its own (globals.css), which would replace any other on the same span. */}
+      <span key={shown.n} className={cn('block', shown.n > 0 && 'step-in')}>
+        <span className="block truncate">
+          <span className="text-shimmer">{shown.label}</span>
+        </span>
+      </span>
+      {shown.previous !== undefined && (
+        <span key={`out${shown.n}`} className="step-out absolute inset-x-0 top-0 block" aria-hidden>
+          <span className="block truncate">
+            <span className="text-shimmer">{shown.previous}</span>
+          </span>
+        </span>
+      )}
+    </span>
+  )
 }
 
 const VERBS: Partial<Record<ReturnType<typeof toolKind>, string>> = {
@@ -995,17 +1788,54 @@ const VERBS: Partial<Record<ReturnType<typeof toolKind>, string>> = {
   web: 'Searched the web',
 }
 
+/**
+ * A mailbox's steps in words (Brigade's address's or Gmail's, either with _<account>): closing an
+ * email without a reply says why, reading or searching says what.
+ */
+function mailStep(toolName: string, input: unknown) {
+  const name = bareToolName(toolName)
+  const i = (input ?? {}) as Record<string, unknown>
+  const text = (value: unknown) => (typeof value === 'string' ? value : '')
+  if (/^(email|gmail)_no_reply(_|$)/.test(name))
+    return {
+      label: i.handled ? 'Handled the email without a reply' : 'Left the email without a reply',
+      detail: text(i.reason),
+    }
+  if (/^(email_read|gmail_read_message|gmail_read_thread)(_|$)/.test(name))
+    return { label: 'Read the email', detail: '' }
+  if (/^gmail_search(_|$)/.test(name)) return { label: 'Searched Gmail', detail: text(i.query) }
+  return null
+}
+
 /** A tool call's line: "Ran npm test", "Read src/app.ts", else its name and what it was given. */
-function ToolLine({ toolName, input }: { toolName: string; input: unknown }) {
+function ToolLine({
+  toolName,
+  input,
+  output,
+}: {
+  toolName: string
+  input: unknown
+  output?: unknown
+}) {
+  // A thread declared done shows as its Done line: a step says only it was not (closingStep).
+  const mail =
+    bareToolName(toolName) === COMPLETE_THREAD_TOOL ? closeLine(output) : mailStep(toolName, input)
+  if (mail)
+    return (
+      <>
+        <span className="flex-none">{mail.label}</span>
+        {mail.detail && <span className="min-w-0 truncate">{mail.detail}</span>}
+      </>
+    )
   const verb = VERBS[toolKind(toolName)]
-  const summary = toolSummary(toolName, input)
+  const summary = stepSummary(toolName, input)
   return (
     <>
       {verb ? (
         <span className="flex-none">{verb}</span>
       ) : (
         <code className="flex-none font-mono text-xs font-medium text-foreground/80">
-          {toolName}
+          {bareToolName(toolName)}
         </code>
       )}
       <span className={cn('min-w-0 truncate', verb && 'font-mono text-xs text-foreground/80')}>
@@ -1090,7 +1920,7 @@ const ToolCode = ({ code, language }: { code: string; language: string }) => (
 /** A visual a teammate drew, under its messages, with its HTML to read beneath. */
 function WidgetCard({ widget }: { widget: Widget }) {
   return (
-    <div className="flex flex-col gap-2 pl-11">
+    <div className="flex flex-col gap-2">
       <div className="rounded-xl border p-4">
         <WidgetFrame html={widget.html} title={widget.title} />
       </div>
@@ -1110,8 +1940,109 @@ function WidgetCard({ widget }: { widget: Widget }) {
   )
 }
 
+/** The names of the images and PDFs a tool returned that are kept apart from its event (STORED_FILE). */
+function storedFiles(value: unknown, names = new Set<string>()): Set<string> {
+  if (typeof value === 'string') {
+    const name = value.startsWith(STORED_FILE) && value.slice(STORED_FILE.length)
+    if (name && STORED_FILE_NAME.test(name)) names.add(name)
+  } else if (Array.isArray(value)) for (const v of value) storedFiles(v, names)
+  else if (value && typeof value === 'object')
+    for (const v of Object.values(value)) storedFiles(v, names)
+  return names
+}
+
+/** The images and PDFs a tool returned, such as a screenshot, above its output. Each opens over the page. */
+function ToolFiles({
+  threadId,
+  names,
+  title,
+}: {
+  threadId: string
+  names: string[]
+  /** What each is called: the file read, else the tool. */
+  title: string
+}) {
+  const [open, setOpen] = useState<string>()
+  const titleOf = (name: string) =>
+    names.length > 1 ? `${title} (${names.indexOf(name) + 1}/${names.length})` : title
+  const isPdf = (name: string) => name.endsWith('.pdf')
+  return (
+    <div className="flex flex-wrap items-start gap-2">
+      {names.map((name) =>
+        isPdf(name) ? (
+          <button
+            key={name}
+            type="button"
+            className="flex max-w-64 items-center gap-2 rounded-lg border bg-card py-1.5 pr-3 pl-2 text-xs hover:border-ring"
+            onClick={() => setOpen(name)}
+          >
+            <FileText aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+            <span className="truncate font-medium">{titleOf(name)}</span>
+          </button>
+        ) : (
+          <button
+            key={name}
+            type="button"
+            className="block cursor-zoom-in overflow-hidden rounded-lg border bg-muted"
+            onClick={() => setOpen(name)}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={storedFileUrl(threadId, name)}
+              alt={titleOf(name)}
+              loading="lazy"
+              className="max-h-64 max-w-full object-contain"
+            />
+          </button>
+        ),
+      )}
+      <MediaPreview
+        media={
+          open && !isPdf(open)
+            ? { name: titleOf(open), src: storedFileUrl(threadId, open), kind: 'image' }
+            : undefined
+        }
+        onClose={() => setOpen(undefined)}
+      />
+      <PdfPreview
+        pdf={
+          open && isPdf(open)
+            ? { name: titleOf(open), url: storedFileUrl(threadId, open) }
+            : undefined
+        }
+        onClose={() => setOpen(undefined)}
+      />
+    </div>
+  )
+}
+
 /** A tool call opened: a command and what it printed, an edit as a diff, else its input and output. */
-function ToolDetail({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
+function ToolDetail({
+  threadId,
+  item,
+}: {
+  threadId: string
+  item: Extract<Item, { kind: 'tool' }>
+}) {
+  const files = [...storedFiles(item.output)]
+  if (!files.length) return <ToolOutput item={item} />
+  const input = (item.input ?? {}) as Record<string, unknown>
+  const path = input.file_path ?? input.path
+  const read = toolKind(item.toolName) === 'read'
+  const title =
+    read && typeof path === 'string' ? (path.split('/').pop() ?? path) : bareToolName(item.toolName)
+  const shown = <ToolFiles threadId={threadId} names={files} title={title} />
+  // A file it read is shown as itself; any other tool's files come before what it returned.
+  if (read && !item.isError) return shown
+  return (
+    <>
+      {shown}
+      <ToolOutput item={item} />
+    </>
+  )
+}
+
+function ToolOutput({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
   const kind = toolKind(item.toolName)
   const input = (item.input ?? {}) as Record<string, unknown>
   const path = input.file_path ?? input.path
@@ -1190,6 +2121,113 @@ function ToolDetail({ item }: { item: Extract<Item, { kind: 'tool' }> }) {
   )
 }
 
+/**
+ * A tool call's line, opening to what it was given and returned. Memoized: the thread's items
+ * are rebuilt at each event of a running turn, but a step's input and output keep their identity
+ * (they come from its events), so only the step that changed renders again.
+ */
+const ToolStep = memo(
+  function ToolStep({
+    threadId,
+    item,
+  }: {
+    threadId: string
+    item: Extract<Item, { kind: 'tool' }>
+  }) {
+    return (
+      <Collapsible data-look="tool-step" className="min-w-0 text-sm">
+        <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 text-left text-muted-foreground hover:text-foreground">
+          <ToolLine toolName={item.toolName} input={item.input} output={item.output} />
+          <ChevronRight
+            className="size-3.5 flex-none transition-transform group-data-[state=open]:rotate-90"
+            aria-hidden
+          />
+          {!item.finished ? (
+            <span
+              role="img"
+              aria-label="Running"
+              className="size-1.5 flex-none animate-pulse rounded-full bg-primary"
+            />
+          ) : item.isError ? (
+            // A failed call is common and the teammate goes on from it: said quietly, on the step only.
+            <span className="flex-none text-xs text-destructive-text">failed</span>
+          ) : null}
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2 flex flex-col gap-2">
+          <ToolDetail threadId={threadId} item={item} />
+        </CollapsibleContent>
+      </Collapsible>
+    )
+  },
+  (a, b) =>
+    a.threadId === b.threadId &&
+    a.item.key === b.item.key &&
+    a.item.toolName === b.item.toolName &&
+    a.item.input === b.item.input &&
+    a.item.output === b.item.output &&
+    a.item.finished === b.item.finished &&
+    a.item.isError === b.item.isError,
+)
+
+/** What a teammate thought on its way, folded. */
+/** A reply whose first piece came this recently when it first shows is revealed as it is written. */
+const FRESH_MS = 15_000
+
+/**
+ * A teammate's reply, revealed word by word as it streams in rather than in the bursts it comes
+ * in, its open Markdown closed meanwhile (lib/stream-text.ts). One done when it shows, shows whole.
+ */
+function StreamedReply({ text, done, at }: { text: string; done: boolean; at: number }) {
+  // Came in while the thread was open: written out from its start, even when it came whole.
+  const [fresh] = useState(() => !done || Date.now() - at < FRESH_MS)
+  const shown = useSmoothText(text, fresh)
+  const revealing = !done || shown.length < text.length
+  return <Markdown text={revealing ? closeOpenMarkdown(shown) : text} streaming={revealing} />
+}
+
+const ThinkingStep = memo(function ThinkingStep({ text }: { text: string }) {
+  return (
+    <Collapsible className="self-start">
+      <CollapsibleTrigger className="group flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+        Thinking
+        <ChevronRight
+          className="size-3.5 transition-transform group-data-[state=open]:rotate-90"
+          aria-hidden
+        />
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <Markdown
+          text={text}
+          className="mt-2 max-h-80 overflow-auto rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground"
+        />
+      </CollapsibleContent>
+    </Collapsible>
+  )
+})
+
+/** Steps an unfolded line shows at first: a long turn's earlier ones wait behind a button. */
+const RECENT_STEPS = 20
+
+/** The latest steps of a run, with a line that shows the earlier ones. */
+function RecentSteps({ children }: { children: React.ReactNode[] }) {
+  const [all, setAll] = useState(false)
+  const hidden = all ? 0 : Math.max(0, children.length - RECENT_STEPS)
+  return (
+    <>
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setAll(true)}
+          className="self-start text-sm text-muted-foreground hover:text-foreground"
+        >
+          Show {plural(hidden, '1 earlier step', 'earlier steps')}
+        </button>
+      )}
+      {hidden ? children.slice(hidden) : children}
+    </>
+  )
+}
+
 /** Lines in a row folded under one that says what they were; it opens to each of them. */
 function Fold({
   label,
@@ -1197,14 +2235,17 @@ function Fold({
   children,
 }: {
   label: string
-  /** After the chevron: a count of failures, the step happening now. */
+  /** After the chevron: the step happening now. */
   after?: React.ReactNode
   children: React.ReactNode
 }) {
   return (
     <Collapsible className="flex min-w-0 flex-col">
       <CollapsibleTrigger className="group flex max-w-full min-w-0 items-center gap-1.5 self-start text-left text-sm text-muted-foreground hover:text-foreground">
-        <span className="flex-none">{label}</span>
+        {/* Truncates on a narrow screen rather than widening the page; the step after it goes first. */}
+        <span className="min-w-0 truncate" title={label}>
+          {label}
+        </span>
         <ChevronRight
           className="size-3.5 flex-none transition-transform group-data-[state=open]:rotate-90"
           aria-hidden
@@ -1226,31 +2267,28 @@ function ActivityGroup({
 }: {
   group: ActivityItem[]
   live: boolean
-  children: React.ReactNode
+  children: React.ReactNode[]
 }) {
-  const failed = group.filter((item) => item.kind === 'tool' && item.isError).length
   return (
     <Fold
       label={activityLabel(group)}
       after={
-        <>
-          {failed > 0 && (
-            <StatusBadge status="failed" label={failed === 1 ? '1 failed' : `${failed} failed`} />
-          )}
-          {live && (
-            <span className="min-w-0 truncate font-mono text-xs opacity-70 group-data-[state=open]:hidden">
-              {stepText(group.at(-1)!)}
-            </span>
-          )}
-        </>
+        live && (
+          <span className="min-w-0 shrink-[100] truncate font-mono text-xs opacity-70 group-data-[state=open]:hidden">
+            {stepText(group.at(-1)!)}
+          </span>
+        )
       }
     >
-      {children}
+      <RecentSteps>{children}</RecentSteps>
     </Fold>
   )
 }
 
-/** "Took over twice, ran 5 commands, handed back": what a run of control lines did. */
+/**
+ * "A person took over once, ran 5 commands, has control": what a run of control lines did.
+ * Handing back is a card of its own, which takes the commands before it.
+ */
 function controlLabel(group: Extract<Item, { kind: 'control' }>[]) {
   const took = group.filter((c) => c.change === 'took').length
   const commands = group.filter((c) => c.change === 'command').length
@@ -1258,21 +2296,96 @@ function controlLabel(group: Extract<Item, { kind: 'control' }>[]) {
     took && `A person took over ${plural(took, 'once', 'times')}`,
     commands && `ran ${plural(commands, 'a command', 'commands')}`,
   ].filter(Boolean) as string[]
-  // Where it stands now: the last change of control.
-  const last = group.findLast((c) => c.change !== 'command')?.change
-  if (last) parts.push(last === 'took' ? 'has control' : 'handed back')
+  if (took) parts.push('has control')
   const text = parts.join(', ')
   return text[0]!.toUpperCase() + text.slice(1)
 }
 
+/**
+ * A person handed the thread back: to whom, their note, and what they did while they had
+ * control (files changed, commands run) folded under a line.
+ */
+function HandbackCard({
+  teammate,
+  note,
+  files,
+  commands,
+}: {
+  teammate?: string
+  note: string
+  files: string[]
+  commands: string[]
+}) {
+  const did = [
+    files.length > 0 && plural(files.length, '1 file changed', 'files changed'),
+    commands.length > 0 && plural(commands.length, '1 command', 'commands'),
+  ].filter(Boolean)
+  return (
+    <div className="flex min-w-0 flex-col gap-2 rounded-xl border bg-card px-3.5 py-3 text-sm">
+      <p className="flex items-center gap-2 font-medium">
+        <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
+          <span className="size-2 rounded-full bg-primary" />
+        </span>
+        Handed back{teammate ? ` to ${teammate}` : ''}
+      </p>
+      {note && (
+        <p className="ml-6 border-l-2 border-primary pl-3 leading-relaxed wrap-anywhere whitespace-pre-wrap">
+          {note}
+        </p>
+      )}
+      {did.length > 0 && (
+        <Collapsible className="ml-6 flex min-w-0 flex-col">
+          <CollapsibleTrigger className="group flex items-center gap-1.5 self-start text-left text-muted-foreground hover:text-foreground">
+            {did.join(' · ')}
+            <ChevronDown
+              className="size-3.5 transition-transform group-data-[state=open]:rotate-180"
+              aria-hidden
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-2 flex flex-col gap-0.5 font-mono text-xs wrap-anywhere text-muted-foreground">
+            {files.map((file) => (
+              <span key={file}>{file}</span>
+            ))}
+            {commands.map((command, i) => (
+              <span
+                key={i}
+                className={cn('whitespace-pre-wrap', i === 0 && files.length > 0 && 'mt-2')}
+              >
+                $ {command}
+              </span>
+            ))}
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+    </div>
+  )
+}
+
 /** A long turn's work before its answer, folded under how long it took. */
-function WorkedFor({ ms, children }: { ms: number; children: React.ReactNode }) {
+/**
+ * A turn that ended, under its answer where its Working line was: how long it worked and what it
+ * did, in small. It opens there, to its steps and the messages between them.
+ */
+function WorkedFor({
+  ms,
+  steps,
+  children,
+}: {
+  ms: number
+  steps: number
+  children: React.ReactNode
+}) {
   return (
     <Collapsible className="flex flex-col gap-4">
-      <CollapsibleTrigger className="group flex items-center gap-1.5 border-b pb-2 text-left text-sm text-muted-foreground hover:text-foreground">
-        Worked for {duration(ms)}
-        <ChevronDown
-          className="size-3.5 transition-transform group-data-[state=open]:rotate-180"
+      <CollapsibleTrigger className="group flex items-center gap-1 self-start text-left text-xs text-muted-foreground tabular-nums hover:text-foreground">
+        {[
+          ms > 0 ? `Worked ${duration(ms)}` : 'Worked',
+          steps > 0 && plural(steps, '1 step', 'steps'),
+        ]
+          .filter(Boolean)
+          .join(' · ')}
+        <ChevronRight
+          className="size-3 flex-none transition-transform group-data-[state=open]:rotate-90"
           aria-hidden
         />
       </CollapsibleTrigger>
@@ -1281,20 +2394,136 @@ function WorkedFor({ ms, children }: { ms: number; children: React.ReactNode }) 
   )
 }
 
-/** How long the running turn has worked, counting up. Not for the first seconds of a quick reply. */
-function WorkingFor({ since }: { since: number }) {
+/**
+ * The running turn as one line: "Working · 4 steps · 1 in background", how long it has worked,
+ * and its steps and background work under it. Not for the first seconds of a quick reply.
+ */
+function WorkingLine({
+  since,
+  steps,
+  background,
+  teammate,
+  subThreads = [],
+  who,
+  next = [],
+  children,
+}: {
+  /** When the turn began; unset when how long it worked is not known or not to be said. */
+  since?: number
+  /** With several teammates in the thread, who works: its pebble is everyone's colour. */
+  who?: string
+  /** Who answers after this turn, in order. */
+  next?: string[]
+  steps: ActivityItem[]
+  background: BackgroundTask[]
+  /** Who works: named, with its avatar, when sub-threads hang under its line. */
+  teammate?: { id: string; name: string }
+  /** Its sub-threads at work, as branches under its line. */
+  subThreads?: ThreadChild[]
+  children: React.ReactNode[]
+}) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
+    if (since === undefined) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [])
-  const ms = now - since
-  if (ms < 5_000) return null
+  }, [since])
+  const ms = since === undefined ? 0 : now - since
+  // The parent of its sub-threads' lines shows at once: they would hang from nothing.
+  const tree = !!teammate && subThreads.some(isChildWorking)
+  if (!tree && !steps.length && !background.length && ms < 5_000) return null
+  // Thinking is no step of its own: it shows under the line, uncounted.
+  const count = steps.filter((item) => item.kind !== 'thinking').length
   return (
-    <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
-      <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
-      Working for {duration(ms)}
-    </div>
+    <Collapsible className="flex min-w-0 flex-col text-sm">
+      {tree ? (
+        <CollapsibleTrigger className="group flex h-8 max-w-full min-w-0 items-center gap-2 self-start text-left text-muted-foreground hover:text-foreground">
+          <TeammateAvatar teammate={teammate!} className="size-5 flex-none" />
+          <span className="flex-none text-foreground">{teammate!.name}</span>
+          <span className="flex-none">Working</span>
+          {count > 0 && <span className="flex-none">· {plural(count, '1 step', 'steps')}</span>}
+          {background.length > 0 && (
+            <span className="min-w-0 truncate">· {background.length} in background</span>
+          )}
+          {ms >= 5_000 && <span className="flex-none">· {duration(ms)}</span>}
+          {next.length > 0 && <span className="min-w-0 truncate">· {next.join(', ')} next</span>}
+          <ChevronRight
+            className="size-3.5 flex-none transition-transform group-data-[state=open]:rotate-90"
+            aria-hidden
+          />
+        </CollapsibleTrigger>
+      ) : (
+        // The step happening now over how long it has worked, the pebble at work on the step's line.
+        <CollapsibleTrigger className="group flex max-w-full min-w-0 items-start gap-2 self-start text-left text-muted-foreground hover:text-foreground">
+          <PebbleAvatar
+            seed="working"
+            tone="neutral"
+            expression={stepExpression(steps.at(-1))}
+            className="size-5 flex-none"
+          />
+          <span className="flex min-w-0 flex-col">
+            <StepTicker label={steps.length ? liveStepText(steps.at(-1)!) : 'Working'} />
+            <span className="flex min-w-0 items-center gap-1 text-xs tabular-nums">
+              {[
+                who,
+                ms >= 1_000 && duration(ms),
+                count > 0 && plural(count, '1 step', 'steps'),
+                background.length > 0 && `${background.length} in background`,
+                next.length > 0 && `${next.join(', ')} next`,
+              ]
+                .filter(Boolean)
+                .join(' · ') || 'Working'}
+              <ChevronRight
+                className="size-3 flex-none transition-transform group-data-[state=open]:rotate-90"
+                aria-hidden
+              />
+            </span>
+          </span>
+        </CollapsibleTrigger>
+      )}
+      {tree && <SubThreadsWorking children={subThreads} />}
+      <CollapsibleContent className="mt-2 ml-0.5 flex flex-col gap-2 border-l pl-3">
+        <RecentSteps>{children}</RecentSteps>
+        {background.map((task) => (
+          <div key={task.id} className="flex min-w-0 items-center gap-2 text-muted-foreground">
+            <span
+              className="size-1.5 flex-none animate-pulse rounded-full bg-primary"
+              aria-hidden
+            />
+            <span className="min-w-0 truncate text-foreground/80">{task.description}</span>
+            <span className="ml-auto flex-none pl-2 text-xs">
+              {task.kind === 'agent' && task.steps > 0
+                ? `${plural(task.steps, '1 step', 'steps')} · in background`
+                : 'in background'}
+            </span>
+          </div>
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+/** When the thread picked up again, centred above the message (lib/thread-times.ts). */
+/** The whole date and time over a pause's mark: toLocaleString's, with a formatter made once. */
+const pauseHint = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: 'numeric',
+  second: 'numeric',
+})
+
+function PauseTime({ at }: { at: number }) {
+  return (
+    <Hint label={pauseHint.format(at)}>
+      <time
+        dateTime={new Date(at).toISOString()}
+        className="text-muted-foreground self-center pt-2 text-xs"
+      >
+        {pauseLabel(at)}
+      </time>
+    </Hint>
   )
 }
 
@@ -1319,36 +2548,28 @@ function EventsWaiting({ since }: { since: string }) {
   )
 }
 
-/** The work a teammate left running in the background: its turn goes on until it reports back. */
-function BackgroundTasks({ tasks }: { tasks: BackgroundTask[] }) {
-  const agents = tasks.filter((t) => t.kind === 'agent').length
-  const heading =
-    tasks.length === 1
-      ? agents
-        ? 'An agent is working in the background'
-        : 'A command is running in the background'
-      : agents === tasks.length
-        ? `${tasks.length} agents are working in the background`
-        : agents === 0
-          ? `${tasks.length} commands are running in the background`
-          : `${tasks.length} tasks are running in the background`
-  return (
-    <div className="flex flex-col gap-1.5 text-sm text-muted-foreground">
-      <span>{heading}</span>
-      <ul className="flex flex-col gap-1 pl-1">
-        {tasks.map((task) => (
-          <li key={task.id} className="flex min-w-0 items-center gap-2">
-            <span
-              className="size-1.5 flex-none animate-pulse rounded-full bg-primary"
-              aria-hidden
-            />
-            <span className="min-w-0 truncate text-foreground/80">{task.description}</span>
-            {task.steps > 0 && (
-              <span className="flex-none text-xs">{plural(task.steps, '1 step', 'steps')}</span>
-            )}
-          </li>
-        ))}
-      </ul>
+/** The computer a thread runs on, away during its turn: by the name Settings → Computers gives it. */
+export type ComputerDown = { name: string; cloud: boolean; state: 'restarting' | 'offline' }
+
+/**
+ * Its computer went away during a turn (a restart, an update, a Mac asleep): the turn
+ * waits on it, and goes on by itself once it is back, where "is reading" would show.
+ */
+function ComputerAway({
+  computer,
+  teammate,
+}: {
+  computer: ComputerDown
+  teammate?: { name: string }
+}) {
+  const name = computer.cloud ? 'The cloud computer' : computer.name
+  return computer.state === 'restarting' ? (
+    <div role="status" className="animate-in self-start text-sm duration-300 fade-in">
+      <span className="text-shimmer">{name} is restarting…</span>
+    </div>
+  ) : (
+    <div role="status" className="self-start text-sm text-muted-foreground">
+      {name} is offline.{teammate && ` ${teammate.name} carries on once it is back.`}
     </div>
   )
 }
@@ -1357,14 +2578,21 @@ function BackgroundTasks({ tasks }: { tasks: BackgroundTask[] }) {
  * Between a message and the first thing its teammate does: a line saying how far it got,
  * where the answer will show. It counts up past the first seconds.
  */
-function Answering({
+export function Answering({
   teammate,
   phase,
   since,
+  next = [],
 }: {
   teammate: { name: string }
-  phase: 'starting' | 'reading' | 'thinking'
+  /** slot: its turn waits for one of that many turns running on its computer to end. */
+  /** preparing: its turn gets the thread's files ready on its computer before it starts. */
+  /** memory: its turn waits for its computer to have memory for it. */
+  /** next: its turn waits for the one before it to end, as asked (a handoff, a message to several). */
+  phase: 'starting' | 'reading' | 'thinking' | 'preparing' | 'memory' | 'next' | { slot: number }
   since?: number
+  /** Who answers after it, in order. */
+  next?: string[]
 }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -1373,16 +2601,24 @@ function Answering({
     return () => clearInterval(timer)
   }, [since])
   const ms = since === undefined ? 0 : now - since
-  const doing = {
-    starting: 'is starting up',
-    reading: 'is reading your message',
-    thinking: 'is thinking',
-  }[phase]
+  const doing =
+    typeof phase === 'object'
+      ? `is waiting for ${phase.slot === 1 ? 'the turn' : `one of the ${phase.slot} turns`} running on this computer to end`
+      : {
+          starting: 'is starting up',
+          reading: 'is reading your message',
+          thinking: 'is thinking',
+          preparing: "is getting this thread's files ready on this computer",
+          memory: 'is waiting for this computer to have memory free',
+          next: 'answers next',
+        }[phase]
+  const after = next.join(', ')
   return (
     // Fading in is an animation too: on the line itself it would replace the shimmer.
     <div role="status" className="animate-in self-start text-sm duration-300 fade-in">
       <span className="text-shimmer">
         {teammate.name} {doing}
+        {after && (phase === 'next' ? `, then ${after}` : ` · ${after} next`)}
         {ms >= 5_000 && ` · ${duration(ms)}`}
       </span>
     </div>
@@ -1396,26 +2632,61 @@ export function ThreadItems({
   onAnswer,
   onTicket,
   onChoose,
+  onDismissChoices,
+  choicesDismissedSeq,
   onReply,
   canApprove,
   takeover,
   teammate,
   teammates = [],
   onOpenPreview,
+  previewStart,
   working = false,
   starting = false,
   background = [],
   eventsWaitingSince,
-  childThreads = [],
+  computerDown,
+  childThreads,
   drafting = false,
+  onRetry,
+  admin = false,
+  gapLine,
+  startSeq,
+  onSideAction,
+  pending,
+  next = [],
+  chiefDecisions,
+  onChiefWrong,
 }: {
   threadId: string
   items: Item[]
-  onApproval: (approvalId: string, approved: boolean, always?: boolean) => void
+  /** Chief's answers in the person's name (docs/chief-answers.md), each beside its note. */
+  chiefDecisions?: ChiefDecisionView[]
+  /** Marks one of Chief's answers in the person's name as wrong. Unset when they cannot. */
+  onChiefWrong?: (decisionId: string) => Promise<void>
+  /** Teammates whose turns wait to answer after another's, in order (useThreadItems). */
+  next?: string[]
+  /**
+   * The person's messages not read yet (queued, or on their way from here): where its turn will
+   * read them, at the end of the thread and above its Working line, as a chat shows what was
+   * just sent, its status under it.
+   */
+  pending?: React.ReactNode
+  /** edited: an email's draft as the person changed it before allowing it. */
+  onApproval: (
+    approvalId: string,
+    approved: boolean,
+    always?: boolean,
+    edited?: EditedEmail,
+  ) => Promise<void>
   onAnswer: (questionId: string, answer: QuestionAnswer) => Promise<void>
   onTicket: (requestId: string, answer: TicketAnswer) => Promise<void>
   /** Sends a choice someone clicked as their message, with the option's design it picks. Unset when they cannot send one now. */
   onChoose?: (text: string, pick?: string) => Promise<void>
+  /** Closes the choices card shown, by its event, without picking one. Unset when they cannot. */
+  onDismissChoices?: (seq: number) => Promise<void>
+  /** The choices card a person dismissed: it and those before it show closed. */
+  choicesDismissedSeq?: number | null
   /** Quotes a message in the composer, for the next one to reply to it. Unset when they cannot send one. */
   onReply?: (reply: ReplyTo) => void
   canApprove: boolean
@@ -1427,6 +2698,8 @@ export function ThreadItems({
   teammates?: { id: string; name: string; harness: string }[]
   /** Opens the thread's preview beside it; set while one runs. */
   onOpenPreview?: () => void
+  /** Starts the thread's preview, for a teammate's preview button. Unset where it cannot. */
+  previewStart?: ReplyPreview
   /** A teammate's turn runs now: its latest steps show live, with how long it has worked. */
   working?: boolean
   /** The thread's computer is starting for that turn. */
@@ -1435,13 +2708,57 @@ export function ThreadItems({
   background?: BackgroundTask[]
   /** Since when its updates have not reached Brigade: said instead of how long it has worked. */
   eventsWaitingSince?: string | null
-  /** The thread's child threads: where a teammate started one, its line shows how it is doing. */
-  childThreads?: ThreadChild[]
+  /** Its computer is away (restarting, offline): said instead of how the turn goes, which waits on it. */
+  computerDown?: ComputerDown
+  /**
+   * The thread's child threads: where a teammate started one, its line shows how it is doing.
+   * Required: left out, every child would show as still working, with no report.
+   */
+  childThreads: ThreadChild[]
   /** The person is writing a message: the buttons a teammate suggested step aside, their words win. */
   drafting?: boolean
+  /** Tries the turn that failed last again. Unset when they cannot write in the thread. */
+  onRetry?: () => Promise<void>
+  /** An owner or admin: they alone allow what only admins may (a teammate's trigger). */
+  admin?: boolean
+  /** Where events are not loaded: what loads them. */
+  gapLine?: (gap: EventGap) => React.ReactNode
+  /**
+   * Shows the thread from the person's message with this seq on, what is before it held back above
+   * (lib/thread-window.ts): all of it when unset, or when no message starts there.
+   */
+  startSeq?: number | null
+  /** Changes what becomes of a message answered on the side. Unset when they cannot write in the thread. */
+  onSideAction?: (messageId: string, action: SideAction) => Promise<void>
 }) {
   const byId = new Map(teammates.map((t) => [t.id, t]))
   const several = teammates.length > 1
+  // Others write in it too: their messages say whose they are.
+  const { me } = useDashboard()
+  const othersWrote = items.some(
+    (it) => it.kind === 'user' && it.memberId !== null && it.memberId !== me.memberId,
+  )
+  const memberNames = useMemberNames(othersWrote)
+  // Who answers after the turn under way, or the one that just ended: named under it until they
+  // start, or until its time (nextShownUntil), when the page renders again to stop showing it.
+  const nextUp = next.flatMap((id) => byId.get(id) ?? [])
+  const nextNames = nextUp.map((t) => t.name)
+  const lastTurnAt = items.findLast(
+    (it): it is Extract<Item, { kind: 'turn' }> => it.kind === 'turn',
+  )?.at
+  const nextUntil = nextUp.length > 0 ? nextShownUntil(working, lastTurnAt) : undefined
+  const [nextNow, setNextNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (nextUntil === undefined || nextUntil === Infinity) return
+    const timer = setTimeout(() => setNextNow(Date.now()), Math.max(0, nextUntil - Date.now()) + 50)
+    return () => clearTimeout(timer)
+  }, [nextUntil])
+  const nextFresh = nextUntil !== undefined && nextNow < nextUntil
+  const [retrying, setRetrying] = useState<string>()
+  // The latest turn failed: nothing came after its error but notes (a try planned on its own, say).
+  const retryable = (i: number) =>
+    !!onRetry && !working && items.slice(i + 1).every((it) => it.kind === 'note')
+  const signInAt = signInCards(items)
   const skillNames = useSkillCommands().map((s) => s.name)
   // A card closing the running turn waits for it to end: under a reply still being written it reads too early.
   // A teammate's buttons stay until anyone answers, with a click or their own words, or
@@ -1480,25 +2797,33 @@ export function ThreadItems({
   const closingTurn = (i: number) =>
     working &&
     !items.slice(i + 1).some((it) => it.kind === 'turn' || (it.kind === 'user' && !it.steeredTo))
-  const render = (item: Item, i: number): React.ReactNode => {
+  /** Its place in a run of one teammate's messages: see `messageRuns`. */
+  type Run = { starts: boolean; follows: boolean; close: boolean; followed: boolean }
+  const render = (item: Item, i: number, run?: Run): React.ReactNode => {
     switch (item.kind) {
       case 'user': {
+        // An email a trigger received: a mail, with the files that came with it.
+        if (item.email)
+          return (
+            <div key={item.key} data-seq={item.seq} className="min-w-0">
+              <ReceivedEmailCard
+                event={item.email.event}
+                email={item.email.email}
+                attachments={item.attachments}
+                reply={
+                  !!item.email.email.threadId && item.email.email.threadId !== item.email.email.id
+                }
+              />
+            </div>
+          )
         // Brigade's own words about child threads: a note, not a person's message.
         if (item.brigade) {
           // A report: one card per thread it tells about, that opens it.
-          const reported =
-            item.brigade === 'report' || item.brigade === 'follow' ? noteThreads(item.text) : null
+          const reported = reportNote(item.text)
           if (reported) {
-            // “… has finished:” only repeats the cards; a schedule's run or a late one says more.
-            const head =
-              item.brigade === 'follow'
-                ? 'From a thread this one follows'
-                : reported.head && !/finished:$/.test(reported.head)
-                  ? reported.head
-                  : null
             return (
               <div key={item.key} data-seq={item.seq} className="flex flex-col gap-2">
-                {head && <p className="text-xs text-muted-foreground">{head}</p>}
+                {reported.head && <p className="text-xs text-muted-foreground">{reported.head}</p>}
                 {reported.threads.map((t) => (
                   <ReportedThread key={t.id} thread={t} />
                 ))}
@@ -1517,7 +2842,7 @@ export function ThreadItems({
                 {parent
                   ? `${parent.from} wrote from the parent thread “${parent.parentTitle}”`
                   : item.brigade === 'report'
-                    ? 'Reports from child threads'
+                    ? 'Reports from sub-threads'
                     : item.brigade === 'follow'
                       ? 'Report from a thread this one follows'
                       : item.brigade === 'dry_run'
@@ -1529,15 +2854,60 @@ export function ThreadItems({
             </div>
           )
         }
+        if (item.handback)
+          return (
+            <div key={item.key} data-seq={item.seq} className="min-w-0">
+              <HandbackCard teammate={teammate?.name} {...item.handback} />
+            </div>
+          )
+        // A wake-up, a schedule's run…: a line saying what it is, what it says folded under it.
+        if (item.note) {
+          // An answer Chief gave in the person's name: they may mark it wrong, once.
+          const answered = item.note.chief
+            ? chiefDecisions?.find((d) => d.id === item.note!.chief!.decisionId)
+            : undefined
+          return (
+            <div key={item.key} data-seq={item.seq} className="min-w-0">
+              <BrigadeNoteLine
+                note={item.note}
+                action={
+                  answered &&
+                  (answered.outcome === 'overruled' ? (
+                    <p className="text-xs text-muted-foreground">You marked it as wrong.</p>
+                  ) : (
+                    onChiefWrong && <MarkWrong onMark={() => onChiefWrong(answered.id)} />
+                  ))
+                }
+              />
+              {item.attachments.length > 0 && (
+                <MessageAttachments attachments={item.attachments} className="mt-2" />
+              )}
+            </div>
+          )
+        }
         // A command it starts with (/design, a skill) is a label above it: what was asked for.
-        const asked = startingCommand(forPeople(item.text), skillNames)
-        const text = asked ? asked.rest : forPeople(item.text)
-        return (
+        // Elements picked in the preview are chips above it, out of its text; their
+        // pictures show in them, not with its other files.
+        const { text: written, elements } = splitPreviewElements(
+          forPeople(item.handed ? item.handed.note : item.lines ? item.lines.said : item.text),
+        )
+        const pictureOf = (name?: string) =>
+          name ? item.attachments.find((a) => a.name === name && a.status === 'ready') : undefined
+        const pictures = new Set(elements.flatMap((e) => pictureOf(e.image)?.id ?? []))
+        const files = item.attachments.filter((a) => !pictures.has(a.id))
+        const asked = startingCommand(written, skillNames)
+        const text = asked ? asked.rest : written
+        const bubble = (
           <div
             key={item.key}
             data-seq={item.seq}
             className="flex max-w-[85%] flex-col items-end gap-1.5 self-end"
           >
+            {item.memberId !== null && item.memberId !== me.memberId && (
+              <span className="text-xs font-medium text-muted-foreground">
+                {memberNames.get(item.memberId) ?? 'Another member'}
+              </span>
+            )}
             {item.replyTo && (
               <ReplyQuote
                 reply={item.replyTo}
@@ -1547,99 +2917,168 @@ export function ThreadItems({
               />
             )}
             {asked && <CommandChip command={asked.command} />}
+            <PreviewElementChips
+              elements={elements.map((element) => {
+                const picture = pictureOf(element.image)
+                return { element, ...(picture && { picture: attachmentUrl(picture.id) }) }
+              })}
+              className="justify-end"
+            />
             {text && (
               <div className="group/message flex items-center gap-1">
                 <MessageActions
                   text={text}
-                  onReply={
-                    onReply &&
-                    (() => onReply({ seq: item.seq, text: replyText(forPeople(item.text)) }))
-                  }
+                  onReply={onReply && (() => onReply({ seq: item.seq, text: replyText(written) }))}
                 />
-                <div className="rounded-2xl rounded-br-md bg-primary px-4 py-2.5 leading-relaxed wrap-anywhere whitespace-pre-wrap text-primary-foreground">
-                  <MessageWithCode text={text} />
-                </div>
+                <MessageBubble text={text} side={!!item.side} />
               </div>
             )}
-            {item.attachments.length > 0 && (
-              <MessageAttachments attachments={item.attachments} className="justify-end" />
+            {files.length > 0 && <MessageAttachments attachments={files} className="justify-end" />}
+            {/* The lines handed over with it: folded under a line, as without a note. */}
+            {item.lines && (
+              <div className="max-w-full">
+                <BrigadeNoteLine note={item.lines.note} />
+              </div>
             )}
-            {item.steeredTo && asksParallel(item.text) ? (
-              <span className="text-xs text-muted-foreground">
-                Sent to run in parallel, in a child thread
-              </span>
-            ) : item.steeredTo ? (
-              <span className="text-xs text-muted-foreground">
-                Steered into{' '}
-                {(byId.get(item.steeredTo) ?? teammate)?.name
-                  ? `${(byId.get(item.steeredTo) ?? teammate)!.name}’s`
-                  : 'the'}{' '}
-                running turn
-              </span>
+            {/* Answered on the side: its aside says what became of it. */}
+            {/* Steered into the running turn, as in a chat: nothing says so. */}
+            {!item.side && item.steeredTo && asksParallel(item.text) ? (
+              <span className="text-xs text-muted-foreground">Sent to a sub-thread</span>
             ) : null}
           </div>
         )
+        // Written during the turn: the teammate's reply under it, in its turn's Aside.
+        if (item.side) {
+          const side = item.side
+          const author = (side.teammateId && byId.get(side.teammateId)) || teammate
+          return (
+            <div key={item.key} className="flex min-w-0 flex-col gap-2">
+              {bubble}
+              <SideReply
+                side={side}
+                {...(author ? { teammate: author } : {})}
+                working={working}
+                mayChange={item.memberId === me.memberId}
+                {...(onSideAction
+                  ? { onAction: (action: SideAction) => onSideAction(side.messageId, action) }
+                  : {})}
+              />
+            </div>
+          )
+        }
+        // Handed over from the Inbox: their note, then the mail, which opens its conversation there.
+        if (item.handed)
+          return (
+            <div key={item.key} className="flex min-w-0 flex-col gap-3">
+              {(text || files.length > 0 || item.replyTo) && bubble}
+              <div data-seq={item.seq} className="min-w-0">
+                <ReceivedEmailCard
+                  event={item.handed.event}
+                  email={item.handed.email}
+                  attachments={[]}
+                  reply={false}
+                  handed={{ item: item.handed.item }}
+                />
+              </div>
+            </div>
+          )
+        return bubble
       }
       case 'assistant': {
         const author = (item.teammateId && byId.get(item.teammateId)) || teammate
-        // With several teammates, name the author where the speaker changes.
+        // With several teammates, name the author over each run of its messages the thread
+        // shows: from the runs of what is shown, not of every item, since a turn's fold hides
+        // its earlier messages. Outside a list of runs (an Aside), where the speaker changes.
         const previous = items
           .slice(0, i)
           .findLast((it): it is Extract<Item, { kind: 'assistant' }> => it.kind === 'assistant')
         const named =
           several &&
           author &&
-          (!previous ||
-            previous.teammateId !== item.teammateId ||
-            items.slice(items.indexOf(previous), i).some((it) => it.kind === 'user'))
+          (run
+            ? run.starts
+            : !previous ||
+              previous.teammateId !== item.teammateId ||
+              items.slice(items.indexOf(previous), i).some((it) => it.kind === 'user'))
+        // Another teammate speaks right after: a little more room, so the two read apart.
+        const handoff =
+          named &&
+          !!previous &&
+          previous.teammateId !== item.teammateId &&
+          !items.slice(items.indexOf(previous), i).some((it) => it.kind === 'user')
         return (
-          <div key={item.key} data-seq={item.seq} className="group/message flex items-start gap-3">
-            {author && <TeammateAvatar teammate={author} className="mt-0.5 size-8" />}
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5 pt-1">
-              {named && <span className="text-sm font-semibold">{author.name}</span>}
-              {/* A file it names opens from its own working folder first. */}
-              <FileLinksProvider value={{ teammateId: item.teammateId }}>
-                {/* A card it ends with shows once the reply is done, without its markup. */}
-                <Markdown text={item.done ? item.text : withoutCard(item.text)} />
-              </FileLinksProvider>
-              {item.done && (
-                <div className="-ml-1.5 flex">
-                  <MessageActions
-                    text={item.text}
-                    onReply={
-                      onReply &&
-                      (() =>
-                        onReply({
-                          seq: item.seq,
-                          ...(author ? { teammateId: author.id } : {}),
-                          text: replyText(item.text),
-                        }))
-                    }
-                  />
-                </div>
+          // No avatar: the thread's one living picture is its Working line's pebble. With
+          // several teammates, a name over each run says whose it is, in its pebble's colour.
+          <div
+            key={item.key}
+            data-seq={item.seq}
+            className={cn(
+              'group/message flex items-start',
+              run?.close && '-mt-3',
+              handoff && 'mt-3',
+            )}
+          >
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              {named && (
+                <span className="teammate-name text-sm font-semibold" style={pebbleInk(author.id)}>
+                  {author.name}
+                </span>
               )}
+              {/* As wide as its text, so actions floating by its first line sit at the end of a short line, not at the far edge. */}
+              <div
+                data-look="teammate-message"
+                data-run={run && runPlace(run)}
+                className={cn(
+                  'relative flex w-fit max-w-full min-w-0 flex-col gap-0.5',
+                  // Room for them on the right, so they never cover its text.
+                  item.done && run?.followed && '[@media(hover:hover)]:pr-14',
+                )}
+              >
+                {/* A file it names opens from its own working folder first. */}
+                <FileLinksProvider
+                  value={{
+                    teammateId: item.teammateId,
+                    ...(item.images ? { images: item.images } : {}),
+                  }}
+                >
+                  {/* A card it ends with shows once the reply is done, without its markup. */}
+                  <StreamedReply
+                    text={item.done ? item.text : withoutCard(item.text)}
+                    done={item.done}
+                    at={item.at}
+                  />
+                </FileLinksProvider>
+                {/* With its next message close under it, they float beside its first line, where a pointer shows them. */}
+                {item.done && (
+                  <div
+                    data-look="message-actions"
+                    className={cn(
+                      '-ml-1.5 flex',
+                      run?.followed &&
+                        '[@media(hover:hover)]:absolute [@media(hover:hover)]:top-0 [@media(hover:hover)]:right-0 [@media(hover:hover)]:ml-0 [@media(hover:hover)]:rounded-full [@media(hover:hover)]:bg-background [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:shadow-sm [@media(hover:hover)]:ring-1 [@media(hover:hover)]:ring-border [@media(hover:hover)]:pointer-events-none [@media(hover:hover)]:group-hover/message:pointer-events-auto [@media(hover:hover)]:group-hover/message:opacity-100 [@media(hover:hover)]:focus-within:opacity-100',
+                    )}
+                  >
+                    <MessageActions
+                      text={item.text}
+                      onReply={
+                        onReply &&
+                        (() =>
+                          onReply({
+                            seq: item.seq,
+                            ...(author ? { teammateId: author.id } : {}),
+                            text: replyText(item.text),
+                          }))
+                      }
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         )
       }
       case 'thinking':
-        return (
-          <Collapsible key={item.key} className="self-start">
-            <CollapsibleTrigger className="group flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-              Thinking
-              <ChevronRight
-                className="size-3.5 transition-transform group-data-[state=open]:rotate-90"
-                aria-hidden
-              />
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <Markdown
-                text={item.text}
-                className="mt-2 max-h-80 overflow-auto rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground"
-              />
-            </CollapsibleContent>
-          </Collapsible>
-        )
+        return <ThinkingStep key={item.key} text={item.text} />
       case 'tool': {
         const team = proposedTeam(item)
         if (
@@ -1650,7 +3089,7 @@ export function ThreadItems({
         const playbook = playbookCard(item)
         if (playbook)
           return (
-            <div key={item.key} className="pl-11">
+            <div key={item.key}>
               {playbook.card === 'playbook' ? (
                 <PlaybookCard playbookKey={playbook.id} />
               ) : playbook.card === 'progress' ? (
@@ -1686,8 +3125,19 @@ export function ThreadItems({
           const reply = items
             .slice(i + 1)
             .find((it): it is Extract<Item, { kind: 'user' }> => it.kind === 'user')
+          const dismissed =
+            choicesDismissedSeq != null && item.seq != null && item.seq <= choicesDismissedSeq
           return (
-            <ChoicesCard key={item.key} choices={choices} reply={reply?.text} onChoose={onChoose} />
+            <ChoicesCard
+              key={item.key}
+              choices={choices}
+              reply={reply?.text}
+              dismissed={dismissed}
+              onChoose={onChoose}
+              onDismiss={
+                onDismissChoices && item.seq != null ? () => onDismissChoices(item.seq!) : undefined
+              }
+            />
           )
         }
         const replies = suggestedReplies(item)
@@ -1698,6 +3148,7 @@ export function ThreadItems({
               key={item.key}
               replies={replies}
               pull={pullBefore(i)}
+              {...(previewStart ? { preview: previewStart } : {})}
               onSend={onChoose}
             />
           )
@@ -1714,6 +3165,8 @@ export function ThreadItems({
               children={childThreads}
             />
           )
+        const restyled = themeChanged(item)
+        if (restyled) return <ThemeChangeCard key={item.key} change={restyled} />
         const opened = item.finished && !item.isError ? openedPull(item) : null
         if (opened)
           return (
@@ -1725,73 +3178,21 @@ export function ThreadItems({
               mergeElsewhere={mergeOffered(i, opened)}
             />
           )
-        return (
-          <Collapsible key={item.key} className="min-w-0 text-sm">
-            <CollapsibleTrigger className="group flex w-full min-w-0 items-center gap-2 text-left text-muted-foreground hover:text-foreground">
-              <ToolLine toolName={item.toolName} input={item.input} />
-              <ChevronRight
-                className="size-3.5 flex-none transition-transform group-data-[state=open]:rotate-90"
-                aria-hidden
-              />
-              {!item.finished ? (
-                <StatusBadge status="running" />
-              ) : item.isError ? (
-                <StatusBadge status="failed" />
-              ) : null}
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-2 flex flex-col gap-2">
-              <ToolDetail item={item} />
-            </CollapsibleContent>
-          </Collapsible>
-        )
+        return <ToolStep key={item.key} threadId={threadId} item={item} />
       }
       case 'approval':
         return (
-          <Card key={item.key} className="min-w-0 gap-3 border-warning/50 px-5 py-4 wrap-anywhere">
-            <div className="flex items-start gap-2">
-              <ShieldAlert aria-hidden className="mt-0.5 size-4 flex-none text-warning" />
-              <div className="min-w-0 flex-1 font-semibold">
-                Allow <code className="font-mono text-sm">{item.toolName}</code>{' '}
-                {toolSummary(item.toolName, item.input)}?
-              </div>
-              {item.resolved && (
-                <StatusBadge
-                  status={item.resolved.approved ? 'approved' : 'denied'}
-                  label={item.resolved.approved ? 'Allowed' : 'Denied'}
-                />
-              )}
-            </div>
-            {item.reason && <p className="text-sm text-muted-foreground">{item.reason}</p>}
-            <pre className={cn(preClass, 'max-h-60')}>{json(item.input)}</pre>
-            {item.resolved ? null : canApprove ? (
-              <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={() => onApproval(item.approvalId, true)}>
-                  {item.always ? 'Allow in this thread' : 'Allow'}
-                </Button>
-                {item.always && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    title="Let this teammate use it from now on, in any thread, without asking"
-                    onClick={() => onApproval(item.approvalId, true, true)}
-                  >
-                    Always allow
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => onApproval(item.approvalId, false)}
-                >
-                  Deny
-                </Button>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Only the member who started this thread can answer.
-              </p>
-            )}
-          </Card>
+          <ApprovalCard
+            key={item.key}
+            item={item}
+            teammateName={(item.teammateId && byId.get(item.teammateId)?.name) || teammate?.name}
+            // A trigger lets outside events start work: only an owner or admin allows one.
+            mayAnswer={bareToolName(item.toolName) === 'create_trigger' ? admin : canApprove}
+            canApprove={canApprove}
+            onApproval={(approved, always, edited) =>
+              onApproval(item.approvalId, approved, always, edited)
+            }
+          />
         )
       case 'question':
         return (
@@ -1868,13 +3269,46 @@ export function ThreadItems({
           </div>
         ) : null
       case 'error':
+        if (item.signedOutAccountId && signInAt.get(item.signedOutAccountId) === item.key)
+          return (
+            <SignedOutError
+              key={item.key}
+              accountId={item.signedOutAccountId}
+              message={item.message}
+              latest={!working && items.slice(i + 1).every((it) => it.kind === 'note')}
+              retrying={retrying === item.key}
+              onRetry={
+                retryable(i)
+                  ? () => {
+                      setRetrying(item.key)
+                      void onRetry!().catch(() => setRetrying(undefined))
+                    }
+                  : undefined
+              }
+            />
+          )
         return (
           <div
             key={item.key}
             role="alert"
-            className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-2.5 text-sm wrap-anywhere whitespace-pre-wrap text-destructive-text"
+            className="flex items-start gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-2.5 text-sm text-destructive-text"
           >
-            {item.message}
+            <span className="min-w-0 flex-1 wrap-anywhere whitespace-pre-wrap">{item.message}</span>
+            {retryable(i) && (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                className="shrink-0"
+                disabled={retrying === item.key}
+                onClick={() => {
+                  setRetrying(item.key)
+                  void onRetry!().catch(() => setRetrying(undefined))
+                }}
+              >
+                Try again
+              </Button>
+            )}
           </div>
         )
       case 'note':
@@ -1891,9 +3325,17 @@ export function ThreadItems({
           >
             $ {item.command}
           </div>
+        ) : item.change === 'handed' ? (
+          <HandbackCard
+            key={item.key}
+            teammate={teammate?.name}
+            note=""
+            files={[]}
+            commands={item.commands ?? []}
+          />
         ) : (
           <div key={item.key} className="text-sm text-muted-foreground">
-            {item.change === 'took' ? 'A person took over' : 'Control handed back'}
+            A person took over
           </div>
         )
       case 'preview':
@@ -1902,7 +3344,7 @@ export function ThreadItems({
             key={item.key}
             className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground"
           >
-            <AppWindow aria-hidden className="size-4 shrink-0" />
+            <Globe aria-hidden className="size-4 shrink-0" />
             <span>
               {item.status === 'ready'
                 ? `Preview ready${item.repository ? ` · ${item.repository}` : ''}`
@@ -1924,23 +3366,98 @@ export function ThreadItems({
               )}
           </div>
         )
+      case 'gap':
+        return <Fragment key={item.key}>{gapLine?.(item.gap)}</Fragment>
       case 'start':
+      case 'woke':
+      case 'slot':
+      case 'preparing':
+      case 'prepared':
         return null
     }
   }
   const nodes = layoutThread(items, working)
-  // Working, and nothing from the teammate since the last message (or only its turn starting).
+  // Where it shows from: the node of the person's message `from` names, else the start.
+  const shownFrom =
+    startSeq == null
+      ? 0
+      : Math.max(
+          0,
+          nodes.findIndex((n) => {
+            const item = n.type === 'item' ? items[n.i]! : undefined
+            return item?.kind === 'user' && item.seq === startSeq
+          }),
+        )
+  // Messages after a pause: their time above them.
+  const marks = pauses(items)
+  // Working, and nothing from the teammate since the last message (or only its turn waiting
+  // for a slot or its files, then starting).
   const lastUser = items.findLastIndex((it) => it.kind === 'user' && !it.steeredTo)
   const since = items.slice(lastUser + 1)
   const waiting =
-    working && lastUser >= 0 && since.every((it) => it.kind === 'start')
-      ? (since.at(-1) as Extract<Item, { kind: 'start' }> | undefined)
+    working &&
+    lastUser >= 0 &&
+    since.every((it) => it.kind === 'start' || it.kind === 'slot' || it.kind === 'preparing')
+      ? (since.at(-1) as Extract<Item, { kind: 'start' | 'slot' | 'preparing' }> | undefined)
       : false
   const waitingFor = waiting !== false && (byId.get(waiting?.teammateId ?? '') ?? teammate)
-  const show = (list: Node[]): React.ReactNode[] =>
-    list.map((node) =>
+  // A turn waiting for a slot, even after output of its own (resumed) or another's reply. One
+  // getting its files ready shows while the thread is idle too: a moved thread's first turn
+  // runs before anyone writes, and no message made the thread busy.
+  const wait = turnWait(items)
+  const slot = wait && (working || wait.kind === 'preparing') ? wait : undefined
+  const slotTeammate = slot && (byId.get(slot.teammateId) ?? teammate)
+  // Counted from its turn starting, else from the message.
+  const from = waiting
+    ? waiting.at
+    : lastUser >= 0
+      ? (items[lastUser] as Extract<Item, { kind: 'user' }>).at
+      : undefined
+  // The running turn's line: its steps, its background work and its sub-threads at work under it.
+  const workingLine =
+    working && ((nodes.running !== undefined && !waitingFor) || background.length > 0)
+  /** Who answered an Aside: the teammate of its first reply, else the thread's. */
+  const asideTeammate = (is: number[]) => {
+    const id = is
+      .map((i) => (items[i] as Extract<Item, { kind: 'user' }>).side?.teammateId)
+      .find(Boolean)
+    return (id && byId.get(id)) || teammate
+  }
+  // What ends a run of one teammate's messages: anything shown but its steps.
+  const runEntry = (node: Node): RunEntry => {
+    if (node.type === 'activity') return 'step'
+    if (node.type !== 'item' || marks.has(items[node.i]!.key)) return 'break'
+    const item = items[node.i]!
+    if (item.kind === 'assistant') return { author: item.teammateId ?? '' }
+    return isActivity(item) ||
+      item.kind === 'start' ||
+      item.kind === 'woke' ||
+      item.kind === 'slot' ||
+      item.kind === 'preparing' ||
+      item.kind === 'prepared' ||
+      (item.kind === 'turn' && item.finishReason !== 'interrupted')
+      ? 'step'
+      : 'break'
+  }
+  // `start`: the first node shown, those before it laid out (a run of messages reads the same) but not drawn.
+  const show = (list: Node[], start = 0): React.ReactNode[] => {
+    const runs = messageRuns(list.map(runEntry))
+    const runAt = (at: number): Run => ({
+      starts: runs.starts.has(at),
+      follows: runs.follows.has(at),
+      close: runs.close.has(at),
+      followed: runs.close.has(at + 1),
+    })
+    return list.slice(start).map((node, k, _, at = k + start) =>
       node.type === 'item' ? (
-        render(items[node.i]!, node.i)
+        marks.has(items[node.i]!.key) ? (
+          <Fragment key={items[node.i]!.key}>
+            <PauseTime at={marks.get(items[node.i]!.key)!} />
+            {render(items[node.i]!, node.i)}
+          </Fragment>
+        ) : (
+          render(items[node.i]!, node.i, runAt(at))
+        )
       ) : node.type === 'activity' ? (
         <ActivityGroup
           key={items[node.is[0]!]!.key}
@@ -1949,6 +3466,24 @@ export function ThreadItems({
         >
           {node.is.map((i) => render(items[i]!, i))}
         </ActivityGroup>
+      ) : node.type === 'asides' ? (
+        <AsideGroup
+          key={items[node.is[0]!]!.key}
+          sides={node.is.map((i) => (items[i] as Extract<Item, { kind: 'user' }>).side!)}
+          seqs={node.is.map((i) => (items[i] as Extract<Item, { kind: 'user' }>).seq)}
+          {...(asideTeammate(node.is)
+            ? {
+                teammate: asideTeammate(node.is)!,
+                avatar: (
+                  <TeammateAvatar teammate={asideTeammate(node.is)!} className="size-5 flex-none" />
+                ),
+              }
+            : {})}
+          live={node.live}
+          quiet={!!node.quiet}
+        >
+          {node.is.map((i) => render(items[i]!, i))}
+        </AsideGroup>
       ) : node.type === 'control' ? (
         <Fold
           key={items[node.is[0]!]!.key}
@@ -1959,26 +3494,69 @@ export function ThreadItems({
           {node.is.map((i) => render(items[i]!, i))}
         </Fold>
       ) : (
-        <WorkedFor key={node.key} ms={node.ms}>
+        <WorkedFor key={node.key} ms={node.ms} steps={node.steps}>
           {show(node.inner)}
         </WorkedFor>
       ),
     )
+  }
+  // With several teammates, who works now: the turn that started last.
+  const worker = several
+    ? byId.get(
+        items.findLast((it): it is Extract<Item, { kind: 'start' }> => it.kind === 'start')
+          ?.teammateId ?? '',
+      )?.name
+    : undefined
+  const workingLineNode = workingLine && (
+    <WorkingLine
+      key="working"
+      {...(worker ? { who: worker } : {})}
+      next={nextNames}
+      {...(nodes.running !== undefined && !eventsWaitingSince ? { since: nodes.running } : {})}
+      steps={nodes.live.map((i) => items[i]!) as ActivityItem[]}
+      background={background}
+      {...(teammate ? { teammate } : {})}
+      subThreads={childThreads}
+    >
+      {nodes.live.map((i) => render(items[i]!, i))}
+    </WorkingLine>
+  )
   return (
     <div className="flex flex-col gap-4">
-      {show(nodes)}
-      {eventsWaitingSince ? (
-        <EventsWaiting since={eventsWaitingSince} />
-      ) : waitingFor ? (
-        <Answering
-          teammate={waitingFor}
-          phase={waiting ? 'thinking' : starting ? 'starting' : 'reading'}
-          {...(waiting ? { since: waiting.at } : {})}
-        />
-      ) : (
-        working && nodes.running !== undefined && <WorkingFor since={nodes.running} />
-      )}
-      {working && background.length > 0 && <BackgroundTasks tasks={background} />}
+      {show(nodes, shownFrom)}
+      {pending}
+      {/* Where the turn says how it goes: as tall as its Working line even when empty, so a line
+          showing up there ("Riley is reading your message", then Working) pushes nothing up. */}
+      <div className="flex min-h-9 flex-col gap-4">
+        {workingLineNode}
+        {eventsWaitingSince ? (
+          <EventsWaiting since={eventsWaitingSince} />
+        ) : working && computerDown ? (
+          <ComputerAway computer={computerDown} teammate={waitingFor || teammate} />
+        ) : slot && slotTeammate ? (
+          <Answering
+            teammate={slotTeammate}
+            phase={
+              slot.kind !== 'slot' ? 'preparing' : slot.memory ? 'memory' : { slot: slot.running }
+            }
+            since={slot.at}
+            next={nextNames.filter((name) => name !== slotTeammate.name)}
+          />
+        ) : waitingFor ? (
+          <Answering
+            teammate={waitingFor}
+            phase={waiting ? 'thinking' : starting ? 'starting' : 'reading'}
+            {...(from !== undefined ? { since: from } : {})}
+            next={nextNames.filter((name) => name !== waitingFor.name)}
+          />
+        ) : !workingLineNode && nextFresh ? (
+          <Answering teammate={nextUp[0]!} phase="next" next={nextNames.slice(1)} />
+        ) : null}
+        {/* Its turn runs without its Working line: its sub-threads at work hang from a line of their own. */}
+        {working && !workingLine && teammate && (
+          <ChildrenWorking children={childThreads} teammate={teammate} />
+        )}
+      </div>
     </div>
   )
 }
@@ -2070,29 +3648,47 @@ function CredentialPicker({
 
 const mentionOf = (c: Credential) => ({ kind: 'credential' as const, id: c.id, label: c.name })
 
+/** What saving a credential of this kind is called on its button. */
+const ADD_CREDENTIAL: Record<CredentialKind, string> = {
+  api_key: 'Add the key',
+  website: 'Add the login',
+  database: 'Add the login',
+  other: 'Add it',
+}
+
 /**
- * A teammate lacks a credential: save it to the vault right here, filled in
- * with what the teammate knows, or grant one already there. Either way the
- * teammate gets its mention and carries on with it in this thread.
+ * A teammate lacks a credential: one row of choices, the form folded away until
+ * asked for. Save it to the vault right here, filled in with what the teammate
+ * knows, grant one already there, or say something else (onSomethingElse, when
+ * the card has nothing else to answer). Either way the teammate gets its mention
+ * and carries on with it in this thread.
  */
 function CredentialAccess({
   ask,
   askerName,
   onReply,
+  onSomethingElse,
 }: {
   ask: Extract<Ask, { type: 'access' }>
   askerName: string
   onReply: (reply: AskReply) => void
+  onSomethingElse?: (note: string) => void
 }) {
-  const [fromVault, setFromVault] = useState(false)
+  const [mode, setMode] = useState<'choose' | 'new' | 'saved' | 'else'>('choose')
   const [picked, setPicked] = useState('')
   const grant = (mention: string) => onReply({ type: 'access', granted: true, credential: mention })
-  const refuse = (
-    <Button size="sm" variant="ghost" onClick={() => onReply({ type: 'access', granted: false })}>
-      Decline
-    </Button>
-  )
-  if (fromVault)
+  const back = () => setMode('choose')
+  if (mode === 'new')
+    return (
+      <CredentialForm
+        inline
+        draft={ask.credential}
+        submitLabel="Save and grant"
+        onCancel={back}
+        onSaved={(saved) => grant(formatMention(mentionOf(saved)))}
+      />
+    )
+  if (mode === 'saved')
     return (
       <div className="flex flex-col gap-2">
         <CredentialPicker
@@ -2100,33 +3696,46 @@ function CredentialAccess({
           onChange={setPicked}
           disabled={false}
           intro={`Pick a saved secret: ${askerName} can then use it in this thread without ever seeing it.`}
-          onNew={() => setFromVault(false)}
+          onNew={() => setMode('new')}
         />
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" disabled={!picked} onClick={() => grant(picked)}>
             Grant
           </Button>
-          {refuse}
+          <Button size="sm" variant="ghost" onClick={back}>
+            Back
+          </Button>
         </div>
       </div>
     )
+  if (mode === 'else' && onSomethingElse)
+    return <SomethingElseForm disabled={false} onSend={onSomethingElse} onCancel={back} />
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2.5">
       <p className="text-sm text-muted-foreground">
-        Save it here and {askerName} uses it in this thread right away. It is encrypted the moment
-        you save it; {askerName} never sees it.
+        {askerName} uses it in this thread right away and never sees it: it is encrypted the moment
+        you save it.
       </p>
-      <CredentialForm
-        inline
-        draft={ask.credential}
-        submitLabel="Save and grant"
-        onSaved={(saved) => grant(formatMention(mentionOf(saved)))}
-      />
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant="link" onClick={() => setFromVault(true)}>
-          It&apos;s already saved
+        <Button size="sm" onClick={() => setMode('new')}>
+          {ADD_CREDENTIAL[ask.credential?.kind ?? 'other']}
         </Button>
-        {refuse}
+        <Button size="sm" variant="outline" onClick={() => setMode('saved')}>
+          It&apos;s saved
+        </Button>
+        {onSomethingElse && (
+          <Button size="sm" variant="outline" onClick={() => setMode('else')}>
+            Something else
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="ml-auto"
+          onClick={() => onReply({ type: 'access', granted: false })}
+        >
+          Decline
+        </Button>
       </div>
     </div>
   )
@@ -2167,6 +3776,208 @@ function DeclineMenu({
   )
 }
 
+/**
+ * Something else, in place of what the teammate asked: the person's own words
+ * ("use the Cloudflare App instead"), sent as the answer so the teammate stops
+ * waiting and does that. Its Decline, with a note.
+ */
+function SomethingElse({
+  disabled,
+  onSend,
+}: {
+  disabled: boolean
+  onSend: (note: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  if (!open)
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="self-start"
+        disabled={disabled}
+        onClick={() => setOpen(true)}
+      >
+        Something else
+      </Button>
+    )
+  return <SomethingElseForm disabled={disabled} onSend={onSend} onCancel={() => setOpen(false)} />
+}
+
+function SomethingElseForm({
+  disabled,
+  onSend,
+  onCancel,
+}: {
+  disabled: boolean
+  onSend: (note: string) => void
+  onCancel: () => void
+}) {
+  const [text, setText] = useState('')
+  const send = () => text.trim() && onSend(text.trim())
+  return (
+    <form
+      className="flex flex-col gap-2"
+      onSubmit={(e) => {
+        e.preventDefault()
+        send()
+      }}
+    >
+      <Textarea
+        autoFocus
+        rows={2}
+        placeholder="What to do instead"
+        aria-label="Something else"
+        disabled={disabled}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onCancel()
+          if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+            send()
+          }
+        }}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" disabled={disabled || !text.trim()}>
+          Send
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+/** What a person wrote in place of answering, once sent. */
+function SentInstead({ note }: { note: string }) {
+  return (
+    <p className="mt-3 border-l-2 pl-3 text-sm wrap-anywhere whitespace-pre-wrap text-muted-foreground">
+      {note}
+    </p>
+  )
+}
+
+/** A Declined badge, or Replied when the person wrote something else instead. */
+const answerBadge = (answer: QuestionAnswer | TicketAnswer) =>
+  answer.action === 'declined'
+    ? answer.note
+      ? { tone: 'success' as const, label: 'Replied' }
+      : { tone: 'warning' as const, label: 'Declined' }
+    : { tone: 'success' as const, label: 'Answered' }
+
+/**
+ * A tool the teammate asks to use: Allow (in this thread, or always) or Deny. The answer shows
+ * at once, as the thread will have it; one that did not go gives the buttons back, with why.
+ */
+function ApprovalCard({
+  item,
+  teammateName,
+  mayAnswer,
+  canApprove,
+  onApproval,
+}: {
+  item: Extract<Item, { kind: 'approval' }>
+  /** The teammate asking, when known: a credential's ask names it. */
+  teammateName?: string | undefined
+  /** This person may answer this one (a trigger: an owner or admin). */
+  mayAnswer: boolean
+  /** This person answers the thread's approvals: an email may be changed before it goes. */
+  canApprove: boolean
+  onApproval: (approved: boolean, always?: boolean, edited?: EditedEmail) => Promise<void>
+}) {
+  const [sending, setSending] = useState<{ approved: boolean }>()
+  const [error, setError] = useState<string>()
+  const resolved = item.resolved ?? sending
+  const adminsOnly = bareToolName(item.toolName) === 'create_trigger'
+  // A vault credential reads as the credential itself, not its id.
+  const credential = credentialAsked(item.toolName, item.input)
+
+  async function answer(approved: boolean, always?: boolean, edited?: EditedEmail) {
+    if (resolved) return
+    setSending({ approved })
+    setError(undefined)
+    try {
+      await onApproval(approved, always, edited)
+    } catch (e) {
+      setError((e as Error).message)
+      setSending(undefined)
+    }
+  }
+
+  return (
+    <Card className="min-w-0 gap-3 border-warning/50 px-5 py-4 wrap-anywhere">
+      <div className="flex items-start gap-2">
+        <ShieldAlert aria-hidden className="mt-0.5 size-4 flex-none text-warning" />
+        <div className="min-w-0 flex-1 font-semibold">
+          {credential
+            ? `${teammateName ?? 'Your teammate'} wants to use`
+            : (approvalAsk(item.toolName) ?? (
+                <>
+                  Allow <code className="font-mono text-sm">{item.toolName}</code>{' '}
+                  {toolSummary(item.toolName, item.input)}?
+                </>
+              ))}
+        </div>
+        {resolved && (
+          <StatusBadge
+            status={resolved.approved ? 'approved' : 'denied'}
+            label={resolved.approved ? 'Allowed' : 'Denied'}
+          />
+        )}
+      </div>
+      {item.reason && !credential && <p className="text-sm text-muted-foreground">{item.reason}</p>}
+      {/* Not shared with the teammate yet: who may allow it is worth a line. */}
+      {credential && item.reason?.includes('which is not shared with it') && (
+        <p className="text-sm text-muted-foreground">
+          Not shared with {teammateName ?? 'this teammate'} yet: only its creator or an admin can
+          allow it.
+        </p>
+      )}
+      {/* An email may be changed before it is allowed. */}
+      {credential ? (
+        <CredentialAskPreview {...credential} input={item.input} />
+      ) : !resolved && canApprove && isEmailSend(item.toolName) ? (
+        <EditableEmailPreview
+          input={item.input}
+          onAllow={(edited) => void answer(true, false, edited)}
+        />
+      ) : (
+        <ToolInputPreview input={item.input} />
+      )}
+      {resolved ? null : mayAnswer ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => void answer(true)}>
+            {item.always ? 'Allow in this thread' : 'Allow'}
+          </Button>
+          {item.always && (
+            <Button
+              size="sm"
+              variant="outline"
+              tooltip="Let this teammate use it from now on, in any thread, without asking"
+              onClick={() => void answer(true, true)}
+            >
+              Always allow
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => void answer(false)}>
+            Deny
+          </Button>
+          {error && <span className="text-sm text-destructive-text">{error}</span>}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          {adminsOnly
+            ? 'Waiting for an owner or admin.'
+            : 'Only the member who started this thread can answer.'}
+        </p>
+      )}
+    </Card>
+  )
+}
+
 /** The harness asks a person something: options, a free answer, or a decline. */
 export function QuestionCard({
   item,
@@ -2179,17 +3990,20 @@ export function QuestionCard({
 }) {
   const [picked, setPicked] = useState<Record<string, string[]>>({})
   const [text, setText] = useState<Record<string, string>>({})
-  const [busy, setBusy] = useState(false)
+  // The answer sent from here shows at once, as the thread will have it; one that did not go
+  // gives the card back, as it was filled in, with why.
+  const [sending, setSending] = useState<QuestionAnswer>()
   const [error, setError] = useState<string>()
+  const answer = item.answer ?? sending
 
-  async function send(answer: QuestionAnswer) {
-    setBusy(true)
+  async function send(next: QuestionAnswer) {
+    setSending(next)
     setError(undefined)
     try {
-      await onAnswer(answer)
+      await onAnswer(next)
     } catch (e) {
       setError((e as Error).message)
-      setBusy(false)
+      setSending(undefined)
     }
   }
 
@@ -2205,10 +4019,10 @@ export function QuestionCard({
   const complete = item.questions.every(
     (q) => (picked[q.id]?.length ?? 0) > 0 || Boolean(text[q.id]?.trim()),
   )
-  const disabled = !canAnswer || busy
+  const disabled = !canAnswer || !!answer
 
   return (
-    <Card className="gap-4 border-primary/40 px-5 py-4">
+    <Card data-look="chat-card" className="gap-4 border-primary/40 px-5 py-4">
       {item.questions.map((q, i) => {
         const optionId = (o: { id: string }) => `${item.questionId}-${q.id}-${o.id}`
         const question = (
@@ -2225,17 +4039,13 @@ export function QuestionCard({
               <div className="flex items-start gap-2">
                 <CircleHelp aria-hidden className="mt-0.5 size-4 flex-none text-primary" />
                 {question}
-                {item.answer ? (
-                  <StatusBadge
-                    status={item.answer.action}
-                    tone={item.answer.action === 'declined' ? 'warning' : 'success'}
-                    label={item.answer.action === 'declined' ? 'Declined' : 'Answered'}
-                  />
+                {answer ? (
+                  <StatusBadge status={answer.action} {...answerBadge(answer)} />
                 ) : (
                   canAnswer && (
                     <DeclineMenu
                       label="Question options"
-                      disabled={busy}
+                      disabled={disabled}
                       onDecline={() => void send({ action: 'declined' })}
                     />
                   )
@@ -2244,7 +4054,7 @@ export function QuestionCard({
             ) : (
               question
             )}
-            {item.answer ? null : (
+            {answer ? null : (
               <>
                 {q.options?.length ? (
                   q.allowMultiple ? (
@@ -2310,16 +4120,24 @@ export function QuestionCard({
           </div>
         )
       })}
+      {answer?.action === 'declined' && answer.note && <SentInstead note={answer.note} />}
       {item.answer ? null : canAnswer ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            disabled={busy || !complete}
-            onClick={() => void send({ action: 'answered', answers })}
-          >
-            Answer
-          </Button>
-          {error && <span className="text-sm text-destructive-text">{error}</span>}
+        // Hidden, not gone, while the answer goes: a note written in it comes back if it fails.
+        <div hidden={!!sending} className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              disabled={!complete}
+              onClick={() => void send({ action: 'answered', answers })}
+            >
+              Answer
+            </Button>
+            {error && <span className="text-sm text-destructive-text">{error}</span>}
+          </div>
+          <SomethingElse
+            disabled={disabled}
+            onSend={(note) => void send({ action: 'declined', note })}
+          />
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
@@ -2349,6 +4167,8 @@ function OptionLabel({
 export type TicketTakeover = {
   /** This member already has control. */
   mine: boolean
+  /** A change of control goes now: answering, which hands back, waits for it. */
+  pending?: boolean
   /** Take control, unless already theirs, and show the desktop, where the teammate's browser is. */
   open: () => Promise<void>
 }
@@ -2391,12 +4211,16 @@ function BrowserAction({
       <div className="flex flex-wrap items-center gap-2">
         {takeover.mine ? (
           <>
-            <Button size="sm" onClick={() => onReply({ type: 'action', done: true })}>
+            <Button
+              size="sm"
+              disabled={takeover.pending}
+              onClick={() => onReply({ type: 'action', done: true })}
+            >
               Done, hand back
             </Button>
             <Button size="sm" variant="outline" disabled={busy} onClick={() => void open()}>
               <Monitor aria-hidden />
-              Show desktop
+              Show computer
             </Button>
           </>
         ) : (
@@ -2425,7 +4249,8 @@ function BrowserAction({
 
 /**
  * A ticket the teammate opened: one or more asks, each answered with its own
- * buttons. The teammate waits; the answers go to it once every ask has one.
+ * buttons. The teammate waits; the answers go to it once every ask has one,
+ * kept in this browser until then (useTicketReplies).
  */
 export function TicketCard({
   item,
@@ -2444,18 +4269,27 @@ export function TicketCard({
   askerName: string
   onAnswer: (answer: TicketAnswer) => Promise<void>
 }) {
-  const [replies, setReplies] = useState<Record<string, AskReply>>({})
-  const [busy, setBusy] = useState(false)
+  const [replies, setReplies, forget] = useTicketReplies(
+    item.requestId,
+    item.asks,
+    Boolean(item.answer),
+  )
+  // The answer sent from here shows at once, as the thread will have it; one that did not go
+  // gives the card back, with its replies and why.
+  const [sending, setSending] = useState<TicketAnswer>()
   const [error, setError] = useState<string>()
+  const answer = item.answer ?? sending
+  const done = Boolean(answer)
 
-  async function send(answer: TicketAnswer) {
-    setBusy(true)
+  async function send(next: TicketAnswer) {
+    setSending(next)
     setError(undefined)
     try {
-      await onAnswer(answer)
+      await onAnswer(next)
+      forget()
     } catch (e) {
       setError((e as Error).message)
-      setBusy(false)
+      setSending(undefined)
     }
   }
 
@@ -2465,27 +4299,32 @@ export function TicketCard({
     setReplies(next)
     if (item.asks.every((a) => next[a.id])) void send({ action: 'answered', replies: next })
   }
-  const undo = (askId: string) => setReplies(({ [askId]: _, ...rest }) => rest)
+  const undo = (askId: string) => {
+    const { [askId]: _, ...rest } = replies
+    setReplies(rest)
+  }
 
-  const answered = item.answer?.action === 'answered' ? item.answer.replies : undefined
-  const done = Boolean(item.answer)
-  const disabled = !canAnswer || busy || done
+  const answered = answer?.action === 'answered' ? answer.replies : undefined
+  const disabled = !canAnswer || done
   const soleAccess = item.asks.length === 1 && item.asks[0]!.type === 'access'
+  // A lone credential ask has Something else among its own buttons.
+  const sole = item.asks.length === 1 ? item.asks[0]! : undefined
+  const elseInline = sole?.type === 'access' && sole.kind === 'credential' && !sole.app
+  const somethingElse = (note: string) => void send({ action: 'declined', note })
 
   const several = item.asks.length > 1
   const count = Object.keys(answered ?? replies).length
+  // Some asks answered, not all: nothing has gone to the teammate yet, access included.
+  const partly = several && !done && count > 0 && count < item.asks.length
+  const granting = Object.values(replies).some((r) => r.type === 'access' && r.granted)
 
   return (
-    <Card className="gap-0 border-primary/40 px-5 py-4">
+    <Card data-look="chat-card" className="gap-0 border-primary/40 px-5 py-4">
       <div className="flex items-start gap-2">
         <ClipboardList aria-hidden className="mt-0.5 size-4 flex-none text-primary" />
         <div className="min-w-0 flex-1 font-semibold">{item.title}</div>
-        {item.answer ? (
-          <StatusBadge
-            status={item.answer.action}
-            tone={item.answer.action === 'declined' ? 'warning' : 'success'}
-            label={item.answer.action === 'declined' ? 'Declined' : 'Answered'}
-          />
+        {answer ? (
+          <StatusBadge status={answer.action} {...answerBadge(answer)} />
         ) : (
           <>
             {several && (
@@ -2497,7 +4336,7 @@ export function TicketCard({
             {canAnswer && !soleAccess && (
               <DeclineMenu
                 label="Ticket options"
-                disabled={busy}
+                disabled={done}
                 onDecline={() => void send({ action: 'declined' })}
               >
                 Decline ticket
@@ -2520,10 +4359,25 @@ export function TicketCard({
             askerId={askerId}
             askerName={askerName}
             onReply={(value) => reply(ask.id, value)}
-            onUndo={done || busy ? undefined : () => undo(ask.id)}
+            onUndo={done ? undefined : () => undo(ask.id)}
+            onSomethingElse={elseInline && canAnswer ? somethingElse : undefined}
           />
         </div>
       ))}
+      {partly && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          {granting
+            ? `${askerName} gets the access and your answers when every ask is answered.`
+            : `Your answers go to ${askerName} when every ask is answered.`}
+        </p>
+      )}
+      {answer?.action === 'declined' && answer.note && <SentInstead note={answer.note} />}
+      {!item.answer && canAnswer && !elseInline && (
+        // Hidden, not gone, while the answer goes: a note written in it comes back if it fails.
+        <div hidden={!!sending} className="mt-3 flex flex-col">
+          <SomethingElse disabled={done} onSend={somethingElse} />
+        </div>
+      )}
       {error && <p className="mt-3 text-sm text-destructive-text">{error}</p>}
       {!done && !canAnswer && (
         <p className="mt-3 text-sm text-muted-foreground">
@@ -2583,6 +4437,7 @@ function AskView({
   askerName,
   onReply,
   onUndo,
+  onSomethingElse,
 }: {
   ask: Ask
   reply: AskReply | undefined
@@ -2593,6 +4448,8 @@ function AskView({
   askerName: string
   onReply: (reply: AskReply) => void
   onUndo: (() => void) | undefined
+  /** Something else from the ask's own buttons, rather than below the card's asks. */
+  onSomethingElse?: (note: string) => void
 }) {
   const [showDraft, setShowDraft] = useState(true)
   const [open, setOpen] = useState(false)
@@ -2674,49 +4531,173 @@ function AskView({
         </CopyableCode>
       ) : null}
 
-      {disabled ? null : ask.type === 'approval' ? (
-        open ? (
+      {/* Hidden, not gone, while an answer goes: what was written in it comes back if it fails. */}
+      <div hidden={disabled} className="contents">
+        {ask.type === 'approval' ? (
+          open ? (
+            <div className="flex flex-col gap-2">
+              <Textarea
+                rows={3}
+                autoFocus
+                placeholder="What should change?"
+                aria-label="What should change"
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-muted-foreground">Send back to</span>
+                <Select value={sendTo || askerId || ''} onValueChange={setSendTo}>
+                  <SelectTrigger size="sm" aria-label="Send back to">
+                    <SelectValue placeholder={askerName} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(teammates.length
+                      ? teammates
+                      : askerId
+                        ? [{ id: askerId, name: askerName }]
+                        : []
+                    ).map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  disabled={!text.trim()}
+                  onClick={() =>
+                    onReply({
+                      type: 'approval',
+                      approved: false,
+                      changes: text.trim(),
+                      ...(sendTo && sendTo !== askerId ? { sendTo } : {}),
+                    })
+                  }
+                >
+                  Send
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => onReply({ type: 'approval', approved: true })}>
+                Approve
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+                Request changes
+              </Button>
+            </div>
+          )
+        ) : ask.type === 'decision' ? (
+          <div className="flex flex-wrap gap-2">
+            {ask.options?.length ? (
+              ask.options.map((o) => (
+                <Button
+                  key={o.id}
+                  size="sm"
+                  variant="outline"
+                  tooltip={o.description}
+                  onClick={() => onReply({ type: 'decision', optionId: o.id })}
+                >
+                  {o.label}
+                </Button>
+              ))
+            ) : (
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => onReply({ type: 'decision', optionId: 'approve' })}
+                >
+                  Approve
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onReply({ type: 'decision', optionId: 'decline' })}
+                >
+                  Decline
+                </Button>
+              </>
+            )}
+          </div>
+        ) : ask.type === 'variables' ? (
+          <VariablesAsk ask={ask} askerName={askerName} onReply={onReply} />
+        ) : ask.type === 'access' && ask.app ? (
+          <AppAccessAsk ask={{ ...ask, app: ask.app }} askerName={askerName} onReply={onReply} />
+        ) : ask.type === 'access' && ask.kind === 'credential' ? (
+          <CredentialAccess
+            ask={ask}
+            askerName={askerName}
+            onReply={onReply}
+            onSomethingElse={onSomethingElse}
+          />
+        ) : ask.type === 'access' ? (
+          // A connection asked for in words: given by hand on the Apps page.
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" onClick={() => onReply({ type: 'access', granted: true })}>
+              I&apos;ve given access
+            </Button>
+            <Button asChild size="sm" variant="outline">
+              <a href="/app/connections" target="_blank" rel="noreferrer">
+                Open Apps →
+              </a>
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onReply({ type: 'access', granted: false })}
+            >
+              Decline
+            </Button>
+          </div>
+        ) : ask.type === 'action' && ask.browser && takeover ? (
+          <BrowserAction askerName={askerName} takeover={takeover} onReply={onReply} />
+        ) : ask.type === 'action' ? (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => onReply({ type: 'action', done: true })}>
+              Done
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => onReply({ type: 'action', done: false })}
+            >
+              Can&apos;t do it
+            </Button>
+          </div>
+        ) : ask.secret ? (
+          <div className="flex flex-col gap-2">
+            <CredentialPicker value={text} onChange={setText} disabled={false} />
+            <Button
+              size="sm"
+              className="self-start"
+              disabled={!text}
+              onClick={() => onReply({ type: 'input', text })}
+            >
+              Submit
+            </Button>
+          </div>
+        ) : open ? (
           <div className="flex flex-col gap-2">
             <Textarea
               rows={3}
               autoFocus
-              placeholder="What should change?"
-              aria-label="What should change"
+              placeholder="Your answer"
+              aria-label="Your answer"
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm text-muted-foreground">Send back to</span>
-              <Select value={sendTo || askerId || ''} onValueChange={setSendTo}>
-                <SelectTrigger size="sm" aria-label="Send back to">
-                  <SelectValue placeholder={askerName} />
-                </SelectTrigger>
-                <SelectContent>
-                  {(teammates.length
-                    ? teammates
-                    : askerId
-                      ? [{ id: askerId, name: askerName }]
-                      : []
-                  ).map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex gap-2">
               <Button
                 size="sm"
                 disabled={!text.trim()}
-                onClick={() =>
-                  onReply({
-                    type: 'approval',
-                    approved: false,
-                    changes: text.trim(),
-                    ...(sendTo && sendTo !== askerId ? { sendTo } : {}),
-                  })
-                }
+                onClick={() => onReply({ type: 'input', text: text.trim() })}
               >
-                Send
+                Submit
               </Button>
               <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
                 Cancel
@@ -2724,271 +4705,393 @@ function AskView({
             </div>
           </div>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => onReply({ type: 'approval', approved: true })}>
-              Approve
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-              Request changes
-            </Button>
-          </div>
-        )
-      ) : ask.type === 'decision' ? (
-        <div className="flex flex-wrap gap-2">
-          {ask.options?.length ? (
-            ask.options.map((o) => (
-              <Button
-                key={o.id}
-                size="sm"
-                variant="outline"
-                title={o.description}
-                onClick={() => onReply({ type: 'decision', optionId: o.id })}
-              >
-                {o.label}
-              </Button>
-            ))
-          ) : (
-            <>
-              <Button size="sm" onClick={() => onReply({ type: 'decision', optionId: 'approve' })}>
-                Approve
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onReply({ type: 'decision', optionId: 'decline' })}
-              >
-                Decline
-              </Button>
-            </>
-          )}
-        </div>
-      ) : ask.type === 'variables' ? (
-        <VariablesAsk ask={ask} askerName={askerName} onReply={onReply} />
-      ) : ask.type === 'access' && ask.app ? (
-        <AppAccessAsk ask={{ ...ask, app: ask.app }} askerName={askerName} onReply={onReply} />
-      ) : ask.type === 'access' && ask.kind === 'credential' ? (
-        <CredentialAccess ask={ask} askerName={askerName} onReply={onReply} />
-      ) : ask.type === 'access' ? (
-        // A connection asked for in words: given by hand on the Apps page.
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => onReply({ type: 'access', granted: true })}>
-            I&apos;ve given access
+          <Button size="sm" className="self-start" onClick={() => setOpen(true)}>
+            Provide details
           </Button>
-          <Button asChild size="sm" variant="outline">
-            <a href="/app/connections" target="_blank" rel="noreferrer">
-              Open Apps →
-            </a>
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onReply({ type: 'access', granted: false })}
-          >
-            Decline
-          </Button>
-        </div>
-      ) : ask.type === 'action' && ask.browser && takeover ? (
-        <BrowserAction askerName={askerName} takeover={takeover} onReply={onReply} />
-      ) : ask.type === 'action' ? (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" onClick={() => onReply({ type: 'action', done: true })}>
-            Done
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => onReply({ type: 'action', done: false })}
-          >
-            Can&apos;t do it
-          </Button>
-        </div>
-      ) : ask.secret ? (
-        <div className="flex flex-col gap-2">
-          <CredentialPicker value={text} onChange={setText} disabled={false} />
-          <Button
-            size="sm"
-            className="self-start"
-            disabled={!text}
-            onClick={() => onReply({ type: 'input', text })}
-          >
-            Submit
-          </Button>
-        </div>
-      ) : open ? (
-        <div className="flex flex-col gap-2">
-          <Textarea
-            rows={3}
-            autoFocus
-            placeholder="Your answer"
-            aria-label="Your answer"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              disabled={!text.trim()}
-              onClick={() => onReply({ type: 'input', text: text.trim() })}
-            >
-              Submit
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setOpen(false)}>
-              Cancel
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <Button size="sm" className="self-start" onClick={() => setOpen(true)}>
-          Provide details
-        </Button>
-      )}
+        )}
+      </div>
     </>
   )
 }
 
+/** What `sent` holds once a person's own words went from the choices card. */
+const OWN_WORDS = '\u0000own'
+
 /**
- * Alternatives a teammate offers: a card each, with the design's picture when
- * the option is one (it opens beside the thread). Picking sends the choice as a
- * message; any message after it closes the offer.
+ * Alternatives a teammate offers, as a list: a soft tile each, its mark (the label's own number,
+ * as the widget above shows it), name and description. With only words, a click on a tile picks
+ * it. When an option is a design, every tile gets a Pick button and a click on a tile opens its
+ * design beside the thread instead, with its picture at the start: one gesture per card, so a
+ * tile never picks when the same-looking one above it opens. The last tile is a field for other
+ * words, sent as a message from here, in the thread as in Today's Needs you. Picking sends the
+ * choice as a message; any message after it closes the offer.
  */
-function ChoicesCard({
+export function ChoicesCard({
   choices,
   reply,
+  dismissed = false,
   onChoose,
+  onDismiss,
+  onSnooze,
 }: {
   choices: Choices
   /** The next message in the thread, if there is one. */
   reply?: string
+  /** A person closed it without picking (docs/board.md). */
+  dismissed?: boolean
   onChoose?: (text: string, pick?: string) => Promise<void>
+  /** Closes it without picking: the thread stops, no turn starts. */
+  onDismiss?: () => Promise<void>
+  /**
+   * Puts its thread away for this member until a time (Today's Needs you): Snooze and Dismiss
+   * become icons, shown as the pointer is on the card.
+   */
+  onSnooze?: (until: Date) => Promise<void>
 }) {
   const links = useFileLinks()
+  const router = useRouter()
+  // Beside its thread, a design opens in the panel; out of it (Today's Needs you), in the library.
+  const openDesign = (path: string) =>
+    links ? links.open({ path }) : router.push(`/app/library?design=${encodeURIComponent(path)}`)
   const designs = choices.options.some((o) => o.design)
   const library = useApi<LibraryFile[]>(designs ? '/library' : null)
-  const [sending, setSending] = useState<string>()
+  // What was picked here (an option's id, or OWN_WORDS): shown at once, as the message goes and
+  // until the thread has it; a message that did not go gives the card back, with why.
+  const [sent, setSent] = useState<string>()
+  const [words, setWords] = useState('')
   const [error, setError] = useState<string>()
-  const picked = reply === undefined ? undefined : pickedChoice(choices.options, reply)
-  const open = reply === undefined && !!onChoose && !sending
+  // Dismissed here, at once, until the thread says so too.
+  const [dismissing, setDismissing] = useState(false)
+  // Snooze's times, from when its menu opens: "Tomorrow" is the member's own tomorrow.
+  const [snoozeOpen, setSnoozeOpen] = useState(false)
+  const times = snoozeOpen ? snoozeOptions() : []
+  const closed = dismissed || dismissing
+  const picked =
+    reply !== undefined
+      ? pickedChoice(choices.options, reply)
+      : choices.options.find((o) => o.id === sent)
+  // Answered with other words (theirs, sent from here or the composer), or closed.
+  const replied = reply !== undefined ? !picked : sent === OWN_WORDS
+  const open = reply === undefined && !closed && !!onChoose && !sent
+  const passed = replied || closed
 
-  async function choose(option: Choices['options'][number]) {
-    if (!onChoose) return
-    setSending(option.id)
+  async function dismiss() {
+    if (!onDismiss) return
+    setDismissing(true)
     setError(undefined)
     try {
-      // A design from an options folder becomes the design: the message says where.
-      const design = option.design?.replace(/\/+$/, '')
-      const options = design && designOptionsOf(design)
-      if (options) await onChoose(choiceMessage(option, pickedDesignPath(options)), design)
-      else await onChoose(choiceMessage(option))
+      await onDismiss()
     } catch (e) {
       setError((e as Error).message)
-      setSending(undefined)
+      setDismissing(false)
     }
   }
 
+  async function snooze(until: Date) {
+    if (!onSnooze) return
+    setError(undefined)
+    try {
+      await onSnooze(until)
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
+  async function send(id: string, message: () => Promise<void>) {
+    setSent(id)
+    setError(undefined)
+    try {
+      await message()
+    } catch (e) {
+      setError((e as Error).message)
+      setSent(undefined)
+    }
+  }
+
+  function choose(option: Choices['options'][number]) {
+    if (!onChoose) return
+    void send(option.id, () => {
+      // A design from an options folder becomes the design: the message says where.
+      const design = option.design?.replace(/\/+$/, '')
+      const options = design && designOptionsOf(design)
+      return options
+        ? onChoose(choiceMessage(option, pickedDesignPath(options)), design)
+        : onChoose(choiceMessage(option))
+    })
+  }
+
+  function writeOwn() {
+    const text = words.trim()
+    if (!onChoose || !text) return
+    void send(OWN_WORDS, async () => {
+      await onChoose(text)
+      setWords('')
+    })
+  }
+
+  const mark = (text: React.ReactNode) => (
+    <span className="flex size-5 flex-none items-center justify-center rounded-[4px] bg-foreground/[0.09] font-mono text-[11px] text-muted-foreground">
+      {text}
+    </span>
+  )
   return (
-    <Card className="gap-4 border-primary/40 px-5 py-4">
-      <div className="flex items-start gap-2">
-        <LayoutTemplate aria-hidden className="mt-0.5 size-4 flex-none text-primary" />
+    <Card className="group/choices gap-3 border-primary/40 px-3 py-3.5">
+      <div className="flex items-start gap-2 px-2">
+        <LayoutTemplate aria-hidden className="mt-1 size-4 flex-none text-primary" />
         <div className="min-w-0 flex-1 font-semibold">
           <Markdown text={choices.question} className="[&>p]:inline" />
         </div>
-        {reply !== undefined && (
+        {picked || replied ? (
           <StatusBadge
             status={picked ? 'answered' : 'replied'}
             tone={picked ? 'success' : 'neutral'}
             label={picked ? 'Picked' : 'Replied'}
           />
+        ) : closed ? (
+          <StatusBadge status="dismissed" tone="neutral" label="Dismissed" />
+        ) : open && onSnooze ? (
+          // Quiet until the pointer is on the card (always on touch screens), as the sidebar's.
+          <div
+            className={cn(
+              '-my-0.5 flex flex-none items-center gap-0.5 transition-opacity',
+              'opacity-0 group-hover/choices:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100',
+              snoozeOpen && 'opacity-100',
+            )}
+          >
+            <DropdownMenu open={snoozeOpen} onOpenChange={setSnoozeOpen}>
+              <Hint label="Snooze">
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label="Snooze"
+                    className="size-7 text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+                  >
+                    <Clock aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+              </Hint>
+              <DropdownMenuContent
+                align="end"
+                className="min-w-52"
+                onKeyDown={(e) => {
+                  const time = times[Number(e.key) - 1]
+                  if (!time || e.metaKey || e.ctrlKey || e.altKey) return
+                  e.preventDefault()
+                  setSnoozeOpen(false)
+                  void snooze(time.until)
+                }}
+              >
+                {times.map((time, i) => (
+                  <DropdownMenuItem key={time.key} onSelect={() => void snooze(time.until)}>
+                    {time.label}
+                    <span className="ml-auto pl-4 text-xs text-muted-foreground tabular-nums">
+                      {wakeLabel(time.until)}
+                    </span>
+                    <DropdownMenuShortcut className="ml-2">{i + 1}</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            {onDismiss && (
+              <Hint label="Dismiss: the thread stops, and the teammate is told">
+                <Button
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label="Dismiss"
+                  className="size-7 text-muted-foreground"
+                  onClick={() => void dismiss()}
+                >
+                  <X aria-hidden />
+                </Button>
+              </Hint>
+            )}
+          </div>
+        ) : (
+          open &&
+          onDismiss && (
+            <Hint label="Close it without picking: the thread stops, and the teammate is told">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="-my-0.5 h-7 flex-none px-2 text-xs text-muted-foreground"
+                onClick={() => void dismiss()}
+              >
+                Dismiss
+              </Button>
+            </Hint>
+          )
         )}
       </div>
-      <ul className="grid gap-3 sm:grid-cols-2">
-        {choices.options.map((o) => {
+      <ul className="@container flex flex-col gap-1">
+        {choices.options.map((o, i) => {
+          const { mark: number, name } = choiceLabel(o.label, i)
           const offered = o.design?.replace(/\/+$/, '')
-          const chosen = picked?.id === o.id || sending === o.id
-          // Once picked, an option from an options folder is the design; the rest are in the trash.
+          const chosen = picked?.id === o.id
+          // Once picked, an option from an options folder is copied to the design, which it opens;
+          // every option keeps its picture. Picks from before moved the option there and trashed the rest.
           const options = offered && designOptionsOf(offered)
-          const design = options && picked?.id === o.id ? pickedDesignPath(options) : offered
-          const thumbnail =
-            design && library.data?.find((f) => f.path === `${design}/${DESIGN_THUMBNAIL}`)
-          const trashed = !!options && !!picked && picked.id !== o.id
+          const made = options && picked?.id === o.id ? pickedDesignPath(options) : undefined
+          const has = (folder?: string) =>
+            !!folder && !!library.data?.some((f) => f.path.startsWith(`${folder}/`))
+          const design = made && has(made) ? made : offered
+          const thumbnail = [offered, made]
+            .map((d) => d && library.data?.find((f) => f.path === `${d}/${DESIGN_THUMBNAIL}`))
+            .find(Boolean)
+          const trashed = !!options && !!picked && !!library.data && !has(offered) && !has(made)
+          const picture = design && (
+            <span className="relative flex aspect-[16/10] w-24 flex-none items-center justify-center overflow-hidden rounded-md border bg-card @md:w-32">
+              {trashed ? (
+                <span className="text-xs text-muted-foreground">In the trash</span>
+              ) : thumbnail ? (
+                // eslint-disable-next-line @next/next/no-img-element -- a library file through the API
+                <img
+                  src={contentUrl(thumbnail.id)}
+                  alt=""
+                  loading="lazy"
+                  className="size-full object-cover object-top transition group-hover:scale-[1.02]"
+                />
+              ) : (
+                <LayoutTemplate aria-hidden className="size-6 text-muted-foreground/60" />
+              )}
+              {!trashed && (
+                <span className="absolute right-1.5 bottom-1.5 rounded-full bg-background/85 px-2 py-0.5 text-[11px] font-semibold opacity-0 backdrop-blur-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
+                  Open
+                </span>
+              )}
+            </span>
+          )
+          const text = (
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="font-semibold">{name}</span>
+              {o.description && (
+                <span className="line-clamp-2 text-xs text-muted-foreground">{o.description}</span>
+              )}
+            </span>
+          )
+          const body = (
+            <>
+              {mark(number)}
+              {picture}
+              {text}
+            </>
+          )
+          const row = 'flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-1.5 text-left'
+          // With designs, the tile opens its design and Pick picks; with only words, the tile picks.
+          const opens = designs && !!design && !trashed
+          const picks = !designs && open
+          const content = opens ? (
+            <button
+              type="button"
+              className={cn(row, 'group cursor-pointer rounded-[10px]')}
+              aria-label={`Open ${o.label}`}
+              onClick={() => openDesign(design)}
+            >
+              {body}
+            </button>
+          ) : picks ? (
+            <button
+              type="button"
+              className={cn(row, 'group cursor-pointer rounded-[10px]')}
+              onClick={() => choose(o)}
+            >
+              {body}
+            </button>
+          ) : (
+            <div className={row}>{body}</div>
+          )
           return (
             <li
               key={o.id}
               className={cn(
-                'flex flex-col overflow-hidden rounded-lg border bg-card',
-                chosen && 'border-primary ring-2 ring-primary/30',
-                picked && !chosen && 'opacity-60',
+                'flex items-center rounded-[10px] bg-muted/55 transition-[background-color,opacity]',
+                (opens || picks) && 'hover:bg-muted',
+                chosen && 'bg-primary/15 hover:bg-primary/15',
+                ((picked && !chosen) || passed) && 'opacity-50',
               )}
             >
-              {design && trashed && (
-                <span className="flex aspect-[16/10] items-center justify-center border-b bg-muted/50 text-xs text-muted-foreground">
-                  In the trash
-                </span>
-              )}
-              {design && !trashed && (
-                <button
-                  type="button"
-                  className="group relative flex aspect-[16/10] items-center justify-center overflow-hidden border-b bg-muted/50"
-                  title={`Open ${design}`}
-                  aria-label={`Open ${o.label}`}
-                  onClick={() => links?.open({ path: design })}
+              {content}
+              {designs && open && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mr-2.5 h-7 flex-none rounded-full px-3 text-xs"
+                  onClick={() => choose(o)}
                 >
-                  {thumbnail ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- a library file through the API
-                    <img
-                      src={contentUrl(thumbnail.id)}
-                      alt=""
-                      loading="lazy"
-                      className="size-full object-cover object-top transition group-hover:scale-[1.02]"
-                    />
-                  ) : (
-                    <LayoutTemplate aria-hidden className="size-7 text-muted-foreground/60" />
-                  )}
-                  <span className="absolute right-2 bottom-2 rounded-full bg-background/85 px-2.5 py-1 text-xs font-semibold backdrop-blur-sm">
-                    Open
-                  </span>
-                </button>
+                  Pick
+                </Button>
               )}
-              <div className="flex flex-1 flex-col gap-1 px-3.5 py-3">
-                <span className="font-semibold">{o.label}</span>
-                {o.description && (
-                  <span className="text-sm text-muted-foreground">{o.description}</span>
-                )}
-                {open && (
-                  <div className="mt-auto pt-2">
-                    <Button size="sm" variant="outline" onClick={() => void choose(o)}>
-                      Pick this one
-                    </Button>
-                  </div>
-                )}
-                {sending === o.id && !picked && (
-                  <span className="mt-2 text-sm text-muted-foreground">Sending…</span>
-                )}
-              </div>
+              {picked?.id === o.id && (
+                <Check aria-label="Picked" className="mr-2.5 size-4 flex-none text-success" />
+              )}
             </li>
           )
         })}
+        {open && (
+          <li className="flex items-start gap-2.5 rounded-[10px] border border-dashed px-2.5 py-1.5 focus-within:border-solid focus-within:border-primary/40">
+            <span className="mt-0.5">{mark(<Pencil aria-hidden className="size-3" />)}</span>
+            <textarea
+              rows={1}
+              value={words}
+              placeholder="Something else…"
+              aria-label="Something else: your own words, sent as a message"
+              className="min-h-6 min-w-0 flex-1 resize-none bg-transparent leading-6 outline-none placeholder:text-muted-foreground disabled:opacity-60"
+              onChange={(e) => {
+                setWords(e.target.value)
+                // Grows with what is written, as the composer does.
+                e.target.style.height = 'auto'
+                e.target.style.height = `${e.target.scrollHeight}px`
+              }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return
+                e.preventDefault()
+                writeOwn()
+              }}
+            />
+            {words.trim() && (
+              <Button
+                size="icon"
+                className="-my-0.5 size-7 flex-none rounded-full"
+                aria-label="Send"
+                onClick={writeOwn}
+              >
+                <ArrowUp className="size-4" />
+              </Button>
+            )}
+          </li>
+        )}
       </ul>
-      {open && (
-        <p className="text-xs text-muted-foreground">
-          Or write what you want instead: mix two, or change one.
-        </p>
-      )}
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      {error && <p className="px-2 text-sm text-destructive">{error}</p>}
     </Card>
   )
+}
+
+/** What a teammate's preview button needs from the thread: whether one runs, and starting it. */
+export type ReplyPreview = {
+  /** One starts or runs: the button steps aside, Preview and its panel show it. */
+  live: boolean
+  /** It is being started, from this button or Preview. */
+  busy: boolean
+  /** As Preview starts it; `words` go to the teammate when the runner cannot start it alone. */
+  start: (words: string) => void
 }
 
 /** Answers a teammate suggested under its reply: a click sends one as the person's message. */
 function SuggestedReplyButtons({
   replies,
   pull,
+  preview,
   onSend,
 }: {
   replies: SuggestedReplies
   /** The pull request opened last in the thread: what a merge button merges. */
   pull: { repository: string; number: number } | null
+  /** The thread's preview: what a preview button starts. */
+  preview?: ReplyPreview
   onSend: (text: string) => Promise<void>
 }) {
+  // A click answers at once: the buttons go as the message shows in the thread, and come back,
+  // with why, if it did not go.
   const [sending, setSending] = useState<string>()
   const [error, setError] = useState<string>()
 
@@ -3003,18 +5106,39 @@ function SuggestedReplyButtons({
     }
   }
 
+  if (sending !== undefined) return null
   return (
-    <div className="flex flex-col -mt-2 gap-1.5 pl-11">
+    <div className="flex flex-col -mt-2 gap-1.5">
       <div className="flex flex-wrap gap-2">
-        {pull &&
-          replies.actions?.map((a) => (
-            <PullMergeButton
-              key={`${a.action}:${a.label}`}
-              repository={pull.repository}
-              number={pull.number}
-              label={a.label}
-            />
-          ))}
+        {replies.actions?.map((a) =>
+          a.action === 'merge'
+            ? pull && (
+                <PullMergeButton
+                  key={`${a.action}:${a.label}`}
+                  repository={pull.repository}
+                  number={pull.number}
+                  label={a.label}
+                />
+              )
+            : preview &&
+              !preview.live && (
+                <Button
+                  key={`${a.action}:${a.label}`}
+                  type="button"
+                  size="sm"
+                  className="rounded-full"
+                  disabled={preview.busy}
+                  onClick={() => preview.start(a.label)}
+                >
+                  {preview.busy ? (
+                    <LoaderCircle aria-hidden className="animate-spin" />
+                  ) : (
+                    <Globe aria-hidden />
+                  )}
+                  {a.label}
+                </Button>
+              ),
+        )}
         {replies.replies.map((reply) => (
           <Button
             key={reply}
@@ -3022,7 +5146,6 @@ function SuggestedReplyButtons({
             size="sm"
             variant="outline"
             className="rounded-full"
-            disabled={sending !== undefined}
             onClick={() => void send(reply)}
           >
             {reply}

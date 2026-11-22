@@ -1,9 +1,16 @@
 // GitHub connector (REST API), on an installation of Brigade's GitHub App.
 // It reaches only the repositories the customer picked when installing it.
+import { PullSpecs, ReviewChoice } from '@brigade/contracts'
 import { z } from 'zod'
 import { env } from '../config.js'
 import { GITHUB_API } from './github-app.js'
-import { json, op, type ConnectorContext, type ConnectorDefinition } from './types.js'
+import {
+  ConnectorError,
+  json,
+  op,
+  type ConnectorContext,
+  type ConnectorDefinition,
+} from './types.js'
 
 type User = { login: string } | null
 type Label = { name: string } | string
@@ -36,7 +43,7 @@ type PullRequest = Issue & {
   draft?: boolean
   merged_at: string | null
   head: { ref: string; sha: string }
-  base: { ref: string }
+  base: { ref: string; repo?: { id: number } | null }
   mergeable?: boolean | null
   additions?: number
   deletions?: number
@@ -138,6 +145,9 @@ const branch = z
   .regex(/^[\w./-]+$/, 'A branch name')
   .refine((b) => segments(b) && !b.endsWith('.lock'), 'A branch name')
 const number = z.number().int().positive().describe('The issue or pull request number')
+/** A pull request that is only part of a list item says what remains of it (src/lists.ts). */
+const PART_OF =
+  "Each partOf entry is { item, remains }: the item's id, and what remains of it once this is merged"
 const limit = z.number().int().min(1).max(100).default(20)
 const page = z.number().int().min(1).max(100).default(1)
 
@@ -573,8 +583,8 @@ export const github: ConnectorDefinition = {
     github_review_pull_request: op({
       description:
         'Submit your review of a pull request, once, when you have read it: approve it, or request changes, ' +
-        'with a summary and comments on specific lines of the new code. Brigade sends a request for changes ' +
-        'to the author and, when a person asked for it, merges an approved pull request.',
+        'with a summary and comments on specific lines of the new code. It is posted on GitHub, and the ' +
+        'pull request shows your verdict in Brigade.',
       write: true,
       input: z.object({
         repository: repo,
@@ -712,15 +722,89 @@ export const github: ConnectorDefinition = {
         base: branch.optional().describe('The branch to merge into'),
         body: z.string().max(65_000).optional().describe('Markdown'),
         draft: z.boolean().default(false),
+        review: ReviewChoice.optional().describe(
+          'Only when your instructions say you decide whether a pull request gets a review: whether ' +
+            'another teammate reviews this one before it reaches the person (wanted), and why, in a ' +
+            'few words the person reads on it (reason). Brigade starts the review and wakes you with it.',
+        ),
+        items: z
+          .object({
+            closes: z.array(z.string().max(64)).max(50).optional(),
+            partOf: z
+              .array(
+                z.object(
+                  {
+                    item: z.string().max(64),
+                    remains: z.string().trim().min(1).max(500),
+                  },
+                  { error: PART_OF },
+                ),
+              )
+              .max(50)
+              .optional(),
+          })
+          .optional()
+          .describe(
+            "The list items this pull request works on, by id (list_items, or your thread's items): " +
+              'closes, those it finishes, which Brigade ticks once it is merged; partOf, those it is ' +
+              "only part of, each with what remains of it once this is merged (a line in the list's " +
+              'language, e.g. "Submit the sitemap in Search Console once deployed"): Brigade adds it under ' +
+              'the item on merge, and ticks the item once all its remaining lines are ticked.',
+          ),
+        specs: PullSpecs.optional().describe(
+          "The library's specs and designs this pull request builds, by path (a Markdown file, or a " +
+            "design's folder ending in .design): ships, those it builds whole, which Brigade marks " +
+            'shipped with its number once it is merged; partOf, those it is one step of, on which ' +
+            'Brigade writes its number and leaves the status. Only files you may change.',
+        ),
       }),
       target: (i) => `pull request ${i.head} → ${i.base ?? 'default branch'} in ${i.repository}`,
-      run: async (ctx, { repository: r, ...fields }) =>
-        pull(
-          await send<PullRequest>(ctx, 'POST', `${repoPath(r)}/pulls`, {
-            ...fields,
-            base: fields.base ?? (await defaultBranch(ctx, r)),
-          }),
-        ),
+      // The review, the items and the specs are Brigade's (src/reviews.ts, src/lists.ts,
+      // src/decisions.ts), not GitHub's.
+      // With its repository's id, which a rename keeps: how Brigade follows it (src/pull-requests.ts).
+      run: async (
+        ctx,
+        { repository: r, review: _review, items: _items, specs: _specs, ...fields },
+      ) => {
+        const created = await send<PullRequest>(ctx, 'POST', `${repoPath(r)}/pulls`, {
+          ...fields,
+          base: fields.base ?? (await defaultBranch(ctx, r)),
+        })
+        return { ...pull(created), repositoryId: created.base.repo?.id }
+      },
+    }),
+    github_mark_ready_for_review: op({
+      description:
+        'Take a draft pull request out of draft, so it can be reviewed and merged; with draft: true, ' +
+        'turn an open pull request back into a draft.',
+      write: true,
+      input: z.object({
+        repository: repo,
+        number,
+        draft: z.boolean().default(false).describe('true: turn it back into a draft'),
+      }),
+      target: (i) =>
+        `${i.repository}#${i.number} (${i.draft ? 'back to draft' : 'ready for review'})`,
+      run: async (ctx, i) => {
+        const found = await get<PullRequest & { node_id: string }>(
+          ctx,
+          `${repoPath(i.repository)}/pulls/${i.number}`,
+        )
+        if (found.merged_at) throw new Error(`#${i.number} is already merged`)
+        if (found.state !== 'open') throw new Error(`#${i.number} is closed`)
+        const changed = Boolean(found.draft) !== i.draft
+        // Only GitHub's GraphQL API moves a pull request in or out of draft.
+        if (changed) {
+          const mutation = i.draft ? 'convertPullRequestToDraft' : 'markPullRequestReadyForReview'
+          const result = await send<{ errors?: { message: string }[] }>(ctx, 'POST', '/graphql', {
+            query: `mutation($id: ID!) { ${mutation}(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
+            variables: { id: found.node_id },
+          })
+          if (result.errors?.length)
+            throw new ConnectorError(result.errors.map((e) => e.message).join('; '))
+        }
+        return { ...pull({ ...found, draft: i.draft }), changed }
+      },
     }),
     github_merge_pull_request: op({
       description:
@@ -739,7 +823,10 @@ export const github: ConnectorDefinition = {
         const found = await get<PullRequest>(ctx, path)
         if (found.merged_at) throw new Error(`#${i.number} is already merged`)
         if (found.state !== 'open') throw new Error(`#${i.number} is closed`)
-        if (found.draft) throw new Error(`#${i.number} is a draft; mark it ready for review first`)
+        if (found.draft)
+          throw new Error(
+            `#${i.number} is a draft; take it out of draft first (github_mark_ready_for_review)`,
+          )
         // On its own after its checks: only the commit they passed on. GitHub refuses the sha
         // too, should the head move between this read and the merge.
         const checked = ctx.checkedSha

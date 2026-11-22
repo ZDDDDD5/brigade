@@ -8,8 +8,10 @@
       "outputs": ["dist/**", ".next/**", "!.next/cache/**"]
     },
     "typecheck": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "passThroughEnv": ["DATABASE_URL"]
     },
+    "lint": {},
     "dev": {
       "dependsOn": ["^build"],
       "cache": false,

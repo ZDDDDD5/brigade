@@ -2,7 +2,8 @@
 // Search everything from anywhere: ⌘K (Ctrl+K), or the box at the top of the
 // sidebar. Pages match as you type; the rest comes from the API, which applies
 // the same rules as each page, so nothing turns up that the member can't open.
-import type { SearchKind, SearchResult } from '@brigade/contracts'
+// The best match leads, then each kind in the order of its best match.
+import { SCORE, titleScore, type SearchKind, type SearchResult } from '@brigade/contracts'
 import {
   ArrowRight,
   Bot,
@@ -16,10 +17,11 @@ import {
   KeyRound,
   MessagesSquare,
   Monitor,
+  Palette,
   Plug,
   Search as SearchIcon,
-  SquareKanban,
   UserRound,
+  Wrench,
   X,
   Zap,
   type LucideIcon,
@@ -27,7 +29,12 @@ import {
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isAdmin, NAV, useDashboard } from '@/components/dashboard'
+import { libraryDocument, useDocumentPanel } from '@/components/document-panel'
 import { isMac, useIsMac } from '@/lib/platform'
+import { isMarkdownName } from '@/lib/file-view'
+import { HOVER_MS, prepareDocument } from '@/lib/prepare-document'
+import { libraryFile } from '@/lib/search-open'
+import { openSettings } from '@/lib/settings-dialog'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { api, pullHref } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -41,17 +48,22 @@ type Item = {
   detail: string | null
   snippet: string | null
   href: string
+  /** How well it matches (SCORE); none for recent rows. */
+  score?: number
+  /** A file the document editor opens, beside the page (SearchResult). */
+  editor?: boolean
 }
 
 const GROUPS: { kind: Item['kind']; label: string; icon: LucideIcon }[] = [
   { kind: 'page', label: 'Pages', icon: ArrowRight },
   { kind: 'teammate', label: 'AI teammates', icon: Bot },
   { kind: 'thread', label: 'Threads', icon: MessagesSquare },
-  { kind: 'task', label: 'Tasks', icon: SquareKanban },
   { kind: 'pull_request', label: 'Pull requests', icon: GitPullRequest },
   { kind: 'ticket', label: 'Tickets', icon: Inbox },
   { kind: 'automation', label: 'Routines', icon: CalendarClock },
   { kind: 'file', label: 'Library', icon: FileText },
+  { kind: 'design', label: 'Designs', icon: Palette },
+  { kind: 'tool', label: 'Tools', icon: Wrench },
   { kind: 'memory', label: 'Memory', icon: Brain },
   { kind: 'connection', label: 'Apps', icon: Plug },
   { kind: 'trigger', label: 'Triggers', icon: Zap },
@@ -71,8 +83,6 @@ function hrefOf(r: SearchResult) {
       return `/app/threads/${r.id}`
     case 'teammate':
       return `/app/teammates/${r.id}`
-    case 'task':
-      return `/app/tasks?task=${r.id}`
     case 'pull_request':
       return r.pull ? pullHref(r.pull.repository, r.pull.number) : '/app/pulls'
     case 'ticket':
@@ -81,6 +91,11 @@ function hrefOf(r: SearchResult) {
       return '/app/routines'
     case 'file':
       return `/app/library?file=${r.id}`
+    // A design or a tool opens as itself, in the library: its id is its folder.
+    case 'design':
+      return `/app/library?design=${encodeURIComponent(r.id)}`
+    case 'tool':
+      return `/app/library?tool=${encodeURIComponent(r.id)}`
     case 'memory':
       return '/app/library?tab=memory'
     case 'connection':
@@ -103,7 +118,10 @@ const recentKey = (workspaceId: string) => `brigade.search.recent.${workspaceId}
 function readRecent(workspaceId: string): Item[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(recentKey(workspaceId)) ?? '[]') as unknown
-    return Array.isArray(parsed) ? (parsed as Item[]).slice(0, RECENT_MAX) : []
+    // Only kinds there still are: a task, from before the Tasks board went, is left out.
+    return Array.isArray(parsed)
+      ? (parsed as Item[]).filter((r) => r.kind in ICON).slice(0, RECENT_MAX)
+      : []
   } catch {
     return []
   }
@@ -149,6 +167,7 @@ export function SearchDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const router = useRouter()
+  const documents = useDocumentPanel()
   const mac = useIsMac()
   const { me, projects } = useDashboard()
   const workspaceId = me.activeWorkspaceId ?? ''
@@ -202,7 +221,7 @@ export function SearchDialog({
 
   const pages = useMemo<Item[]>(() => {
     const all = [
-      ...NAV.map((n) => ({ href: n.href, title: n.label })),
+      ...NAV.map((n) => ({ href: n.href, title: n.search ?? n.label })),
       ...projects
         .filter((p) => !p.archivedAt)
         .map((p) => ({ href: `/app/projects/${p.id}`, title: p.name })),
@@ -229,7 +248,7 @@ export function SearchDialog({
       wanted.every((w) => p.title.toLowerCase().includes(w)),
     )
     const items: Item[] = [
-      ...matchingPages,
+      ...matchingPages.map((p) => ({ ...p, score: titleScore(trimmed, p.title) })),
       ...(found?.results ?? []).map((r) => ({
         key: `${r.kind}:${r.id}`,
         kind: r.kind,
@@ -237,12 +256,25 @@ export function SearchDialog({
         detail: r.detail,
         snippet: r.snippet,
         href: hrefOf(r),
+        score: r.score,
+        ...(r.editor && { editor: true }),
       })),
     ]
-    return GROUPS.map((g) => ({
-      label: g.label,
-      items: items.filter((i) => i.kind === g.kind),
-    })).filter((g) => g.items.length > 0)
+    // A name that matches leads on its own; the rest keep their kind's group.
+    const best = items.reduce<Item | undefined>(
+      (top, i) => ((i.score ?? 0) > (top?.score ?? 0) ? i : top),
+      undefined,
+    )
+    const top = best && (best.score ?? 0) >= SCORE.inside ? best : undefined
+    const groups = GROUPS.map((g) => {
+      const kept = items
+        .filter((i) => i.kind === g.kind && i !== top)
+        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+      return { label: g.label, items: kept, score: kept[0]?.score ?? 0 }
+    })
+      .filter((g) => g.items.length > 0)
+      .sort((a, b) => b.score - a.score)
+    return top ? [{ label: 'Top hit', items: [top] }, ...groups] : groups
   }, [trimmed, recent, pages, found])
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups])
   const searching = Boolean(trimmed) && found?.query !== trimmed && !error
@@ -252,6 +284,18 @@ export function SearchDialog({
   useEffect(() => {
     list.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: 'nearest' })
   }, [active])
+  // The document the row picked opens, once it stays picked a moment: Enter shows it at once.
+  const picked = flat[active]
+  const pickedFile = picked ? libraryFile(picked) : undefined
+  const prepared =
+    pickedFile && pickedFile.editable !== false && isMarkdownName(pickedFile.path)
+      ? pickedFile.id
+      : undefined
+  useEffect(() => {
+    if (!open || !prepared) return
+    const timer = setTimeout(() => prepareDocument({ kind: 'library', id: prepared }), HOVER_MS)
+    return () => clearTimeout(timer)
+  }, [open, prepared])
 
   const choose = useCallback(
     (item: Item, newTab = false) => {
@@ -261,9 +305,11 @@ export function SearchDialog({
         return
       }
       onOpenChange(false)
-      router.push(item.href)
+      const file = libraryFile(item)
+      if (file) documents.open(libraryDocument(file))
+      else if (!openSettings(item.href)) router.push(item.href)
     },
-    [onOpenChange, router, workspaceId],
+    [onOpenChange, router, workspaceId, documents],
   )
 
   function onKeyDown(e: React.KeyboardEvent) {

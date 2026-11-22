@@ -1,30 +1,64 @@
 // Zod schemas shared by api, runner and web. The single source of types.
 export * from './api.js'
+export * from './apps.js'
 export * from './attachments.js'
+export * from './board.js'
+export * from './builtin-skills.js'
 export * from './cards.js'
+export * from './catalog-schemas.js'
 export * from './chief.js'
+export * from './chief-answers.js'
 export * from './children.js'
 export * from './commands.js'
 export * from './credentials.js'
+export * from './decisions.js'
 export * from './design.js'
+export * from './dictation.js'
+export * from './email.js'
+export * from './errors.js'
+export * from './features.js'
+export * from './goals.js'
+export * from './themes.js'
+export * from './inbox.js'
+export * from './initiatives.js'
 export * from './events.js'
+export * from './handback.js'
 export * from './library.js'
+export * from './lists.js'
+export * from './memory.js'
 export * from './playbooks.js'
 export * from './playbook-approvals.js'
 export * from './mentions.js'
 export * from './models.js'
 export * from './notifications.js'
 export * from './previews.js'
+export * from './preview-elements.js'
+export * from './element-select.js'
 export * from './projects.js'
 export * from './pulls.js'
 export * from './repositories.js'
+export * from './reviews.js'
 export * from './runner.js'
 export * from './schedules.js'
+export * from './side-replies.js'
+export * from './signed-out.js'
 export * from './wakeups.js'
+export * from './snooze.js'
 export * from './search.js'
+export * from './secrets.js'
 export * from './skills.js'
-export * from './tasks.js'
+export * from './onboarding.js'
+export * from './suggestions.js'
+export * from './legacy-tasks.js'
+export * from './started-threads.js'
+export * from './thread-done.js'
 export * from './thread-history.js'
+export * from './tool.js'
+export * from './trigger-events.js'
+export * from './triggers.js'
+export * from './turn-retries.js'
+export * from './uploads.js'
+export * from './usage.js'
 
 /**
  * Bump when the runner protocol changes. 2: threads with several teammates.
@@ -53,8 +87,142 @@ export * from './thread-history.js'
  * 30: a thread's tab comes to the front of its teammate's browser while people watch its desktop (browser.focus).
  * 31: playbook threads (the spec's `playbook`, and playbook_triage and playbook_report as schedule.call
  *     operations); follow_thread (a schedule.call operation).
+ * 32: a deleted thread's folders are removed (thread.deleted).
+ * 33: a turn that failed is tried again: on its own after a passing error, or when a person asks (thread.retry).
+ * 34: a cloud computer says when its disk is still full after it freed what it could (disk).
+ * 35: memory in layers: memory.update edits name topics, replacements, archive reasons and confirmed
+ *     lines; tidy runs lay a memory file out again (memory.tidy).
+ * 36: after a turn, Claude Code guesses the person's next message (the spec's `suggestions`, message.suggested).
+ * 37: reviews in child threads (request_review as a schedule.call operation; the spec's project.reviewPolicy).
+ * 38: triggers from a thread (list_triggers and create_trigger as schedule.call operations), which may
+ *     answer connector.pending while an admin decides.
+ * 39: people edit text files of a teammate's working folder (thread.file.write, the hash in
+ *     thread.file.result) and find where a preview's element is written (thread.source.find).
+ * 40: the code panel lists, finds and searches a teammate's working folder, and watches open
+ *     files' hashes (thread.code).
+ * 41: the code panel lists the files changed since the last commit, reads a file as in it and
+ *     puts files back as they are in it (thread.code's changes, original and revert).
+ * 42: uploads straight to the bucket: library saves (`save`'s `upload`), skill proposals (`refs`) and
+ *     the images and PDFs of events (STORED_FILE) by reference, each file PUT to a signed URL first;
+ *     connector-call files and git backups by signed URL too (DIRECT_UPLOAD_PROTOCOL).
+ * 43: commands with a commandId are acknowledged (command.ack), and one seen before is ignored: the
+ *     API sends again what is not acknowledged.
+ * 44: a cloud computer backs up what lives only on its disk (thread folders, teammates' crontabs, user
+ *     services and browser profiles, account logins) to Brigade, now and then and when asked
+ *     (computer.backup), and a computer that replaces another restores it first (welcome's restore).
+ * 45: a thread's spec names its large parts (connectors, skills, project, design systems) by their
+ *     SHA-256 (ThreadSpec.parts): the runner fetches each once (GET /runner/spec-parts/<sha256>).
+ * 46: the runner says it is still there with keepalive rather than heartbeat, which a workspace's hub
+ *     object answers without waking, and connects to /runner/ws?workspace=<the welcome's workspaceId>
+ *     (docs/workspace-hubs-plan.md).
+ * 47: a message to a teammate waiting on its ticket or question reaches it at once, and the ask
+ *     stays open (ASIDE_PROTOCOL); turn.completed says when one still is (`waiting`).
+ * 48: a connector's operations are left out of the spec and named by a catalog (ConnectorGrant's
+ *     `catalog`): the runner fetches each App's once (GET /runner/catalogs/<connectionId>) and
+ *     keeps it while its version holds (CATALOG_PROTOCOL).
+ * 49: a held call decided once its tool no longer waited shows decided in its thread
+ *     (thread.settle, SETTLE_PROTOCOL).
+ * 50: a person's message sent during its teammate's turn gets a side reply (message.side), and
+ *     thread.queued takes keep and queue for it (SIDE_REPLY_PROTOCOL).
+ * 51: Chief answered teammates' questions for the person in decision threads of its own (the spec's
+ *     `decision`, chief_decide and chief_decisions), and the spec's `chiefAnswers`: no longer sent
+ *     from 53 on.
+ * 52: no Tasks board: start_thread, message_thread and a playbook's file_idea as schedule.call
+ *     operations, and no task.call (the API still answers older runners' task tools: src/legacy-tasks.ts).
+ * 53: Chief for the person (CHIEF_PASS_PROTOCOL, docs/chief-answers.md): its daily pass threads (the
+ *     spec's `pass`, with chief_answer, chief_retry and chief_report as schedule.call operations), the
+ *     person's rules in teammates' instructions (the spec's `rules`), and chief_rules.
+ * 54: goals (GOAL_PROTOCOL, docs/goals.md): `/goal` rewritten into words, propose_goal, goal_status and
+ *     goal_report as schedule.call operations, and a goal's command measurement (goal.measure, goal.measured).
+ * 55: teammates on Pi (PI_PROTOCOL): ThreadSpec.teammate.harness may be `pi`, and turn.started and
+ *     turn.completed carry what the Pi benchmark compares (harness, model, tool calls and errors).
+ * 56: teammates on Antigravity (ANTIGRAVITY_PROTOCOL): ThreadSpec.teammate.harness and an account's
+ *     provider may be `antigravity`, a Google account signed in with Antigravity's own `agy`.
  */
-export const PROTOCOL_VERSION = 31
+export const PROTOCOL_VERSION = 56
+/**
+ * Runners from this version on run a teammate on Pi (TeammateHarness). The API starts no Pi turn on
+ * an older one, whose spec would not parse: it says the computer's Brigade must update first.
+ */
+export const PI_PROTOCOL = 55
+/**
+ * Runners from this version on run a teammate on Antigravity and sign in its Google accounts. The
+ * API starts no Antigravity turn or sign-in on an older one, whose messages would not parse: it says
+ * the computer's Brigade must update first.
+ */
+export const ANTIGRAVITY_PROTOCOL = 56
+/**
+ * Runners from this version on run Chief's daily pass (ThreadSpec.pass) with its tools. The API
+ * starts no pass on an older one: what waits on the person waits, as before.
+ */
+export const CHIEF_PASS_PROTOCOL = 53
+/**
+ * Runners from this version on answer a person's message sent during its teammate's turn on
+ * the side (message.side), and take keep and queue on it. The API refuses those actions to
+ * older ones, which never send a side reply.
+ */
+export const SIDE_REPLY_PROTOCOL = 50
+/**
+ * Runners from this version on take thread.settle: a held call's decision no tool heard, which
+ * shows its approval decided. Older ones are not sent it, and the approval stays as it was.
+ */
+export const SETTLE_PROTOCOL = 49
+/**
+ * Runners from this version on fetch a connector's operations themselves (ConnectorGrant's
+ * `catalog`), so a thread's spec stays a few kilobytes whatever its Apps' tools weigh. Older ones
+ * are sent them in the spec, as before.
+ */
+export const CATALOG_PROTOCOL = 48
+/**
+ * Runners from this version on take a message while their teammate waits on its own ticket or
+ * question: it reads the message now, and the ask stays open for the person to answer later.
+ * Older ones hold it until the ask is answered, so the API refuses it as before.
+ */
+export const ASIDE_PROTOCOL = 47
+/**
+ * Runners from this version on send KEEPALIVE instead of heartbeat, and name their workspace when
+ * they connect: their hub object can hibernate between their messages.
+ */
+export const KEEPALIVE_PROTOCOL = 46
+/**
+ * A runner's or a dashboard's keepalive, exactly as sent and answered: a hub object answers it
+ * itself, without waking (the Workers runtime matches the text, not its JSON).
+ */
+export const KEEPALIVE = '{"type":"keepalive"}'
+/**
+ * Runners from this version on back up a cloud computer to Brigade (computer.backup) and restore a
+ * replaced one (welcome's restore, computer.restored).
+ */
+export const BACKUP_PROTOCOL = 44
+/**
+ * Runners from this version on take a thread's spec with its large parts named by SHA-256
+ * (ThreadSpec.parts) and fetch them; older ones are sent the spec whole.
+ */
+export const SPEC_PARTS_PROTOCOL = 45
+/**
+ * Runners from this version on never send a file's bytes to the API: they PUT them to signed
+ * bucket URLs and send references. The API still takes the bytes of older runners (base64 in
+ * `library.call` saves and events, skill proposals' text, POST /runner/attachments, PUT
+ * /runner/backups); once MIN_PROTOCOL_VERSION reaches this, those paths can go.
+ */
+export const DIRECT_UPLOAD_PROTOCOL = 42
+/**
+ * Runners from this version on acknowledge commands by id and ignore one they saw already: the API
+ * keeps each until acknowledged and sends it again on reconnect (apps/api/src/runner-commands.ts).
+ */
+export const OUTBOX_PROTOCOL = 43
+/** Runners from this version on write files people edit and find a preview element's source. */
+export const CODE_EDIT_PROTOCOL = 39
+/** Runners from this version on list, find and search a working folder for the code panel (thread.code). */
+export const CODE_TREE_PROTOCOL = 40
+/** Runners from this version on show and revert the changes since the last commit (thread.code). */
+export const CODE_CHANGES_PROTOCOL = 41
+/** Runners from this version on say when their disk is still full (disk). */
+export const DISK_PROTOCOL = 34
+/** Runners from this version on try a failed turn again when a person asks (thread.retry). */
+export const RETRY_PROTOCOL = 33
+/** Runners from this version on remove a deleted thread's folders (thread.deleted). */
+export const DELETE_PROTOCOL = 32
 /** Runners from this version on bring a thread's tab to the front (browser.focus). */
 export const FOCUS_PROTOCOL = 30
 /** Runners from this version on take thread.note. */
@@ -77,3 +245,14 @@ export const HEARTBEAT_PROTOCOL = 19
 export const LIBRARY_VIEWS_PROTOCOL = 13
 /** The API rejects runners below this protocol version. */
 export const MIN_PROTOCOL_VERSION = 1
+/**
+ * The Node.js runners run on (the latest LTS, with its security fixes): the installer puts it in
+ * place wherever the computer's own Node.js is older, and an updating runner moves onto it.
+ */
+export const NODE_VERSION = 'v24.22.1'
+/** Whether Node.js `version` (as in process.version) is at least `min`. */
+export function nodeAtLeast(version: string, min = NODE_VERSION) {
+  const [a, b] = [version, min].map((v) => v.replace(/^v/, '').split('.').map(Number))
+  for (let i = 0; i < 3; i++) if (a![i] !== b![i]) return (a![i] ?? 0) > (b![i] ?? 0)
+  return true
+}

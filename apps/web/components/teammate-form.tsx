@@ -1,69 +1,105 @@
 'use client'
-import { CODEX_DEFAULT_MODEL, HARNESS_MODELS, isHarnessModel, modelLabel } from '@brigade/contracts'
+import {
+  CODEX_DEFAULT_MODEL,
+  HARNESS_MODELS,
+  isHarnessModel,
+  modelLabel,
+  PI_DEFAULT_MODEL,
+  ANTIGRAVITY_DEFAULT_MODEL,
+  type TeammateHarness,
+} from '@brigade/contracts'
 import { TriangleAlert } from 'lucide-react'
-import { useState } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
+import { useDashboard } from '@/components/dashboard'
+import { HarnessLogo } from '@/components/harness-logo'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { ActivityIndicator } from '@/components/ui/activity-indicator'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectLabel,
   SelectGroup,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import type { Teammate } from '@/lib/api'
+import { harnessLabel, type Teammate } from '@/lib/api'
 
 export type TeammateInput = {
   name: string
+  title: string
   instructions: string
-  harness: 'claude_code' | 'codex'
+  harness: TeammateHarness
   model: string | null
 }
 
 type Harness = TeammateInput['harness']
 /** Radix Select can't hold null: this stands for "the account's default model". */
 const DEFAULT_MODEL = 'default'
+const HARNESSES: Harness[] = ['claude_code', 'codex']
 
-const optionClass =
-  'flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-4 leading-normal font-normal transition-colors hover:bg-secondary has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5'
+/** The Default option's line: Codex's, Pi's and Antigravity's model is Brigade's, Claude Code's the account's. */
+const defaultLine = (h: Harness) =>
+  h === 'codex'
+    ? modelLabel(h, CODEX_DEFAULT_MODEL)
+    : h === 'pi'
+      ? modelLabel(h, PI_DEFAULT_MODEL)
+      : h === 'antigravity'
+        ? modelLabel(h, ANTIGRAVITY_DEFAULT_MODEL)
+        : 'The account’s default model'
 
 export function TeammateForm({
   initial,
   submitLabel,
   onSubmit,
+  footer,
 }: {
   initial?: Teammate
   submitLabel: string
   onSubmit: (input: TeammateInput) => Promise<void>
+  /** On the left of the submit button, e.g. Archive. */
+  footer?: ReactNode
 }) {
+  // Pi only with the pi_harness feature (docs/harnesses.md), or for a teammate already on it.
+  const { me } = useDashboard()
+  // Antigravity likewise, with the antigravity_harness feature.
+  const harnesses: Harness[] = [
+    ...HARNESSES,
+    ...(me.features?.includes('antigravity_harness') || initial?.harness === 'antigravity'
+      ? (['antigravity'] as const)
+      : []),
+    ...(me.features?.includes('pi_harness') || initial?.harness === 'pi' ? (['pi'] as const) : []),
+  ]
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [harness, setHarness] = useState<Harness>(initial?.harness ?? 'claude_code')
   const [model, setModel] = useState<string | null>(initial?.model ?? null)
   // A model saved before the list existed stays selectable until it's changed.
   const legacy =
-    initial?.model && initial.harness === harness && !isHarnessModel(harness, initial.model)
-      ? initial.model
+    initial?.model && !isHarnessModel(initial.harness, initial.model)
+      ? { harness: initial.harness, model: initial.model }
       : null
 
-  function changeHarness(next: Harness) {
-    setHarness(next)
-    // Each agent has its own models: keep the choice only if the new one runs it too.
-    if (!isHarnessModel(next, model) && model !== legacy) setModel(null)
+  /** A picker value is `harness:model`, with DEFAULT_MODEL for the default. */
+  function choose(value: string) {
+    const at = value.indexOf(':')
+    const next = value.slice(at + 1)
+    setHarness(value.slice(0, at) as Harness)
+    setModel(next === DEFAULT_MODEL ? null : next)
   }
 
   async function submit(form: FormData) {
+    if (busy) return
     setBusy(true)
     setError(undefined)
     try {
       await onSubmit({
         name: String(form.get('name')),
+        title: String(form.get('title') ?? ''),
         instructions: String(form.get('instructions') ?? ''),
         harness,
         model,
@@ -76,97 +112,122 @@ export function TeammateForm({
   }
 
   return (
-    <Card className="w-full max-w-2xl">
-      <CardContent>
-        <form action={submit} className="flex flex-col gap-6">
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="name">Name</Label>
-            <Input
-              id="name"
-              name="name"
-              defaultValue={initial?.name}
-              placeholder="Riley"
-              required
-              // The chief keeps its name, so @chief always reaches it.
-              readOnly={initial?.kind === 'chief'}
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="instructions">Role instructions</Label>
-            <Textarea
-              id="instructions"
-              name="instructions"
-              rows={6}
-              defaultValue={initial?.instructions}
-              placeholder="You handle customer support for Acme. Answer from the docs, be brief, and escalate refunds."
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label id="harness-label">Agent</Label>
-            <RadioGroup
-              name="harness"
-              aria-labelledby="harness-label"
-              value={harness}
-              onValueChange={(value) => changeHarness(value as Harness)}
-              className="grid-cols-[repeat(auto-fit,minmax(13rem,1fr))]"
-            >
-              <Label htmlFor="harness-claude_code" className={optionClass}>
-                <RadioGroupItem id="harness-claude_code" value="claude_code" className="mt-0.5" />
-                <span className="font-bold">Claude Agent</span>
-              </Label>
-              <Label htmlFor="harness-codex" className={optionClass}>
-                <RadioGroupItem id="harness-codex" value="codex" className="mt-0.5" />
-                <span className="flex flex-col gap-2">
-                  <span className="font-bold">Codex</span>
-                  <span className="flex items-start gap-1.5 rounded-md bg-warning/10 px-2 py-1.5 text-xs text-warning">
-                    <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
-                    Codex cannot ask before running commands or editing files, so its threads run
-                    them without asking.
-                  </span>
-                </span>
-              </Label>
-            </RadioGroup>
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="model">Model</Label>
-            <Select
-              value={model ?? DEFAULT_MODEL}
-              onValueChange={(value) => setModel(value === DEFAULT_MODEL ? null : value)}
-            >
-              <SelectTrigger id="model" className="w-full sm:w-80">
-                <SelectValue>{modelLabel(harness, model)}</SelectValue>
-              </SelectTrigger>
-              <SelectContent position="popper" className="max-h-96">
+    <form
+      // React form actions reset uncontrolled fields (including Radix's native select)
+      // after success. Settings must keep the values the member just saved.
+      onSubmit={(event) => {
+        event.preventDefault()
+        void submit(new FormData(event.currentTarget))
+      }}
+      className="flex w-full max-w-2xl flex-col gap-6"
+    >
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="name">Name</Label>
+        <Input
+          id="name"
+          name="name"
+          defaultValue={initial?.name}
+          placeholder="Riley"
+          required
+          // The chief keeps its name, so @chief always reaches it.
+          readOnly={initial?.kind === 'chief'}
+        />
+      </div>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="title">Title</Label>
+        <Input
+          id="title"
+          name="title"
+          defaultValue={initial?.title}
+          placeholder="Software engineer"
+          maxLength={40}
+        />
+        <p className="text-xs text-muted-foreground">Shown as a badge beside its name.</p>
+      </div>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="instructions">Role instructions</Label>
+        <Textarea
+          id="instructions"
+          name="instructions"
+          rows={6}
+          defaultValue={initial?.instructions}
+          placeholder="You handle customer support for Acme. Answer from the docs, be brief, and escalate refunds."
+        />
+      </div>
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="model">Model</Label>
+        {/* One picker for both: a model belongs to an agent, so choosing it picks the agent. */}
+        <Select value={`${harness}:${model ?? DEFAULT_MODEL}`} onValueChange={choose}>
+          <SelectTrigger id="model" className="w-full sm:w-80">
+            <SelectValue>
+              <HarnessLogo harness={harness} />
+              {modelLabel(harness, model)}
+              <span className="text-muted-foreground">· {harnessLabel(harness)}</span>
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent position="popper" className="max-h-96">
+            {harnesses.map((h, i) => (
+              <Fragment key={h}>
+                {i > 0 && <SelectSeparator />}
                 <SelectGroup>
-                  <SelectLabel>Select model</SelectLabel>
-                  <ModelOption value={DEFAULT_MODEL} label="Default">
-                    {harness === 'codex'
-                      ? modelLabel(harness, CODEX_DEFAULT_MODEL)
-                      : 'The account’s default model'}
+                  <SelectLabel className="flex items-center gap-2 font-semibold">
+                    <HarnessLogo harness={h} className="size-3.5" />
+                    {harnessLabel(h)}
+                  </SelectLabel>
+                  <ModelOption value={`${h}:${DEFAULT_MODEL}`} label="Default">
+                    {defaultLine(h)}
                   </ModelOption>
-                  {HARNESS_MODELS[harness].map((m) => (
-                    <ModelOption key={m.id} value={m.id} label={m.label}>
+                  {HARNESS_MODELS[h].map((m) => (
+                    <ModelOption key={m.id} value={`${h}:${m.id}`} label={m.label}>
                       {m.description}
                     </ModelOption>
                   ))}
-                  {legacy && (
-                    <ModelOption value={legacy} label={legacy}>
+                  {legacy && legacy.harness === h && (
+                    <ModelOption value={`${h}:${legacy.model}`} label={legacy.model}>
                       Saved earlier; not in the current list
                     </ModelOption>
                   )}
                 </SelectGroup>
-              </SelectContent>
-            </Select>
-          </div>
-          {error && <p className="text-sm text-destructive-text">{error}</p>}
-          <div className="flex justify-end border-t pt-5">
-            <Button type="submit" disabled={busy}>
-              {submitLabel}
-            </Button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
+              </Fragment>
+            ))}
+          </SelectContent>
+        </Select>
+        {harness === 'codex' && (
+          <p className="flex items-start gap-1.5 text-xs text-warning">
+            <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+            Codex cannot ask before running commands or editing files, so its threads run them
+            without asking.
+          </p>
+        )}
+        {harness === 'antigravity' && (
+          <p className="flex items-start gap-1.5 text-xs text-warning">
+            <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+            Antigravity runs on a Google account you sign in to under Accounts, with Google’s own
+            Antigravity CLI. Google allows other apps to drive it only while a person is in the
+            session, so it may suspend an account used by routines or background work. Its threads
+            run commands and edit files without asking, and it can’t answer a message on the side
+            while it works.
+          </p>
+        )}
+        {harness === 'pi' && (
+          <p className="flex items-start gap-1.5 text-xs text-warning">
+            <TriangleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+            Pi runs on the same Claude and ChatGPT accounts as your other teammates. The providers
+            don’t allow other apps to use these logins and may suspend the account. Pi has no
+            sub-agents and can’t answer a message on the side while it works.
+          </p>
+        )}
+      </div>
+      {error && <p className="text-sm text-destructive-text">{error}</p>}
+      <div className="flex items-center justify-end gap-3 border-t pt-5">
+        {footer}
+        <span className="flex-1" />
+        <Button type="submit" disabled={busy} aria-busy={busy}>
+          {busy && <ActivityIndicator label="Saving" />}
+          {submitLabel}
+        </Button>
+      </div>
+    </form>
   )
 }
 

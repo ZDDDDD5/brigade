@@ -6,14 +6,57 @@ import { cn } from '@/lib/utils'
 
 export type ProviderKind = Connection['kind']
 
+const KINDS: Record<ProviderKind, true> = {
+  gmail: true,
+  google_calendar: true,
+  google_drive: true,
+  google_docs: true,
+  google_sheets: true,
+  google_search_console: true,
+  google_analytics: true,
+  google_ads: true,
+  meta_ads: true,
+  stripe: true,
+  github: true,
+  webhook: true,
+  cloudflare: true,
+  google_cloud: true,
+  google_drive_mcp: true,
+  google_docs_mcp: true,
+  google_sheets_mcp: true,
+  neon: true,
+  supabase: true,
+  atlassian: true,
+  notion: true,
+  linear: true,
+  mixpanel: true,
+  resend: true,
+  replicate: true,
+  openrouter: true,
+  posthog: true,
+  dataforseo: true,
+  ahrefs: true,
+  revenuecat: true,
+  expo: true,
+  vercel: true,
+  email: true,
+  mcp: true,
+}
+
+/** A kind as a tool or playbook names it: a built-in App's, else a custom MCP server's. */
+export const providerKind = (kind: string): ProviderKind =>
+  Object.hasOwn(KINDS, kind) ? (kind as ProviderKind) : 'mcp'
+
 /**
  * Each service's own mark: Google's Gmail, Calendar, Drive, Docs and Sheets icons, Search
- * Console's 2025 icon, Analytics' bars, Stripe's app icon, Cloudflare's cloud, Google Cloud's
+ * Console's 2025 icon, Analytics' bars, Google Ads' bars and dot, Stripe's app icon, Cloudflare's cloud, Google Cloud's
  * four-color cloud, Neon's square N, Supabase's bolt, Atlassian's two-part A, Notion's
  * black-on-white cube, Linear's violet mark, Mixpanel's violet x, Resend's R on black, Replicate's
- * bars on black, OpenRouter's arrows on white, GitHub's
- * Invertocat (in the text color, so it reads in both themes), and a
- * generic webhook mark for custom apps.
+ * bars on black, OpenRouter's arrows on white, PostHog's ramps and hog, DataForSEO's Q on blue
+ * and yellow, Ahrefs' a on blue, RevenueCat's R and C on coral, Expo's chevron and Vercel's
+ * triangle (in the text color), GitHub's
+ * Invertocat (in the text color, so it reads in both themes), Brigade's own Email App as an
+ * envelope on a violet tile, and a generic webhook mark for custom apps.
  */
 export function ProviderLogo({ kind, className }: { kind: ProviderKind; className?: string }) {
   const common = { 'aria-hidden': true, className: cn('size-6 shrink-0', className) } as const
@@ -113,6 +156,36 @@ export function ProviderLogo({ kind, className }: { kind: ProviderKind; classNam
         <circle fill="#e37400" cx="41" cy="163" r="21" />
       </svg>
     )
+  // Google Ads: the yellow and blue bars meeting at the top, the green dot at the left one's foot.
+  if (kind === 'google_ads')
+    return (
+      <svg viewBox="0 0 192 192" {...common}>
+        <path stroke="#fbbc04" strokeWidth="44" strokeLinecap="round" d="M96 46 50 142" />
+        <path stroke="#4285f4" strokeWidth="44" strokeLinecap="round" d="m96 46 46 96" />
+        <circle fill="#34a853" cx="48" cy="146" r="24" />
+      </svg>
+    )
+  // Meta: its blue infinity loop.
+  if (kind === 'meta_ads')
+    return (
+      <svg viewBox="0 0 24 24" {...common}>
+        <path
+          fill="#0081fb"
+          d="M6.915 4.03c-1.968 0-3.683 1.28-4.871 3.113C.704 9.208 0 11.883 0 14.449c0 .706.07 1.369.21 1.973a6.624 6.624 0 0 0 .265.86 5.297 5.297 0 0 0 .371.761c.696 1.159 1.818 1.927 3.593 1.927 1.497 0 2.633-.671 3.965-2.444.76-1.012 1.144-1.626 2.663-4.32l.756-1.339.186-.325c.061.1.121.196.183.3l2.152 3.595c.724 1.21 1.665 2.556 2.47 3.314 1.046.987 1.992 1.22 3.06 1.22 1.075 0 1.876-.355 2.455-.843a3.743 3.743 0 0 0 .81-.973c.542-.939.861-2.127.861-3.745 0-2.72-.681-5.357-2.084-7.45-1.282-1.912-2.957-2.93-4.716-2.93-1.047 0-2.088.467-3.053 1.308-.652.57-1.257 1.29-1.82 2.05-.69-.875-1.335-1.547-1.958-2.056-1.182-.966-2.315-1.303-3.454-1.303zm10.16 2.053c1.147 0 2.188.758 2.992 1.999 1.132 1.748 1.647 4.195 1.647 6.4 0 1.548-.368 2.9-1.839 2.9-.58 0-1.027-.23-1.664-1.004-.496-.601-1.343-1.878-2.832-4.358l-.617-1.028a44.908 44.908 0 0 0-1.255-1.98c.07-.109.141-.224.211-.327 1.12-1.667 2.118-2.602 3.358-2.602zm-10.201.553c1.265 0 2.058.791 2.675 1.446.307.327.737.871 1.234 1.579l-1.02 1.566c-.757 1.163-1.882 3.017-2.837 4.338-1.191 1.649-1.81 1.817-2.486 1.817-.524 0-1.038-.237-1.383-.794-.263-.426-.464-1.13-.464-2.046 0-2.221.63-4.535 1.66-6.088.454-.687.964-1.226 1.533-1.533a2.264 2.264 0 0 1 1.088-.285z"
+        />
+      </svg>
+    )
+  if (kind === 'email')
+    return (
+      <svg viewBox="0 0 24 24" {...common}>
+        {/* Brigade's own App: a white envelope on the brand violet. */}
+        <rect width="24" height="24" rx="5.5" className="fill-primary" />
+        <g fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="5" y="7" width="14" height="10" rx="1.75" />
+          <path d="m5.5 8 6.5 5 6.5-5" />
+        </g>
+      </svg>
+    )
   if (kind === 'webhook') return <Webhook {...common} />
   if (kind === 'mcp') return <Plug {...common} />
   if (kind === 'cloudflare')
@@ -124,7 +197,7 @@ export function ProviderLogo({ kind, className }: { kind: ProviderKind; classNam
         />
       </svg>
     )
-  if (kind === 'google_drive')
+  if (kind === 'google_drive' || kind === 'google_drive_mcp')
     return (
       <svg viewBox="0 0 87.3 78" {...common}>
         <path
@@ -153,7 +226,7 @@ export function ProviderLogo({ kind, className }: { kind: ProviderKind; classNam
         />
       </svg>
     )
-  if (kind === 'google_docs')
+  if (kind === 'google_docs' || kind === 'google_docs_mcp')
     return (
       <svg viewBox="0 0 47 65" {...common}>
         <path
@@ -167,7 +240,7 @@ export function ProviderLogo({ kind, className }: { kind: ProviderKind; classNam
         />
       </svg>
     )
-  if (kind === 'google_sheets')
+  if (kind === 'google_sheets' || kind === 'google_sheets_mcp')
     return (
       <svg viewBox="0 0 47 65" {...common}>
         <path
@@ -286,6 +359,30 @@ export function ProviderLogo({ kind, className }: { kind: ProviderKind; classNam
         />
       </svg>
     )
+  if (kind === 'posthog')
+    return (
+      <svg viewBox="0 0 24 24" {...common}>
+        {/* PostHog's logomark: blue, orange and yellow ramps, the hog in the text color. */}
+        <g transform="translate(0 5.54) scale(0.4615)">
+          <path
+            fill="#1d4aff"
+            d="M10.74 7.16 4.54.8A2.66 2.66 0 0 0 0 2.66V7.5l10.74 11.18zM9.19 28h1.55v-9.32L0 7.5v10.73zM0 25.41A2.6 2.6 0 0 0 2.58 28H9.2L0 18.23z"
+          />
+          <path
+            fill="#f54e00"
+            d="M10.74 2.66v4.5l11.22 11.52V7.63L15.3.8a2.66 2.66 0 0 0-4.56 1.86M10.74 28h8.96l-8.96-9.32zM10.74 7.16v11.52L19.7 28h2.26v-9.32z"
+          />
+          <path
+            fill="#f9bd2b"
+            d="M21.96 2.67v4.96l11.3 11.6h.02V7.75L26.63.85a2.8 2.8 0 0 0-2-.85 2.67 2.67 0 0 0-2.67 2.67M21.96 7.63v11.05L31.03 28h2.25v-8.75zM21.96 28h9.07l-9.07-9.32z"
+          />
+          <path
+            fill="currentColor"
+            d="M51.66 25.22A1.9 1.9 0 0 0 50 23.33l-.34-.04c-1-.13-1.94-.6-2.65-1.33L33.28 7.75V28H49a2.66 2.66 0 0 0 2.67-2.67zM39.2 23.54h-.09a1.78 1.78 0 1 1 .1 0"
+          />
+        </g>
+      </svg>
+    )
   if (kind === 'resend')
     return (
       <svg viewBox="0 0 24 24" {...common}>
@@ -320,6 +417,62 @@ export function ProviderLogo({ kind, className }: { kind: ProviderKind; classNam
           transform="translate(4.8 4.8) scale(0.6)"
           d="M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z"
         />
+      </svg>
+    )
+  if (kind === 'dataforseo')
+    return (
+      <svg viewBox="0 0 24 24" {...common}>
+        {/* DataForSEO's icon: a disc, blue over yellow, cut by a white Q. */}
+        <path fill="#202c9d" d="M0 12a12 12 0 0 1 24 0Z" />
+        <path fill="#fbd000" d="M0 12a12 12 0 0 0 24 0Z" />
+        <circle cx="12" cy="12" r="6.25" fill="none" stroke="#fff" strokeWidth="2.75" />
+        <path
+          fill="#fff"
+          d="M17.922 15.977 21.402 19.457A12 12 0 0 1 19.457 21.402L15.977 17.922Z"
+        />
+      </svg>
+    )
+  if (kind === 'ahrefs')
+    return (
+      <svg viewBox="0 0 24 24" {...common}>
+        {/* Ahrefs' app icon: a white a on its blue tile, its stem in orange. */}
+        <rect width="24" height="24" rx="5.5" fill="#3a57fc" />
+        <g transform="translate(6.3 5.25) scale(0.0264)">
+          <path
+            fill="#fff"
+            d="M47.6 0v95.3l256-.2v107.3l-142.4.2C58.4 202.6 0 256.5 0 355.2S58.4 512 161.3 512h7.4c56.7 0 100.4-22.8 134.9-56.5v44.6h125V0Zm153.1 419.3c-52.6 0-76.5-20.6-76.5-64.1s23.9-62.5 76.5-63.3h103.7c0 71.5-32.9 123.3-103.7 127.4Z"
+          />
+          <rect x="303.6" width="125" height="500" fill="#ff8d00" />
+        </g>
+      </svg>
+    )
+  if (kind === 'revenuecat')
+    return (
+      <svg viewBox="0 0 32 32" {...common}>
+        {/* RevenueCat's app icon: a white R and C on its coral tile. */}
+        <rect width="32" height="32" rx="7" fill="#f2545b" />
+        <path
+          fill="#fdfeff"
+          d="M5.9375 6.86088C6.8845 6.63175 8.35075 6.5 9.67469 6.5C13.2529 6.5 15.395 7.7455 15.395 10.9154C15.395 12.8591 14.6086 14.1415 13.3753 14.8398L16.3603 19.9341C16.1281 20.102 15.6272 20.1985 14.929 20.1985C14.1426 20.1985 13.6242 20.1045 13.2489 19.9341L10.7641 15.5188H10.4778C9.86181 15.5191 9.24656 15.4751 8.63625 15.387V19.9534C8.38575 20.1045 7.93888 20.1985 7.29563 20.1985C6.67063 20.1985 6.20546 20.1037 5.9375 19.9534V6.86088ZM8.60269 12.9905C9.11075 13.0789 9.62481 13.123 10.1397 13.1222C11.695 13.1222 12.6428 12.5348 12.6428 11.0661C12.6428 9.55538 11.6417 8.93431 9.85425 8.93431C9.43475 8.93238 9.01594 8.96969 8.60269 9.04594V12.9905Z"
+        />
+        <path
+          fill="#fdfeff"
+          d="M26.7831 20.5777C26.7831 22.8454 25.6341 23.4684 24.7691 23.8872C22.5608 24.9575 19.023 23.7125 15.2629 23.3336C11.8583 22.8884 8.48163 22.5951 7.95681 23.3586C7.7595 23.552 7.71756 24.1749 7.95681 24.4289C8.66275 25.1781 10.5038 24.6558 11.8074 24.4196C12.2119 24.3559 12.6208 24.5062 12.8799 24.8138C13.1391 25.1215 13.2093 25.5398 13.064 25.9112C12.9187 26.2826 12.58 26.5507 12.1756 26.6144C11.5862 26.704 10.9906 26.7493 10.3941 26.75C9.12425 26.75 7.52763 26.5309 6.62144 25.567C6.1702 25.0875 5.70791 24.2362 6.06419 22.9041C6.74219 20.3796 10.8004 21.0032 15.5021 21.4771C18.7756 21.8067 22.3269 22.9041 23.7459 21.8964C24.1076 21.6396 24.7823 21.0639 24.4186 20.5777C24.0549 20.0917 23.4596 20.3552 22.6774 20.3552C18.7595 20.3552 16.4524 17.8314 16.4524 13.6198C16.4529 10.4557 17.761 8.24325 19.8929 7.19312C20.8193 6.73681 21.9013 6.5 23.0992 6.5C24.1433 6.5 25.2044 6.68319 25.8819 7.08537C26.3029 7.6895 26.4861 8.76906 26.3941 9.57506C25.5154 9.15413 24.71 8.93431 23.6668 8.93431C21.0853 8.93431 19.3092 10.2524 19.3092 13.4366C19.3092 16.6207 21.0666 17.8843 23.5382 17.8843C24.2418 17.8772 25.1938 17.7919 26.3941 17.6283C26.6534 18.5936 26.7831 19.5767 26.7831 20.5777Z"
+        />
+      </svg>
+    )
+  if (kind === 'expo')
+    return (
+      <svg viewBox="0 0 24 24" fill="currentColor" {...common}>
+        {/* Expo's mark, black on Expo's own pages: in the text color, so it reads in both themes. */}
+        <path d="M0 20.084c.043.53.23 1.063.718 1.778.58.849 1.576 1.315 2.303.567.49-.505 5.794-9.776 8.35-13.29a.761.761 0 011.248 0c2.556 3.514 7.86 12.785 8.35 13.29.727.748 1.723.282 2.303-.567.57-.835.728-1.42.728-2.046 0-.426-8.26-15.798-9.092-17.078-.8-1.23-1.044-1.498-2.397-1.542h-1.032c-1.353.044-1.597.311-2.398 1.542C8.267 3.991.33 18.758 0 19.77Z" />
+      </svg>
+    )
+  if (kind === 'vercel')
+    return (
+      <svg viewBox="0 0 24 24" fill="currentColor" {...common}>
+        {/* Vercel's triangle, black on Vercel's own pages: in the text color, so it reads in both themes. */}
+        <path d="m12 1.608 12 20.784H0Z" />
       </svg>
     )
   if (kind === 'stripe')

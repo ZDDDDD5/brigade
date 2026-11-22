@@ -1,5 +1,14 @@
-import type { ThreadAttachmentRef } from '@brigade/contracts'
+import type { PermissionPolicy, ThreadAttachmentRef } from '@brigade/contracts'
 import type { z } from 'zod'
+import type { Scope } from '../db.js'
+
+/** A file a call sends: its bytes stream from the bucket each time it is opened. */
+export type SentFile = {
+  name: string
+  contentType: string
+  size: number
+  open: () => Promise<ReadableStream<Uint8Array>>
+}
 
 /** One thing a connector can do. Each declares whether it reads or writes and what it touches. */
 export type Operation<I extends z.ZodType = z.ZodType> = {
@@ -12,9 +21,36 @@ export type Operation<I extends z.ZodType = z.ZodType> = {
   /**
    * The input field listing files to send with the call (an email's attachments):
    * the teammate gives paths on its computer, the runner uploads them, and the
-   * operation reads them with ctx.readFile by the ids it gets instead.
+   * operation opens them with ctx.openFile by the ids it gets instead.
    */
   files?: string
+  /**
+   * Why the call cannot go, checked before anyone is asked to approve it (and again with what a
+   * person changed): null when it can.
+   */
+  check?: (ctx: ConnectorContext, input: z.infer<I>) => Promise<string | null>
+  /**
+   * A write that asks a person even when the teammate's connector writes go without asking (an
+   * email to someone outside the workspace), unless its own policy says otherwise.
+   */
+  asks?: (ctx: ConnectorContext, input: z.infer<I>, policy: PermissionPolicy) => Promise<boolean>
+  /** A person approving the call may change its input (an email's draft) first. */
+  editable?: boolean
+  /**
+   * What a person's changes (EditedEmail: to, cc, subject, text, sendAt) are in this operation's
+   * input, when its fields are named otherwise (Gmail's body). Absent: taken as they are.
+   */
+  edited?: (changes: Record<string, unknown>) => Record<string, unknown>
+}
+
+/** The thread a call comes from, for connectors that act on Brigade's own data (the Email App). */
+export type CallThread = {
+  id: string
+  projectId: string | null
+  teammateId: string
+  startedByMemberId: string
+  origin: string
+  status: string
 }
 
 /**
@@ -34,14 +70,40 @@ export type ConnectorContext = {
     name: string
     contentType: string
     bytes: () => Promise<Uint8Array>
+    /** Its bytes as they arrive: taken in by the stream, preferred to `bytes`. */
+    open?: () => Promise<OpenedFile>
   }) => Promise<ThreadAttachmentRef>
-  /** A file the teammate sends with this call, by the id the runner gave its upload. */
-  readFile: (id: string) => Promise<{ name: string; contentType: string; bytes: Uint8Array }>
+  /**
+   * A file the teammate sends with this call, by the id the runner gave its upload: what it is,
+   * and its bytes as they arrive from the bucket when opened (again for another try), never
+   * held whole.
+   */
+  openFile: (id: string) => Promise<SentFile>
+  /**
+   * Such a file as a link the App fetches it from, signed for a while (file-links.ts): its bytes
+   * stay in the bucket. Only for a call from a thread.
+   */
+  fileLink?: (id: string) => Promise<string>
   /**
    * A merge a playbook lets through on its own because its checks passed: the head commit they
    * passed on. The merge goes through only on that commit, never on one pushed since.
    */
   checkedSha?: string
+  /**
+   * Brigade's own connectors (auth brigade), and mailboxes Brigade keeps the mail of (Gmail): the
+   * call's workspace, account, thread and teammate.
+   */
+  scope?: Scope
+  connectionId?: string
+  thread?: CallThread
+  teammateId?: string
+  /** The member who approved the call, when one did. */
+  approvedByMemberId?: string
+  /**
+   * What the account's owner picked after signing in (Connection.settings): Google Ads' customers,
+   * Meta Ads' ad accounts.
+   */
+  settings?: unknown
 }
 
 export type ConnectorKind =
@@ -52,11 +114,16 @@ export type ConnectorKind =
   | 'google_sheets'
   | 'google_search_console'
   | 'google_analytics'
+  | 'google_ads'
+  | 'meta_ads'
   | 'stripe'
   | 'github'
   | 'webhook'
   | 'cloudflare'
   | 'google_cloud'
+  | 'google_drive_mcp'
+  | 'google_docs_mcp'
+  | 'google_sheets_mcp'
   | 'neon'
   | 'supabase'
   | 'atlassian'
@@ -66,10 +133,21 @@ export type ConnectorKind =
   | 'resend'
   | 'replicate'
   | 'openrouter'
+  | 'posthog'
+  | 'dataforseo'
+  | 'ahrefs'
+  | 'revenuecat'
+  | 'expo'
+  | 'vercel'
+  | 'email'
   | 'mcp'
 
 /** A vendor API key, entered once in the dashboard and kept in the vault. */
-export type ApiKeyCredential = { apiKey: string }
+export type ApiKeyCredential = {
+  apiKey: string
+  /** The account the key reaches, by the provider's stable id (RevenueCat's project), when known. */
+  accountId?: string
+}
 
 /** A trigger option, shown as a text field. */
 export type TriggerOption = {
@@ -90,7 +168,15 @@ export type ExternalFile = {
   /** Shown inside the message (an email's inline image) rather than attached to it. */
   inline?: boolean
   download: (ctx: Pick<ConnectorContext, 'fetch'>) => Promise<Uint8Array>
+  /**
+   * Its bytes as they arrive, and how many: taken in by the stream, never held whole (an
+   * email's attachment). Preferred to `download` when given.
+   */
+  open?: (ctx: Pick<ConnectorContext, 'fetch'>) => Promise<OpenedFile>
 }
+
+/** A file's bytes as they arrive, and their number. */
+export type OpenedFile = { body: ReadableStream<Uint8Array>; size: number }
 
 /** A vendor event, as the ingress or the change reader hands it to the triggers. */
 export type VendorEvent = {
@@ -113,7 +199,7 @@ export type TriggerDefinition = {
   matches?: (
     event: VendorEvent,
     options: Record<string, string>,
-    ctx: Pick<ConnectorContext, 'fetch'>,
+    ctx: TriggerContext,
   ) => boolean | Promise<boolean>
   /** What the teammate reads first: a title and a few lines, before the raw payload. */
   describe: (event: VendorEvent) => { title: string; summary: string }
@@ -127,10 +213,18 @@ export type TriggerDefinition = {
    */
   replay?: (
     options: Record<string, string>,
-    ctx: Pick<ConnectorContext, 'fetch'>,
+    ctx: TriggerContext,
     last: number,
   ) => Promise<(VendorEvent & { at: string | null })[]>
+  /**
+   * A mailbox's rules: an event goes to the first trigger that matches it, in their order
+   * (Trigger.position), never to several. Otherwise each matching trigger starts its thread.
+   */
+  exclusive?: boolean
 }
+
+/** What a trigger's checks get: the account's fetch, and which account it is. */
+export type TriggerContext = Pick<ConnectorContext, 'fetch'> & { connectionId?: string }
 
 export type ConnectorDefinition = {
   kind: ConnectorKind
@@ -141,8 +235,10 @@ export type ConnectorDefinition = {
    * google: OAuth tokens refreshed by the API. api_key: a key entered in the dashboard.
    * github_app: an installation of Brigade's GitHub App; tokens are minted per call.
    * mcp: an MCP server's own OAuth (discovery, client registration, PKCE), refreshed by the API.
+   * brigade: Brigade's own service (the Email App): no credential, the API's own keys.
+   * meta: a Meta user token from Brigade's Meta app (meta-oauth.ts), long-lived, not refreshed.
    */
-  auth: 'google' | 'api_key' | 'github_app' | 'mcp'
+  auth: 'google' | 'api_key' | 'github_app' | 'mcp' | 'brigade' | 'meta'
   /** Written in Brigade. An MCP connector has none: its tools come from the server. */
   operations: Record<string, Operation>
   /** A remote MCP server (Streamable HTTP) the API calls with the account's token. */
@@ -178,19 +274,45 @@ export type McpServer = {
    * a URL to GET with the same token, and the name to show from its output, such as the
    * account's organization.
    */
-  account?: ({ tool: string } | { url: string }) & { name: (output: unknown) => string | null }
+  account?: ({ tool: string } | { url: string }) & {
+    name: (output: unknown) => string | null
+    /**
+     * The account's stable id from the same output, for a key the member pastes: two accounts
+     * may share a name, and a key may reconnect only its own account.
+     */
+    id?: (output: unknown) => string | null
+  }
+  /**
+   * Accounts may also sign in with a key the member pastes, beside the server's OAuth
+   * (RevenueCat, whose OAuth came after its keys): a credential holding apiKey is sent as a
+   * Bearer token.
+   */
+  keys?: boolean
   /** oauth: the scopes to ask for, when not all those the server lists. */
   scopes?: string[]
+  /**
+   * A call's object for approvals and the log, for servers whose tools take a whole API
+   * request (Stripe's stripe_api_write): null to show its inputs as they are.
+   */
+  target?: (tool: string, input: Record<string, unknown>) => string | null
+  /**
+   * Arguments every call of an account carries, from its row (Stripe's account and mode): left
+   * out of the tools teammates see, added to each call, and a call naming other values refused.
+   * Null: the row does not say them, and the account signs in again.
+   */
+  fixed?: (connection: { externalAccount: string | null }) => Record<string, unknown> | null
+  /** Tools teammates never get, such as changing which accounts the sign-in reaches. */
+  hidden?: string[]
 }
 
 /**
- * The account's organizations as a name, from a list_organizations tool's output (an array,
- * or an object holding one): the only one, or the first with how many more.
+ * The account's organizations as a name, from a list_organizations tool's output (an array, or
+ * an object holding one: Supabase's `organizations`, Neon's `data` since November 2026): the only
+ * one, or the first with how many more.
  */
 export function organizationsName(output: unknown) {
-  const list = Array.isArray(output)
-    ? output
-    : (output as { organizations?: unknown } | null)?.organizations
+  const held = output as { organizations?: unknown; data?: unknown } | null
+  const list = Array.isArray(output) ? output : (held?.organizations ?? held?.data)
   if (!Array.isArray(list)) return null
   const names = list
     .map((o) => (o as { name?: unknown } | null)?.name)
@@ -203,7 +325,15 @@ export type McpAuth = 'oauth' | 'api_key' | 'none'
 
 export const op = <I extends z.ZodType>(o: Operation<I>) => o as unknown as Operation
 
-export class ConnectorError extends Error {}
+export class ConnectorError extends Error {
+  /** The vendor's HTTP status, when it answered one (json). */
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message)
+  }
+}
 
 /**
  * Vendors may echo part of a credential in errors (Stripe shows a masked key).
@@ -216,6 +346,8 @@ export function redact(text: string) {
       // Neon API keys, Supabase access tokens and OAuth client secrets.
       .replace(/\b(napi|sbp|sba)_[A-Za-z0-9]+/g, '[redacted key]')
       .replace(/\bya29\.[\w-]+/g, '[redacted token]')
+      // Meta user and page tokens.
+      .replace(/\bEA[A-Za-z0-9]{30,}/g, '[redacted token]')
       .replace(/\b(gh[pousr]_[A-Za-z0-9]+|github_pat_\w+)/g, '[redacted token]')
       .replace(/\bBearer\s+[\w.*-]+/gi, 'Bearer [redacted]')
   )
@@ -232,7 +364,7 @@ export async function json<T>(response: Response): Promise<T> {
     } catch {
       // not JSON
     }
-    throw new ConnectorError(redact(`${response.status}: ${message}`))
+    throw new ConnectorError(redact(`${response.status}: ${message}`), response.status)
   }
   return (body ? JSON.parse(body) : {}) as T
 }

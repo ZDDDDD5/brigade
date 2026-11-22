@@ -11,7 +11,7 @@
 // ⌘J (Ctrl+J) shows it, brings it in front of a preview or a file, or hides it;
 // ⌘⇧K starts a thread without it (components/quick-thread.tsx).
 import { ArrowLeft, ChevronRight, Laptop, LoaderCircle, Maximize2, X } from 'lucide-react'
-import { usePathname, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import {
   createContext,
   useCallback,
@@ -28,7 +28,8 @@ import { SidebarToggle, TeammateAvatar, useDashboard } from '@/components/dashbo
 import { ProjectIcon } from '@/components/projects'
 import { StatusDot } from '@/components/status-badge'
 import { useDesktopPreview } from '@/components/desktop-preview'
-import { useDocumentPanel } from '@/components/document-panel'
+import { DocumentsButton, useDocumentPanel } from '@/components/document-panel'
+import { useKeptPanelShown } from '@/components/kept-previews'
 import {
   NewThread,
   TeammatePicker,
@@ -46,20 +47,32 @@ import {
   ThreadConversation,
   type ThreadHeading,
 } from '@/components/thread-conversation'
+import { TeammateTitle } from '@/components/teammate-title'
 import { ThreadChannel } from '@/components/thread-list'
 import { Button } from '@/components/ui/button'
+import { Hint } from '@/components/ui/tooltip'
 import {
+  answerOf,
   api,
   preload,
-  preloaded,
+  isList,
   useApi,
   type ProjectRef,
   type Teammate,
   type ThreadSummary,
 } from '@/lib/api'
-import { isMac } from '@/lib/platform'
+import { PendingThread } from '@/components/pending-thread'
+import {
+  LISTED_WITHIN_MS,
+  pendingThreads,
+  usePendingThread,
+  useUnlistedThreads,
+  withUnlisted,
+} from '@/lib/pending-threads'
+import { isMac, isNarrow } from '@/lib/platform'
 import { StreamedTitle } from '@/components/streamed-title'
 import { useLive } from '@/lib/use-live'
+import { openInPlace, usePanelPathname } from '@/lib/thread-address'
 import { cn } from '@/lib/utils'
 
 type ThreadPanel = {
@@ -103,6 +116,14 @@ type ThreadPanel = {
   /** The latest such request, until the thread's page takes it up: once, not on each visit. */
   previewRequest?: { threadId: string; key: number }
   takePreviewRequest: () => void
+  /**
+   * Opens a thread on its computer, over the whole window (from Home's ticket, once the
+   * member took control): the thread, then its computer.
+   */
+  showComputer: (threadId: string) => void
+  /** The latest such request, until the thread's page takes it up. */
+  computerRequest?: { threadId: string; key: number }
+  takeComputerRequest: () => void
   /** A thread's file or preview is in the teammate panel's place. */
   covered: boolean
   setCovered: (covered: boolean) => void
@@ -110,11 +131,9 @@ type ThreadPanel = {
   teammateId?: string
   chooseTeammate: (id: string) => void
   /**
-   * Where a teammate opens from the sidebar: expanded, on the thread last open with it in
-   * this browser, else its latest; its list when it has none yet.
+   * A teammate picked from the sidebar: a new thread with it, its box focused. Its threads
+   * are in the sidebar's list, which the pick narrows to them.
    */
-  teammateHref: (teammateId: string) => string
-  /** Goes there, looking further back than the latest threads loaded here if need be. */
   openTeammate: (teammateId: string) => void
   /**
    * A teammate's computer, a page like any other (/app/teammates/<id>/computer):
@@ -131,8 +150,6 @@ type ThreadPanel = {
 
 const Context = createContext<ThreadPanel | null>(null)
 const OPEN_KEY = 'brigade:threads-panel'
-/** The thread last open with each teammate, by the teammate that leads it. */
-const LAST_THREADS_KEY = 'brigade:teammate-threads'
 /** Its name among the panels beside a page. */
 const PANEL = 'threads'
 
@@ -149,15 +166,6 @@ function readSaved(): { open: boolean; threadId: string | null } {
     }
   } catch {
     return { open: false, threadId: null }
-  }
-}
-
-function readLastThreads(): Record<string, string> {
-  try {
-    const saved = JSON.parse(localStorage.getItem(LAST_THREADS_KEY) ?? 'null') as unknown
-    return saved && typeof saved === 'object' ? (saved as Record<string, string>) : {}
-  } catch {
-    return {}
   }
 }
 
@@ -201,9 +209,17 @@ const BUSY = new Set(['starting', 'running'])
 
 export function ThreadPanelProvider({ children }: { children: ReactNode }) {
   const router = useRouter()
-  const pathname = usePathname()
+  // A thread opened in place shows at once, not once Next's transition to its address ends.
+  const pathname = usePanelPathname()
   const routed = routeThread(pathname)
   const expanded = routed !== undefined
+  // The panel's own addresses open in place, without a trip to the server (openInPlace).
+  const go = useCallback(
+    (href: string) => {
+      if (!openInPlace(href)) router.push(href)
+    },
+    [router],
+  )
   // As it was left, in this browser: read as it mounts (only in the browser, once the member
   // is in), so nothing can save the defaults over it first.
   const [saved] = useState(readSaved)
@@ -224,7 +240,9 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
     (teammate: string, options: { threadId?: string; shell?: boolean } = {}) => {
       if (!options.threadId) chooseTeammate(teammate)
       setDocked(options.threadId ?? null)
-      setOpen(true)
+      // On a phone the panel covers the whole page: the screen comes first, and the
+      // conversation from its toolbar.
+      setOpen(!isNarrow())
       raisePanel(PANEL)
       setShell(!!options.shell)
       router.push(`/app/teammates/${teammate}/computer`)
@@ -246,11 +264,11 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
   }, [open, docked])
 
   // A computer's page has the threads beside it: opening it opens them, on the teammate's
-  // list unless a thread is open there.
+  // list unless a thread is open there. Not on a phone, where they would cover the screen.
   useEffect(() => {
     if (!computerPage) return
     chooseTeammate(computerPage)
-    setOpen(true)
+    setOpen(!isNarrow())
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [computerPage])
 
@@ -269,14 +287,14 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
   }, [expanded, routed, router])
   const openThread = useCallback(
     (id: string) => {
-      if (expanded || !computerPage) router.push(`/app/threads/${id}`)
+      if (expanded || !computerPage) go(`/app/threads/${id}`)
       else {
         setDocked(id)
         setOpen(true)
         raisePanel(PANEL)
       }
     },
-    [expanded, computerPage, router],
+    [expanded, computerPage, go],
   )
   const [previewRequest, setPreviewRequest] = useState<{ threadId: string; key: number }>()
   const openPreview = useCallback(
@@ -287,20 +305,29 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
     [openThread],
   )
   const takePreviewRequest = useCallback(() => setPreviewRequest(undefined), [])
+  const [computerRequest, setComputerRequest] = useState<{ threadId: string; key: number }>()
+  const showComputer = useCallback(
+    (id: string) => {
+      setComputerRequest({ threadId: id, key: Date.now() })
+      go(`/app/threads/${id}`)
+    },
+    [go],
+  )
+  const takeComputerRequest = useCallback(() => setComputerRequest(undefined), [])
   const back = useCallback(() => {
-    if (expanded) router.push('/app/threads')
+    if (expanded) go('/app/threads')
     else setDocked(null)
-  }, [expanded, router])
+  }, [expanded, go])
   const expand = useCallback(() => {
-    router.push(docked ? `/app/threads/${docked}` : '/app/threads')
-  }, [docked, router])
+    go(docked ? `/app/threads/${docked}` : '/app/threads')
+  }, [docked, go])
   const newThreadPage = useCallback(() => {
-    if (routed !== null) router.push('/app/threads')
+    if (routed !== null) go('/app/threads')
     setFocusKey((k) => k + 1)
-  }, [routed, router])
+  }, [routed, go])
   const startThread = useCallback(() => {
     if (expanded || !computerPage) {
-      if (routed !== null) router.push('/app/threads')
+      if (routed !== null) go('/app/threads')
     } else {
       setDocked(null)
       setOpen(true)
@@ -308,7 +335,7 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
       raisePanel(PANEL)
     }
     setFocusKey((k) => k + 1)
-  }, [expanded, computerPage, routed, router])
+  }, [expanded, computerPage, routed, go])
   // Open behind another panel, it comes in front instead of closing. Away from a computer,
   // the threads are a page: to the one left last.
   const toggle = useCallback(() => {
@@ -337,15 +364,32 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
 
   // Every thread, for what each teammate is doing and what waits; live. A pull request's
   // change moves its thread in the sidebar (waiting on a person to merge, or not).
-  const threads = useApi<ThreadSummary[]>('/threads')
+  const threads = useApi<ThreadSummary[]>(
+    '/threads',
+    ['thread.updated', 'pulls.updated', 'lists.updated'],
+    isList,
+  )
   const reloadThreads = threads.reload
-  useLive((message) => {
-    if (message.type === 'thread.updated' || message.type === 'pulls.updated') void reloadThreads()
-  })
+  // Threads just sent, listed before the API has them (lib/pending-threads.ts): first, until
+  // the list has them, which is asked for again once they have started.
+  const unlisted = useUnlistedThreads()
+  const threadList = useMemo(() => withUnlisted(threads.data, unlisted), [threads.data, unlisted])
+  useEffect(() => {
+    if (Array.isArray(threads.data)) pendingThreads.listed(new Set(threads.data.map((t) => t.id)))
+  }, [threads.data])
+  const startedUnlisted = unlisted.flatMap((u) => (u.startedAt ? [u.row.id] : [])).join(' ')
+  useEffect(() => {
+    if (!startedUnlisted) return
+    void reloadThreads()
+    // Asked again past the deadline, should nothing else load it: a thread already gone (deleted
+    // from another tab) then leaves too, rather than starting in the list for good.
+    const late = setTimeout(() => void reloadThreads(), LISTED_WITHIN_MS + 1_000)
+    return () => clearTimeout(late)
+  }, [startedUnlisted, reloadThreads])
   const { activity, waiting } = useMemo(() => {
     const activity: Record<string, TeammateActivity> = {}
     let waiting = 0
-    for (const t of threads.data ?? []) {
+    for (const t of threadList ?? []) {
       const state = t.status === 'waiting' ? 'waiting' : BUSY.has(t.status) ? 'busy' : undefined
       if (!state) continue
       if (state === 'waiting') waiting++
@@ -354,11 +398,8 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
       for (const p of people) if (activity[p.id] !== 'waiting') activity[p.id] = state
     }
     return { activity, waiting }
-  }, [threads.data])
+  }, [threadList])
 
-  // The thread last open with each teammate, docked or expanded, for the sidebar to go back to.
-  const [lastThreads, setLastThreads] = useState(readLastThreads)
-  const threadList = threads.data
   // The thread shown here is read by this member: as it opens, and again each time a reply
   // comes in while it shows in a tab in front. The sidebar then shows it read.
   const [inFront, setInFront] = useState(true)
@@ -378,41 +419,12 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
       .then(() => reloadThreads())
       .catch(() => {})
   }, [showing, unreadShowing, reloadThreads])
-  useEffect(() => {
-    const lead = threadId && threadList?.find((t) => t.id === threadId)?.teammate.id
-    if (!lead || lastThreads[lead] === threadId) return
-    const next = { ...lastThreads, [lead]: threadId }
-    setLastThreads(next)
-    try {
-      localStorage.setItem(LAST_THREADS_KEY, JSON.stringify(next))
-    } catch {}
-  }, [threadId, threadList, lastThreads])
-  const teammateHref = useCallback(
-    (teammate: string) => {
-      // The latest active first: the remembered one while it is still there, else the latest.
-      const list = (threadList ?? []).filter(
-        (t) => t.teammate.id === teammate || t.teammates?.some((p) => p.teammate.id === teammate),
-      )
-      const last = list.find((t) => t.id === lastThreads[teammate]) ?? list[0]
-      return last ? `/app/threads/${last.id}` : '/app/threads'
-    },
-    [threadList, lastThreads],
-  )
   const openTeammate = useCallback(
-    async (teammate: string) => {
+    (teammate: string) => {
       chooseTeammate(teammate)
-      let href = teammateHref(teammate)
-      // None among the latest loaded here: its own latest, if it has any.
-      if (!routeThread(href)) {
-        const [latest] = await api<ThreadSummary[]>(
-          `/threads?teammateId=${teammate}&limit=1&sort=activity`,
-        ).catch(() => [])
-        if (latest) href = `/app/threads/${latest.id}`
-      }
-      router.push(href)
+      newThreadPage()
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [teammateHref, router],
+    [chooseTeammate, newThreadPage],
   )
 
   const value = useMemo(
@@ -439,11 +451,13 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
       openPreview,
       previewRequest,
       takePreviewRequest,
+      showComputer,
+      computerRequest,
+      takeComputerRequest,
       covered,
       setCovered,
       teammateId,
       chooseTeammate,
-      teammateHref,
       openTeammate,
       openComputer,
       computerPage,
@@ -473,10 +487,12 @@ export function ThreadPanelProvider({ children }: { children: ReactNode }) {
       openPreview,
       previewRequest,
       takePreviewRequest,
+      showComputer,
+      computerRequest,
+      takeComputerRequest,
       covered,
       teammateId,
       chooseTeammate,
-      teammateHref,
       openTeammate,
       openComputer,
       computerPage,
@@ -508,17 +524,19 @@ export function ThreadPanel() {
     if (!lead || !inThread || !teammate || inThread.includes(teammate.id)) return
     if (teammates.some((t) => t.id === lead.id)) choose(lead.id)
   }, [shown, lead, inThread, teammate, teammates, choose])
+  const pending = usePendingThread(panel.threadId)
   // Docked, Escape closes it (SidePanel's own). Expanded it is the page: Escape leaves it be.
   if (!panel.visible) return null
   const { expanded, threadId } = panel
   // Expanded: the sidebar's toggle, and a pill saying where and who, which opens the details.
   const top = expanded ? (
-    <PillBar>
+    // A thread's conversation has its own top right (Preview, and a document's button under it).
+    <PillBar documents={!threadId || Boolean(pending)}>
       {threadId
         ? shown && (
             <DetailsPill
               project={shown.project}
-              teammate={lead}
+              teammates={shown.teammates}
               label={shown.title}
               threadId={shown.id}
               heading
@@ -529,7 +547,7 @@ export function ThreadPanel() {
           )
         : teammate && (
             <DetailsPill
-              teammate={teammate}
+              teammates={[teammate]}
               label={teammate.name}
               details={`${teammate.name}'s computer, routines and more`}
             />
@@ -557,7 +575,7 @@ export function ThreadPanel() {
                 className="size-8 shrink-0"
                 onClick={panel.back}
                 aria-label={teammate ? `Back to ${teammate.name}'s threads` : 'Back to threads'}
-                title={teammate ? `${teammate.name}'s threads` : 'Threads'}
+                tooltip={teammate ? `${teammate.name}'s threads` : 'Threads'}
               >
                 <ArrowLeft aria-hidden />
               </Button>
@@ -606,11 +624,13 @@ export function ThreadPanel() {
                 value={teammate}
                 onChange={choose}
                 heading="Threads with"
+                withTitle
               />
             ) : (
               <span className="flex min-w-0 items-center gap-2 px-1.5 text-sm font-semibold">
                 <TeammateAvatar teammate={teammate} className="size-5" />
                 <span className="truncate">{teammate.name}</span>
+                <TeammateTitle title={teammate.title} />
               </span>
             ))
           )}
@@ -622,7 +642,7 @@ export function ThreadPanel() {
             className="size-8"
             onClick={panel.expand}
             aria-label="Expand"
-            title="Expand"
+            tooltip="Expand"
           >
             <Maximize2 aria-hidden />
           </Button>
@@ -633,7 +653,7 @@ export function ThreadPanel() {
             className="size-8"
             onClick={panel.close}
             aria-label="Close threads"
-            title="Close (Esc)"
+            tooltip="Close (Esc)"
           >
             <X aria-hidden />
           </Button>
@@ -653,14 +673,25 @@ export function ThreadPanel() {
           )}
           {threadId && (
             <div className="flex min-w-0 flex-1 flex-col">
-              <ThreadConversation
-                key={threadId}
-                id={threadId}
-                expanded={expanded}
-                onExpand={panel.expand}
-                onHeading={(h) => setHeading({ id: threadId, ...h })}
-                top={top}
-              />
+              {/* Opened before it exists: its message, until it has started. */}
+              {pending ? (
+                <PendingThread
+                  key={threadId}
+                  id={threadId}
+                  thread={pending}
+                  expanded={expanded}
+                  top={top}
+                />
+              ) : (
+                <ThreadConversation
+                  key={threadId}
+                  id={threadId}
+                  expanded={expanded}
+                  onExpand={panel.expand}
+                  onHeading={(h) => setHeading({ id: threadId, ...h })}
+                  top={top}
+                />
+              )}
             </div>
           )}
         </div>
@@ -673,24 +704,34 @@ export function ThreadPanel() {
   )
 }
 
-/** Floats over the top of an expanded thread: the sidebar's toggle, and the pill centered. */
-function PillBar({ children }: { children: ReactNode }) {
+/**
+ * Floats over the top of an expanded thread: the sidebar's toggle, and the pill centered. With
+ * `documents`, a minimized document's button across from the toggle.
+ */
+function PillBar({ children, documents }: { children: ReactNode; documents: boolean }) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex h-14 items-center justify-center px-12">
-      <SidebarToggle className="pointer-events-auto absolute top-3 left-2 ml-0" />
+    <div
+      data-look="thread-header"
+      className="pointer-events-none absolute inset-x-0 top-0 z-10 flex h-14 items-center justify-center px-12"
+    >
+      <SidebarToggle className="pill-toggle pointer-events-auto absolute top-3 left-2 ml-0 max-md:top-2.5" />
       {children}
+      {documents && <DocumentsButton className="pointer-events-auto absolute top-2.5 right-2" />}
     </div>
   )
 }
 
+/** The most avatars the pill stacks: past them, a count of the others. */
+const STACKED = 3
+
 /**
- * Where and who: the project's icon, the teammate's avatar, then the thread's title (or
- * the teammate's name). It grows to show a › on hover; a click opens and closes the details
+ * Where and who: the project's icon, the avatars of the thread's teammates (who leads it
+ * first), then the thread's title (or the teammate's name). It grows to show a › on hover; a click opens and closes the details
  * beside it: the thread's, its computer's, the teammate's.
  */
 function DetailsPill({
   project,
-  teammate,
+  teammates = [],
   label,
   threadId,
   heading = false,
@@ -699,7 +740,7 @@ function DetailsPill({
   reconnecting = false,
 }: {
   project?: Pick<ProjectRef, 'name' | 'icon'> | null
-  teammate?: Pick<Teammate, 'id' | 'name' | 'harness'>
+  teammates?: Pick<Teammate, 'id' | 'name'>[]
   label: string
   /** The label is this thread's title: it streams in when it changes. */
   threadId?: string
@@ -718,51 +759,93 @@ function DetailsPill({
   const Label = heading ? 'h1' : 'span'
   const pill = useSlideAcross<HTMLButtonElement>()
   return (
-    <button
-      ref={pill}
-      type="button"
-      className="group pointer-events-auto flex h-11 max-w-full min-w-0 items-center gap-2.5 rounded-full bg-card/90 pr-4 pl-2.5 text-[0.9375rem] font-semibold shadow-sm backdrop-blur transition-colors outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-pressed:bg-accent"
-      aria-pressed={shown}
-      title={shown ? 'Hide details' : `Details: ${details}`}
-      onClick={() => {
-        if (shown) return setDetails(false)
-        documents.close()
-        setDetails(true)
-      }}
-    >
-      {project && (
-        <span title={project.name} className="flex">
-          <ProjectIcon project={project} className="size-6 rounded-md text-xs" />
-          <span className="sr-only">{project.name}: </span>
-        </span>
-      )}
-      {teammate && <TeammateAvatar teammate={teammate} className="size-6 shrink-0" />}
-      {/* Capped, so a long title keeps it a pill: the whole of it on hover. */}
-      <Label className="max-w-72 min-w-0 truncate" title={label}>
-        {threadId ? <StreamedTitle threadId={threadId} text={label} /> : label}
-      </Label>
-      {machine && (
-        <span title={`Runs on ${machine}`} className="-ml-0.5 flex shrink-0">
-          <Laptop aria-hidden className="size-4 text-muted-foreground" />
-          <span className="sr-only">, runs on {machine}</span>
-        </span>
-      )}
-      {reconnecting && <Reconnecting />}
-      {/* The pill grows to show it on hover and while open; always there on touch screens,
-          which have no hover. */}
-      <span
-        aria-hidden
-        className="-ml-1 flex w-[1.125rem] shrink-0 overflow-hidden text-muted-foreground transition-[width,margin,opacity] duration-200 ease-out [@media(hover:hover)]:-ml-2.5 [@media(hover:hover)]:w-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:-ml-1 [@media(hover:hover)]:group-hover:w-[1.125rem] [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-visible:-ml-1 [@media(hover:hover)]:group-focus-visible:w-[1.125rem] [@media(hover:hover)]:group-focus-visible:opacity-100 [@media(hover:hover)]:group-aria-pressed:-ml-1 [@media(hover:hover)]:group-aria-pressed:w-[1.125rem] [@media(hover:hover)]:group-aria-pressed:opacity-100"
+    <Hint label={shown ? 'Hide details' : `Details: ${details}`}>
+      <button
+        ref={pill}
+        type="button"
+        data-look="thread-pill"
+        className="group pointer-events-auto flex h-11 max-w-full min-w-0 items-center gap-2.5 rounded-full bg-card/90 pr-4 pl-2.5 text-[0.9375rem] font-semibold shadow-sm backdrop-blur transition-colors outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-pressed:bg-accent"
+        aria-pressed={shown}
+        onClick={() => {
+          if (shown) return setDetails(false)
+          documents.close()
+          setDetails(true)
+        }}
       >
-        <ChevronRight className="size-[1.125rem] shrink-0" />
-      </span>
-    </button>
+        {(project || teammates.length > 0) && (
+          <span className="flex shrink-0 items-center">
+            {project && (
+              <span title={project.name} className="flex">
+                <ProjectIcon project={project} className="size-6 rounded-full text-xs" />
+                <span className="sr-only">{project.name}: </span>
+              </span>
+            )}
+            {/* Each on the circle before it, in a ring of the pill's colour that cuts it, as on
+              a board card. Past a few, a count of the others, named on hover. */}
+            {[
+              ...teammates
+                .slice(0, STACKED)
+                .map((p) => <TeammateAvatar key={p.id} teammate={p} className="size-6" />),
+              ...(teammates.length > STACKED
+                ? [
+                    <span
+                      key="more"
+                      title={teammates
+                        .slice(STACKED)
+                        .map((p) => p.name)
+                        .join(', ')}
+                      className="flex size-6 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground tabular-nums"
+                    >
+                      +{teammates.length - STACKED}
+                    </span>,
+                  ]
+                : []),
+            ].map((avatar, i) => (
+              <span
+                key={avatar.key}
+                className={cn(
+                  'flex rounded-full',
+                  (project || i > 0) &&
+                    '-ml-2 bg-card p-[1.5px] transition-colors group-hover:bg-accent group-aria-pressed:bg-accent',
+                )}
+              >
+                {avatar}
+              </span>
+            ))}
+          </span>
+        )}
+        {/* Capped, so a long title keeps it a pill: the whole of it on hover. */}
+        <Label className="max-w-72 min-w-0 truncate" title={label}>
+          {threadId ? <StreamedTitle threadId={threadId} text={label} /> : label}
+        </Label>
+        {machine && (
+          <span title={`Runs on ${machine}`} className="-ml-0.5 flex shrink-0">
+            <Laptop aria-hidden className="size-4 text-muted-foreground" />
+            <span className="sr-only">, runs on {machine}</span>
+          </span>
+        )}
+        {reconnecting && <Reconnecting />}
+        {/* The pill grows to show it on hover and while open; always there on touch screens,
+          which have no hover. */}
+        <span
+          aria-hidden
+          className="-ml-1 flex w-[1.125rem] shrink-0 overflow-hidden text-muted-foreground transition-[width,margin,opacity] duration-200 ease-out [@media(hover:hover)]:-ml-2.5 [@media(hover:hover)]:w-0 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:-ml-1 [@media(hover:hover)]:group-hover:w-[1.125rem] [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-visible:-ml-1 [@media(hover:hover)]:group-focus-visible:w-[1.125rem] [@media(hover:hover)]:group-focus-visible:opacity-100 [@media(hover:hover)]:group-aria-pressed:-ml-1 [@media(hover:hover)]:group-aria-pressed:w-[1.125rem] [@media(hover:hover)]:group-aria-pressed:opacity-100"
+        >
+          <ChevronRight className="size-[1.125rem] shrink-0" />
+        </span>
+      </button>
+    </Hint>
   )
 }
 
 /** A damped spring: quick out, a slight overshoot, then settles. */
 const SPRING =
   'linear(0, 0.037, 0.129, 0.25, 0.382, 0.511, 0.63, 0.734, 0.821, 0.89, 0.943, 0.982, 1.008, 1.025, 1.034, 1.038, 1.038, 1.035, 1.031, 1.026, 1.021, 1.016, 1.012, 1.008, 1.005, 1.003, 1.001, 1, 1)'
+
+const center = (el: Element) => {
+  const r = el.getBoundingClientRect()
+  return r.left + r.width / 2
+}
 
 /**
  * Slides the element across when it moves sideways, from where it was to where it is: a
@@ -773,10 +856,8 @@ const SPRING =
 function useSlideAcross<T extends HTMLElement>() {
   const ref = useRef<T>(null)
   const last = useRef<number>(undefined)
-  const center = (el: T) => {
-    const r = el.getBoundingClientRect()
-    return r.left + r.width / 2
-  }
+  // A thread's preview or tool opens or closes in a render of its own (components/kept-previews.tsx).
+  useKeptPanelShown()
   // After each render: what opens a panel renders, and its room is taken in the same commit.
   useLayoutEffect(() => {
     const el = ref.current
@@ -843,9 +924,7 @@ function useThreadChannel(teammateId: string) {
         // The newest, as many as are shown (up to the API's most): replies and states change.
         const limit = Math.min(Math.max(loaded.current, PAGE), 100)
         const url = `${path}&limit=${limit}`
-        const request =
-          (opening ? preloaded<ThreadSummary[]>(url) : undefined) ?? api<ThreadSummary[]>(url)
-        const page = (await request).reverse()
+        const page = (await answerOf<ThreadSummary[]>(url, { opening, accept: isList })).reverse()
         // Whether there are earlier ones: the first page says; after it, earlier pages do.
         if (loaded.current === 0) setMore(page.length === limit)
         const ids = new Set(page.map((t) => t.id))
@@ -877,7 +956,9 @@ function useThreadChannel(teammateId: string) {
       loading.current = true
       setLoadingOlder(true)
       try {
-        const page = await api<ThreadSummary[]>(`${path}&limit=${PAGE}&before=${oldest.id}`)
+        const page = await answerOf<ThreadSummary[]>(`${path}&limit=${PAGE}&before=${oldest.id}`, {
+          accept: isList,
+        })
         before()
         setThreads((shown) => {
           // Never twice: a thread already shown stays where it is.
@@ -938,6 +1019,7 @@ function TeammateStart({ teammate, top }: { teammate: Teammate; top?: ReactNode 
             typeToFocus
             placeholder={`Chat with ${teammate.name}`}
             onStarted={(thread) => openThread(thread.id)}
+            openAtOnce
           />
         </div>
       </div>
@@ -993,7 +1075,7 @@ function TeammateThreads({ teammate }: { teammate: Teammate }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scroller} className="scroll-fade min-h-0 flex-1 overflow-y-auto">
+      <div ref={scroller} className="scroll-fade scroll-fade-y min-h-0 flex-1 overflow-y-auto">
         <div className={cn(column, 'flex min-h-full flex-col justify-end pb-12')}>
           {list ? (
             <>
@@ -1044,6 +1126,7 @@ function TeammateThreads({ teammate }: { teammate: Teammate }) {
           typeToFocus
           placeholder={`Chat with ${teammate.name}`}
           onStarted={(thread) => openThread(thread.id)}
+          openAtOnce
         />
       </div>
     </div>

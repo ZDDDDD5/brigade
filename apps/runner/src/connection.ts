@@ -1,15 +1,19 @@
 // The runner's one outbound WebSocket to the API. Nothing connects in.
 import {
   ApiToRunner,
+  KEEPALIVE,
+  PreviewMachineUp,
   PROTOCOL_VERSION,
+  type LoggedResponse,
   type RunnerToApi,
   type SequencedEvent,
   type ThreadAttachmentRef,
 } from '@brigade/contracts'
 import { randomUUID } from 'node:crypto'
 import WebSocket from 'ws'
-import { HOME, VERSION, type RunnerConfig } from './config.js'
+import { HOME, saveConfig, VERSION, type RunnerConfig } from './config.js'
 import type { Outbox } from './outbox.js'
+import type { SeenCommands } from './seen-commands.js'
 import { installedBundle } from './updater.js'
 
 /** When this process started: the API tells previews it lost from those it runs (hello). */
@@ -17,14 +21,53 @@ const STARTED_AT = new Date().toISOString()
 
 const BATCH = 200
 /**
+ * And at most about this much JSON in one: Cloudflare refuses a WebSocket message over
+ * 32 MiB, and a replay can bring many events that each hold an image. One event larger
+ * than this still goes alone.
+ */
+const BATCH_CHARS = 8 * 1024 * 1024
+
+/** Events in the batches they are sent in, by count and size, in order. */
+export function eventBatches(events: SequencedEvent[]) {
+  if (events.length <= 1) return events.length ? [events] : []
+  const batches: SequencedEvent[][] = []
+  let batch: SequencedEvent[] = []
+  let chars = 0
+  for (const event of events) {
+    const size = JSON.stringify(event).length
+    if (batch.length && (batch.length >= BATCH || chars + size > BATCH_CHARS)) {
+      batches.push(batch)
+      batch = []
+      chars = 0
+    }
+    batch.push(event)
+    chars += size
+  }
+  batches.push(batch)
+  return batches
+}
+/**
  * A ping this often keeps the socket from looking idle (Cloudflare closes
  * WebSockets that carry nothing), and one unanswered by the next tells a dead
- * connection from a quiet one. The API cannot see pings: a heartbeat message
- * tells it the same, the other way (HEARTBEAT_PROTOCOL).
+ * connection from a quiet one. The API cannot see pings: a keepalive message
+ * tells it the same, the other way (KEEPALIVE_PROTOCOL), which a workspace's hub
+ * object answers without waking.
  */
 const HEARTBEAT_MS = 30_000
 /** An upgrade that has not answered in this long is given up and retried. */
 const HANDSHAKE_MS = 15_000
+/**
+ * Up to this much more is waited before connecting again, at random: a deploy of the API drops
+ * every runner's socket at once, and without it they would all come back in the same second.
+ */
+export const RECONNECT_SPREAD_MS = 9_000
+
+/** How long to wait before connecting again, after `backoff`: spread so runners do not come back together. */
+export const reconnectDelay = (
+  backoff: number,
+  spread = RECONNECT_SPREAD_MS,
+  random: () => number = Math.random,
+) => Math.round(backoff + random() * spread)
 /**
  * Events the API has not acknowledged in this long are sent again: one it failed to
  * store, or lost on the way, would otherwise wait for the next reconnect, and every
@@ -35,6 +78,15 @@ const RESEND_MS = 30_000
 const RESEND_FOR_MS = 24 * 60 * 60_000
 /** Events unacknowledged this long make their thread's page say so (events.waiting). */
 const WAITING_MS = 3 * 60_000
+/** Longest the API takes to keep a usage.responses before it is sent again later. */
+const USAGE_CALL_MS = 60_000
+/**
+ * Longest the API takes to give a preview its machine: making one, or starting a stopped one,
+ * takes seconds; another start making it meanwhile, up to two minutes.
+ */
+const MACHINE_UP_MS = 3 * 60_000
+/** Longest the API takes to stop a preview's machine or note it in use. */
+const MACHINE_CALL_MS = 60_000
 
 type Result = Extract<ApiToRunner, { type: 'connector.result' }>
 
@@ -43,13 +95,42 @@ type PendingCall = {
   reject: (error: Error) => void
   onPending: (ticketId: string, reason?: string, always?: boolean) => void
   onDecision: (decision: { ticketId: string; approved: boolean; memberId: string }) => void
+  /** The ticket it waits on for a person's decision, once the API said so. */
+  ticketId?: string
 }
+
+/**
+ * What the teammate's tool says of a call that waited on a person when the connection dropped:
+ * the API keeps it with its ticket, makes it once someone decides, and tells the thread.
+ */
+export const STILL_WAITING =
+  'This is still waiting for a person to approve it (its ticket is open). Do not make the call again: ' +
+  'once they decide, Brigade makes it and its result comes to this thread as a message. End your turn, ' +
+  'or go on with work that does not depend on it.'
+
+/**
+ * A call's failure that says what became of it: the API answered it (a refusal), or it never went.
+ * Any other (the connection lost while it was under way) may have been made all the same.
+ */
+const markAnswered = (error: Error) => Object.assign(error, { answered: true as const })
+
+/**
+ * A command that could not be taken yet (its spec's parts did not come, say): it is not
+ * acknowledged, so the API sends it again a little later, and opens a ticket after a day.
+ */
+export class NotTaken extends Error {}
 
 export class Connection {
   private ws: WebSocket | undefined
   private calls = new Map<string, PendingCall>()
+  /** Commands being taken now, by commandId: one sent again meanwhile waits for their ack. */
+  private taking = new Set<string>()
   private ready = false
   private backoff = 1000
+  /** The most added at random to each wait before connecting again (tests make it 0). */
+  reconnectSpreadMs = RECONNECT_SPREAD_MS
+  /** The wait before connecting again, cleared when the connection is closed for good. */
+  private retry: ReturnType<typeof setTimeout> | undefined
   private closed = false
   /** When each thread's events were last sent. */
   private sentAt = new Map<string, number>()
@@ -59,18 +140,31 @@ export class Connection {
   constructor(
     private readonly config: RunnerConfig,
     private readonly outbox: Outbox,
-    private readonly onCommand: (message: ApiToRunner) => void,
+    /** Settles once the command is taken (a takeover, once the folder is back): then it is acknowledged. */
+    private readonly onCommand: (message: ApiToRunner) => unknown,
     private readonly hello: () => Promise<Partial<Extract<RunnerToApi, { type: 'hello' }>>>,
     /**
      * The bundle the API serves, on every connect. `required`: the API refuses
      * this runner's protocol. Returns true when the runner updates itself.
      */
     private readonly onBundle: (bundle: string | undefined, required: boolean) => boolean,
+    /**
+     * The events to send now, of those given: the others hold files, sent with `send`
+     * once those are in the bucket (event-files.ts). All of them when not given.
+     */
+    private readonly keepFiles?: (
+      events: SequencedEvent[],
+      send: (events: SequencedEvent[]) => void,
+    ) => SequencedEvent[],
+    /** Commands taken already (OUTBOX_PROTOCOL): acknowledged again and ignored. */
+    private readonly seen?: SeenCommands,
   ) {}
 
   start() {
     const url = new URL('/runner/ws', this.config.apiUrl)
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+    // Its workspace's hub takes the connection (docs/workspace-hubs-plan.md).
+    if (this.config.workspaceId) url.searchParams.set('workspace', this.config.workspaceId)
     const ws = new WebSocket(url, {
       headers: { authorization: `Bearer ${this.config.token}` },
       handshakeTimeout: HANDSHAKE_MS,
@@ -86,7 +180,8 @@ export class Connection {
         if (!answered) return ws.terminate()
         answered = false
         ws.ping()
-        this.send({ type: 'heartbeat' })
+        // Exactly as KEEPALIVE: a hub object answers it without waking.
+        if (ws.readyState === WebSocket.OPEN) ws.send(KEEPALIVE)
         this.checkWaiting()
       }, HEARTBEAT_MS)
       const extra = await this.hello().catch(() => ({}))
@@ -104,25 +199,35 @@ export class Connection {
       const parsed = ApiToRunner.safeParse(JSON.parse(String(raw)))
       if (!parsed.success) return console.warn('bad message from api', parsed.error.issues[0])
       const message = parsed.data
+      // The answer to a keepalive: nothing to do.
+      if (message.type === 'keepalive') return
       if (message.type === 'welcome') {
         console.log(`connected to ${this.config.apiUrl} (workspace "${this.config.workspaceName}")`)
+        if (message.workspaceId && message.workspaceId !== this.config.workspaceId) {
+          this.config.workspaceId = message.workspaceId
+          void saveConfig(this.config).catch((error: unknown) =>
+            console.warn(`could not keep the workspace id: ${String(error)}`),
+          )
+        }
         this.ready = true
         // What it was told before, it forgot with the old connection.
         this.reported = new Map()
         this.flush()
-        this.onCommand(message)
+        this.handle(message)
         this.onBundle(message.bundle, false)
       } else if (message.type === 'ack') {
         this.outbox.ack(message.sessionId, message.seq)
       } else if (message.type === 'connector.pending') {
-        this.calls.get(message.callId)?.onPending(message.ticketId, message.reason, message.always)
+        const call = this.calls.get(message.callId)
+        if (call) call.ticketId = message.ticketId
+        call?.onPending(message.ticketId, message.reason, message.always)
       } else if (message.type === 'connector.result') {
         const call = this.calls.get(message.callId)
         if (!call) return
         this.calls.delete(message.callId)
         if (message.decision) call.onDecision(message.decision)
         if (message.ok) call.resolve(message)
-        else call.reject(new Error(message.error ?? 'The connector call failed'))
+        else call.reject(markAnswered(new Error(message.error ?? 'The connector call failed')))
       } else if (message.type === 'update.available') {
         this.onBundle(message.bundle, false)
       } else if (message.type === 'update.required') {
@@ -131,16 +236,49 @@ export class Connection {
           `This runner is too old for the API (needs protocol ${message.minProtocolVersion}). Update it and start again.`,
         )
         process.exit(1)
+      } else if ('commandId' in message && this.seen) {
+        // Sent again by the API until acknowledged: one taken already is not taken twice. It is
+        // acknowledged once taken, so a restart while it is being taken leaves it to be sent again.
+        const { commandId } = message
+        const seen = this.seen
+        if (seen.has(commandId)) return this.send({ type: 'command.ack', commandIds: [commandId] })
+        if (this.taking.has(commandId)) return
+        this.taking.add(commandId)
+        let taken: unknown
+        try {
+          // Now, in the order commands came; acknowledged once it settles.
+          taken = this.onCommand(message)
+        } catch (error) {
+          taken = Promise.reject(error)
+        }
+        void Promise.resolve(taken).then(
+          () => this.took(commandId, seen),
+          (error: unknown) => {
+            if (error instanceof NotTaken) {
+              this.taking.delete(commandId)
+              return console.warn(`command ${commandId} not taken, for now: ${error.message}`)
+            }
+            console.warn(`command ${commandId} failed: ${String(error)}`)
+            this.took(commandId, seen)
+          },
+        )
       } else {
-        this.onCommand(message)
+        this.handle(message)
       }
     })
     ws.on('close', (code, reason) => {
       clearInterval(heartbeat)
       this.ready = false
-      // Calls in flight cannot be answered on a new connection.
+      // Calls in flight cannot be answered on a new connection. One waiting on a person is kept
+      // by the API, which makes it once they decide: the teammate must not make it again.
       for (const call of this.calls.values())
-        call.reject(new Error('Lost the connection to Brigade during this call; try again'))
+        call.reject(
+          new Error(
+            call.ticketId
+              ? STILL_WAITING
+              : 'Lost the connection to Brigade during this call; try again',
+          ),
+        )
       this.calls.clear()
       if (this.closed) return
       if (code === 4401) {
@@ -157,13 +295,35 @@ export class Connection {
         )
         process.exit(1)
       }
+      const delay = reconnectDelay(this.backoff, this.reconnectSpreadMs)
       console.warn(
-        `disconnected (${code}${reason.length ? ` ${reason}` : ''}); retrying in ${this.backoff / 1000}s`,
+        `disconnected (${code}${reason.length ? ` ${reason}` : ''}); retrying in ${(delay / 1000).toFixed(1)}s`,
       )
-      setTimeout(() => this.start(), this.backoff)
+      this.retry = setTimeout(() => this.start(), delay)
       this.backoff = Math.min(this.backoff * 2, 10_000)
     })
     ws.on('error', (error) => console.warn(`connection error: ${error.message}`))
+  }
+
+  /** A command taken (or failed in the taking): not taken again, and acknowledged. */
+  private took(commandId: string, seen: SeenCommands) {
+    this.taking.delete(commandId)
+    seen.add(commandId)
+    this.send({ type: 'command.ack', commandIds: [commandId] })
+  }
+
+  /** A message without an id to acknowledge: what goes wrong with it is said in the log. */
+  private handle(message: ApiToRunner) {
+    let handled: unknown
+    try {
+      // Now, in the order messages came.
+      handled = this.onCommand(message)
+    } catch (error) {
+      handled = Promise.reject(error)
+    }
+    void Promise.resolve(handled).catch((error: unknown) =>
+      console.warn(`${message.type} failed: ${String(error)}`),
+    )
   }
 
   /** Replay everything the API has not acknowledged. */
@@ -173,8 +333,14 @@ export class Connection {
 
   private sendEvents(events: SequencedEvent[], now = Date.now()) {
     for (const e of events) this.sentAt.set(e.sessionId, now)
-    for (let i = 0; i < events.length; i += BATCH)
-      this.send({ type: 'events', events: events.slice(i, i + BATCH) })
+    const ready = this.keepFiles
+      ? this.keepFiles(events, (kept) => this.ready && this.sendBatches(kept))
+      : events
+    this.sendBatches(ready)
+  }
+
+  private sendBatches(events: SequencedEvent[]) {
+    for (const batch of eventBatches(events)) this.send({ type: 'events', events: batch })
   }
 
   /** Send one new event now if connected; otherwise it waits in the outbox for replay. */
@@ -241,25 +407,18 @@ export class Connection {
     return result.output
   }
 
-  /** Create a task from a thread, or complete its task. The API checks the thread. */
-  async callTask(
-    request: Omit<Extract<RunnerToApi, { type: 'task.call' }>, 'type' | 'callId'>,
-  ): Promise<unknown> {
-    const result = await this.call(
-      { type: 'task.call', ...request },
-      { onPending: () => undefined, onDecision: () => undefined },
-    )
-    return result.output
-  }
-
-  /** Create, list or change the teammate's schedules. The API checks the thread. */
+  /**
+   * Create, list or change the teammate's schedules. The API checks the thread. A trigger
+   * waits for an admin's approval, which the hooks show in the thread.
+   */
   async callSchedule(
     request: Omit<Extract<RunnerToApi, { type: 'schedule.call' }>, 'type' | 'callId'>,
+    hooks: Pick<PendingCall, 'onPending' | 'onDecision'> = {
+      onPending: () => undefined,
+      onDecision: () => undefined,
+    },
   ): Promise<unknown> {
-    const result = await this.call(
-      { type: 'schedule.call', ...request },
-      { onPending: () => undefined, onDecision: () => undefined },
-    )
+    const result = await this.call({ type: 'schedule.call', ...request }, hooks)
     return result.output
   }
 
@@ -283,6 +442,50 @@ export class Connection {
     return (result.output as { origins: Record<number, string> }).origins
   }
 
+  /**
+   * The thread's preview machine, running with this key let in, or null to run the preview here
+   * (preview_machines). An API before it says it could not read the call: the preview runs here.
+   */
+  async previewMachineUp(sessionId: string, publicKey: string): Promise<PreviewMachineUp> {
+    const result = await this.withTimeout(
+      { type: 'preview.machine', sessionId, action: 'up', publicKey },
+      MACHINE_UP_MS,
+    )
+    const parsed = PreviewMachineUp.safeParse(result.output)
+    if (!parsed.success) throw new Error('The API gave no machine')
+    return parsed.data
+  }
+
+  /** The thread's preview machine sleeps (stops, its disk kept), or is still in use. */
+  async previewMachine(sessionId: string, action: 'sleep' | 'touch', busy = false) {
+    await this.withTimeout(
+      { type: 'preview.machine', sessionId, action, ...(busy ? { busy: true } : {}) },
+      MACHINE_CALL_MS,
+    )
+  }
+
+  /** A call given up after `ms` when the API does not answer it. */
+  private async withTimeout(
+    message: DistributiveOmit<Extract<RunnerToApi, { type: 'preview.machine' }>, 'callId'>,
+    ms: number,
+  ) {
+    const callId = randomUUID()
+    const timer = setTimeout(() => {
+      const call = this.calls.get(callId)
+      this.calls.delete(callId)
+      call?.reject(new Error('The API did not answer in time'))
+    }, ms)
+    try {
+      return await this.call(
+        message,
+        { onPending: () => undefined, onDecision: () => undefined },
+        callId,
+      )
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   /** What a person opens for a preview port: its address with the token. Never logged. */
   async previewUrl(sessionId: string, port: number): Promise<string> {
     const result = await this.call(
@@ -294,6 +497,25 @@ export class Connection {
     return url
   }
 
+  /** Give the API what model responses spent (usage-logs.ts). Resolves once it kept them. */
+  async sendUsage(responses: LoggedResponse[]): Promise<void> {
+    const callId = randomUUID()
+    const timer = setTimeout(() => {
+      const call = this.calls.get(callId)
+      this.calls.delete(callId)
+      call?.reject(new Error('The API did not answer in time'))
+    }, USAGE_CALL_MS)
+    try {
+      await this.call(
+        { type: 'usage.responses', responses },
+        { onPending: () => undefined, onDecision: () => undefined },
+        callId,
+      )
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   private call(
     message: DistributiveOmit<
       Extract<
@@ -303,18 +525,20 @@ export class Connection {
             | 'connector.call'
             | 'credential.request'
             | 'library.call'
-            | 'task.call'
             | 'schedule.call'
             | 'preview.expose'
             | 'preview.call'
+            | 'preview.machine'
+            | 'usage.responses'
         }
       >,
       'callId'
     >,
     hooks: Pick<PendingCall, 'onPending' | 'onDecision'>,
+    callId = randomUUID(),
   ): Promise<Result> {
-    if (!this.ready) return Promise.reject(new Error('Not connected to Brigade; try again shortly'))
-    const callId = randomUUID()
+    if (!this.ready)
+      return Promise.reject(markAnswered(new Error('Not connected to Brigade; try again shortly')))
     return new Promise((resolve, reject) => {
       this.calls.set(callId, { resolve, reject, ...hooks })
       this.send({ ...message, callId } as RunnerToApi)
@@ -325,8 +549,16 @@ export class Connection {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(message))
   }
 
+  /** Send now if connected and welcomed; false otherwise, for a caller that keeps it to try again. */
+  sendIfConnected(message: RunnerToApi) {
+    if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) return false
+    this.ws.send(JSON.stringify(message))
+    return true
+  }
+
   close() {
     this.closed = true
+    clearTimeout(this.retry)
     this.ws?.close()
   }
 }

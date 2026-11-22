@@ -2,6 +2,10 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+# `pnpm deploy` (the runner bundle, the API's Docker image) as in pnpm 8: the new one needs
+# injectWorkspacePackages, which would copy the workspace packages into every app.
+forceLegacyDeploy: true
+
 # pnpm 10 runs no dependency's install scripts unless it is listed here: these need theirs
 # (Prisma's engines, the esbuild and workerd binaries). A new one shows in `pnpm install`
 # as "Ignored build scripts"; add it here when it needs its script.
@@ -12,11 +16,22 @@ onlyBuiltDependencies:
   - workerd
 
 patchedDependencies:
-  '@ai-sdk/harness-claude-code@1.0.157': patches/@ai-sdk__harness-claude-code@1.0.157.patch
-  '@ai-sdk/harness-codex@1.0.155': patches/@ai-sdk__harness-codex@1.0.155.patch
+  '@ai-sdk/harness-claude-code@1.0.191': patches/@ai-sdk__harness-claude-code@1.0.191.patch
+  '@ai-sdk/harness-codex@1.0.189': patches/@ai-sdk__harness-codex@1.0.189.patch
+  '@ai-sdk/harness@1.0.187': patches/@ai-sdk__harness@1.0.187.patch
+  '@blocknote/react@0.56.0': patches/@blocknote__react@0.56.0.patch
   '@opennextjs/cloudflare@1.20.7': patches/@opennextjs__cloudflare@1.20.7.patch
+  '@prisma/client@7.10.1': patches/@prisma__client@7.10.1.patch
   pg-cloudflare@1.4.1: patches/pg-cloudflare@1.4.1.patch
 
-# `pnpm deploy` (the runner bundle, the API's Docker image) as in pnpm 8: the new one needs
-# injectWorkspacePackages, which would copy the workspace packages into every app.
-forceLegacyDeploy: true
+# Dependencies of dependencies with known vulnerabilities (pnpm audit, OWASP dependency-check
+# for Google's CASA assessment), raised to their first fixed version. image-size is listed by
+# pptxgenjs but never loaded by it; glob and minimatch run only in builds and lint.
+overrides:
+  body-parser@>=2.0.0 <2.4.0: ^2.4.0
+  fast-uri@>=3.0.0 <3.1.9: ^3.1.9
+  glob@>=9.0.0 <14.0.2: ^14.0.2
+  image-size@<2.0.3: ^2.0.3
+  minimatch@>=7.0.0 <11.0.1: ^11.0.1
+  qs@>=6.7.0 <6.16.1: ^6.16.1
+  undici@>=7.0.0 <7.30.1: ^7.30.1

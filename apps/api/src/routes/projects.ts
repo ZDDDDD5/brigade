@@ -1,5 +1,7 @@
 import { CreateProject, ReadSite, SetProjectRepositories, UpdateProject } from '@brigade/contracts'
 import { Hono } from 'hono'
+import { HTTPException } from 'hono/http-exception'
+import { projectDecisions } from '../decisions.js'
 import {
   createProject,
   deleteProject,
@@ -10,6 +12,7 @@ import {
   setProjectRepositories,
   updateProject,
 } from '../projects.js'
+import { LOGO_HEADERS } from '../logos.js'
 import { describeSite, readSite } from '../project-sites.js'
 import { parseBody, requireUser, requireWorkspace, type AppEnv } from '../scope.js'
 
@@ -22,15 +25,22 @@ export const projects = new Hono<AppEnv>()
 
   .get('/:id', async (c) => c.json(await getProject(c.var.db, c.var.scope, c.req.param('id'))))
 
+  /** Its specs, notes and designs with their status, read from its library folder (src/decisions.ts). */
+  .get('/:id/decisions', async (c) => {
+    const project = await c.var.db.project.findFirst({
+      where: { id: c.req.param('id') },
+      select: { folder: true },
+    })
+    if (!project) throw new HTTPException(404, { message: 'Project not found' })
+    return c.json(project.folder ? await projectDecisions(c.var.scope, project.folder) : [])
+  })
+
   /** Its logo. The URL names the version (`?v=`), so a browser keeps it for good. */
   .get('/:id/logo', async (c) => {
     const logo = await projectLogo(c.var.db, c.var.scope, c.req.param('id'))
     return c.body(logo.bytes as Uint8Array<ArrayBuffer>, 200, {
       'content-type': logo.type,
-      'cache-control': 'private, max-age=31536000, immutable',
-      'x-content-type-options': 'nosniff',
-      // An SVG opened on its own runs nothing from the API's origin.
-      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      ...LOGO_HEADERS,
     })
   })
 

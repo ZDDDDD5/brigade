@@ -15,6 +15,8 @@ import {
   deleteDesignSystem,
   designZip,
   editDesign,
+  findDesign,
+  listDesignOptions,
   listDesignSystems,
   openDesignView,
   saveDesignSystem,
@@ -67,6 +69,20 @@ export const designs = new Hono<AppEnv>()
     const { scope, db } = c.var
     const { path } = await parseBody(c.req.raw, OpenDesignView)
     return c.json(await openDesignView(db, scope, path))
+  })
+
+  /** Where a design a message names is now: an option picked from may have moved. */
+  .post('/where', async (c) => {
+    const { db } = c.var
+    const { path } = await parseBody(c.req.raw, OpenDesignView)
+    return c.json(await findDesign(db, path))
+  })
+
+  /** The options offered with a design, to switch between them in its panel. */
+  .post('/options', async (c) => {
+    const { scope, db } = c.var
+    const { path } = await parseBody(c.req.raw, OpenDesignView)
+    return c.json(await listDesignOptions(db, scope, path))
   })
 
   /** The values chosen in the viewer, saved into the design's knobs.json. */

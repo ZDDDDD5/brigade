@@ -6,22 +6,39 @@ import {
   cronProblem,
   nextRun,
   nextRuns,
+  scheduledRunMessage,
   type ApiToRunner,
   type RunnerToApi,
   type ScheduleOperation,
+  isChiefOperation,
+  isTriggerOperation,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
+import { handleAppCall } from './app-calls.js'
 import { audit, type Actor } from './audit.js'
+import { outcomeOf } from './board.js'
 import { prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { handleChildCall, isChildOperation } from './children.js'
+import { fileIdea } from './playbook-ideas.js'
+import { handleStartedThreadCall, isStartedThreadOperation } from './started-threads.js'
+import { onChiefsWord } from './chief-answers.js'
+import { handleGoalCall, isGoalOperation } from './goals.js'
+import { handleChiefCall } from './chief-pass.js'
 import { handlePlaybookCall, isPlaybookInstallOperation } from './playbook-chat.js'
 import { triageRun } from './playbook-autonomy.js'
 import { beginRun, reportRun, settleRun } from './playbooks.js'
-import { broadcastSchedule, isOnline } from './hub.js'
+import { handleReviewCall, isReviewOperation } from './reviews.js'
+import { handleTriggerCall } from './trigger-calls.js'
+import { onDecided, type Live, type Resume } from './held-calls.js'
+import { hubs, scheduleUpdated } from './hub.js'
 import type { WorkspaceScope } from './scope.js'
-import { actingTeammate, loadThread } from './thread-spec.js'
+import { actingTeammate, loadThread, shownAccounts } from './thread-spec.js'
 import { projectWhere, usableProject } from './projects.js'
+import { handleListCall, isListOperation } from './lists.js'
 import { handleWakeup, isWakeupOperation } from './wakeups.js'
+import { handleThemeCall, isThemeOperation } from './themes.js'
+import { handleInitiativeCall, isInitiativeOperation, missionIdOfThread } from './initiatives.js'
+import { completeThread, isDoneOperation } from './thread-done.js'
 import { startThread } from './work.js'
 
 /** A thread still `starting` after this is taken as lost (e.g. its queued prompt went with a restart). */
@@ -42,6 +59,9 @@ type Changes = {
 const findSchedule = (db: ScopedDb, id: string) =>
   db.schedule.findFirst({ where: { id }, include: { teammate: true } })
 
+/** How many of its latest runs a schedule shows, as dots on Routines. */
+const RECENT_RUNS = 8
+
 const LIST = {
   teammate: { select: { id: true, name: true, harness: true, archivedAt: true } },
   owner: { select: { id: true, user: { select: { name: true } } } },
@@ -50,15 +70,22 @@ const LIST = {
   parentSession: { select: { id: true, title: true } },
   sessions: {
     orderBy: { createdAt: 'desc' as const },
-    take: 1,
-    select: { id: true, status: true, createdAt: true },
+    take: RECENT_RUNS,
+    select: { id: true, status: true, report: true, createdAt: true },
   },
 }
 
-const view = ({ sessions, ...schedule }: Awaited<ReturnType<typeof listRows>>[number]) => ({
-  ...schedule,
-  lastRun: sessions[0] ?? null,
-})
+const view = ({ sessions, ...schedule }: Awaited<ReturnType<typeof listRows>>[number]) => {
+  const last = sessions[0]
+  return {
+    ...schedule,
+    lastRun: last ? { id: last.id, status: last.status, createdAt: last.createdAt } : null,
+    /** Its latest runs, oldest first, with how each ended. */
+    recentRuns: sessions
+      .map((s) => ({ id: s.id, outcome: outcomeOf(s), createdAt: s.createdAt }))
+      .reverse(),
+  }
+}
 
 const listRows = (
   db: ScopedDb,
@@ -101,7 +128,7 @@ async function requireSchedule(db: ScopedDb, id: string) {
 function notThePlaybooks(schedule: { playbookInstallationId: string | null }) {
   if (schedule.playbookInstallationId)
     throw new HTTPException(409, {
-      message: 'This schedule belongs to a playbook: change it from the playbook, on Automations',
+      message: 'This schedule belongs to a playbook: change it from the playbook, on Playbooks',
     })
 }
 
@@ -113,7 +140,7 @@ async function requireTeammate(db: ScopedDb, id: string) {
 
 /** Its owner, or an owner or admin of the workspace: pause, resume, run now, delete. */
 function requireManager(scope: WorkspaceScope, schedule: { ownerMemberId: string }) {
-  if (schedule.ownerMemberId !== scope.memberId && scope.role === 'member')
+  if (schedule.ownerMemberId !== scope.memberId && scope.role !== 'owner' && scope.role !== 'admin')
     throw new HTTPException(403, {
       message: "This schedule runs on another member's accounts; only they or an admin manage it",
     })
@@ -132,7 +159,7 @@ async function changed(scope: Scope, actor: Actor, action: string, id: string, d
     target: { type: 'schedule', id },
     ...(data ? { data: data as never } : {}),
   })
-  broadcastSchedule(scope.workspaceId, id)
+  void hubs.get(scope.workspaceId).broadcast(scheduleUpdated(id))
 }
 
 /** A new schedule, active at once, owned by the member whose accounts it runs on. */
@@ -148,6 +175,8 @@ export async function createSchedule(
     projectId?: string | null | undefined
     /** Its runs are children of this thread and report to it. */
     parentSessionId?: string | null
+    /** The mission it is a routine of (docs/missions.md). */
+    initiativeId?: string | null
   },
   by: { memberId: string; teammateId?: string },
 ) {
@@ -165,6 +194,7 @@ export async function createSchedule(
       createdByTeammateId: by.teammateId ?? null,
       projectId: projectId ?? null,
       parentSessionId: input.parentSessionId ?? null,
+      initiativeId: input.initiativeId ?? null,
       nextRunAt: upcoming(input.cron, input.timezone),
     } as never,
   })
@@ -327,7 +357,7 @@ export async function fire(schedule: Schedule, dueAt: Date): Promise<Firing> {
           payload: { scheduleId: schedule.id, memberId: schedule.ownerMemberId },
         } as never,
       })
-    broadcastSchedule(scope.workspaceId, schedule.id)
+    void hubs.get(scope.workspaceId).broadcast(scheduleUpdated(schedule.id))
     return { error: message }
   }
 
@@ -337,7 +367,9 @@ export async function fire(schedule: Schedule, dueAt: Date): Promise<Firing> {
     : null
   // The parent's computer, or the workspace computer, or else the owner's own machine.
   const computer =
-    (parent && (parent.computer.kind === 'cloud' || isOnline(parent.computer.id))
+    (parent &&
+    (parent.computer.kind === 'cloud' ||
+      (await hubs.get(parent.computer.workspaceId).isOnline(parent.computer.id)))
       ? parent.computer
       : null) ??
     (await db.computer.findFirst({ where: { kind: 'cloud', status: { not: 'destroyed' } } })) ??
@@ -354,22 +386,18 @@ export async function fire(schedule: Schedule, dueAt: Date): Promise<Firing> {
   if (run && 'skipped' in run) return { skipped: run.skipped }
   if (run && 'limit' in run) {
     await db.schedule.updateMany({ where: { id: schedule.id }, data: { lastError: run.limit } })
-    broadcastSchedule(scope.workspaceId, schedule.id)
+    void hubs.get(scope.workspaceId).broadcast(scheduleUpdated(schedule.id))
     return { error: run.limit }
   }
   const runId = run?.runId
 
-  const text = [
-    `Scheduled run of "${schedule.title}", due ${localTime(dueAt, schedule.timezone)} (${schedule.timezone}). ` +
-      'Nobody is watching this thread live: do the work below, and open a ticket if you need a person.' +
-      (parent
-        ? ` It reports to the thread “${parent.title}”: when you are done, call \`report\` once, with ` +
-          'status nothing when there is nothing new (that wakes nobody), report when there is something to tell, ' +
-          'needs_person when you opened a ticket, or failed.'
-        : ''),
-    '',
-    schedule.instructions,
-  ].join('\n')
+  const text = scheduledRunMessage({
+    title: schedule.title,
+    due: localTime(dueAt, schedule.timezone),
+    timezone: schedule.timezone,
+    ...(parent ? { parentTitle: parent.title } : {}),
+    instructions: schedule.instructions,
+  })
   try {
     const { thread, outcome } = await startThread(db, scope, {
       teammate: schedule.teammate,
@@ -390,7 +418,7 @@ export async function fire(schedule: Schedule, dueAt: Date): Promise<Firing> {
     if (outcome === 'offline') return failed('the computer is offline')
     if (schedule.lastError)
       await db.schedule.updateMany({ where: { id: schedule.id }, data: { lastError: null } })
-    broadcastSchedule(scope.workspaceId, schedule.id)
+    void hubs.get(scope.workspaceId).broadcast(scheduleUpdated(schedule.id))
     return { threadId: thread.id }
   } catch (error) {
     if (runId) await settleRun(db, runId, null)
@@ -399,59 +427,49 @@ export async function fire(schedule: Schedule, dueAt: Date): Promise<Firing> {
   }
 }
 
-let ticking = false
-
-/**
- * Fire every schedule that is due. Moving nextRunAt is the claim: only the tick
- * that moves it off the due value fires, so a firing never starts twice. The
- * next firing is counted from now, so missed ones (downtime) collapse into one.
- */
-async function tick() {
-  if (ticking) return
-  ticking = true
-  try {
-    const now = new Date()
-    const due = await prisma.schedule.findMany({
-      where: { pausedAt: null, nextRunAt: { lte: now } },
-      orderBy: { nextRunAt: 'asc' },
-      take: 100,
-      include: { teammate: true },
-    })
-    for (const schedule of due) {
-      let next: Date | null = null
-      try {
-        next = upcoming(schedule.cron, schedule.timezone)
-      } catch (error) {
-        console.error(`schedule ${schedule.id}: bad cron, it stops`, error)
-      }
-      const { count } = await prisma.schedule.updateMany({
-        where: { id: schedule.id, nextRunAt: schedule.nextRunAt },
-        data: { nextRunAt: next },
-      })
-      if (!count) continue
-      const result = await fire(schedule, schedule.nextRunAt!).catch((error: unknown) => {
-        console.error(`schedule ${schedule.id}: could not fire`, error)
-        return null
-      })
-      if (result && 'skipped' in result)
-        console.log(`schedule ${schedule.id}: skipped, ${result.skipped}`)
-    }
-  } finally {
-    ticking = false
-  }
+/** Workspaces with a schedule due now (src/jobs.ts). */
+export async function dueSchedules(now = new Date()) {
+  const rows = await prisma.schedule.findMany({
+    where: { pausedAt: null, nextRunAt: { lte: now } },
+    distinct: ['workspaceId'],
+    select: { workspaceId: true },
+  })
+  return rows.map((r) => r.workspaceId)
 }
 
-/** Tick at the start of every minute, so a 07:00 run starts at 07:00. */
-export function watchSchedules() {
-  const later = () =>
-    setTimeout(
-      () =>
-        void tick()
-          .catch((error) => console.error('schedule tick failed', error))
-          .finally(later),
-      60_000 - (Date.now() % 60_000) + 250,
-    )
-  later()
+/**
+ * Fire every schedule that is due, of one workspace or all. Moving nextRunAt is the claim: only
+ * the run that moves it off the due value fires, so a firing never starts twice, even with two
+ * runs at once. The next firing is counted from now, so missed ones (downtime) collapse into one.
+ * Each minute, at its start, so a 07:00 run starts at 07:00 (src/jobs.ts).
+ */
+export async function fireDueSchedules(workspaceId?: string) {
+  const now = new Date()
+  const due = await prisma.schedule.findMany({
+    where: { pausedAt: null, nextRunAt: { lte: now }, ...(workspaceId ? { workspaceId } : {}) },
+    orderBy: { nextRunAt: 'asc' },
+    take: 100,
+    include: { teammate: true },
+  })
+  for (const schedule of due) {
+    let next: Date | null = null
+    try {
+      next = upcoming(schedule.cron, schedule.timezone)
+    } catch (error) {
+      console.error(`schedule ${schedule.id}: bad cron, it stops`, error)
+    }
+    const { count } = await prisma.schedule.updateMany({
+      where: { id: schedule.id, nextRunAt: schedule.nextRunAt },
+      data: { nextRunAt: next },
+    })
+    if (!count) continue
+    const result = await fire(schedule, schedule.nextRunAt!).catch((error: unknown) => {
+      console.error(`schedule ${schedule.id}: could not fire`, error)
+      return null
+    })
+    if (result && 'skipped' in result)
+      console.log(`schedule ${schedule.id}: skipped, ${result.skipped}`)
+  }
 }
 
 /** A member's timezone, as far as Brigade knows: their latest schedule's, else UTC. */
@@ -480,14 +498,27 @@ const brief = (s: {
   nextRuns: s.pausedAt ? [] : nextRuns(s.cron, s.timezone, 3).map((d) => localTime(d, s.timezone)),
 })
 
+/** Why a thread several people ask in sets up no schedule. */
+const SEVERAL_CREATE =
+  "Several people ask in this thread, and a schedule's runs follow its instructions on the accounts of the " +
+  'member who started this thread: a person sets one up with you in a thread of their own.'
+
+/** Why it lists and changes none. */
+const SEVERAL_LIST =
+  "Several people ask in this thread, and each schedule runs on its owner's accounts: a person sees and " +
+  'changes theirs with you in a thread of their own, or on the Routines page.'
+
 /**
  * A teammate's schedule tools, from a thread a member started on this runner's
- * computer. Its schedules run on that member's accounts, so only they are touched.
+ * computer. Its schedules run on that member's accounts, so only theirs are made, listed
+ * and changed there; and none in a thread several people ask in (shownAccounts, as the
+ * trigger tools), where another member would set up or steer work on the starter's accounts.
  */
 export async function handleScheduleCall(
   runner: Runner,
   call: Extract<RunnerToApi, { type: 'schedule.call' }>,
   reply: (message: ApiToRunner) => void,
+  options: { live?: Live; resume?: Resume } = {},
 ) {
   const scope: Scope = { organizationId: runner.organizationId, workspaceId: runner.workspaceId }
   const db = scoped(scope)
@@ -503,6 +534,11 @@ export async function handleScheduleCall(
   const teammate = await actingTeammate(db, session, call.teammateId)
   if (!teammate) return fail('That teammate is not in this thread')
   const op: ScheduleOperation = call.operation
+  // Lists' items too (docs/lists.md), within the library access of the teammate.
+  if (isListOperation(op)) {
+    const output = await handleListCall(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
   // Wake-ups come with the schedule tools; they check the thread themselves.
   if (isWakeupOperation(op)) {
     const output = await handleWakeup(db, scope, session, teammate, op)
@@ -511,6 +547,41 @@ export async function handleScheduleCall(
   // So do child threads; a child reports with them.
   if (isChildOperation(op)) {
     const output = await handleChildCall(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
+  // And threads it starts at the top, for itself or another teammate, and writes in later.
+  if (isStartedThreadOperation(op)) {
+    const output = await handleStartedThreadCall(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
+  // And a review of a pull request this thread opened.
+  if (isReviewOperation(op)) {
+    const output = await handleReviewCall(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
+  // And Chief's calls (src/chief-pass.ts): its daily pass for a person, and their rules.
+  if (isChiefOperation(op)) {
+    const output = await handleChiefCall(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
+  // And missions (docs/missions.md): actions planned, outputs and numbers recorded.
+  if (isInitiativeOperation(op)) {
+    const output = await handleInitiativeCall(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
+  // And themes (docs/themes.md): the starter's own look for the dashboard.
+  if (isThemeOperation(op)) {
+    const output = await handleThemeCall(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
+  // And goals (docs/goals.md): a contract proposed, where one stands, and its summary.
+  if (isGoalOperation(op)) {
+    const output = await handleGoalCall(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
+  // And declaring the work asked here delivered (docs/board.md), refused while anything is open.
+  if (isDoneOperation(op)) {
+    const output = await completeThread(db, scope, session, teammate, op)
     return 'error' in output ? fail(output.error) : done(output)
   }
   // And a playbook run's case, once its event is sorted, and its report.
@@ -522,21 +593,71 @@ export async function handleScheduleCall(
     const output = await reportRun(db, scope, session, teammate, op)
     return 'error' in output ? fail(output.error) : done(output)
   }
+  // And an idea a live run keeps for the team, in the playbook's ideas list.
+  if (op.name === 'file_idea') {
+    const output = await fileIdea(db, scope, session, teammate, op)
+    return 'error' in output ? fail(output.error) : done(output)
+  }
   // And installing a playbook from the chat.
   if (isPlaybookInstallOperation(op)) {
     const output = await handlePlaybookCall(db, scope, session, teammate, op)
     return 'error' in output ? fail(output.error) : done(output)
+  }
+  // And triggers, which wait for an admin's approval: the call says so while it waits.
+  if (isTriggerOperation(op)) {
+    const answer = await handleTriggerCall(db, scope, session, teammate, op, {
+      callId: call.callId,
+      request: { sessionId: call.sessionId, teammateId: call.teammateId, operation: op },
+      reply,
+      ...(options.live ? { live: options.live } : {}),
+      ...(options.resume ? { resume: options.resume } : {}),
+    })
+    // Held for an admin's decision: the result comes once they decide (src/held-calls.ts).
+    if ('held' in answer) return
+    const { decision: made, ...result } = answer
+    // With the decision, for the thread to show it on the approval: also when a check made again
+    // once a person decided refuses the call (another member asked in the thread meanwhile).
+    const decided = options.resume?.decision
+    const decision =
+      made ??
+      (decided && {
+        ticketId: decided.ticketId,
+        approved: decided.approved,
+        memberId: decided.memberId,
+      })
+    return reply({
+      type: 'connector.result',
+      callId: call.callId,
+      ...('error' in result
+        ? { ok: false, error: result.error }
+        : { ok: true, output: result.output }),
+      ...(decision ? { decision } : {}),
+    })
+  }
+  // And the Apps it can use, ask for or have connected; a playbook's run has only its own.
+  if (op.name === 'list_apps') {
+    const answer = await handleAppCall(db, session, teammate, op)
+    return 'error' in answer ? fail(answer.error) : done(answer.output)
   }
   // A playbook's run, its children included: a schedule's runs would be threads outside it.
   if (session.playbookRunId)
     return fail("A playbook's run sets up no schedule. Just do the work here.")
   if (session.origin !== 'member')
     return fail('Schedules are set up only from a thread a person started. Just do the work here.')
+  // A routine set up on Chief's word would act later with nobody asked (src/chief-answers.ts).
+  if ((op.name === 'create' || op.name === 'update') && onChiefsWord(session))
+    return fail(
+      "You act on Chief's answer, not the person's: a routine waits for them. Ask them first, in your reply or with a ticket.",
+    )
   const actor: Actor = { type: 'teammate', id: teammate.id }
+  // Whose schedules the thread works on: its starter's while nobody else asks in it; nobody's once
+  // another member does, as a schedule's runs follow its instructions on its owner's accounts.
+  const { person } = await shownAccounts(db, session)
 
   try {
     if (op.name === 'create') {
-      const timezone = op.timezone ?? (await memberTimezone(db, session.startedByMemberId))
+      if (!person) return fail(SEVERAL_CREATE)
+      const timezone = op.timezone ?? (await memberTimezone(db, person))
       const problem = cronProblem(op.cron, timezone)
       if (problem) return fail(problem)
       const schedule = await createSchedule(
@@ -552,8 +673,11 @@ export async function handleScheduleCall(
           projectId: session.projectId,
           // Its runs report to this thread, unless asked to stand alone.
           parentSessionId: op.attachToThread === false ? null : session.id,
+          // Made in a mission's thread, it is the mission's routine (docs/missions.md).
+          initiativeId: await missionIdOfThread(db, session.id),
         },
-        { memberId: session.startedByMemberId, teammateId: teammate.id },
+        // Owned by the thread's starter: they asked, and its runs spend their accounts.
+        { memberId: person, teammateId: teammate.id },
       )
       return done({
         ...brief(schedule),
@@ -567,20 +691,22 @@ export async function handleScheduleCall(
       })
     }
 
-    // A playbook's schedules are the playbook's to change.
-    const mine = await db.schedule.findMany({
-      where: { teammateId: teammate.id, playbookInstallationId: null },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-    })
-    if (op.name === 'list') return done({ schedules: mine.map(brief) })
+    // Only those on the accounts of the person in this thread: not another member's, with their
+    // instructions. A playbook's schedules are the playbook's to change.
+    const theirs = person
+      ? { teammateId: teammate.id, ownerMemberId: person, playbookInstallationId: null }
+      : null
+    if (op.name === 'list') {
+      const schedules = theirs
+        ? await db.schedule.findMany({ where: theirs, orderBy: { createdAt: 'desc' }, take: 100 })
+        : []
+      return done({ ...(person ? {} : { note: SEVERAL_LIST }), schedules: schedules.map(brief) })
+    }
 
-    const schedule = mine.find((s) => s.id === op.scheduleId)
+    if (!theirs) return fail(SEVERAL_LIST)
+    // Another member's reads as no schedule at all: the thread learns nothing of it.
+    const schedule = await db.schedule.findFirst({ where: { ...theirs, id: op.scheduleId } })
     if (!schedule) return fail('No schedule of yours has that id; list_schedules shows them')
-    if (schedule.ownerMemberId !== session.startedByMemberId)
-      return fail(
-        "That schedule runs on another member's accounts; only they can change it, on the Routines page",
-      )
     const { scheduleId: _, name: __, ...changes } = op
     const updated = await applyChanges(db, scope, { ...schedule, teammate }, changes, actor)
     return done(brief(updated))
@@ -589,3 +715,13 @@ export async function handleScheduleCall(
     throw error
   }
 }
+
+/** A trigger an admin decided on, made after any restart: the call as the runner sent it. */
+onDecided('trigger', (runner, request, reply, resume) =>
+  handleScheduleCall(
+    runner,
+    { ...request, type: 'schedule.call' } as Extract<RunnerToApi, { type: 'schedule.call' }>,
+    reply,
+    { resume },
+  ),
+)

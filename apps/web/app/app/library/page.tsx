@@ -1,15 +1,21 @@
 'use client'
-import { BookOpen, ChevronDown, FilePlus, FolderPlus, FolderUp, Search, Upload } from 'lucide-react'
+import { FilePlus, FolderPlus, FolderUp, Search, Upload } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { timeAgo } from '@/components/dashboard'
 import { DesignGallery } from '@/components/design-gallery'
-import { DesignSystems } from '@/components/design-systems'
+import { ToolGallery } from '@/components/tool-gallery'
+import { DesignSystemsBar } from '@/components/design-systems'
+import { MemoryCard } from '@/components/memory-card'
 import { useDocumentPanel } from '@/components/document-panel'
-import { join, LibraryBrowser } from '@/components/library-browser'
+import {
+  join,
+  LibraryBrowser,
+  LibraryViewSwitch,
+  useLibrarySort,
+} from '@/components/library-browser'
 import { LibraryTrash } from '@/components/library-trash'
-import { Markdown } from '@/components/markdown'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,19 +27,17 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { EditTarget } from '@brigade/contracts'
 import {
   api,
   isAdmin,
+  uploadToLibrary,
   useApi,
   type LibraryTree,
   type Me,
-  type MemoryFile,
   type MemoryOverview,
   type SearchHit,
   type Teammate,
 } from '@/lib/api'
-import { API_URL } from '@/lib/config'
 
 /** The workspace's shared files and memory, and one search over both. */
 export default function LibraryPage() {
@@ -44,18 +48,20 @@ export default function LibraryPage() {
   )
 }
 
-type Tab = 'files' | 'designs' | 'memory' | 'design-systems' | 'trash'
+type Tab = 'files' | 'designs' | 'tools' | 'memory' | 'trash'
 
 function LibraryView() {
   const params = useSearchParams()
   const router = useRouter()
-  const tree = useApi<LibraryTree>('/library/tree')
-  const memory = useApi<MemoryOverview>('/library/memory')
-  const teammates = useApi<Teammate[]>('/teammates')
+  const tree = useApi<LibraryTree>('/library/tree', ['library.updated'])
+  const memory = useApi<MemoryOverview>('/library/memory', ['library.updated'])
+  const teammates = useApi<Teammate[]>('/teammates', ['teammates.updated'])
   const me = useApi<Me>('/me')
   const [tab, setTab] = useState<Tab>('files')
+  const [managing, setManaging] = useState(false)
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState<'file' | 'folder' | null>(null)
+  const view = useLibrarySort()
   const documents = useDocumentPanel()
   // What the panel saved: sizes, times and memory previews, once it closes or switches.
   const shown = JSON.stringify(documents.current?.target ?? null)
@@ -74,6 +80,9 @@ function LibraryView() {
   const folder = params.get('folder') ?? ''
   const focus = params.get('file') ?? undefined
   const focusDesign = params.get('design') ?? undefined
+  const focusTool = params.get('tool') ?? undefined
+  // Tools (docs/tools.md), for people who have them.
+  const tools = me.data?.features?.includes('tools') ?? false
   const setFolder = useCallback(
     (path: string) => {
       setCreating(null)
@@ -84,29 +93,29 @@ function LibraryView() {
     [router],
   )
   useEffect(() => {
-    const asked = focus || focusDesign ? 'files' : params.get('tab')
-    const tabs: Tab[] = ['files', 'designs', 'memory', 'design-systems', 'trash']
+    const asked = focus || focusDesign || focusTool ? 'files' : params.get('tab')
+    // Design systems were a tab of their own: they open beside the designs now.
+    if (asked === 'design-systems') {
+      setTab('designs')
+      setManaging(true)
+      setQuery('')
+      return
+    }
+    const tabs: Tab[] = ['files', 'designs', 'tools', 'memory', 'trash']
     if (!tabs.includes(asked as Tab)) return
     setTab(asked as Tab)
     setQuery('')
-  }, [focus, focusDesign, params])
+  }, [focus, focusDesign, focusTool, params])
 
   async function upload(list: { file: File; path: string }[]) {
     if (list.length === 0) return
     setError(undefined)
     for (const [i, { file, path }] of list.entries()) {
       setUploading(list.length > 1 ? `${i + 1} of ${list.length}` : file.name)
-      const form = new FormData()
-      form.set('file', file)
-      form.set('path', path)
-      const response = await fetch(`${API_URL}/api/library/upload`, {
-        method: 'POST',
-        credentials: 'include',
-        body: form,
-      })
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { error?: string }
-        setError(`${path}: ${body.error ?? response.statusText}`)
+      try {
+        await uploadToLibrary(path, file)
+      } catch (e) {
+        setError(`${path}: ${(e as Error).message}`)
         break
       }
     }
@@ -125,18 +134,19 @@ function LibraryView() {
     )
 
   return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-3xl font-extrabold tracking-tight">Library</h1>
-          <p className="max-w-2xl text-muted-foreground">
-            Shared files and memory. Teammates read the folders they have access to on their
-            computer and search them; when a thread goes quiet, what it taught goes into memory.
-          </p>
-        </div>
-        <div className="flex gap-2">
+    <div data-look="library" className="flex flex-col gap-6">
+      <header className="flex items-center justify-between gap-4">
+        <h1 className="text-3xl font-extrabold tracking-tight">Library</h1>
+        <div data-corner-clear className="flex items-center gap-2">
+          {uploading && (
+            <span className="truncate text-sm text-muted-foreground">Uploading {uploading}…</span>
+          )}
           <Button
             variant="outline"
+            size="icon"
+            className="rounded-full"
+            aria-label="New folder"
+            tooltip="New folder"
             onClick={() => (
               setTab('files'),
               setQuery(''),
@@ -144,10 +154,13 @@ function LibraryView() {
             )}
           >
             <FolderPlus />
-            New folder
           </Button>
           <Button
             variant="outline"
+            size="icon"
+            className="rounded-full"
+            aria-label="New file"
+            tooltip="New file"
             onClick={() => (
               setTab('files'),
               setQuery(''),
@@ -155,14 +168,17 @@ function LibraryView() {
             )}
           >
             <FilePlus />
-            New file
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button disabled={Boolean(uploading)}>
+              <Button
+                size="icon"
+                className="rounded-full"
+                disabled={Boolean(uploading)}
+                aria-label="Upload"
+                tooltip="Upload"
+              >
                 <Upload />
-                {uploading ? `Uploading ${uploading}…` : 'Upload'}
-                <ChevronDown aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -215,14 +231,17 @@ function LibraryView() {
           onFile={() => setQuery('')}
         />
       ) : (
-        <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)}>
-          <TabsList>
-            <TabsTrigger value="files">Files</TabsTrigger>
-            <TabsTrigger value="memory">Memory</TabsTrigger>
-            <TabsTrigger value="designs">Designs</TabsTrigger>
-            <TabsTrigger value="design-systems">Design systems</TabsTrigger>
-            <TabsTrigger value="trash">Trash</TabsTrigger>
-          </TabsList>
+        <Tabs value={tab} onValueChange={(v) => (setTab(v as Tab), setManaging(false))}>
+          <div className="flex items-center gap-2">
+            <TabsList className="min-w-0 justify-start overflow-x-auto">
+              <TabsTrigger value="files">Files</TabsTrigger>
+              <TabsTrigger value="memory">Memory</TabsTrigger>
+              <TabsTrigger value="designs">Designs</TabsTrigger>
+              {tools && <TabsTrigger value="tools">Tools</TabsTrigger>}
+              <TabsTrigger value="trash">Trash</TabsTrigger>
+            </TabsList>
+            {tab === 'files' && <LibraryViewSwitch view={view} className="ml-auto shrink-0" />}
+          </div>
           <TabsContent value="files" className="flex flex-col gap-4 pt-2">
             <LibraryBrowser
               tree={tree.data}
@@ -230,26 +249,33 @@ function LibraryView() {
               setFolder={setFolder}
               focus={focus}
               focusDesign={focusDesign}
+              focusTool={focusTool}
               reload={tree.reload}
               upload={upload}
               teammates={teammates.data}
               admin={me.data ? isAdmin(me.data) : false}
               creating={creating}
               setCreating={setCreating}
+              view={view}
             />
           </TabsContent>
           <TabsContent value="designs" className="flex flex-col gap-4 pt-2">
-            <DesignGallery tree={tree.data} />
-          </TabsContent>
-          <TabsContent value="memory" className="flex flex-col gap-4 pt-2">
-            <Memory overview={memory.data} reload={memory.reload} />
-          </TabsContent>
-          <TabsContent value="design-systems" className="flex flex-col gap-4 pt-2">
-            <DesignSystems
+            <DesignSystemsBar
               tree={tree.data}
               teammates={teammates.data}
               admin={me.data ? isAdmin(me.data) : false}
+              open={managing}
+              onOpenChange={setManaging}
             />
+            <DesignGallery tree={tree.data} />
+          </TabsContent>
+          {tools && (
+            <TabsContent value="tools" className="flex flex-col gap-4 pt-2">
+              <ToolGallery tree={tree.data} />
+            </TabsContent>
+          )}
+          <TabsContent value="memory" className="flex flex-col gap-4 pt-2">
+            <Memory overview={memory.data} reload={memory.reload} />
           </TabsContent>
           <TabsContent value="trash" className="flex flex-col gap-4 pt-2">
             <LibraryTrash
@@ -282,6 +308,23 @@ function Memory({
         target={{ kind: 'workspace_memory' }}
         onSaved={reload}
       />
+      {/* A project's empty memory is on its own page; here it would only add an empty card. */}
+      {overview.projects
+        .filter(
+          (p) =>
+            p.memory.documentId &&
+            (p.memory.archived > 0 || p.memory.text.replace(/^#[^\n]*\n+/, '').trim()),
+        )
+        .map((p) => (
+          <MemoryCard
+            key={p.projectId}
+            title={p.name}
+            description={`What teammates know about this project. Every thread in it loads the core; topics, when its work touches them.`}
+            file={p.memory}
+            target={{ kind: 'project_memory', projectId: p.projectId }}
+            onSaved={reload}
+          />
+        ))}
       {overview.teammates.map((t) => (
         <MemoryCard
           key={t.teammateId}
@@ -330,68 +373,12 @@ function Memory({
   )
 }
 
-function MemoryCard({
-  title,
-  description,
-  file,
-  target,
-  onSaved,
-}: {
-  title: string
-  description: string
-  file: MemoryFile
-  target: EditTarget
-  onSaved: () => Promise<void>
-}) {
-  const documents = useDocumentPanel()
-  const editing = JSON.stringify(documents.current?.target) === JSON.stringify(target)
-
-  const body = file.text.replace(/^#[^\n]*\n+/, '').trim()
-  return (
-    <Card className="gap-3">
-      <div className="flex items-start justify-between gap-4 px-6">
-        <div className="flex min-w-0 flex-col gap-1">
-          <h2 className="flex items-center gap-2 text-base font-bold">
-            <BookOpen aria-hidden className="size-4 text-muted-foreground" />
-            {title}
-          </h2>
-          <p className="text-sm text-muted-foreground">
-            {description}
-            {file.updatedAt && ` Updated ${timeAgo(file.updatedAt)}.`}
-          </p>
-        </div>
-        <Button
-          variant={editing ? 'default' : 'outline'}
-          size="sm"
-          aria-pressed={editing}
-          onClick={() => {
-            if (!editing) {
-              documents.open({ target, title: `${title} memory`, subtitle: description })
-              return
-            }
-            documents.close()
-            void onSaved()
-          }}
-        >
-          {editing ? 'Done' : 'Edit'}
-        </Button>
-      </div>
-      <CardContent>
-        {body ? (
-          <Markdown text={body} className="text-sm" />
-        ) : (
-          <p className="text-sm text-muted-foreground">Nothing remembered yet.</p>
-        )}
-      </CardContent>
-    </Card>
-  )
-}
-
 const KIND_LABEL: Record<SearchHit['kind'], string> = {
   library: 'File',
   workspace_memory: 'Memory',
   teammate_memory: 'Memory',
   project_memory: 'Memory',
+  archived_memory: 'Removed from memory',
   thread_summary: 'Thread',
 }
 
@@ -445,10 +432,10 @@ function SearchResults({
     return <p className="text-sm text-muted-foreground">Nothing matches “{query}”.</p>
   return (
     <Card className="gap-0 divide-y py-0">
-      {hits.map((h) => {
+      {hits.map((h, i) => {
         const title = <span className="block truncate text-sm font-semibold">{h.title}</span>
         return (
-          <div key={h.documentId} className="flex flex-col gap-1 px-5 py-3">
+          <div key={`${h.kind}:${h.documentId}:${i}`} className="flex flex-col gap-1 px-5 py-3">
             <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
               <StatusBadge status={h.kind} tone="neutral" label={KIND_LABEL[h.kind]} />
               {h.kind === 'library' ? (

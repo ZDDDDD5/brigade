@@ -1,6 +1,6 @@
 // Sample data for a local Brigade or a preview: the "Acme" organization, with
 // Ada (owner), Bob (admin) and Carol (member) in its workspace, its teammates,
-// projects, threads in each state, tasks in each column, tickets, library files,
+// projects, threads in each state, tickets, library files,
 // memory, connections, credentials, a schedule, a pull request and a playbook with
 // its runs (seed-playbooks.ts). Nothing in it reaches an outside service:
 // connection and credential secrets are placeholders.
@@ -8,6 +8,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import {
   childPrompt,
+  MemoryEdit,
   parentMessage,
   singleNote,
   SUGGEST_REPLIES_TOOL,
@@ -15,9 +16,12 @@ import {
 } from '@brigade/contracts'
 import { audit, type Actor } from '../src/audit.js'
 import { prisma, scoped, type Prisma } from '../src/db.js'
-import { saveLibraryFile, saveSummary, writeMemory } from '../src/library.js'
+import { editMemory, saveLibraryFile, saveSummary, writeMemory } from '../src/library.js'
+import { SAMPLE_TOOL_MANIFEST, SAMPLE_TOOL_PAGE, SAMPLE_VISUALS } from './seed-tool.js'
 import { sealSecret } from '../src/vault.js'
+import { LONG_THREAD_TITLE, longThreadEvents } from './seed-long-thread.js'
 import { seedPlaybooks } from './seed-playbooks.js'
+import { seedUsage } from './seed-usage.js'
 
 export const SAMPLE_ORGANIZATION = 'acme'
 
@@ -32,12 +36,16 @@ type Draft = {
   [T in AgentEvent['type']]: Omit<Extract<AgentEvent, { type: T }>, 'at'>
 }[AgentEvent['type']]
 
-export async function seedWorkspace(users: Users) {
+/** `sample`: another name for its organization (the load test seeds many: scripts/load). */
+export async function seedWorkspace(
+  users: Users,
+  sample: { name: string; slug: string } = { name: 'Acme', slug: SAMPLE_ORGANIZATION },
+) {
   // -------------------------------------------------------------------------
   // Organization, members and the workspace
   // -------------------------------------------------------------------------
   const organization = await prisma.organization.create({
-    data: { id: randomUUID(), name: 'Acme', slug: SAMPLE_ORGANIZATION, createdAt: days(30) },
+    data: { id: randomUUID(), name: sample.name, slug: sample.slug, createdAt: days(30) },
   })
   const organizationId = organization.id
   const member = async (userId: string, role: string) =>
@@ -49,7 +57,7 @@ export async function seedWorkspace(users: Users) {
   const carol = await member(users.carol.id, 'member')
 
   const workspace = await prisma.workspace.create({
-    data: { organizationId, name: 'Acme', createdAt: days(30) },
+    data: { organizationId, name: sample.name, createdAt: days(30) },
   })
   const workspaceId = workspace.id
   const scope = { organizationId, workspaceId }
@@ -62,7 +70,7 @@ export async function seedWorkspace(users: Users) {
     actor: asAda,
     action: 'workspace.created',
     target: { type: 'workspace', id: workspaceId },
-    data: { name: 'Acme' },
+    data: { name: sample.name },
   })
 
   // The workspace's cloud computer. No runner answers in a preview, so it shows stopped.
@@ -109,6 +117,7 @@ export async function seedWorkspace(users: Users) {
   // -------------------------------------------------------------------------
   const teammate = (data: {
     name: string
+    title?: string
     kind?: 'chief' | 'teammate'
     instructions?: string
     caps?: object
@@ -116,16 +125,22 @@ export async function seedWorkspace(users: Users) {
     libraryAccess?: 'read' | 'read_write'
     archivedAt?: Date
   }) => prisma.teammate.create({ data: { ...inWorkspace, ...data, createdAt: days(29) } })
-  const chief = await teammate({ name: 'Chief', kind: 'chief' })
+  const chief = await teammate({ name: 'Chief', kind: 'chief', title: 'Chief of staff' })
   const riley = await teammate({
     name: 'Riley',
+    title: 'Software engineer',
     instructions:
       'Full-stack engineer on the Acme web app (Next.js, Postgres).\nOpen a pull request for every change; never push to main.',
     libraryAccess: 'read_write',
     caps: { threadsPerDay: 40 },
   })
+  const kai = await teammate({
+    name: 'Kai',
+    instructions: 'Engineer on the Acme web app. Reviews pull requests for bugs, not style.',
+  })
   const sam = await teammate({
     name: 'Sam',
+    title: 'Lead customer support',
     instructions:
       'Customer support: answers support@acme.test, looks customers up in Stripe.\nRefunds over $100 need a person to approve.',
     permissionPolicy: { connectorWrites: 'ask' },
@@ -133,6 +148,7 @@ export async function seedWorkspace(users: Users) {
   })
   const maya = await teammate({
     name: 'Maya',
+    title: 'Marketing lead',
     instructions:
       'Marketing: newsletter, launch posts and the blog, in the brand voice (Marketing/brand-voice.md).',
     libraryAccess: 'read_write',
@@ -237,9 +253,16 @@ export async function seedWorkspace(users: Users) {
   })
   const stripe = await connection({
     kind: 'stripe',
-    label: 'Stripe (test mode)',
-    externalAccount: 'Acme test account',
-    secret: { apiKey: 'sk_test_sample' },
+    label: 'Stripe',
+    externalAccount: 'Acme (acct_1SampleAcme, test mode)',
+    secret: {
+      accessToken: 'sample',
+      refreshToken: 'sample',
+      expiresAt: 0,
+      clientId: 'sample',
+      tokenEndpoint: 'https://access.stripe.com/mcp/oauth2/token',
+      resource: 'https://mcp.stripe.com',
+    },
   })
   // Carol's own mailbox: a second account of the Gmail App, used only in her threads.
   const carolGmail = await connection({
@@ -444,7 +467,18 @@ export async function seedWorkspace(users: Users) {
   }
   const harness = (name: string) => `mcp__harness-tools__${name}`
 
-  // Done, with a pull request waiting for review: its task is in Needs you.
+  // Long, for the timeline beside a thread: it opens on its latest page.
+  await thread({
+    title: LONG_THREAD_TITLE,
+    teammateId: riley.id,
+    member: ada,
+    accountId: adaAccount.id,
+    status: 'idle',
+    startedAt: days(4),
+    events: longThreadEvents(riley.id, adaAccount.id, ada.id),
+  })
+
+  // Done, with a pull request waiting for review: it needs you.
   const darkMode = await thread({
     title: 'Add dark mode to the pricing page',
     teammateId: riley.id,
@@ -490,8 +524,13 @@ export async function seedWorkspace(users: Users) {
               repository: 'acme/web',
               title: 'Pricing cards follow the theme',
               head: 'brigade/riley-pricing-dark',
+              review: { wanted: true, reason: 'It changes the colors of every pricing card' },
             },
-            { number: 128, url: 'https://github.com/acme/web/pull/128' },
+            {
+              number: 128,
+              url: 'https://github.com/acme/web/pull/128',
+              review: { started: true, reviewer: 'Kai' },
+            },
           ),
           {
             type: 'usage.updated',
@@ -501,12 +540,91 @@ export async function seedWorkspace(users: Users) {
             limits: usage,
           },
         ],
-        'Done: the pricing cards used `bg-white`, so they ignored the theme. They now use `bg-card` and `text-card-foreground`, and the tests pass.\n\nPull request: [acme/web#128](https://github.com/acme/web/pull/128).',
+        'The pricing cards used `bg-white`, so they ignored the theme. They now use `bg-card` and `text-card-foreground`, and the tests pass. Kai is reviewing the pull request; I will tell you once it is done.',
+      ),
+      // Woken by its review's report (src/reviews.ts).
+      ...turn(
+        riley.id,
+        adaAccount.id,
+        'The child thread you were waiting for has finished:\n- Kai · “Review #128: Pricing cards follow the theme”: reports. Approved: the cards use the theme tokens in both themes.',
+        null,
+        [],
+        'Kai reviewed it and approved it: nothing to fix. Ready to merge: [acme/web#128](https://github.com/acme/web/pull/128).',
+      ),
+    ],
+  })
+  // Its review, in a child thread started with Brigade's brief.
+  const darkModeReview = await thread({
+    title: 'Review #128: Pricing cards follow the theme',
+    teammateId: kai.id,
+    member: ada,
+    accountId: adaAccount.id,
+    status: 'idle',
+    startedAt: hours(4),
+    projectId: website.id,
+    origin: 'child',
+    parentId: darkMode.id,
+    parentTeammateId: riley.id,
+    awaited: true,
+    report: {
+      status: 'report',
+      summary: 'Approved: the cards use the theme tokens in both themes.',
+      at: hours(3).toISOString(),
+    },
+    reportDeliveredAt: hours(3),
+    events: [
+      ...turn(
+        kai.id,
+        adaAccount.id,
+        childPrompt({
+          from: riley.name,
+          parentTitle: 'Add dark mode to the pricing page',
+          instructions:
+            'Review pull request #128 "Pricing cards follow the theme" in acme/web (`brigade/riley-pricing-dark` into `main`), which Riley wrote, before it reaches a person: https://github.com/acme/web/pull/128',
+        }),
+        null,
+        [
+          ...tool(
+            harness('github_get_pull_request'),
+            { repository: 'acme/web', number: 128 },
+            { number: 128, title: 'Pricing cards follow the theme', files: 1 },
+          ),
+          ...tool(
+            harness('github_review_pull_request'),
+            {
+              repository: 'acme/web',
+              number: 128,
+              verdict: 'approve',
+              body: 'Looks right: the cards use the theme tokens and both themes were checked.',
+            },
+            { verdict: 'approve', url: 'https://github.com/acme/web/pull/128' },
+          ),
+          ...tool(
+            harness('report'),
+            {
+              status: 'report',
+              summary: 'Approved: the cards use the theme tokens in both themes.',
+            },
+            { ok: true },
+          ),
+        ],
+        'Approved: the cards use the theme tokens in both themes, and nothing else changed.',
       ),
     ],
   })
 
-  // Waits on an approval: Sam wants to refund a customer through Stripe.
+  // Waits on an approval: Sam wants to refund a customer through Stripe's MCP server.
+  const stripeCall = (operation: string, parameters: Record<string, unknown>) => ({
+    stripe_api_operation_id: operation,
+    parameters,
+    stripe_context: 'acct_1SampleAcme',
+    livemode: false,
+  })
+  const refundCall = stripeCall('PostRefunds', { charge: 'ch_Sample2', reason: 'duplicate' })
+  const refundTarget = 'PostRefunds {"charge":"ch_Sample2","reason":"duplicate"} (test mode)'
+  // The approval's id is its ticket's, as the runner asks for a connector write.
+  const refundTicketId = randomUUID()
+  const refundCallId = `call_${id()}`
   const refund = await thread({
     title: 'Refund request from Jamie Lee',
     teammateId: sam.id,
@@ -523,13 +641,17 @@ export async function seedWorkspace(users: Users) {
       'New email to support@acme.test from Jamie Lee <jamie@example.org>:\n\nSubject: Charged twice\n\nHi, I was charged twice for my Pro plan this month ($149 each). Could you refund one of them? Thanks, Jamie',
       null,
       [
-        ...tool(harness('stripe_search_customers'), { email: 'jamie@example.org' }, [
-          { id: 'cus_Sample1', name: 'Jamie Lee', email: 'jamie@example.org' },
-        ]),
-        ...tool(harness('stripe_list_charges'), { customer: 'cus_Sample1' }, [
-          { id: 'ch_Sample1', amount: 14900, created: '2026-10-01' },
-          { id: 'ch_Sample2', amount: 14900, created: '2026-10-01' },
-        ]),
+        ...tool(
+          harness('stripe_api_read'),
+          stripeCall('GetCustomersSearch', { query: "email:'jamie@example.org'" }),
+          { data: [{ id: 'cus_Sample1', name: 'Jamie Lee', email: 'jamie@example.org' }] },
+        ),
+        ...tool(harness('stripe_api_read'), stripeCall('GetCharges', { customer: 'cus_Sample1' }), {
+          data: [
+            { id: 'ch_Sample1', amount: 14900, created: 1790812800 },
+            { id: 'ch_Sample2', amount: 14900, created: 1790812800 },
+          ],
+        }),
         {
           type: 'message.delta',
           id: id(),
@@ -537,9 +659,16 @@ export async function seedWorkspace(users: Users) {
         },
         {
           type: 'tool.started',
-          toolCallId: `call_${id()}`,
-          toolName: harness('stripe_refund'),
-          input: { charge: 'ch_Sample2', amount: 14900, reason: 'duplicate' },
+          toolCallId: refundCallId,
+          toolName: harness('stripe_api_write'),
+          input: refundCall,
+        },
+        {
+          type: 'approval.requested',
+          approvalId: refundTicketId,
+          toolCallId: refundCallId,
+          toolName: harness('stripe_api_write'),
+          input: refundCall,
         },
       ],
     ),
@@ -547,24 +676,30 @@ export async function seedWorkspace(users: Users) {
   await prisma.ticket.create({
     data: {
       ...inWorkspace,
+      id: refundTicketId,
       sessionId: refund.id,
       type: 'approval',
-      title: 'Sam: stripe refund (ch_Sample2, $149.00)',
+      title: `Sam: stripe api write (${refundTarget})`,
       payload: {
         connectionId: stripe.id,
-        connection: 'Acme test account',
-        operation: 'stripe_refund',
-        target: 'ch_Sample2, $149.00',
-        input: { charge: 'ch_Sample2', amount: 14900, reason: 'duplicate' },
+        connection: 'Acme (acct_1SampleAcme, test mode)',
+        operation: 'stripe_api_write',
+        target: refundTarget,
+        input: refundCall,
       },
       createdAt: minutes(38),
     },
   })
   await prisma.connectionCall.createMany({
     data: [
-      ['stripe_search_customers', false, 'jamie@example.org', 'ok'],
-      ['stripe_list_charges', false, 'cus_Sample1', 'ok'],
-      ['stripe_refund', true, 'ch_Sample2, $149.00', 'awaiting_approval'],
+      [
+        'stripe_api_read',
+        false,
+        `GetCustomersSearch {"query":"email:'jamie@example.org'"} (test mode)`,
+        'ok',
+      ],
+      ['stripe_api_read', false, 'GetCharges {"customer":"cus_Sample1"} (test mode)', 'ok'],
+      ['stripe_api_write', true, refundTarget, 'awaiting_approval'],
     ].map(([operation, write, target, result]) => ({
       ...inWorkspace,
       sessionId: refund.id,
@@ -689,7 +824,7 @@ export async function seedWorkspace(users: Users) {
     },
   })
 
-  // Finished long ago, with a summary: its task is done.
+  // Finished long ago, with a summary: its teammate declared it done (below).
   const checkout = await thread({
     title: 'Why is checkout slow on mobile?',
     teammateId: riley.id,
@@ -727,6 +862,16 @@ export async function seedWorkspace(users: Users) {
         'Merged in acme/web#121 and deployed.',
       ),
     ],
+  })
+  // A wake-up pending in it: its sidebar row shows an alarm.
+  await prisma.wakeup.create({
+    data: {
+      ...inWorkspace,
+      sessionId: checkout.id,
+      teammateId: riley.id,
+      note: 'Check checkout LCP on phones after a week of real traffic',
+      wakeAt: new Date(Date.now() + 7 * 24 * 60 * 60_000),
+    },
   })
 
   // The chief setting up the team, the first day.
@@ -774,7 +919,51 @@ export async function seedWorkspace(users: Users) {
     ),
   })
 
-  // Failed: the computer stopped mid-turn. Its task stays in Doing.
+  // Ended on choices nobody picked: it needs you, with its card in the thread (only words).
+  await thread({
+    title: 'Subject line for the November newsletter',
+    teammateId: maya.id,
+    member: ada,
+    accountId: adaAccount.id,
+    status: 'idle',
+    startedAt: hours(2),
+    events: turn(
+      maya.id,
+      adaAccount.id,
+      'Give me a few subject lines for the November newsletter, the one announcing CSV export.',
+      ada.id,
+      [
+        ...tool(
+          harness('offer_choices'),
+          {
+            question: 'Which subject line should the newsletter go out with?',
+            options: [
+              {
+                id: 'plain',
+                label: '1 · Plain and clear',
+                description: 'CSV export is here: every report, one click (42 characters)',
+              },
+              {
+                id: 'question',
+                label: '2 · A question',
+                description:
+                  'Still copying tables by hand? Export any report to CSV, from every page that shows one, in one click',
+              },
+              {
+                id: 'short',
+                label: '3 · Short',
+                description: 'Your data, your spreadsheet',
+              },
+            ],
+          },
+          { shown: true },
+        ),
+      ],
+      'Three directions, from the plainest to the shortest. I would go with the first: it says what changed, and plain subjects get opened most in our past sends.',
+    ),
+  })
+
+  // Failed: the computer stopped mid-turn.
   const upgrade = await thread({
     title: 'Upgrade Next.js to 16',
     teammateId: riley.id,
@@ -834,144 +1023,32 @@ export async function seedWorkspace(users: Users) {
   })
 
   // -------------------------------------------------------------------------
-  // Tasks, one per column
+  // Threads their teammate declared done (docs/board.md)
   // -------------------------------------------------------------------------
-  const task = (data: {
-    title: string
-    description: string
-    priority?: 'low' | 'medium' | 'high' | 'urgent'
-    teammateId?: string
-    projectId?: string
-    createdByMemberId?: string
-    completedAt?: Date
-    archivedAt?: Date
-    trashedAt?: Date
-    summary?: string
-    deliverables?: { label: string; url: string }[]
-    sessionId?: string
-    parentId?: string
-    createdAt: Date
-  }) => {
-    const { sessionId, ...rest } = data
-    return prisma.task
-      .create({ data: { ...inWorkspace, createdByMemberId: ada.id, ...rest } })
-      .then(async (row) => {
-        if (sessionId)
-          await prisma.session.update({
-            where: { id: sessionId },
-            // Keep when it last moved: thread lists sort by it.
-            data: {
-              taskId: row.id,
-              updatedAt: (await prisma.session.findUniqueOrThrow({ where: { id: sessionId } }))
-                .updatedAt,
-            },
-          })
-        return row
-      })
+  const declaredDone = async (id: string, at: Date, summary: string, teammateId: string) => {
+    const { updatedAt } = await prisma.session.findUniqueOrThrow({ where: { id } })
+    await prisma.session.update({
+      where: { id },
+      // Keep when it last moved: thread lists sort by it.
+      data: {
+        doneAt: at,
+        doneSummary: summary,
+        doneByType: 'teammate',
+        doneById: teammateId,
+        updatedAt,
+      },
+    })
   }
-  await task({
-    title: 'Add CSV export to the billing page',
-    description:
-      'Customers ask for their invoices as CSV. One button on /billing, all invoices of the year.',
-    priority: 'medium',
-    projectId: website.id,
-    createdAt: days(4),
-  })
-  // A mission: one card on the board for the launch's tasks.
-  const launchMission = await task({
-    title: 'Launch Acme Teams',
-    description:
-      'Everything for the Teams launch on November 4: the sales deck, the newsletter and the blog post.',
-    priority: 'medium',
-    projectId: launch.id,
-    createdByMemberId: bob.id,
-    createdAt: days(3),
-  })
-  await task({
-    title: 'Publish the launch blog post',
-    description:
-      'A post on acme.com/blog announcing Teams, with the pricing and two customer quotes.',
-    priority: 'medium',
-    projectId: launch.id,
-    createdByMemberId: bob.id,
-    parentId: launchMission.id,
-    createdAt: days(2),
-  })
-  await task({
-    title: 'Write the Acme Teams sales deck',
-    description: '10 slides for sales calls: problem, Teams, pricing, security, customer quotes.',
-    priority: 'low',
-    projectId: launch.id,
-    createdByMemberId: bob.id,
-    parentId: launchMission.id,
-    createdAt: days(2),
-  })
-  await task({
-    title: 'Add dark mode to the pricing page',
-    description: 'The pricing cards stay white in dark mode. Done when the PR is merged.',
-    priority: 'high',
-    teammateId: riley.id,
-    projectId: website.id,
-    sessionId: darkMode.id,
-    createdAt: hours(5),
-  })
-  await task({
-    title: 'Upgrade Next.js to 16',
-    description: 'Move acme/web to Next.js 16 and fix what breaks; the tests must pass.',
-    priority: 'medium',
-    teammateId: riley.id,
-    projectId: website.id,
-    createdByMemberId: bob.id,
-    sessionId: upgrade.id,
-    createdAt: hours(20),
-  })
-  await task({
-    title: 'October newsletter',
-    description: 'Announce Acme Teams to the newsletter list, approved by Bob before sending.',
-    priority: 'medium',
-    teammateId: maya.id,
-    projectId: launch.id,
-    createdByMemberId: bob.id,
-    sessionId: newsletter.id,
-    parentId: launchMission.id,
-    createdAt: hours(2),
-  })
-  await task({
-    title: 'Speed up checkout on mobile',
-    description: 'Checkout takes 6 s to show on phones; get it under 2.5 s LCP.',
-    priority: 'urgent',
-    teammateId: riley.id,
-    projectId: website.id,
-    sessionId: checkout.id,
-    completedAt: days(2),
-    summary:
-      'Stripe.js now loads only on /checkout, after the form: LCP 1.9 s on a mid-range phone.',
-    deliverables: [
-      { label: 'acme/web#121', url: 'https://github.com/acme/web/pull/121' },
-      { label: 'Checkout performance notes', url: 'Projects/Website/checkout-performance.md' },
-    ],
-    createdAt: days(3),
-  })
-  await task({
-    title: 'Set up the team',
-    description: 'Teammates for engineering, support and marketing.',
-    teammateId: chief.id,
-    sessionId: setup.id,
-    completedAt: days(29),
-    archivedAt: days(20),
-    summary: 'Riley, Sam and Maya created.',
-    createdAt: days(29),
-  })
-  await task({
-    title: 'Try a chatbot on the docs',
-    description: 'Dropped: the docs search is enough for now.',
-    priority: 'low',
-    trashedAt: days(6),
-    createdAt: days(12),
-  })
+  await declaredDone(
+    checkout.id,
+    days(2),
+    'Stripe.js now loads only on /checkout, after the form: LCP 1.9 s on a mid-range phone.',
+    riley.id,
+  )
+  await declaredDone(setup.id, days(29), 'Riley, Sam and Maya created.', chief.id)
 
   // -------------------------------------------------------------------------
-  // The pull request Riley opened, approved by a review
+  // The pull request Riley opened, approved by Kai's review
   // -------------------------------------------------------------------------
   const pull = await prisma.pullRequest.create({
     data: {
@@ -983,11 +1060,7 @@ export async function seedWorkspace(users: Users) {
       baseRef: 'main',
       sessionId: darkMode.id,
       authorTeammateId: riley.id,
-      reviewerTeammateId: chief.id,
-      reviewStatus: 'approved',
-      round: 1,
-      reviewedSha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
-      requestedByMemberId: ada.id,
+      reviewSessionId: darkModeReview.id,
       createdAt: hours(4),
     },
   })
@@ -995,7 +1068,8 @@ export async function seedWorkspace(users: Users) {
     data: {
       ...inWorkspace,
       pullRequestId: pull.id,
-      teammateId: chief.id,
+      teammateId: kai.id,
+      sessionId: darkModeReview.id,
       verdict: 'approve',
       body: 'Looks right: the cards use the theme tokens and both themes were checked.',
       sha: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
@@ -1045,6 +1119,25 @@ export async function seedWorkspace(users: Users) {
     'Data/customers.csv',
     'name,email,plan,seats,mrr\nGlobex,ops@globex.test,pro,18,342\nInitech,it@initech.test,business,40,1560\nUmbrella,billing@umbrella.test,pro,7,133\nHooli,team@hooli.test,business,95,3705\n',
   )
+  // A tool (docs/tools.md) Maya made in the newsletter's thread: a review board for the visuals.
+  for (const [name, svg] of Object.entries(SAMPLE_VISUALS))
+    await file(`Projects/Fall launch/visuals/${name}`, svg, asMaya)
+  const fromNewsletter = { sessionId: newsletter.id }
+  const reviewTool = 'Projects/Fall launch/visual-review.tool'
+  await saveLibraryFile(
+    db,
+    scope,
+    asMaya,
+    { path: `${reviewTool}/tool.json`, bytes: new TextEncoder().encode(SAMPLE_TOOL_MANIFEST) },
+    fromNewsletter,
+  )
+  await saveLibraryFile(
+    db,
+    scope,
+    asMaya,
+    { path: `${reviewTool}/index.html`, bytes: new TextEncoder().encode(SAMPLE_TOOL_PAGE) },
+    fromNewsletter,
+  )
   // A restricted folder: only teammates with a grant reach it.
   const finance = await prisma.libraryFolder.create({
     data: {
@@ -1070,12 +1163,49 @@ export async function seedWorkspace(users: Users) {
     { kind: 'workspace_memory' },
     '# Workspace memory\n\n- Acme is a 12-person SaaS selling project tracking to small teams.\n- Customers are answered within one business day.\n- Refunds over $100 need a person to approve.\n- main deploys to production on every merge.\n',
   )
+  // A core every thread in the project loads, and topics read when the work touches them.
   await writeMemory(
     db,
     scope,
     asAda,
     { kind: 'project_memory', projectId: website.id },
-    '# Website memory\n\n- Use the theme tokens (bg-card, text-foreground), never raw colors.\n- Run `pnpm test` before opening a pull request.\n',
+    [
+      '# Website memory',
+      '',
+      '- Use the theme tokens (bg-card, text-foreground), never raw colors.',
+      '- Run `pnpm test` before opening a pull request.',
+      '',
+      '## Checkout',
+      '',
+      'Read before touching the checkout or payments.',
+      '',
+      '- Previews use Stripe in test mode; production is the live account: never test there.',
+      '- Only the checkout page loads Stripe.js.',
+      '',
+      '## Pricing page',
+      '',
+      'Read before changing prices or plans.',
+      '',
+      '- Prices come from the Stripe catalog; the page never hard-codes them.',
+      '- Annual plans show the monthly price, billed yearly.',
+      '',
+    ].join('\n'),
+  )
+  // A thread corrected a line: the old one is in the archive, with why.
+  await editMemory(
+    db,
+    scope,
+    { type: 'teammate', id: riley.id },
+    { kind: 'project_memory', projectId: website.id, name: website.name },
+    MemoryEdit.parse({
+      replace: [
+        {
+          from: 'Annual plans show the monthly price, billed yearly.',
+          to: 'Annual plans show the yearly price, with the monthly equivalent under it.',
+        },
+      ],
+    }),
+    checkout.id,
   )
   await writeMemory(
     db,
@@ -1150,7 +1280,7 @@ export async function seedWorkspace(users: Users) {
       ...turn(
         riley.id,
         adaAccount.id,
-        `2 child threads you were waiting for have finished:\n- Riley · “Bisect the Next.js versions” (${bisectId}): reports. It broke in 16.3.0-canary.34 (vercel/next.js#94062); 16.3.0-canary.33 works.\n- Riley · “Try Next 16.4.2 on acme/web” (${upgradeId}): needs a person (a ticket is open in it). The upgrade does not fix it.`,
+        `2 child threads you were waiting for have finished:\n- Riley · “Bisect the Next.js versions” (${bisectId}): reports. It broke in 16.3.0-canary.34 (vercel/next.js#94062); 16.3.0-canary.33 works.\n- Riley · “Try Next 16.4.2 on acme/web” (${upgradeId}): needs a person. The upgrade does not fix it.`,
         null,
         [],
         'Found it: live reload broke in Next 16.3.0-canary.34 (vercel/next.js#94062), and 16.4.2 does not fix it. Its upgrade thread asks you whether to keep 16.4.2 anyway.',
@@ -1367,6 +1497,96 @@ export async function seedWorkspace(users: Users) {
       ),
     ],
   })
+  // Asides (docs/side-replies.md): messages written during the turn, answered on the side.
+  const asides = { question: id(), change: id(), work: id() }
+  const aside = (
+    messageId: string,
+    text: string,
+    reply: string,
+    route: 'answer' | 'steer' | 'queue',
+  ): Draft[] => [
+    { type: 'message.queued', messageId, text, memberId: ada.id, waitingFor: 'turn' },
+    { type: 'message.side', messageId, status: 'answering', teammateId: riley.id },
+    {
+      type: 'message.side',
+      messageId,
+      status: 'answered',
+      teammateId: riley.id,
+      text: reply,
+      route,
+      ...(route === 'steer' ? { steerAt: minutes(30).toISOString() } : {}),
+    },
+    ...(route === 'answer'
+      ? [
+          {
+            type: 'message.user',
+            text,
+            memberId: ada.id,
+            messageId,
+            side: { text: reply, route },
+          } as Draft,
+        ]
+      : route === 'steer'
+        ? [
+            {
+              type: 'message.user',
+              text,
+              memberId: ada.id,
+              messageId,
+              steered: true,
+              side: { text: reply, route },
+            } as Draft,
+          ]
+        : []),
+  ]
+  await thread({
+    title: 'Fix the CSV export',
+    teammateId: riley.id,
+    member: ada,
+    accountId: adaAccount.id,
+    status: 'running',
+    startedAt: minutes(40),
+    projectId: website.id,
+    events: [
+      ...turn(riley.id, adaAccount.id, 'Fix the CSV export and open a pull request.', ada.id, [
+        { type: 'message.done', id: id(), text: 'On it: I reproduce it first.' },
+        ...tool(
+          'Bash',
+          { command: 'pnpm test export' },
+          '1 failed: invoices.csv has two date columns',
+        ),
+      ]),
+      ...aside(
+        asides.question,
+        'Did you find where it came from?',
+        'Yes: `exportRows` formats the date twice. I am fixing it, then I run the tests again.',
+        'answer',
+      ),
+      ...tool('Edit', { file_path: 'apps/web/lib/export.ts' }, 'Edited').map((e) => ({
+        ...e,
+        teammateId: riley.id,
+      })),
+      ...aside(
+        asides.change,
+        'Use a semicolon as the separator instead.',
+        'Noted: I pass it on to the work in progress.',
+        'steer',
+      ),
+      ...aside(
+        asides.work,
+        'Then add an Excel export.',
+        'That is new work: I start on it once this fix is done.',
+        'queue',
+      ),
+      {
+        type: 'tool.started',
+        toolCallId: `call_${id()}`,
+        toolName: 'Bash',
+        input: { command: 'pnpm test export' },
+        teammateId: riley.id,
+      },
+    ],
+  })
   await thread({
     title: 'Move the blog to MDX',
     teammateId: riley.id,
@@ -1417,6 +1637,9 @@ export async function seedWorkspace(users: Users) {
     projectId: support.id,
     repository: 'acme/web',
   })
+
+  // A month of tokens for Settings › Usage, once every thread is there.
+  await seedUsage(inWorkspace)
 
   console.log('created: sample organization Acme (ada owner, bob admin, carol member)')
 }

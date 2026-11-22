@@ -1,0 +1,832 @@
+// Billing: a Brigade Cloud plan, subscribed per workspace, which gives the workspace its cloud
+// computer: Max ($99, tier `cloud`), or Starter ($15, with a monthly allowance of cloud computer
+// hours). Brigade itself stays free on members' own machines. Stripe holds the subscription;
+// BillingSubscription rows follow it. Without STRIPE_SECRET_KEY billing is off and every
+// workspace has the cloud computer, as on a self-hosted Brigade.
+//
+// One rule keeps the rows right: they only ever take Stripe's current state, read under a
+// lock on the workspace, never what an event says. Events come late, twice, out of order
+// or overlapping; each one only says "look again". A read that fails changes nothing, and
+// Stripe is asked to send the event again. The rows are written through the lock's own
+// transaction: a run that outlived its lock (a slow Stripe) writes nothing.
+import { HTTPException } from 'hono/http-exception'
+import Stripe from 'stripe'
+import { identifyWorkspace, personOfMember, trackLater } from './analytics.js'
+import { env } from './config.js'
+import { prisma, type Prisma } from './db.js'
+import { noteFailure } from './ops/failures.js'
+import { recordAdConversion } from './google-ads.js'
+import { usedBy } from './vm-costs.js'
+
+export const billingEnabled = () => !!env.STRIPE_SECRET_KEY
+
+export const stripeClient = env.STRIPE_SECRET_KEY
+  ? new Stripe(env.STRIPE_SECRET_KEY, {
+      // Workers have no Node http: fetch everywhere.
+      httpClient: Stripe.createFetchHttpClient(),
+      // Well within a lock (billingTiming): a run that still outlives it writes nothing.
+      timeout: 15_000,
+      maxNetworkRetries: 1,
+      appInfo: { name: 'Brigade', url: 'https://www.brigade.lol' },
+    })
+  : null
+
+/** How long a run may hold a workspace's billing lock. Tests shorten it. */
+export const billingTiming = { lockMs: 60_000 }
+
+/**
+ * The Cloud plan: $99 a month, €99 in the euro zone. One Stripe price with a EUR currency
+ * option, found by its lookup key, so test and live accounts need no price ids here:
+ * Checkout shows the customer's currency. Add-ons (an email address at $10 a month) will
+ * be more items on the same subscription.
+ */
+export const CLOUD_PLAN = { name: 'cloud', lookupKey: 'brigade_cloud_monthly' }
+
+/**
+ * The Cloud plans, by tier, each a Stripe price found by its lookup key (scripts/stripe-setup.mjs).
+ * Both are rows of plan "cloud": the tier follows the subscription's price, so a switch in
+ * Stripe's portal changes it on the same row.
+ * - cloud: Max, $99 / €99 a month, the cloud computer without a limit of hours. Its code name
+ *   stays `cloud` (rows, events, the lookup key): only people see "Max".
+ * - starter: Starter, $15 / €15 a month: the same cloud computer for `hours` hours
+ *   a billing period (its VM's running time, src/vm-costs.ts), without threads'
+ *   own machines. Past them, the computer sleeps until the period renews or the plan goes up.
+ */
+export const PLANS = {
+  cloud: { lookupKey: CLOUD_PLAN.lookupKey, name: 'Max' },
+  starter: {
+    lookupKey: 'brigade_cloud_starter_monthly',
+    name: 'Starter',
+    hours: 100,
+  },
+} as const
+
+export type Tier = keyof typeof PLANS
+
+/** The tier of a Stripe price, by its lookup key: Cloud unless it is Starter's. */
+export const tierOfPrice = (lookupKey: string | null | undefined): Tier =>
+  lookupKey === PLANS.starter.lookupKey ? 'starter' : 'cloud'
+
+/**
+ * The statuses that keep the cloud computer. past_due too: Stripe retries the payment for a
+ * while, and only once it gives up (unpaid or canceled) does the workspace lose it.
+ */
+const ENTITLED = ['active', 'trialing', 'past_due']
+
+export const entitles = (status: string) => ENTITLED.includes(status)
+
+/** Statuses of a subscription that is over: a new one may be made. */
+const OVER = ['canceled', 'incomplete_expired']
+
+type Db = Prisma.TransactionClient | typeof prisma
+
+/** The workspace's plan that counts: the one that entitles it, else the latest. */
+export async function workspacePlan(workspaceId: string, db: Db = prisma) {
+  const rows = await db.billingSubscription.findMany({
+    where: { workspaceId, plan: CLOUD_PLAN.name },
+  })
+  return pickPlan(rows)
+}
+
+/** Of a workspace's subscription rows, the one that entitles it, else the most recent. */
+export function pickPlan<T extends { status: string; periodStart: Date | null }>(rows: T[]) {
+  const entitled = rows.find((row) => entitles(row.status))
+  if (entitled) return entitled
+  const ended = rows.filter((row) => row.status !== 'incomplete')
+  return (
+    ended.sort((a, b) => (b.periodStart?.getTime() ?? 0) - (a.periodStart?.getTime() ?? 0))[0] ??
+    null
+  )
+}
+
+/**
+ * The workspace's plan as it entitles it now: whether it has one (always, unless billing is on)
+ * and its tier. Not the hours of Starter: see cloudAccess.
+ */
+export async function planOf(workspaceId: string) {
+  if (!billingEnabled()) return { entitled: true, tier: 'cloud' as Tier, plan: null }
+  const plan = await workspacePlan(workspaceId)
+  const entitled = !!plan && entitles(plan.status)
+  return { entitled, tier: (entitled ? plan.tier : 'cloud') as Tier, plan: entitled ? plan : null }
+}
+
+/** Whether the workspace has a Cloud plan (either tier): always, unless billing is on. */
+export async function planEntitled(workspaceId: string) {
+  return (await planOf(workspaceId)).entitled
+}
+
+const DAY_MS = 24 * 60 * 60_000
+
+/** The first of the month after `date`'s, in UTC. */
+const nextMonth = (date: Date) =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1))
+
+/**
+ * Hours the workspace's cloud computer ran in [since, now): every VM it had (a replacement
+ * makes a new one), from the runs Brigade keeps of them (src/vm-costs.ts), the time before its
+ * idle stop included, as its provider bills it.
+ */
+export async function computerHours(workspaceId: string, since: Date, now = new Date()) {
+  const runs = await prisma.vmRun.findMany({
+    where: {
+      workspaceId,
+      kind: 'computer',
+      status: { not: 'void' },
+      startedAt: { lt: now },
+      OR: [{ stoppedAt: null }, { stoppedAt: { gt: since } }],
+    },
+    select: { start: true, status: true, startedAt: true, stoppedAt: true, size: true },
+  })
+  return runs.reduce((hours, run) => hours + usedBy(run, since, now, now).hours, 0)
+}
+
+export type StarterUsage = {
+  /** Hours the cloud computer ran since the period began. */
+  usedHours: number
+  includedHours: number
+  /** When the hours start over: the end of the period paid for. */
+  resetsAt: Date
+}
+
+/**
+ * A Starter plan's hours this billing period: from its start to now. Without one Stripe gave (or
+ * one older than a period, a renewal not read yet), the calendar month in UTC.
+ */
+export async function starterUsage(
+  workspaceId: string,
+  plan: { periodStart: Date | null; periodEnd: Date | null },
+  now = new Date(),
+): Promise<StarterUsage> {
+  const current =
+    plan.periodStart &&
+    plan.periodEnd &&
+    plan.periodStart <= now &&
+    plan.periodEnd > now &&
+    now.getTime() - plan.periodStart.getTime() < 32 * DAY_MS
+  const since = current
+    ? plan.periodStart!
+    : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+  return {
+    usedHours: await computerHours(workspaceId, since, now),
+    includedHours: PLANS.starter.hours,
+    resetsAt: current ? plan.periodEnd! : nextMonth(now),
+  }
+}
+
+export const CLOUD_PLAN_REQUIRED =
+  'The cloud computer comes with Brigade Cloud: subscribe in Settings › Billing'
+
+const day = (date: Date) =>
+  date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'UTC' })
+
+/** Why the cloud computer may not run: Starter's hours are used up until `resetsAt`. */
+export const hoursUsedUp = (resetsAt: Date) =>
+  `This month's ${PLANS.starter.hours} cloud computer hours of Starter are used up: the cloud computer sleeps until ${day(resetsAt)}, or upgrade to Max in Settings › Billing`
+
+export type CloudAccess =
+  | { ok: true }
+  | { ok: false; reason: 'plan'; message: string }
+  | { ok: false; reason: 'hours'; message: string; resetsAt: Date }
+
+/**
+ * Whether the workspace's cloud computer may run now: always without billing; with it, while
+ * the workspace has a Cloud plan and, on Starter, hours left this period.
+ */
+export async function cloudAccess(workspaceId: string, now = new Date()): Promise<CloudAccess> {
+  const { entitled, tier, plan } = await planOf(workspaceId)
+  if (!entitled) return { ok: false, reason: 'plan', message: CLOUD_PLAN_REQUIRED }
+  if (tier !== 'starter' || !plan) return { ok: true }
+  const usage = await starterUsage(workspaceId, plan, now)
+  if (usage.usedHours < usage.includedHours) return { ok: true }
+  return {
+    ok: false,
+    reason: 'hours',
+    message: hoursUsedUp(usage.resetsAt),
+    resetsAt: usage.resetsAt,
+  }
+}
+
+/** Whether the workspace may have its cloud computer running now (cloudAccess). */
+export async function cloudEntitled(workspaceId: string) {
+  return (await cloudAccess(workspaceId)).ok
+}
+
+/** 402 unless the workspace's cloud computer may run now, saying why (cloudAccess). */
+export async function requireCloudPlan(workspaceId: string) {
+  const access = await cloudAccess(workspaceId)
+  if (!access.ok) throw new HTTPException(402, { message: access.message })
+}
+
+/**
+ * Email on Brigade's own addresses comes with the Cloud plan: Resend charges for each mail sent
+ * and received. Turning an address on, making a sign-up address and sending are refused
+ * without it; Gmail, which costs nothing, is not.
+ */
+export const EMAIL_PLAN_REQUIRED =
+  'Email addresses come with Brigade Cloud: an owner or admin subscribes in Settings › Billing'
+
+/** 402 unless the workspace may use Brigade's email addresses: with either Cloud plan. */
+export async function requireEmailPlan(workspaceId: string) {
+  if (!(await planEntitled(workspaceId)))
+    throw new HTTPException(402, { message: EMAIL_PLAN_REQUIRED })
+}
+
+/**
+ * `run` alone for the workspace's billing: no other Checkout, event or read for it meanwhile,
+ * whichever Worker or process it reaches. Its writes go through `tx`, the lock's transaction:
+ * should `run` outlive the lock, they fail and are rolled back rather than land after another
+ * run's.
+ */
+function withWorkspaceLock<T>(
+  workspaceId: string,
+  run: (tx: Prisma.TransactionClient) => Promise<T>,
+) {
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`billing:${workspaceId}`}))`
+      return run(tx)
+    },
+    { timeout: billingTiming.lockMs, maxWait: billingTiming.lockMs },
+  )
+}
+
+const fromUnix = (seconds: number | null | undefined) => (seconds ? new Date(seconds * 1000) : null)
+
+/**
+ * A Stripe subscription, as Stripe has it now, on the workspace's row: the row already naming
+ * it, else the one its Checkout was for (`rowId`, from Brigade's own metadata), else a new one.
+ * `committed` sends its analytics: the caller runs it once the transaction has committed, so
+ * nothing is sent for a change rolled back, and the workspace's plan is read as saved.
+ */
+export async function savePlan(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  subscription: Stripe.Subscription,
+  rowId?: string,
+) {
+  const item = subscription.items.data[0]
+  const state = {
+    stripeSubscriptionId: subscription.id,
+    // Its price says which plan it is: a switch in the portal changes it here.
+    ...(item?.price && { tier: tierOfPrice(item.price.lookup_key) }),
+    stripeCustomerId:
+      typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id,
+    status: subscription.status,
+    cancelAtPeriodEnd: subscription.cancel_at_period_end,
+    cancelAt: fromUnix(subscription.cancel_at),
+    canceledAt: fromUnix(subscription.canceled_at),
+    endedAt: fromUnix(subscription.ended_at),
+    ...(item && {
+      periodStart: fromUnix(item.current_period_start),
+      periodEnd: fromUnix(item.current_period_end),
+    }),
+  }
+  const row =
+    (await tx.billingSubscription.findFirst({
+      where: { workspaceId, stripeSubscriptionId: subscription.id },
+    })) ??
+    (rowId
+      ? await tx.billingSubscription.findFirst({
+          where: { id: rowId, workspaceId, stripeSubscriptionId: null },
+        })
+      : null)
+  const saved = await (row
+    ? tx.billingSubscription.update({ where: { id: row.id }, data: state })
+    : tx.billingSubscription.create({ data: { workspaceId, plan: CLOUD_PLAN.name, ...state } }))
+  const before = row?.status ?? null
+  // Of a person who came from a Google ad: Google Ads' conversion, with its price, kept with
+  // the plan (src/google-ads.ts).
+  const userId = subscription.metadata?.userId
+  if (userId && startedNow(before, subscription.status)) {
+    const price = item?.price
+    await recordAdConversion(tx, userId, 'subscription', {
+      ...(price?.unit_amount != null && { value: price.unit_amount / 100 }),
+      ...(price?.currency && { currency: price.currency }),
+    })
+  }
+  return { saved, committed: () => trackPlanChange(workspaceId, before, subscription) }
+}
+
+/** A subscription that gives the plan now, and did not before: it started. */
+function startedNow(before: string | null, after: string) {
+  return !(before && entitles(before)) && (after === 'active' || after === 'trialing')
+}
+
+/**
+ * Product analytics (src/analytics.ts) for a subscription that changed status: started,
+ * canceled, or a payment failed. Of the member who started its Checkout.
+ */
+function trackPlanChange(
+  workspaceId: string,
+  before: string | null,
+  subscription: Stripe.Subscription,
+) {
+  const after = subscription.status
+  if (before === after) return
+  identifyWorkspace(workspaceId)
+  const event = startedNow(before, after)
+    ? 'subscription_started'
+    : after === 'canceled'
+      ? 'subscription_canceled'
+      : after === 'past_due' || after === 'unpaid'
+        ? 'payment_failed'
+        : null
+  if (!event) return
+  const userId = subscription.metadata?.userId
+  const price = subscription.items.data[0]?.price
+  const months = (Date.now() - subscription.start_date * 1000) / (30.44 * 24 * 60 * 60_000)
+  void prisma.workspace
+    .findUnique({ where: { id: workspaceId }, select: { organizationId: true } })
+    .then((workspace) => {
+      if (!workspace) return
+      trackLater(
+        userId ? personOfMember(userId) : null,
+        event,
+        { ...workspace, workspaceId },
+        {
+          feature: 'billing',
+          plan: CLOUD_PLAN.name,
+          tier: tierOfPrice(price?.lookup_key),
+          status: after,
+          ...(event === 'subscription_started' && price
+            ? {
+                currency: price.currency,
+                ...(price.unit_amount !== null && { amount: price.unit_amount / 100 }),
+              }
+            : {}),
+          ...(event === 'subscription_canceled' && {
+            months_active: Math.max(0, Math.round(months * 10) / 10),
+            ...(subscription.cancellation_details?.reason && {
+              reason: subscription.cancellation_details.reason,
+            }),
+          }),
+        },
+      )
+    })
+    .catch((error: unknown) => console.warn(`analytics: ${String(error)}`))
+}
+
+/**
+ * Read the subscription from Stripe and keep what it says, then let the cloud computer
+ * follow. A subscription that names another workspace, or none (another product's), is
+ * left alone. Throws when Stripe cannot be read, the lock was lost or the cloud computer
+ * could not follow: the event is to be sent again.
+ */
+export async function reconcile(target: {
+  workspaceId: string
+  subscriptionId: string
+  rowId?: string
+}) {
+  const { workspaceId } = target
+  if (!stripeClient) return
+  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } })
+  if (!workspace) {
+    // Organizations are not deleted while a subscription runs (guardOrganizationDeletion).
+    console.error(`billing: ${target.subscriptionId} names ${workspaceId}, which is gone`)
+    return
+  }
+  const saved = await withWorkspaceLock(workspaceId, async (tx) => {
+    const subscription = await stripeClient!.subscriptions.retrieve(target.subscriptionId)
+    if (subscription.metadata?.workspaceId !== workspaceId) return null
+    return (await savePlan(tx, workspaceId, subscription, target.rowId)).committed
+  })
+  if (!saved) return
+  saved()
+  await applyPlan(workspaceId)
+}
+
+/** What a webhook event is about, from Brigade's metadata: its workspace and subscription. */
+export function eventTarget(type: string, object: Record<string, any>) {
+  const metadata = (object.metadata ?? {}) as Record<string, string>
+  if (!metadata.workspaceId) return null
+  if (type === 'checkout.session.completed' && object.mode === 'subscription') {
+    const subscription = object.subscription
+    const subscriptionId = typeof subscription === 'string' ? subscription : subscription?.id
+    return subscriptionId
+      ? { workspaceId: metadata.workspaceId, subscriptionId, rowId: metadata.rowId }
+      : null
+  }
+  if (type.startsWith('customer.subscription.'))
+    return { workspaceId: metadata.workspaceId, subscriptionId: object.id as string }
+  return null
+}
+
+/**
+ * Stripe's webhook ({API_URL}/api/billing/webhook): verified by its signature, then reconcile.
+ * 200 once done, or for an event that is not Brigade's; 503 when it could not be done, so
+ * Stripe sends the event again.
+ */
+export async function stripeWebhook(request: Request) {
+  const signature = request.headers.get('stripe-signature')
+  if (!stripeClient || !env.STRIPE_WEBHOOK_SECRET || !signature)
+    return Response.json({ error: 'Not a Stripe event' }, { status: 400 })
+  let event: Stripe.Event
+  try {
+    event = await stripeClient.webhooks.constructEventAsync(
+      await request.text(),
+      signature,
+      env.STRIPE_WEBHOOK_SECRET,
+    )
+  } catch {
+    noteFailure('stripe-signature', 'a request to the billing webhook failed its signature check')
+    return Response.json({ error: 'Not a Stripe event' }, { status: 400 })
+  }
+  const target = eventTarget(event.type, event.data.object)
+  if (!target) return Response.json({ received: true })
+  try {
+    await reconcile(target)
+  } catch (error) {
+    console.error(`billing: ${event.type} ${event.id} not reconciled`, error)
+    noteFailure(
+      'stripe-webhook',
+      `${event.type} ${event.id}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    return Response.json({ error: 'Not reconciled: send it again' }, { status: 503 })
+  }
+  return Response.json({ received: true })
+}
+
+/**
+ * Back from Checkout ({API_URL}/api/billing/return): its subscription, reconciled at once rather
+ * than when the webhook comes. Needs no session: it only reads Stripe and keeps what Stripe says.
+ */
+export async function checkoutReturn(sessionId: string | undefined) {
+  if (!stripeClient || !sessionId) return
+  const session = await stripeClient.checkout.sessions.retrieve(sessionId)
+  const target = eventTarget('checkout.session.completed', session)
+  if (target) await reconcile(target)
+}
+
+/**
+ * Without a webhook (a preview), changes made in Stripe (a cancellation in its portal) reach
+ * Brigade only by asking: on reading the plan. With one, the row as it is.
+ */
+export async function refreshPlan(workspaceId: string) {
+  const plan = await workspacePlan(workspaceId)
+  if (!env.STRIPE_WEBHOOK_SECRET && plan?.stripeSubscriptionId)
+    await reconcile({ workspaceId, subscriptionId: plan.stripeSubscriptionId })
+  return workspacePlan(workspaceId)
+}
+
+/**
+ * Brigade's settings for Stripe's customer portal (scripts/stripe-setup.mjs). The account's
+ * default portal is another product's (Papers): without Brigade's, none opens, rather than that
+ * one. Only a configuration found is kept: once it is set up again, the next call finds it.
+ */
+let portal: Promise<string> | undefined
+export function portalConfiguration() {
+  portal ??= (async () => {
+    const { data } = await stripeClient!.billingPortal.configurations.list({
+      active: true,
+      limit: 100,
+    })
+    const id = data.find((configuration) => configuration.metadata?.brigade === 'portal')?.id
+    if (!id) throw new Error('Stripe has no active customer portal configuration for Brigade')
+    return id
+  })().catch((error: unknown) => {
+    portal = undefined
+    throw error
+  })
+  return portal
+}
+
+/** Only for tests. */
+export const forgetPortalConfiguration = () => {
+  portal = undefined
+}
+
+/**
+ * The cloud computer follows the workspace's plan as it is now: with it, the computer is
+ * created on the first subscription; without it, a computer that runs, starts or is being made
+ * is stopped, keeping its disk until the plan comes back. A stop that fails throws, so the
+ * event is sent again; the idle check stops it meanwhile (src/cloud.ts), and a computer still
+ * being made stops itself once made.
+ */
+export async function applyPlan(workspaceId: string) {
+  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } })
+  if (!workspace) return
+  // Not imported above: src/cloud.ts imports this module.
+  const { createWorkspaceComputer } = await import('./cloud.js')
+  const { hubs } = await import('./hub.js')
+  if (await cloudEntitled(workspace.id)) {
+    await createWorkspaceComputer(workspace)
+    return
+  }
+  const computers = await prisma.computer.findMany({
+    where: {
+      workspaceId: workspace.id,
+      kind: 'cloud',
+      status: { notIn: ['stopped', 'destroyed'] },
+    },
+  })
+  const failed: unknown[] = []
+  for (const computer of computers)
+    await hubs
+      .get(computer.workspaceId)
+      .shutDown(computer)
+      .catch((error) =>
+        // One that was up is the event's to retry; a broken one, the minute check's.
+        ['running', 'starting'].includes(computer.status)
+          ? failed.push(error)
+          : console.error(`shutting ${computer.id} down failed`, error),
+      )
+  if (failed.length)
+    throw new AggregateError(failed, `stopping ${workspaceId}'s cloud computer failed`)
+}
+
+/**
+ * The workspace's own Stripe customer, made on its first Checkout: its subscription, invoices
+ * and card, and nothing else, so the portal opened for it shows only this workspace's plan,
+ * whoever pays. Never a customer found by email: the account is shared with other products.
+ */
+async function workspaceCustomer(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+  payer: { email: string },
+) {
+  const workspace = await tx.workspace.findUniqueOrThrow({ where: { id: workspaceId } })
+  if (workspace.stripeCustomerId) return workspace.stripeCustomerId
+  const customer = await stripeClient!.customers.create({
+    name: workspace.name,
+    email: payer.email,
+    metadata: { workspaceId, product: 'brigade' },
+  })
+  await tx.workspace.update({
+    where: { id: workspaceId },
+    data: { stripeCustomerId: customer.id },
+  })
+  return customer.id
+}
+
+/** The customer whose portal manages the workspace's plan: the workspace's own. */
+export async function workspaceCustomerId(workspaceId: string) {
+  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } })
+  return workspace?.stripeCustomerId ?? null
+}
+
+/**
+ * Expire the customer's Checkouts still open, so none of them can be paid any more. One paid
+ * meanwhile can no longer be expired: its subscription is then in Stripe, for the caller's
+ * next look.
+ */
+async function closeOpenCheckouts(customer: string) {
+  const stripe = stripeClient!
+  for await (const open of stripe.checkout.sessions.list({ customer, status: 'open' }))
+    await stripe.checkout.sessions.expire(open.id).catch(async (error: unknown) => {
+      const now = await stripe.checkout.sessions.retrieve(open.id)
+      if (now.status === 'open') throw error
+    })
+}
+
+/** The workspace's subscription Stripe has that is not over, if any. */
+async function liveSubscription(customer: string, workspaceId: string) {
+  for await (const subscription of stripeClient!.subscriptions.list({ customer, status: 'all' }))
+    if (subscription.metadata?.workspaceId === workspaceId && !OVER.includes(subscription.status))
+      return subscription
+  return null
+}
+
+/**
+ * Stripe Checkout for the workspace's Cloud plan: its address. Under the workspace's lock,
+ * so it can never be subscribed twice (two clicks, two tabs, two admins):
+ * 1. the Checkouts still open are expired, so none can be paid from then on;
+ * 2. then, a subscription Stripe has for the workspace (one of those paid just before, or
+ *    paid with its webhook not here yet) becomes its plan, and no Checkout is made;
+ * 3. else the new Checkout. Should the lock have been lost meanwhile, it is expired at once.
+ */
+export async function startCheckout(input: {
+  workspaceId: string
+  user: { id: string; email: string }
+  /** Where Checkout comes back to: Settings › Billing or onboarding. */
+  from: 'billing' | 'onboarding'
+  cancelUrl: string
+  /** Which plan: Max by default. */
+  tier?: Tier
+}) {
+  const stripe = stripeClient!
+  const { workspaceId, user } = input
+  let made: string | undefined
+  let outcome: { url: string } | { adopted: Stripe.Subscription; committed: () => void }
+  try {
+    outcome = await withWorkspaceLock(workspaceId, async (tx) => {
+      const { organizationId } = await tx.workspace.findUniqueOrThrow({
+        where: { id: workspaceId },
+      })
+      if (await beingDeleted(tx, organizationId, workspaceId))
+        throw new HTTPException(409, { message: 'This workspace is being deleted' })
+      const current = await workspacePlan(workspaceId, tx)
+      if (current && entitles(current.status))
+        throw new HTTPException(409, { message: 'This workspace already has Brigade Cloud' })
+      const customer = await workspaceCustomer(tx, workspaceId, user)
+      await closeOpenCheckouts(customer)
+      const known = await liveSubscription(customer, workspaceId)
+      if (known) {
+        const { committed } = await savePlan(tx, workspaceId, known, known.metadata.rowId)
+        return { adopted: known, committed }
+      }
+      const lookupKey = PLANS[input.tier ?? 'cloud'].lookupKey
+      const [price] = (
+        await stripe.prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 })
+      ).data
+      if (!price) throw new Error(`No Stripe price has the lookup key ${lookupKey}`)
+      // The row Checkout completes: an abandoned one is used again.
+      const pending =
+        (await tx.billingSubscription.findFirst({
+          where: {
+            workspaceId,
+            plan: CLOUD_PLAN.name,
+            status: 'incomplete',
+            stripeSubscriptionId: null,
+          },
+        })) ??
+        (await tx.billingSubscription.create({
+          data: { workspaceId, plan: CLOUD_PLAN.name, status: 'incomplete' },
+        }))
+      // How webhooks and the return find the workspace and its row.
+      const metadata = { workspaceId, rowId: pending.id, userId: user.id }
+      const back = new URL('/api/billing/return', env.API_URL)
+      back.searchParams.set('to', input.from)
+      const session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        customer,
+        customer_update: { name: 'auto', address: 'auto' },
+        line_items: [{ price: price.id, quantity: 1 }],
+        client_reference_id: workspaceId,
+        allow_promotion_codes: true,
+        billing_address_collection: 'auto',
+        tax_id_collection: { enabled: true },
+        subscription_data: { metadata },
+        metadata,
+        // Stripe fills in the session's id; not encoded, or it would not.
+        success_url: `${back}&session={CHECKOUT_SESSION_ID}`,
+        cancel_url: input.cancelUrl,
+        // The account's public name is shared with Papers: Checkout names Brigade itself.
+        branding_settings: { display_name: 'Brigade' },
+      })
+      made = session.id
+      // Still the lock's: this write fails if it was lost, and the session is expired below.
+      await tx.billingSubscription.update({
+        where: { id: pending.id },
+        data: { stripeCustomerId: customer },
+      })
+      return { url: session.url! }
+    })
+  } catch (error) {
+    // Nobody saw its address: no one can pay it once expired.
+    if (made)
+      await stripe.checkout.sessions
+        .expire(made)
+        .catch((failure) => console.error(`billing: expiring ${made} failed`, failure))
+    throw error
+  }
+  if ('url' in outcome) return outcome.url
+  outcome.committed()
+  await applyPlan(workspaceId)
+  const status = outcome.adopted.status
+  throw new HTTPException(409, {
+    message:
+      status === 'incomplete'
+        ? 'A payment for this workspace is still being processed'
+        : entitles(status)
+          ? 'This workspace already has Brigade Cloud'
+          : 'This workspace has a subscription with an unpaid invoice: update the card in Manage billing',
+  })
+}
+
+/**
+ * Stripe's portal, at the confirmation of the move from Starter to Max:
+ * its address. The portal shows what is paid now for the rest of the period and takes the card's
+ * confirmation; the subscription's price changes there, and the plan's tier follows it (savePlan),
+ * by the webhook or the Billing page's next read.
+ */
+export async function startUpgrade(workspaceId: string, returnUrl: string) {
+  const stripe = stripeClient!
+  const { plan, tier } = await planOf(workspaceId)
+  if (!plan?.stripeSubscriptionId || tier !== 'starter')
+    throw new HTTPException(409, { message: 'Only Starter can be upgraded to Max' })
+  const customer = await workspaceCustomerId(workspaceId)
+  if (!customer) throw new HTTPException(409, { message: 'Only Starter can be upgraded to Max' })
+  const subscription = await stripe.subscriptions.retrieve(plan.stripeSubscriptionId)
+  const item = subscription.items.data[0]
+  const [price] = (
+    await stripe.prices.list({ lookup_keys: [PLANS.cloud.lookupKey], active: true, limit: 1 })
+  ).data
+  if (!item) throw new Error(`${subscription.id} has no item to change`)
+  if (!price) throw new Error(`No Stripe price has the lookup key ${PLANS.cloud.lookupKey}`)
+  const session = await stripe.billingPortal.sessions.create({
+    customer,
+    configuration: await portalConfiguration(),
+    return_url: returnUrl,
+    flow_data: {
+      type: 'subscription_update_confirm',
+      subscription_update_confirm: {
+        subscription: subscription.id,
+        items: [{ id: item.id, price: price.id, quantity: 1 }],
+      },
+      after_completion: { type: 'redirect', redirect: { return_url: returnUrl } },
+    },
+  })
+  return session.url
+}
+
+/** How long an organization stays closed to Checkout once its deletion is decided. */
+const DELETION_LEASE_MS = 10 * 60_000
+
+/**
+ * Whether a deletion of the organization, or of this workspace, is under way: one of their
+ * closings is young enough.
+ */
+async function beingDeleted(db: Db, organizationId: string, workspaceId: string) {
+  const since = new Date(Date.now() - DELETION_LEASE_MS)
+  return !!(await db.billingClosing.findFirst({
+    where: {
+      organizationId,
+      createdAt: { gt: since },
+      OR: [{ workspaceId: null }, { workspaceId }],
+    },
+    select: { id: true },
+  }))
+}
+
+/**
+ * Under the workspace's lock: its Checkouts still open are expired, and its subscription that
+ * is not over, if any, is returned. Read once a closing is kept, so no Checkout starts after.
+ */
+async function closeWorkspaceBilling(workspaceId: string) {
+  return withWorkspaceLock(workspaceId, async (tx) => {
+    const workspace = await tx.workspace.findUniqueOrThrow({ where: { id: workspaceId } })
+    if (!workspace.stripeCustomerId) return null
+    await closeOpenCheckouts(workspace.stripeCustomerId)
+    return liveSubscription(workspace.stripeCustomerId, workspaceId)
+  })
+}
+
+/**
+ * Before an organization is deleted (better-auth, src/auth.ts). First it is closed to Checkout
+ * with a closing of this request's own (BillingClosing, which startCheckout reads under each
+ * workspace's lock), for the few moments until it is gone; then, workspace by workspace under
+ * its lock, the Checkouts still open are expired and a subscription that is not over refuses
+ * the deletion: it would go on billing a workspace that is gone. Refused or failed, this
+ * request removes its own closing, never another's; should the deletion fail after this, the
+ * closing lapses by itself.
+ */
+export async function guardOrganizationDeletion(organizationId: string) {
+  if (!stripeClient) return
+  // The lapsed closings of deletions that failed earlier go.
+  await prisma.billingClosing.deleteMany({
+    where: { organizationId, createdAt: { lte: new Date(Date.now() - DELETION_LEASE_MS) } },
+  })
+  const closing = await prisma.billingClosing.create({
+    data: { organizationId, createdAt: new Date() },
+  })
+  try {
+    // Read once closed: a workspace made from now on cannot start a Checkout either.
+    const workspaces = await prisma.workspace.findMany({ where: { organizationId } })
+    for (const { id } of workspaces) {
+      const live = await closeWorkspaceBilling(id)
+      if (live)
+        throw new HTTPException(409, {
+          message:
+            'A workspace of this organization has Brigade Cloud: cancel it in Settings › Billing, then delete the organization once it has ended',
+        })
+    }
+  } catch (error) {
+    await prisma.billingClosing.deleteMany({ where: { id: closing.id } })
+    throw error
+  }
+}
+
+export const CANCEL_CLOUD_FIRST =
+  'This workspace has Brigade Cloud. Cancel Brigade Cloud in Settings › Billing first; you can delete the workspace once it has ended'
+
+/**
+ * Before a workspace is deleted (src/workspace-delete.ts), as guardOrganizationDeletion does for
+ * an organization: closed to Checkout with a closing of its own, its Checkouts still open
+ * expired, and refused while its subscription is not over. Its Stripe customer stays, with its
+ * invoices. Returns how to lift the closing once the deletion is done or has failed; refused,
+ * it is lifted here.
+ */
+export async function guardWorkspaceDeletion(organizationId: string, workspaceId: string) {
+  if (!stripeClient) return async () => {}
+  await prisma.billingClosing.deleteMany({
+    where: {
+      organizationId,
+      workspaceId,
+      createdAt: { lte: new Date(Date.now() - DELETION_LEASE_MS) },
+    },
+  })
+  const closing = await prisma.billingClosing.create({
+    data: { organizationId, workspaceId, createdAt: new Date() },
+  })
+  const lift = async () => {
+    await prisma.billingClosing.deleteMany({ where: { id: closing.id } })
+  }
+  try {
+    if (await closeWorkspaceBilling(workspaceId))
+      throw new HTTPException(409, { message: CANCEL_CLOUD_FIRST })
+  } catch (error) {
+    await lift()
+    throw error
+  }
+  return lift
+}

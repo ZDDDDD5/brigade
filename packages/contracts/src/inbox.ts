@@ -1,0 +1,272 @@
+// The Inbox: every mail the workspace's mailboxes received, across agents, projects and sources
+// (Brigade's own addresses, Gmail accounts), one row per conversation, with where it went. See
+// the API's src/inbox.ts.
+import { z } from 'zod'
+import type { MailRoute } from './email.js'
+
+/**
+ * waiting: nobody took it and no person marked it done. handled: a thread has it. other: nobody
+ * took it, and it waits for nobody (noise says why).
+ */
+export type InboxStatus = 'waiting' | 'handled' | 'other' | 'done'
+
+/**
+ * Why a mail nobody took is in Other, not To do: sent to a sign-up address whose thread no longer
+ * waits (a site's newsletter), sent by a machine or to a list, or from a sender a person muted.
+ */
+export type InboxNoise = 'sign_up' | 'automatic' | 'muted'
+
+/**
+ * What comes next in a conversation, shown on its row: a teammate's reply waiting for this
+ * member's approval (an email_send ticket they may decide), or a reply set to leave later.
+ */
+export type InboxNext =
+  | { kind: 'draft'; ticketId: string; teammate: { id: string; name: string } | null }
+  | { kind: 'scheduled'; id: string; at: string }
+
+/** A teammate's reply in the conversation, waiting for a person to approve it. */
+export type InboxDraft = {
+  ticketId: string
+  teammate: { id: string; name: string } | null
+  /** email_send's arguments: to, cc, subject, text, replyTo, sendAt… */
+  input: Record<string, unknown>
+  /** The thread's starter or an admin: the others see it, but cannot decide. */
+  canDecide: boolean
+  at: string
+}
+
+/** How far ahead an email can be set to leave (Resend schedules up to 30 days). */
+export const SEND_LATER_MAX_DAYS = 30
+
+/** A conversation, as its latest received mail shows it. */
+export type InboxItem = {
+  /**
+   * mail:<MailMessage id> of its latest received mail, whatever its source: every source keeps
+   * its mail there. Any of its mails' ids opens the conversation.
+   */
+  id: string
+  source: { id: string; kind: 'email' | 'gmail' }
+  /** The address it came to. */
+  to: string
+  from: string
+  fromName: string
+  subject: string
+  snippet: string
+  at: string
+  status: InboxStatus
+  /** In Other: why. Null otherwise. */
+  noise: InboxNoise | null
+  /** Brigade's addresses: where it went. */
+  route: MailRoute | null
+  thread: { id: string; title: string } | null
+  rule: { id: string; label: string } | null
+  teammate: { id: string; name: string } | null
+  project: { id: string; name: string } | null
+  files: number
+  sender: 'member' | 'contact' | 'unknown' | 'brigade' | null
+  /** A sign-up's mail, which is its thread's: its subject and words are not shown. */
+  hidden: boolean
+  /** Its mails, received and sent. */
+  count: number
+  next: InboxNext | null
+  /**
+   * What its thread said it did without replying (email_no_reply), while no reply went out
+   * since: no_reply puts it To do, with the thread's reason; handled leaves it with the teammate.
+   * Still there once done, to say how it ended.
+   */
+  outcome: InboxOutcome | null
+  /**
+   * Where its teammate is with it, while it is not done: at work in its thread now, waiting on a
+   * person there (a ticket, a question), or it replied after its latest received mail.
+   */
+  activity: InboxActivity | null
+}
+
+export type InboxActivity =
+  { kind: 'working' } | { kind: 'needs_you' } | { kind: 'replied'; at: string }
+
+/** What a thread did with a mail it did not answer, in its own words. */
+export type InboxOutcome = { kind: 'no_reply' | 'handled'; note: string; at: string }
+
+/** One mail of a conversation. */
+export type InboxMessage = {
+  id: string
+  /**
+   * in: received; out: sent from Brigade's address, or a thread's reply from Gmail (Gmail's
+   * other sent mail is not kept).
+   */
+  direction: 'in' | 'out'
+  from: string
+  fromName: string
+  to: string[]
+  cc: string[]
+  subject: string
+  at: string
+  /** Its own words; the earlier messages it quotes apart. */
+  text: string
+  quoted: string
+  /**
+   * Received mail's HTML as it came, quote included, for the Inbox's HTML view (in a sandboxed
+   * frame); null when it had none or before Brigade kept it.
+   */
+  html: string | null
+  /** The files its HTML shows in place (cid: links), opened like attachments. */
+  inlineFiles: { id: string; cid: string }[]
+  /** Received and kept, its words still being read: not an empty mail. */
+  arriving: boolean
+  /** Its files: a received one opens at the API's /inbox/items/<its id>/files/<file id>. */
+  attachments: { id: string; name: string; contentType: string; size: number }[]
+  authentication: { spf?: string; dkim?: string; dmarc?: string } | null
+  /** Sent mail: where it is. */
+  sent: 'scheduled' | 'sent' | 'delivered' | 'bounced' | 'failed' | null
+  /** Sent mail still to leave: when it does, and whether this member may cancel it. */
+  sendAt: string | null
+  canCancel: boolean
+  hidden: boolean
+}
+
+/** A conversation, whole: its latest received mail in front, then each of its mails, oldest first. */
+export type InboxDetail = InboxItem & {
+  messages: InboxMessage[]
+  routeNote: string | null
+  /** Its sender is muted for the workspace: by its address, or by its domain (value). */
+  muted: { kind: 'address' | 'domain'; value: string } | null
+  /** The domain its sender can be muted by: null for a public mail provider's (gmail.com…). */
+  muteDomain: string | null
+  /** Why nobody took it, in plain words, while it is unassigned. */
+  reason: string | null
+  /**
+   * What a rule on its mailbox needs, for an owner or admin to add one from it: Brigade's mail
+   * (its address, its project's variant; an agent's address: that agent). Null otherwise.
+   */
+  addRule: { connectionId: string; projectId: string | null; teammateId: string | null } | null
+  /** The teammates it can be handed to: those given its mailbox. */
+  handTo: { id: string; name: string }[]
+  doneAt: string | null
+  /** Its teammates' replies waiting for approval, oldest first. */
+  drafts: InboxDraft[]
+  /** This member may write in its thread: ask its teammate to reply, discuss it there. */
+  mayPrompt: boolean
+  /** This member may reply from the Inbox, from its mailbox: Brigade's addresses, in a thread they may write in. */
+  canReply: boolean
+  /** Where a person's reply goes: its latest mail's Reply-To, else its sender. */
+  replyRecipients: string[]
+}
+
+export type InboxSourceView = {
+  id: string
+  kind: 'email' | 'gmail'
+  label: string
+  address: string
+  teammate: { id: string; name: string } | null
+  project: { id: string; name: string } | null
+}
+
+/**
+ * Whether the Inbox asks for Brigade Cloud first (GET /inbox/plan): Brigade's own addresses come
+ * with it. teammate and address: the one the paywall shows, the workspace's first teammate.
+ */
+export type InboxPlan = {
+  needed: boolean
+  teammate: { id: string; name: string } | null
+  address: string | null
+}
+
+export const InboxQuery = z.object({
+  source: z.string().max(200).optional(),
+  teammate: z.string().max(100).optional(),
+  project: z.string().max(100).optional(),
+  /**
+   * waiting: to do (nobody took it, or a reply waits for this member's approval); handled: with
+   * a teammate; other: nobody took it and it waits for nobody; scheduled: a reply set to leave
+   * later; done; all.
+   */
+  status: z.enum(['waiting', 'handled', 'other', 'scheduled', 'done', 'all']).optional(),
+  q: z.string().max(200).optional(),
+  /** The previous page's next. */
+  before: z.string().max(200).optional(),
+})
+
+export const SetInboxDone = z.object({ done: z.boolean() })
+
+/** Mute a conversation's sender for the workspace: its address, or everyone at its domain. */
+export const MuteInboxSender = z.object({ kind: z.enum(['address', 'domain']) })
+
+/** A person's own reply, from the Inbox: to the conversation's people, from its mailbox. */
+export const ReplyInboxItem = z.object({ text: z.string().trim().min(1).max(100_000) })
+
+export const HandInboxItem = z.object({
+  teammateId: z.string(),
+  /** What the person asks, before the mail. */
+  note: z.string().max(5000).optional(),
+  /** Its thread's project, for Gmail. Default: the item's; Brigade's mail stays in its mailbox's. */
+  projectId: z.string().nullish(),
+})
+
+/**
+ * A mailbox: whatever receives mail for the workspace, in one list (Inbox › Mailboxes): an
+ * agent's address, a project's shared mailbox (support@…, forwarded to it), a Gmail account.
+ * Its id is the Inbox's source id: email:<address id> or gmail:<connection id>.
+ */
+export type MailboxSummary = {
+  id: string
+  kind: 'agent' | 'inbox' | 'gmail'
+  /** Riley · Support (Askli) · georges@acme.com */
+  name: string
+  /** Its address, the one people see: on Brigade's domain or one of the workspace's, or Gmail's. */
+  address: string
+  /** Its address on Brigade's domain, when it has one elsewhere: where that one is forwarded. */
+  internalAddress: string | null
+  /** The workspace's domain its address is on, if any: sending and receiving go by it. */
+  domain: {
+    id: string
+    name: string
+    status: 'pending' | 'verified' | 'failed'
+    receiving: 'direct' | 'forward'
+  } | null
+  project: { id: string; name: string } | null
+  teammate: { id: string; name: string } | null
+  /** Its rules and playbooks. */
+  ruleCount: number
+  /** Who sees its mail in the Inbox: everyone, or only you (your own Gmail). */
+  visibility: 'workspace' | 'you'
+  /** Gmail: all its mail shows in the Inbox, not only what went to a thread. */
+  showAll: boolean
+  /**
+   * How the email its teammates send goes, whichever its provider: on their own (auto), or each
+   * waiting for a person's approval (approve).
+   */
+  sendPolicy: 'auto' | 'approve'
+}
+
+/** One way a mailbox's mail goes to a teammate: a rule, or a playbook's (changed in it). */
+export type MailboxRule = {
+  id: string
+  label: string
+  /** Null: nobody. It keeps the mail it takes in the Inbox for a person, and starts no thread. */
+  teammate: { id: string; name: string } | null
+  options: Record<string, string>
+  instructions: string | null
+  position: number
+  /** The project its threads start in (an agent's address: the project's variant it watches). */
+  project: { id: string; name: string } | null
+  playbook: { id: string; name: string; status: string } | null
+}
+
+/** A mailbox, whole: where its mail arrives, who handles it (in order), who reads and replies. */
+export type MailboxDetail = MailboxSummary & {
+  addressId: string | null
+  connectionId: string
+  /** This member may change it (its rules, its address): an owner or admin. */
+  manages: boolean
+  /** A Gmail account this member connected: they choose whether all its mail shows. */
+  accountOwner: boolean
+  /** This member may change how its email goes: an owner or admin, or the Gmail account's owner. */
+  setsSending: boolean
+  /** In the order they apply: the first that matches takes the mail. */
+  rules: MailboxRule[]
+  /** The teammates given it: they read it and reply from it. */
+  readers: { id: string; name: string }[]
+  /** Gmail: shared with the workspace's threads, or only its member's. */
+  reach: 'workspace' | 'mine' | null
+}

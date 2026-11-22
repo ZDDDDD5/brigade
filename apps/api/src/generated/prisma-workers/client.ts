@@ -44,6 +44,35 @@ export { Prisma }
  */
 export type User = Prisma.UserModel
 /**
+ * Model AnalyticsFirst
+ * The product analytics events a person has sent once already (src/analytics.ts): the next
+ * of each carries `first: false`. People who existed before analytics have them all.
+ */
+export type AnalyticsFirst = Prisma.AnalyticsFirstModel
+/**
+ * Model DownloadSource
+ * Where a visitor who downloaded Brigade.app from the site came from (src/download-source.ts):
+ * the app's guest sign-up from the same address within a few days takes it. One row a visitor,
+ * the latest download's; old rows are deleted as new ones come.
+ */
+export type DownloadSource = Prisma.DownloadSourceModel
+/**
+ * Model AdConversion
+ * A conversion of a person who came from a Google ad (src/google-ads.ts): their sign-up, then
+ * their first subscription. Kept with what it counts (in the same transaction), sent to Google
+ * Ads by the `ad-conversions` job from `sendAfter`; Google takes it (`requestId`, `sentAt`),
+ * then processes it later: `confirmedAt` once it says so, `failedAt` and `error` once it never
+ * will. A processing failure that may pass (a click too recent) sends it again later.
+ */
+export type AdConversion = Prisma.AdConversionModel
+/**
+ * Model BillingSubscription
+ * A workspace's paid plan (src/billing.ts): Cloud, which gives it the cloud computer. It
+ * only ever holds Stripe's current state for its subscription. A row with no
+ * stripeSubscriptionId and status "active" is a complimentary plan, added by hand.
+ */
+export type BillingSubscription = Prisma.BillingSubscriptionModel
+/**
  * Model AuthSession
  * A signed-in browser session (better-auth "session"). Not a thread.
  */
@@ -59,10 +88,22 @@ export type AuthAccount = Prisma.AuthAccountModel
  */
 export type Verification = Prisma.VerificationModel
 /**
+ * Model RateLimit
+ * better-auth's rate limit (src/auth.ts): requests to sign in and to mail a code, per visitor and path.
+ */
+export type RateLimit = Prisma.RateLimitModel
+/**
  * Model Organization
  * 
  */
 export type Organization = Prisma.OrganizationModel
+/**
+ * Model BillingClosing
+ * A deletion of the organization under way (src/billing.ts): while one is younger than 10
+ * minutes, no Checkout starts in it. One per request, so each removes only its own when it
+ * is refused or fails; the deletion itself removes them all.
+ */
+export type BillingClosing = Prisma.BillingClosingModel
 /**
  * Model Member
  * A user's role in an organization: owner, admin or member.
@@ -73,6 +114,13 @@ export type Member = Prisma.MemberModel
  * 
  */
 export type Invitation = Prisma.InvitationModel
+/**
+ * Model InvitationSend
+ * One invitation mail sent, first or again (src/invitation-budget.ts): what the sending budget
+ * counts, per organization and per address. Kept a day, the longest window; a table of its own
+ * because better-auth's RateLimit cleanup prunes every row past its own short windows.
+ */
+export type InvitationSend = Prisma.InvitationSendModel
 /**
  * Model Workspace
  * 
@@ -104,6 +152,20 @@ export type ThreadRead = Prisma.ThreadReadModel
  */
 export type ThreadPin = Prisma.ThreadPinModel
 /**
+ * Model SidebarOrder
+ * The order a member dragged a list of their sidebar to (its teammates or its projects), in a
+ * workspace: the ids, first to last. Those not in it follow, in the list's own order.
+ */
+export type SidebarOrder = Prisma.SidebarOrderModel
+/**
+ * Model ThreadLater
+ * A thread a member snoozed (Later in the code): out of their sidebar's list and of what waits
+ * on them, under the filter's Snoozed, until `until`. Each member's own, like a pin. Anything
+ * new in the thread after laterAt (a message, a turn, a ticket, a pull request) brings it back
+ * sooner (src/later.ts).
+ */
+export type ThreadLater = Prisma.ThreadLaterModel
+/**
  * Model HomeDismissal
  * A loose end a member set aside on Home. Its key names the thing as it stood then (a thread's
  * proposal by its event, a stalled thread by its last event, a routine by its failed run), so
@@ -117,9 +179,8 @@ export type HomeDismissal = Prisma.HomeDismissalModel
 export type Session = Prisma.SessionModel
 /**
  * Model Task
- * Work to see finished, on the Tasks board. Its thread is its comments and
- * progress; the column comes from the thread (none: backlog) and completedAt.
- * Assigning a teammate starts the thread, so a task has a teammate once it has one.
+ * Work to see finished, on the Tasks board, which is gone (docs/hand-offs.md): nothing reads or
+ * writes it any more. It goes in a later deploy, once no API running reads it.
  */
 export type Task = Prisma.TaskModel
 /**
@@ -129,11 +190,41 @@ export type Task = Prisma.TaskModel
  */
 export type Schedule = Prisma.ScheduleModel
 /**
+ * Model ChiefDecision
+ * Chief's decision on a question a teammate ended its reply on: buttons or a choices card, in a
+ * thread of a member who lets Chief answer for them (docs/chief-answers.md, src/chief-answers.ts).
+ */
+export type ChiefDecision = Prisma.ChiefDecisionModel
+/**
+ * Model ChiefPass
+ * Chief's daily pass for a member in a workspace (docs/chief-answers.md, src/chief-pass.ts): what
+ * waited on them that morning, what Chief did in their name, and what it left them on Today.
+ */
+export type ChiefPass = Prisma.ChiefPassModel
+/**
+ * Model Goal
+ * A goal a teammate works toward until Brigade's measurement confirms it (docs/goals.md): its
+ * contract, approved by a person in one click, and where the loop stands.
+ */
+export type Goal = Prisma.GoalModel
+/**
+ * Model GoalMeasurement
+ * One measurement of a goal by its recipe, never the teammate's word. A command's is pending until
+ * its computer answers (goal.measured).
+ */
+export type GoalMeasurement = Prisma.GoalMeasurementModel
+/**
  * Model Wakeup
  * A teammate asked to be prompted again in its thread at a time ("check CI in 10 minutes").
  * The API's minute tick fires it into the same thread, with the conversation so far.
  */
 export type Wakeup = Prisma.WakeupModel
+/**
+ * Model ReplyWatch
+ * An email a teammate sent from a thread: a reply in its conversation wakes that thread, until
+ * `until`. Another email in the conversation moves `until` on; cancelling sets it to now.
+ */
+export type ReplyWatch = Prisma.ReplyWatchModel
 /**
  * Model ThreadTeammate
  * 
@@ -144,6 +235,35 @@ export type ThreadTeammate = Prisma.ThreadTeammateModel
  * 
  */
 export type SessionEvent = Prisma.SessionEventModel
+/**
+ * Model ColdEventChunk
+ * A run of a quiet thread's events kept in the bucket (src/cold-events.ts): every event from
+ * firstSeq to lastSeq, as JSON lines, gzipped, at coldEventsKey. The heavy ones went from
+ * SessionEvent in the transaction that recorded it; the others stay there too.
+ */
+export type ColdEventChunk = Prisma.ColdEventChunkModel
+/**
+ * Model ThreadEventVolume
+ * What a thread's events weigh as stored (their data's pg_column_size), counted as they come
+ * (src/event-volume.ts): the largest threads, without reading their events. A table of its own,
+ * as a BigInt in Session would go wherever a thread is sent as JSON, which cannot hold one.
+ */
+export type ThreadEventVolume = Prisma.ThreadEventVolumeModel
+/**
+ * Model WorkspaceEventDay
+ * What a workspace's threads wrote to SessionEvent in a day (UTC), counted as events are
+ * stored (src/event-volume.ts): its growth, without reading the events again.
+ */
+export type WorkspaceEventDay = Prisma.WorkspaceEventDayModel
+/**
+ * Model TokenUsage
+ * What a harness spent for the workspace, in tokens: one row per stream of a teammate's turn
+ * (its usage.updated event, by seq) and per run outside a turn (memory, title, a project's
+ * brief, an image). Counts only, never what was said (src/usage.ts, Settings › Usage).
+ * Who and what it was for are copied in when it is stored: a thread deleted later keeps
+ * its tokens in the totals.
+ */
+export type TokenUsage = Prisma.TokenUsageModel
 /**
  * Model Account
  * One harness login of one member on one computer. Never the credential.
@@ -236,12 +356,78 @@ export type Ticket = Prisma.TicketModel
  */
 export type Document = Prisma.DocumentModel
 /**
+ * Model ListItem
+ * A checklist line of a library Markdown file that work is attached to (docs/lists.md). The file
+ * holds the line itself, marked `<!-- item:<id> -->` at its end, and whether it is ticked; this
+ * row holds what the file cannot: the threads working on it, the pull requests that finish it,
+ * and who ticked it from Brigade.
+ */
+export type ListItem = Prisma.ListItemModel
+/**
+ * Model ListItemThread
+ * A thread working on a list item. A thread can carry several items, an item several threads.
+ */
+export type ListItemThread = Prisma.ListItemThreadModel
+/**
+ * Model ListItemPull
+ * A pull request that works on a list item: `closes` ticks the item once it is merged; else it is
+ * only part of the work, shown on the line, and `remains` says what is left once it is merged.
+ */
+export type ListItemPull = Prisma.ListItemPullModel
+/**
+ * Model LibraryLock
+ * A library file being changed (withLibraryLock, src/library.ts): one change at a time. A lease,
+ * so that waiting holds no database connection and a holder that crashed frees it at `until`.
+ */
+export type LibraryLock = Prisma.LibraryLockModel
+/**
+ * Model ListPin
+ * A list (docs/lists.md) a member pinned in their sidebar: under Pinned, among their pinned
+ * threads, with the threads working on its items under it. Each member's own, like a thread's pin.
+ */
+export type ListPin = Prisma.ListPinModel
+/**
+ * Model DocumentPin
+ * A library file a member pinned: it stays at the top of their Library. Each member's own,
+ * like a thread's pin. A file in the trash keeps its pin, which shows again once restored.
+ */
+export type DocumentPin = Prisma.DocumentPinModel
+/**
+ * Model MemoryLine
+ * One line of a memory file, known by its text (memoryLineKey): when and where
+ * it was learned and, once it left the file, why. Lines that left (replaced,
+ * merged, outdated, removed by a person) are the memory's archive: search finds
+ * them and people can put them back. The file's text stays the source of truth.
+ */
+export type MemoryLine = Prisma.MemoryLineModel
+/**
  * Model DocumentVersion
- * A saved state of a library file. Its bytes are in the bucket under
- * <organization>/<workspace>/library-versions/<id>; the newest is also the file itself.
- * Saves by the same author from the same thread within minutes update one version.
+ * A saved state of a library file: the object of the save it records (objectKey), the same one
+ * the file pointed to then. Versions from before objects per save have their bytes under
+ * <organization>/<workspace>/library-versions/<id>. Saves by the same author from the same thread
+ * within minutes update one version.
  */
 export type DocumentVersion = Prisma.DocumentVersionModel
+/**
+ * Model LibraryObjectFolder
+ * A workspace that has had library objects (LibraryObject): made before its first one, and kept
+ * for good, even once the workspace is deleted. The listing sweep (sweepOrphanLibraryObjects)
+ * goes over its folder, <organization>/<workspace>/library-objects/, through these rows, so bytes
+ * a write left after their object's row was swept are found whenever they land, in a live
+ * workspace or a deleted one. No relation.
+ */
+export type LibraryObjectFolder = Prisma.LibraryObjectFolderModel
+/**
+ * Model LibraryObject
+ * An object in the bucket holding one save of a library file's bytes, at
+ * <organization>/<workspace>/library-objects/<document id>/<id>. Made before its bytes are
+ * written, so none is ever lost track of; written once, never changed. A file's row or a
+ * version points to it once the save commits, which claims it (claimObject, src/library-objects.ts);
+ * one no row points to (superseded, or its save failed or came too late) is found by the sweep,
+ * marked, and an hour on deleted from the bucket, then its row. A marked one can no longer be
+ * claimed. No relation: kept when its file or workspace goes, until the sweep deletes its bytes.
+ */
+export type LibraryObject = Prisma.LibraryObjectModel
 /**
  * Model LibraryFolder
  * A library folder someone made, or one with access rules. Folders also exist
@@ -254,6 +440,48 @@ export type LibraryFolder = Prisma.LibraryFolderModel
  */
 export type LibraryFolderGrant = Prisma.LibraryFolderGrantModel
 /**
+ * Model LibraryShare
+ * A library file's public link (docs/public-links.md): anyone with its address reads the file
+ * as it is now, without signing in, at <web>/s/<token>. A design's link is its index.html's and
+ * shows the whole design. Turning the link off deletes the row: turned on again, the file gets
+ * a new address. A file in the trash keeps its link, which answers again once it is restored.
+ */
+export type LibraryShare = Prisma.LibraryShareModel
+/**
+ * Model ToolState
+ * State a tool keeps (docs/tools.md): a key's JSON value, for everyone who opens the tool
+ * (`owner` "shared") or for one member (`owner` their member id). Keyed by the tool's
+ * `index.html` document, so it follows the tool when it moves; gone with it.
+ */
+export type ToolState = Prisma.ToolStateModel
+/**
+ * Model Theme
+ * A member's own look for the dashboard (docs/themes.md), made by talking with a teammate:
+ * colours, a stylesheet and the files it uses. One member's, in one workspace: it changes only
+ * their windows there. Which one they wear is their latest ThemeChange's.
+ */
+export type Theme = Prisma.ThemeModel
+/**
+ * Model ThemeAsset
+ * An image or font a theme's stylesheet uses (`url("theme:<name>")`), in the bucket
+ * (themeFileKey). The dashboard loads it from the bucket's signed address, never through the API.
+ */
+export type ThemeAsset = Prisma.ThemeAssetModel
+/**
+ * Model ThemeChange
+ * One of a member's look changes (docs/themes.md), with the look right after it: going back
+ * returns to one of these. Their latest is the look they wear. The last THEME_LIMITS.history
+ * are kept.
+ */
+export type ThemeChange = Prisma.ThemeChangeModel
+/**
+ * Model ToolAccount
+ * An App account attached to a tool (docs/tools.md): the tool's page may call its operations,
+ * through the dashboard, for people allowed to use the account. `codeHash` is the tool's files
+ * when it was attached: once they change, its calls wait until a person allows it again.
+ */
+export type ToolAccount = Prisma.ToolAccountModel
+/**
  * Model DocumentAsset
  * A file put in a document from the editor: an image, a video, a recording, a PDF. Its bytes
  * are in the bucket under <organization>/<workspace>/assets/<id>; the document refers to it as
@@ -261,14 +489,37 @@ export type LibraryFolderGrant = Prisma.LibraryFolderGrantModel
  */
 export type DocumentAsset = Prisma.DocumentAssetModel
 /**
+ * Model BucketCleanup
+ * A deleted thread's files folder in the bucket, emptied again once every signed upload
+ * URL issued before its deletion has expired (a runner's late image, runner-files.ts).
+ * Kept until a sweep empties it whole: the row is the promise that nothing is left.
+ */
+export type BucketCleanup = Prisma.BucketCleanupModel
+/**
+ * Model WorkspaceCleanup
+ * A deleted workspace's folder in the bucket (`<org>/<ws>/`), emptied by a sweep in batches
+ * (src/workspace-delete.ts), and again once every signed upload URL issued before its deletion
+ * has expired. Written with the deletion itself: the row is the promise that nothing is left,
+ * and goes only once a listing after that margin finds the folder empty.
+ */
+export type WorkspaceCleanup = Prisma.WorkspaceCleanupModel
+/**
  * Model AuditEntry
  * Append-only record of an action. workspaceId is null for organization-level actions.
  */
 export type AuditEntry = Prisma.AuditEntryModel
 /**
- * Model Attachment
+ * Model Upload
  * A file's bytes (in the bucket, keyed by id) and where they came from. One
  * file can be in several threads, e.g. an email two triggers matched.
+ * A file uploaded straight to the bucket (uploads.ts), held under `uploadKey` until it is used:
+ * saved to the library, read as a skill pack, kept as a skill's file or a logo. The sweep
+ * removes those never used, bytes first.
+ */
+export type Upload = Prisma.UploadModel
+/**
+ * Model Attachment
+ * 
  */
 export type Attachment = Prisma.AttachmentModel
 /**
@@ -305,6 +556,23 @@ export type SkillPack = Prisma.SkillPackModel
  */
 export type PreviewRecipe = Prisma.PreviewRecipeModel
 /**
+ * Model PreviewMachine
+ * A thread's preview machine (docs/previews.md, the preview_machines feature): a VM of its own
+ * at the cloud provider, which the thread's preview runs on while the code stays on the cloud
+ * computer. No foreign key to its thread or workspace: deleting either leaves the row, and the
+ * sweep (src/preview-machines.ts) destroys the VM before it removes the row, so none outlives
+ * what it was made for.
+ */
+export type PreviewMachine = Prisma.PreviewMachineModel
+/**
+ * Model VmRun
+ * One run of a VM at the provider (docs/vm-costs.md): its start (a create or a resume) and the
+ * time it ran until it stopped. What a workspace's cloud computer and its threads' machines cost
+ * is summed from these. Written before the provider is asked to start the VM (pending), and
+ * confirmed once it answered or the provider's own figures say it ran (reconcileVmRuns).
+ */
+export type VmRun = Prisma.VmRunModel
+/**
  * Model PreviewVariable
  * A variable people give a repository's preview: each start puts it in the
  * app's environment. A secret's value is sealed in the vault, never shown again.
@@ -326,6 +594,18 @@ export type ProjectRepository = Prisma.ProjectRepositoryModel
  * A browser or installed app that receives a user's notifications, from PushManager.subscribe.
  */
 export type PushDevice = Prisma.PushDeviceModel
+/**
+ * Model DesktopDevice
+ * Brigade.app on a computer, which shows the person's notifications itself: Electron has no
+ * push service. The sweep (src/notifications.ts) queues each push for it as a DesktopMessage,
+ * and the app fetches them with its token (src/routes/desktop-notifications.ts).
+ */
+export type DesktopDevice = Prisma.DesktopDeviceModel
+/**
+ * Model DesktopMessage
+ * A push queued for a DesktopDevice until its next fetch, which takes it.
+ */
+export type DesktopMessage = Prisma.DesktopMessageModel
 /**
  * Model PushNotice
  * One thing a member was or will be notified of, by key (needs:<threadId>,
@@ -364,3 +644,172 @@ export type PlaybookDryRun = Prisma.PlaybookDryRunModel
  * wakes each follower once, like a parent (src/children.ts).
  */
 export type ThreadFollow = Prisma.ThreadFollowModel
+/**
+ * Model MailAddress
+ * An address on Brigade's mail domain: its name is the part before the first dot, in one
+ * registry for all of Brigade. A name belongs to one agent or one project inbox, in one
+ * workspace, and is never given to anyone else, even once its owner is gone: no link to the
+ * workspace that could delete it, and none to the teammate or project either.
+ */
+export type MailAddress = Prisma.MailAddressModel
+/**
+ * Model MailProject
+ * A project's name in its agents' addresses (riley.<slug>@): set the first time one is used,
+ * then kept when the project is renamed or deleted, and never given to another project.
+ */
+export type MailProject = Prisma.MailProjectModel
+/**
+ * Model MailAlias
+ * An address made for one sign-up (riley.lovarank.k3f9@): until waitUntil its mail goes to the
+ * thread that asked for it, then to its box. Never deleted, so it never points elsewhere.
+ */
+export type MailAlias = Prisma.MailAliasModel
+/**
+ * Model MailMessage
+ * One email in a mailbox the workspace reads: one of Brigade's own addresses (an agent's, a
+ * project's inbox), received or sent, or a shared Gmail account's, received (the Inbox's mail,
+ * kept as Gmail's inbox reader reads it). Received mail left in its box is kept 30 days; mail
+ * a thread took lives and goes with it.
+ */
+export type MailMessage = Prisma.MailMessageModel
+/**
+ * Model MailHtml
+ * A received mail's HTML as it came (up to 1 000 000 characters, else none), for the Inbox's
+ * HTML view in a sandboxed frame. Apart from MailMessage so that lists never load it; teammates
+ * read the text.
+ */
+export type MailHtml = Prisma.MailHtmlModel
+/**
+ * Model MailDomain
+ * A domain of the workspace's own (lovarank.com) that its project inboxes send as, once its DNS
+ * records are in place. One workspace per domain across Brigade.
+ */
+export type MailDomain = Prisma.MailDomainModel
+/**
+ * Model Contact
+ * Someone a workspace's mailboxes exchanged mail with, with each way to reach them.
+ */
+export type Contact = Prisma.ContactModel
+/**
+ * Model MailMute
+ * One way to reach a contact: an email address today, a chat account later.
+ * A sender a person muted in the Inbox: its mail nobody takes goes to Other, not To do.
+ */
+export type MailMute = Prisma.MailMuteModel
+/**
+ * Model ContactHandle
+ * 
+ */
+export type ContactHandle = Prisma.ContactHandleModel
+/**
+ * Model OpsAlert
+ * A problem with Brigade itself that its operators are alerted to (src/ops/): one row per
+ * problem, by key, kept once resolved so it is not alerted again right away.
+ */
+export type OpsAlert = Prisma.OpsAlertModel
+/**
+ * Model HeldCall
+ * A call a teammate made that waits for a person's decision in a ticket (src/held-calls.ts): an
+ * App's write, a credential, a trigger. Kept so the decision is acted on whenever it comes, after
+ * any restart of the API or the runner, exactly once; an identical call meanwhile joins its ticket.
+ */
+export type HeldCall = Prisma.HeldCallModel
+/**
+ * Model RunnerCommand
+ * A command for a computer's runner (src/runner-commands.ts): sent at once as before, kept until
+ * the runner acknowledges it, and sent again when it reconnects, so neither a restart of the API,
+ * a computer that takes long to start, nor a connection that died unnoticed loses it.
+ */
+export type RunnerCommand = Prisma.RunnerCommandModel
+/**
+ * Model SpecPart
+ * A large part of a thread's spec (its connectors, skills, project, design systems), by the
+ * SHA-256 of its JSON (src/spec-parts.ts): commands name it rather than carry it, and the runner
+ * fetches it once. The same catalog in many commands is one row.
+ */
+export type SpecPart = Prisma.SpecPartModel
+/**
+ * Model TriggerDelivery
+ * One event a trigger took (src/triggers.ts): one row per trigger and event id, claimed before
+ * its thread starts, so a vendor's retry, a second reader or a retry after a crash starts no
+ * second thread.
+ */
+export type TriggerDelivery = Prisma.TriggerDeliveryModel
+/**
+ * Model InboundEvent
+ * A vendor's webhook as it came (src/inbound.ts): kept, answered 2xx, then processed from here
+ * on the minute's tick with retries, so a restart or a failure loses no event, and a vendor's
+ * retry of one is processed once (source and external id).
+ */
+export type InboundEvent = Prisma.InboundEventModel
+/**
+ * Model FolderBackup
+ * A thread folder's backup on its cloud computer (the runner's folders.ts): one per thread and
+ * teammate, replaced by each newer one, so a lost disk costs minutes of work. Its bytes are in
+ * the bucket under the thread's files folder (encrypted by the runner with the workspace's backup
+ * key), deleted with the thread, late uploads too (BucketCleanup).
+ */
+export type FolderBackup = Prisma.FolderBackupModel
+/**
+ * Model TeammateBackup
+ * A teammate's backup from its cloud computer: kind `tasks` (its crontab and systemd user
+ * services) or `browser` (the parts of its Chrome profile that keep its sign-ins). Its bytes are
+ * in the bucket, encrypted by the runner with the workspace's backup key.
+ */
+export type TeammateBackup = Prisma.TeammateBackupModel
+/**
+ * Model AccountLoginBackup
+ * An account's login files on its cloud computer (a Claude token, Codex's auth.json), encrypted
+ * with the vault's key, kept as they change so a computer that replaces this one is signed in.
+ */
+export type AccountLoginBackup = Prisma.AccountLoginBackupModel
+/**
+ * Model ComputerReplacement
+ * A cloud computer moved onto a new VM (src/cloud-replace.ts), step by step so an API restart
+ * picks it up where it was: backing_up (the old one backs up, then stops), creating (a new VM,
+ * its runner installed), restoring (the new runner puts the backups back), done or failed.
+ * The old VM stays with the provider, never destroyed by Brigade: its data may still be read.
+ */
+export type ComputerReplacement = Prisma.ComputerReplacementModel
+/**
+ * Model FeatureFlag
+ * A feature hidden until it is ready (packages/contracts/src/features.ts, docs/feature-flags.md),
+ * opened to some people. Without a row, a feature is its declared default for everyone.
+ */
+export type FeatureFlag = Prisma.FeatureFlagModel
+/**
+ * Model SpecPull
+ * A spec or design of the library that a pull request ships (`ships`) or is one step of
+ * (github_create_pull_request's `specs`). On merge, Brigade names the pull request on it and, when
+ * it ships it, sets its status to shipped (src/decisions.ts, settleSpecsOnMerge). A Markdown spec's
+ * row is its file's; a design's is its design.json's.
+ */
+export type SpecPull = Prisma.SpecPullModel
+/**
+ * Model Initiative
+ * A mission (docs/missions.md): ongoing work a member delegates to a teammate, its owner. Named
+ * Initiative in code so it can't be taken for the Tasks board's old missions (Task.parentId).
+ * Its threads and routines point to it; its plan is its InitiativeAction rows, what went out its
+ * InitiativeOutput rows, and its number, when it follows one, a goal's measurements in one of its
+ * threads or the values its teammate declares (InitiativeValue).
+ */
+export type Initiative = Prisma.InitiativeModel
+/**
+ * Model InitiativeAction
+ * A dated action a mission's teammate planned (plan_action): at dueAt Brigade prompts its thread
+ * with its instructions, as a wake-up. One with a draft needs a person's approval before approveBy.
+ */
+export type InitiativeAction = Prisma.InitiativeActionModel
+/**
+ * Model InitiativeOutput
+ * What went out for a mission (record_output): a post, a comment, a reply, with its link, then its
+ * numbers. Brigade sees neither where it went out nor its numbers: they are its teammate's word.
+ */
+export type InitiativeOutput = Prisma.InitiativeOutputModel
+/**
+ * Model InitiativeValue
+ * A value of a mission's number its teammate declared (record_number), read by hand where Brigade
+ * has no App (LinkedIn analytics). A goal's measurements, when one of its threads has a goal, are
+ * Brigade's own and read from GoalMeasurement instead.
+ */
+export type InitiativeValue = Prisma.InitiativeValueModel

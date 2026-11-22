@@ -1,0 +1,790 @@
+import assert from 'node:assert/strict'
+import { generateKeyPairSync, randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { after, before, describe, test } from 'node:test'
+import { parseEnv } from 'node:util'
+
+// Auto-merge (src/pull-requests.ts), against the API's development database (apps/api/.env),
+// in an organization of its own removed at the end, with GitHub faked; skipped when no database
+// answers:
+// - off by default: a ready pull request waits on a person;
+// - on, a teammate's turn ending with its pull request ready merges it: no review under way,
+//   asked for changes or behind its head, checks passed;
+// - not while its thread is at work, nor for a member who may not merge;
+// - checks still running: it merges once they pass; failed, it waits on a person again, with no
+//   ticket and nothing sent to the author; failed already, it is not set merging at all;
+// - a merge under way gives up when its thread goes back to work, or when what it would merge is
+//   no longer the head its review approved;
+// - checks GitHub fails to list are never taken for none: not set merging, and a merge under way
+//   waits; without the Checks permission it never merges on its own;
+// - opened in a child whose report wakes its parent (a schedule's run): not before the turn its
+//   report's wake-up brought ended (its message found by the wake-up's id, never its text),
+//   whatever other turn ends first; one delivered before wake-ups kept the report holds nothing;
+//   one whose report wakes nobody, once it is delivered, which looks again; an awaited child's,
+//   as before;
+// - a merge tells its thread once, even when GitHub's event for it comes while Brigade merges.
+const envFile = new URL('../.env', import.meta.url)
+if (!process.env.DATABASE_URL && existsSync(envFile))
+  process.env.DATABASE_URL = parseEnv(readFileSync(envFile, 'utf8')).DATABASE_URL
+process.env.DATABASE_URL ??= 'postgresql://localhost:1/none'
+process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
+process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
+const { privateKey } = generateKeyPairSync('rsa', {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+  publicKeyEncoding: { type: 'spki', format: 'pem' },
+})
+process.env.GITHUB_APP_ID = '1'
+process.env.GITHUB_APP_SLUG = 'brigade-test'
+process.env.GITHUB_APP_PRIVATE_KEY = privateKey
+
+const { prisma, scoped, Prisma } = await import('../src/db.js')
+const { wakeupMessageId } = await import('../src/wakeups.js')
+const database = await Promise.race([
+  prisma.$queryRaw`select 1`.then(() => true),
+  new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
+]).catch(() => false)
+
+type Checks = 'success' | 'pending' | 'failure'
+
+describe('auto-merge', { skip: !database && 'no database answers' }, () => {
+  const suffix = randomUUID().slice(0, 8)
+  const installationId = 100_000 + Math.floor(Math.random() * 1_000_000)
+  const repo = 'acme/auto'
+  const ids = {} as Record<
+    'org' | 'workspace' | 'owner' | 'bob' | 'computer' | 'riley' | 'kai',
+    string
+  >
+  let db: ReturnType<typeof scoped>
+  let scope: { organizationId: string; workspaceId: string }
+  const realFetch = globalThis.fetch
+  /** Each pull request's checks on GitHub, success unless said. */
+  const checks = new Map<number, Checks>()
+  /** Pull requests merged on GitHub. */
+  const merged = new Set<number>()
+
+  const pull = (number: number) => ({
+    number,
+    title: `Change ${number}`,
+    html_url: `https://github.com/${repo}/pull/${number}`,
+    state: merged.has(number) ? 'closed' : 'open',
+    draft: false,
+    merged_at: merged.has(number) ? new Date().toISOString() : null,
+    updated_at: new Date().toISOString(),
+    user: { login: 'brigade-test[bot]', type: 'Bot' },
+    head: { ref: `brigade/change-${number}`, sha: `sha${number}` },
+    base: { ref: 'main' },
+    mergeable: true,
+    mergeable_state: checks.get(number) === 'pending' ? 'unstable' : 'clean',
+  })
+
+  before(async () => {
+    ids.org = `org-auto-${suffix}`
+    await prisma.organization.create({
+      data: { id: ids.org, name: 'Auto', slug: `auto-${suffix}` },
+    })
+    for (const [who, role] of [
+      ['owner', 'owner'],
+      ['bob', 'member'],
+    ] as const) {
+      await prisma.user.create({
+        data: { id: `${who}-${suffix}`, name: who, email: `${who}-${suffix}@test.local` },
+      })
+      ids[who] = `m-${who}-${suffix}`
+      await prisma.member.create({
+        data: { id: ids[who], organizationId: ids.org, userId: `${who}-${suffix}`, role },
+      })
+    }
+    ids.workspace = (
+      await prisma.workspace.create({ data: { organizationId: ids.org, name: 'Auto' } })
+    ).id
+    scope = { organizationId: ids.org, workspaceId: ids.workspace }
+    db = scoped(scope)
+    ids.computer = (
+      await db.computer.create({
+        data: { kind: 'cloud', name: 'Test', status: 'running' } as never,
+      })
+    ).id
+    ids.riley = (await db.teammate.create({ data: { name: 'Riley' } as never })).id
+    ids.kai = (await db.teammate.create({ data: { name: 'Kai' } as never })).id
+    const app = await db.app.create({
+      data: { key: 'github', createdByMemberId: ids.owner } as never,
+    })
+    const { sealSecret } = await import('../src/vault.js')
+    const github = await db.connection.create({
+      data: {
+        appId: app.id,
+        kind: 'github',
+        label: 'GitHub',
+        createdByMemberId: ids.owner,
+        vaultSecretId: await sealSecret(db, scope, { installationId }),
+      } as never,
+    })
+    await db.grant.create({
+      data: { teammateId: ids.riley, connectionId: github.id, scope: 'read_write' } as never,
+    })
+
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const { pathname } = new URL(String(url))
+      const method = init?.method ?? 'GET'
+      if (pathname.endsWith('/access_tokens'))
+        return Response.json({
+          token: 'installation-token',
+          expires_at: new Date(Date.now() + 3600_000).toISOString(),
+        })
+      if (pathname === '/installation/repositories')
+        return Response.json({ repositories: [{ full_name: repo, private: true }] })
+      const pr = pathname.match(/^\/repos\/acme\/auto\/pulls\/(\d+)$/)
+      if (pr && method === 'GET') return Response.json(pull(Number(pr[1])))
+      const merge = pathname.match(/^\/repos\/acme\/auto\/pulls\/(\d+)\/merge$/)
+      if (merge && method === 'PUT') {
+        merged.add(Number(merge[1]))
+        return Response.json({ merged: true })
+      }
+      const runs = pathname.match(/^\/repos\/acme\/auto\/commits\/sha(\d+)\/check-runs$/)
+      if (runs) {
+        const state = checks.get(Number(runs[1])) ?? 'success'
+        return Response.json({
+          check_runs: [
+            {
+              name: 'test',
+              status: state === 'pending' ? 'in_progress' : 'completed',
+              conclusion: state === 'pending' ? null : state,
+              html_url: null,
+            },
+          ],
+        })
+      }
+      if (pathname.endsWith('/status')) return Response.json({ statuses: [] })
+      return Response.json({ message: 'Not Found' }, { status: 404 })
+    }) as typeof fetch
+  })
+
+  after(async () => {
+    globalThis.fetch = realFetch
+    if (ids.workspace) await prisma.workspace.deleteMany({ where: { id: ids.workspace } })
+    await prisma.member.deleteMany({ where: { organizationId: ids.org } })
+    await prisma.organization.deleteMany({ where: { id: ids.org } })
+    await prisma.user.deleteMany({
+      where: { id: { in: [`owner-${suffix}`, `bob-${suffix}`] } },
+    })
+  })
+
+  const autoMerge = (memberId: string, on: boolean) =>
+    prisma.member.update({ where: { id: memberId }, data: { autoMerge: on } })
+
+  /** A thread of Riley's, started by a member, where it opened pull request #number. */
+  async function opened(number: number, memberId = ids.owner, status = 'idle') {
+    const session = await db.session.create({
+      data: {
+        teammateId: ids.riley,
+        startedByMemberId: memberId,
+        computerId: ids.computer,
+        title: `Change ${number}`,
+        status,
+        lastSeq: 0,
+      } as never,
+    })
+    const { notePullRequestCall } = await import('../src/pull-requests.js')
+    await notePullRequestCall(db, scope, {
+      sessionId: session.id,
+      teammateId: ids.riley,
+      operation: 'github_create_pull_request',
+      input: { repository: repo, title: `Change ${number}`, head: `brigade/change-${number}` },
+      output: { number, title: `Change ${number}`, head: `brigade/change-${number}`, base: 'main' },
+    })
+    return session.id
+  }
+
+  /** Its teammate's turn ended in the thread: what the hub does then. */
+  async function turnEnded(sessionId: string) {
+    const { autoMergeTurnEnded } = await import('../src/pull-requests.js')
+    await autoMergeTurnEnded(scope, sessionId)
+  }
+
+  const row = (number: number) =>
+    db.pullRequest.findFirstOrThrow({ where: { repository: repo, number } })
+
+  test('off by default: a ready pull request waits on a person', async () => {
+    assert.equal(
+      (await prisma.member.findUniqueOrThrow({ where: { id: ids.owner } })).autoMerge,
+      false,
+    )
+    const thread = await opened(1)
+    await turnEnded(thread)
+    assert.equal((await row(1)).state, 'open')
+    assert.ok(!merged.has(1))
+  })
+
+  test('on, a ready pull request merges once its teammate is done', async () => {
+    await autoMerge(ids.owner, true)
+    const thread = await opened(2)
+    await turnEnded(thread)
+    const pr = await row(2)
+    assert.equal(pr.state, 'merged')
+    assert.equal(pr.mergeStatus, 'none')
+    assert.equal(pr.autoMergeAt, null)
+    assert.ok(merged.has(2))
+    const entry = await prisma.auditEntry.findFirst({
+      where: { action: 'pull_request.merged', targetId: pr.id },
+    })
+    assert.equal((entry?.data as { auto?: boolean }).auto, true)
+  })
+
+  test('not while its thread is at work, nor for a member who may not merge', async () => {
+    const busy = await opened(3, ids.owner, 'running')
+    await turnEnded(busy)
+    assert.equal((await row(3)).mergeStatus, 'none')
+    assert.ok(!merged.has(3))
+    // Its next turn ends with the thread at rest: now it merges.
+    await db.session.updateMany({ where: { id: busy }, data: { status: 'idle' } })
+    await turnEnded(busy)
+    assert.ok(merged.has(3))
+
+    await autoMerge(ids.bob, true)
+    const bobs = await opened(4, ids.bob)
+    await turnEnded(bobs)
+    assert.ok(!merged.has(4), 'Bob is a member: only owners and admins merge')
+  })
+
+  test('not while a review is under way, asked for changes or did not read its head', async () => {
+    const thread = await opened(5)
+    const pr = await row(5)
+    const review = await db.session.create({
+      data: {
+        teammateId: ids.kai,
+        startedByMemberId: ids.owner,
+        computerId: ids.computer,
+        title: 'Review #5',
+        status: 'running',
+        parentId: thread,
+        awaited: true,
+        lastSeq: 0,
+      } as never,
+    })
+    await db.pullRequest.updateMany({ where: { id: pr.id }, data: { reviewSessionId: review.id } })
+    await turnEnded(thread)
+    assert.ok(!merged.has(5), 'Kai is reviewing it')
+
+    await db.session.updateMany({
+      where: { id: review.id },
+      data: { status: 'idle', reportDeliveredAt: new Date() },
+    })
+    const verdict = (verdict: 'approve' | 'request_changes', sha: string, round: number) =>
+      db.pullRequestReview.create({
+        data: {
+          pullRequestId: pr.id,
+          teammateId: ids.kai,
+          sessionId: review.id,
+          verdict,
+          body: verdict,
+          sha,
+          round,
+          createdAt: new Date(Date.now() + round * 1000),
+        } as never,
+      })
+    await verdict('request_changes', 'sha5', 1)
+    await turnEnded(thread)
+    assert.ok(!merged.has(5), 'Kai asked for changes')
+
+    await verdict('approve', 'old-sha', 2)
+    await turnEnded(review.id)
+    assert.ok(!merged.has(5), 'commits came after the approval')
+
+    await verdict('approve', 'sha5', 3)
+    await turnEnded(review.id)
+    assert.ok(merged.has(5), 'approved at its head')
+  })
+
+  test('checks still running: it merges once they pass', async () => {
+    checks.set(6, 'pending')
+    const thread = await opened(6)
+    await turnEnded(thread)
+    let pr = await row(6)
+    assert.equal(pr.mergeStatus, 'merging')
+    assert.ok(pr.autoMergeAt)
+    assert.match(pr.note ?? '', /Waiting for checks: test/)
+    const { needsAttention, advanceMerges } = await import('../src/pull-requests.js')
+    assert.ok(!(await needsAttention(db)).some((p) => p.number === 6), 'Brigade merges it')
+    checks.set(6, 'success')
+    await advanceMerges(ids.workspace)
+    pr = await row(6)
+    assert.equal(pr.state, 'merged')
+  })
+
+  test('checks that fail leave it to a person, with no ticket and nothing sent back', async () => {
+    checks.set(7, 'pending')
+    const thread = await opened(7)
+    await turnEnded(thread)
+    assert.equal((await row(7)).mergeStatus, 'merging')
+    checks.set(7, 'failure')
+    const { needsAttention, advanceMerges } = await import('../src/pull-requests.js')
+    await advanceMerges(ids.workspace)
+    const pr = await row(7)
+    assert.equal(pr.mergeStatus, 'none')
+    assert.equal(pr.autoMergeAt, null)
+    assert.equal(pr.round, 0, 'not sent back to its author')
+    assert.equal(await db.ticket.count({ where: { sessionId: thread } }), 0)
+    assert.ok(
+      (await needsAttention(db)).some((p) => p.number === 7),
+      'waits on a person again',
+    )
+    assert.ok(!merged.has(7))
+    // Failed already: not set merging at all.
+    await turnEnded(thread)
+    assert.equal((await row(7)).mergeStatus, 'none')
+  })
+
+  test('a merge under way gives up when its thread goes back to work', async () => {
+    checks.set(8, 'pending')
+    const thread = await opened(8)
+    await turnEnded(thread)
+    assert.equal((await row(8)).mergeStatus, 'merging')
+    await db.session.updateMany({ where: { id: thread }, data: { status: 'running' } })
+    checks.set(8, 'success')
+    const { advanceMerges } = await import('../src/pull-requests.js')
+    await advanceMerges(ids.workspace)
+    assert.equal((await row(8)).mergeStatus, 'none')
+    assert.ok(!merged.has(8))
+  })
+
+  /** GitHub, changed for one test: `change` answers first, or passes to the fake above. */
+  async function withGitHub(
+    change: (pathname: string, method: string) => Response | Promise<Response> | undefined,
+    run: () => Promise<void>,
+  ) {
+    const fake = globalThis.fetch
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) =>
+      (await change(new URL(String(url)).pathname, init?.method ?? 'GET')) ??
+      fake(url, init)) as typeof fetch
+    try {
+      await run()
+    } finally {
+      globalThis.fetch = fake
+    }
+  }
+
+  test('a head pushed after the approval while checks ran is not merged', async () => {
+    checks.set(9, 'pending')
+    const thread = await opened(9)
+    const pr = await row(9)
+    await db.pullRequestReview.create({
+      data: {
+        pullRequestId: pr.id,
+        teammateId: ids.kai,
+        sessionId: thread,
+        verdict: 'approve',
+        body: 'approve',
+        sha: 'sha9',
+        round: 1,
+      } as never,
+    })
+    await turnEnded(thread)
+    assert.equal((await row(9)).mergeStatus, 'merging')
+    checks.set(9, 'success')
+    const { advanceMerges } = await import('../src/pull-requests.js')
+    await withGitHub(
+      (pathname, method) =>
+        pathname === '/repos/acme/auto/pulls/9' && method === 'GET'
+          ? Response.json({ ...pull(9), head: { ref: 'brigade/change-9', sha: 'sha9-new' } })
+          : undefined,
+      () => advanceMerges(ids.workspace),
+    )
+    assert.ok(!merged.has(9), 'its approval read sha9')
+    assert.equal((await row(9)).mergeStatus, 'none')
+  })
+
+  test('checks GitHub fails to list are never taken for none', async () => {
+    const down = (pathname: string) =>
+      /\/(check-runs|status)$/.test(pathname)
+        ? Response.json({ message: 'Server Error' }, { status: 502 })
+        : undefined
+    const thread = await opened(10)
+    await withGitHub(down, () => turnEnded(thread))
+    assert.equal((await row(10)).mergeStatus, 'none', 'not set merging')
+    assert.ok(!merged.has(10))
+
+    checks.set(11, 'pending')
+    const other = await opened(11)
+    await turnEnded(other)
+    assert.equal((await row(11)).mergeStatus, 'merging')
+    checks.set(11, 'success')
+    const { advanceMerges } = await import('../src/pull-requests.js')
+    await withGitHub(down, () => advanceMerges(ids.workspace))
+    assert.ok(!merged.has(11))
+    assert.equal((await row(11)).mergeStatus, 'merging', 'it tries again next minute')
+    await advanceMerges(ids.workspace)
+    assert.ok(merged.has(11), 'GitHub answers again: merged')
+  })
+
+  test('without the Checks permission, it cannot tell and leaves it to a person', async () => {
+    const noChecks = (pathname: string) =>
+      pathname.endsWith('/check-runs')
+        ? Response.json({ message: 'Resource not accessible by integration' }, { status: 403 })
+        : undefined
+    const thread = await opened(12)
+    await withGitHub(noChecks, () => turnEnded(thread))
+    assert.equal((await row(12)).mergeStatus, 'none', 'not set merging')
+    assert.ok(!merged.has(12))
+
+    // Lost meanwhile, under way: it gives up at once rather than wait two hours.
+    checks.set(14, 'pending')
+    const other = await opened(14)
+    await turnEnded(other)
+    assert.equal((await row(14)).mergeStatus, 'merging')
+    checks.set(14, 'success')
+    const { advanceMerges } = await import('../src/pull-requests.js')
+    await withGitHub(noChecks, () => advanceMerges(ids.workspace))
+    assert.equal((await row(14)).mergeStatus, 'none')
+    assert.ok(!merged.has(14))
+  })
+
+  test('another 403 on check runs, such as a rate limit, is not a missing permission', async () => {
+    const thread = await opened(13)
+    await withGitHub(
+      (pathname) =>
+        pathname.endsWith('/check-runs')
+          ? Response.json(
+              { message: 'You have exceeded a secondary rate limit. Please wait a few minutes.' },
+              { status: 403 },
+            )
+          : undefined,
+      () => turnEnded(thread),
+    )
+    assert.equal((await row(13)).mergeStatus, 'none')
+    assert.ok(!merged.has(13))
+  })
+
+  /**
+   * Pull request #number opened in a child of a new idle thread of Riley's, whose report is
+   * delivered as its turn ends (deliverReport): the child, its parent, and the parent's wake-up.
+   */
+  async function openedInChild(number: number, child: { awaited: boolean; status?: string }) {
+    const parent = await db.session.create({
+      data: {
+        teammateId: ids.riley,
+        startedByMemberId: ids.owner,
+        computerId: ids.computer,
+        title: `Parent of ${number}`,
+        status: 'idle',
+        lastSeq: 0,
+      } as never,
+    })
+    const id = await opened(number)
+    await db.session.updateMany({
+      where: { id },
+      data: {
+        parentId: parent.id,
+        parentTeammateId: ids.riley,
+        awaited: child.awaited,
+        origin: child.awaited ? 'child' : 'schedule',
+        report: {
+          status: child.status ?? 'report',
+          summary: `Opened #${number}`,
+          at: new Date().toISOString(),
+        },
+      },
+    })
+    return { child: id, parent: parent.id }
+  }
+
+  /** The child's report reached its parent: what happens as the child's turn ends. */
+  async function delivered(child: string) {
+    const { deliverReport } = await import('../src/children.js')
+    await deliverReport(scope, child)
+  }
+
+  /** The thread's latest wake-up for a report, if any. */
+  const reportWakeup = (sessionId: string) =>
+    db.wakeup.findFirst({ where: { sessionId, kind: 'report' }, orderBy: { createdAt: 'desc' } })
+
+  /** An event of the thread, as its runner noted it. */
+  const event = (sessionId: string, seq: number, type: string, data: object = {}) =>
+    db.sessionEvent.create({
+      data: { sessionId, seq, type, data: { type, ...data }, at: new Date() } as never,
+    })
+
+  test("a schedule's run's pull request waits for the turn its report woke", async () => {
+    const { child, parent } = await openedInChild(20, { awaited: false })
+    await delivered(child)
+    await turnEnded(child)
+    assert.ok(!merged.has(20), 'its parent has not read the report')
+    const wakeup = await reportWakeup(parent)
+    assert.ok(wakeup, 'the report wakes its parent')
+
+    // The wake-up went: its message waits behind a turn of the parent already under way.
+    await db.wakeup.updateMany({
+      where: { id: wakeup.id },
+      data: { status: 'fired', firedAt: new Date() },
+    })
+    await event(parent, 1, 'turn.started')
+    await event(parent, 2, 'turn.completed')
+    await turnEnded(parent)
+    assert.ok(!merged.has(20), 'that turn did not show the report')
+
+    // The turn that reads it.
+    await db.session.updateMany({ where: { id: parent }, data: { status: 'running' } })
+    await event(parent, 3, 'message.user', {
+      text: wakeup.note,
+      memberId: null,
+      messageId: wakeupMessageId(wakeup.id),
+    })
+    await event(parent, 4, 'turn.started')
+    await turnEnded(child)
+    assert.ok(!merged.has(20), 'its parent is reading it')
+
+    await event(parent, 5, 'turn.completed')
+    await db.session.updateMany({ where: { id: parent }, data: { status: 'idle' } })
+    await turnEnded(parent)
+    assert.ok(merged.has(20), "its parent's woken turn ended")
+  })
+
+  test('an unrelated hand-back turn does not stand for reading a pending report', async () => {
+    const { child, parent } = await openedInChild(30, { awaited: false })
+    await db.session.updateMany({
+      where: { id: parent },
+      data: { controlledByMemberId: ids.owner, status: 'paused' },
+    })
+    await delivered(child)
+    const row = await db.session.findFirstOrThrow({ where: { id: child } })
+    const wakeup = await reportWakeup(parent)
+    assert.ok(row.reportDeliveredAt)
+    assert.equal(wakeup?.status, 'pending')
+    // Handed back with a note: a turn of its own, which ends before the wake-up goes.
+    await db.session.updateMany({
+      where: { id: parent },
+      data: { controlledByMemberId: null, status: 'running' },
+    })
+    await event(parent, 1, 'message.user', { text: 'Handed back', memberId: ids.owner })
+    await event(parent, 2, 'turn.started')
+    await event(parent, 3, 'turn.completed')
+    await db.session.updateMany({ where: { id: parent }, data: { status: 'idle' } })
+    await turnEnded(parent)
+    assert.equal(
+      (await db.wakeup.findFirstOrThrow({ where: { id: wakeup!.id } })).status,
+      'pending',
+    )
+    assert.ok(!merged.has(30), 'the unrelated turn did not read the pending report')
+  })
+
+  test('a run whose report is not in yet waits; one that wakes nobody merges once in', async () => {
+    const { child } = await openedInChild(21, { awaited: false })
+    await db.session.updateMany({ where: { id: child }, data: { report: Prisma.DbNull } })
+    await turnEnded(child)
+    assert.ok(!merged.has(21), 'its report is not in yet')
+
+    // Checked before its quiet report was delivered: the delivery looks again, as no turn follows.
+    const quiet = await openedInChild(31, { awaited: false, status: 'nothing' })
+    await turnEnded(quiet.child)
+    assert.ok(!merged.has(31), 'held until delivery')
+    await delivered(quiet.child)
+    const { advanceMerges } = await import('../src/pull-requests.js')
+    await advanceMerges(ids.workspace)
+    assert.ok(merged.has(31), 'a quiet delivery tries auto-merge again')
+  })
+
+  test("an awaited child's pull request merges as before, once its report is delivered", async () => {
+    const { child } = await openedInChild(23, { awaited: true })
+    await db.session.updateMany({ where: { id: child }, data: { reportDeliveredAt: new Date() } })
+    await turnEnded(child)
+    assert.ok(merged.has(23))
+  })
+
+  test('an older message with the same note does not stand for reading the current report', async () => {
+    await autoMerge(ids.owner, false)
+    const { child, parent } = await openedInChild(40, { awaited: false })
+    // The first report is really read while auto-merge is off.
+    await db.session.updateMany({
+      where: { id: parent },
+      data: { controlledByMemberId: ids.owner, status: 'paused' },
+    })
+    await delivered(child)
+    const first = await reportWakeup(parent)
+    assert.ok(first)
+    await db.wakeup.updateMany({
+      where: { id: first.id },
+      data: { status: 'fired', firedAt: new Date() },
+    })
+    await event(parent, 1, 'message.user', {
+      text: first.note,
+      memberId: null,
+      messageId: wakeupMessageId(first.id),
+    })
+    await event(parent, 2, 'turn.started')
+    await event(parent, 3, 'turn.completed')
+    await db.session.updateMany({
+      where: { id: parent },
+      data: { controlledByMemberId: null, status: 'idle' },
+    })
+    await turnEnded(parent)
+    assert.ok(!merged.has(40))
+
+    // The same child reports the same summary again: a new report.at, the same note.
+    const old = await db.session.findFirstOrThrow({ where: { id: child } })
+    await db.session.updateMany({
+      where: { id: child },
+      data: {
+        report: { ...(old.report as object), at: new Date().toISOString() },
+        reportDeliveredAt: null,
+      },
+    })
+    await db.session.updateMany({
+      where: { id: parent },
+      data: { controlledByMemberId: ids.owner, status: 'paused' },
+    })
+    await delivered(child)
+    const second = await reportWakeup(parent)
+    assert.ok(second)
+    assert.notEqual(second.id, first.id)
+    assert.equal(second.note, first.note)
+    // Its prompt is only queued: no message.user for it yet.
+    await db.wakeup.updateMany({
+      where: { id: second.id },
+      data: { status: 'fired', firedAt: new Date() },
+    })
+    await db.session.updateMany({
+      where: { id: parent },
+      data: { controlledByMemberId: null, status: 'idle' },
+    })
+    await autoMerge(ids.owner, true)
+    await turnEnded(child)
+    assert.ok(!merged.has(40), 'the older message must not stand for reading the second report')
+
+    // Its own message shows, and the turn that reads it ends.
+    await event(parent, 4, 'message.user', {
+      text: second.note,
+      memberId: null,
+      messageId: wakeupMessageId(second.id),
+    })
+    await event(parent, 5, 'turn.started')
+    await event(parent, 6, 'turn.completed')
+    await turnEnded(parent)
+    assert.ok(merged.has(40), 'the second report was read')
+  })
+
+  test('a report delivered before this change holds nothing, as before', async () => {
+    const { child, parent } = await openedInChild(50, { awaited: false })
+    await delivered(child)
+    const wakeup = await reportWakeup(parent)
+    assert.ok(wakeup)
+    // The state main left before this change: no reportSource, and a random message id.
+    await db.wakeup.updateMany({
+      where: { id: wakeup.id },
+      data: { sourceId: null, status: 'fired', firedAt: new Date() },
+    })
+    await event(parent, 1, 'message.user', {
+      text: wakeup.note,
+      memberId: null,
+      messageId: 'legacy-random-id',
+    })
+    await event(parent, 2, 'turn.started')
+    await event(parent, 3, 'turn.completed')
+    await turnEnded(parent)
+    assert.ok(merged.has(50), 'a report delivered by the old code holds nothing')
+  })
+
+  test('a waking report is not delivered as an earlier quiet one', async () => {
+    await autoMerge(ids.owner, true)
+    const { child, parent } = await openedInChild(61, { awaited: false, status: 'nothing' })
+    await db.session.updateMany({ where: { id: child }, data: { status: 'running' } })
+    let pending: Promise<void> | undefined
+    await db.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Session" WHERE id = ${child} FOR UPDATE`
+        const [{ pid }] = await tx.$queryRaw<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`
+        // Delivery reads the old quiet report, then its UPDATE waits for this row lock.
+        pending = delivered(child)
+        let waiting = false
+        for (let n = 0; n < 300; n++) {
+          const blockers = await tx.$queryRaw<{ pid: number }[]>`
+            SELECT pid FROM pg_stat_activity WHERE ${pid} = ANY(pg_blocking_pids(pid))`
+          if (blockers.length) {
+            waiting = true
+            break
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5))
+        }
+        assert.ok(waiting, 'deliverReport read the old report and waits to claim its row')
+        // A new report call lands meanwhile, resetting reportDeliveredAt as the tool does.
+        const { handleChildCall } = await import('../src/children.js')
+        const current = await tx.session.findFirstOrThrow({ where: { id: child } })
+        await handleChildCall(
+          tx as never,
+          scope,
+          current as never,
+          { id: ids.riley, name: 'Riley' },
+          { name: 'report', status: 'report', summary: 'New work: please review this PR' } as never,
+        )
+      },
+      { timeout: 10000 },
+    )
+    await pending
+    const after = await db.session.findFirstOrThrow({ where: { id: child } })
+    assert.equal((after.report as { status: string }).status, 'report')
+    assert.equal(after.reportDeliveredAt, null, 'the stale delivery claimed nothing')
+    assert.equal(await reportWakeup(parent), null)
+
+    await db.session.updateMany({ where: { id: child }, data: { status: 'idle' } })
+    const { noteChildEvents } = await import('../src/children.js')
+    await Promise.all([
+      turnEnded(child),
+      noteChildEvents({ ...scope, id: child, parentId: parent }, [
+        { event: { type: 'turn.completed', at: new Date().toISOString() } },
+      ]),
+    ])
+    const delivered2 = await db.session.findFirstOrThrow({ where: { id: child } })
+    assert.ok(delivered2.reportDeliveredAt, 'the new report is delivered as its turn ends')
+    const wakeup = await reportWakeup(parent)
+    assert.equal(wakeup?.status, 'pending', 'with its own wake-up')
+    assert.ok(
+      !merged.has(61),
+      'the fresh report is not taken for an old one and has not reached its parent',
+    )
+  })
+  test('a merge tells its thread once, even when GitHub tells of it while Brigade merges', async () => {
+    const { hubs } = await import('../src/hub.js')
+    const { mergeNow, pullRequestEvent } = await import('../src/pull-requests.js')
+    const thread = await opened(70)
+    // Its runner connected: the notes it is sent.
+    const notes: string[] = []
+    const get = hubs.get
+    hubs.get = (workspaceId: string) => {
+      const hub = get(workspaceId)
+      return new Proxy(hub, {
+        get: (target, name) =>
+          name === 'runnerProtocol'
+            ? async () => 99
+            : name === 'sendToRunner'
+              ? async (_: string, message: { type: string; sessionId?: string; text?: string }) => {
+                  if (message.type === 'thread.note' && message.sessionId === thread)
+                    notes.push(message.text!)
+                }
+              : Reflect.get(target, name),
+      })
+    }
+    // GitHub's event for the merge lands before Brigade records it: both see it open.
+    const realFetch = globalThis.fetch
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      const response = await realFetch(url, init)
+      if (init?.method === 'PUT' && new URL(String(url)).pathname.endsWith('/pulls/70/merge'))
+        await pullRequestEvent(scope, repo, pull(70) as never)
+      return response
+    }) as typeof fetch
+    try {
+      await mergeNow(
+        { ...scope, userId: `owner-${suffix}`, memberId: ids.owner, role: 'owner' },
+        repo,
+        70,
+        'squash',
+      )
+    } finally {
+      globalThis.fetch = realFetch
+      hubs.get = get
+    }
+    assert.equal((await row(70)).state, 'merged')
+    assert.deepEqual(
+      notes.filter((n) => n.startsWith('Pull request #70 ')),
+      [`Pull request #70 in ${repo} was merged.`],
+    )
+  })
+})

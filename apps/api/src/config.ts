@@ -36,6 +36,15 @@ const Env = z.object({
   GOOGLE_MCP_CLIENT_ID: z.string().optional(),
   GOOGLE_MCP_CLIENT_SECRET: z.string().optional(),
   /**
+   * Brigade's Meta app (developers.facebook.com, use case "Create & manage ads with Marketing
+   * API"), for the Meta Ads App: its ID, secret, and the Facebook Login for Business
+   * configuration (a user access token with ads_read, ads_management and business_management).
+   * Valid OAuth redirect URI: {API_URL}/api/connections/oauth/meta/callback.
+   */
+  META_APP_ID: z.string().optional(),
+  META_APP_SECRET: z.string().optional(),
+  META_LOGIN_CONFIG_ID: z.string().optional(),
+  /**
    * Gmail push, for "Email received" triggers: a Pub/Sub topic in the OAuth client's Google
    * Cloud project, e.g. projects/acme/topics/brigade-gmail, that
    * gmail-api-push@system.gserviceaccount.com may publish to, with a push subscription
@@ -84,6 +93,34 @@ const Env = z.object({
    * development: browsers send it to this computer, as another site than localhost.
    */
   DESIGN_URL: z.preprocess((v) => v || undefined, z.url().optional()),
+  /**
+   * Origins that may show the dashboard in a frame, and so be above a design's or a tool's frame,
+   * comma-separated: a preview's dashboard is itself shown in Brigade's preview pane, and a frame's
+   * page loads only where every page above it is allowed. Unset in production, where the dashboard
+   * is never framed.
+   */
+  SANDBOX_FRAME_ANCESTORS: z
+    .string()
+    .default('')
+    .transform((v) =>
+      v
+        .split(',')
+        .map((o) => o.trim())
+        .filter(Boolean),
+    ),
+  /**
+   * The previews' own site (apps/preview-gateway, a Cloudflare Worker), e.g.
+   * https://brigade.surf: each preview at https://<id>.brigade.surf, which carries the
+   * provider's token itself. Safari, and every browser on an iPhone, drops the provider's
+   * token cookie in the dashboard's frame, so its previews stayed white there. Without
+   * both, previews are at the provider's address.
+   */
+  PREVIEW_GATEWAY_URL: z.preprocess((v) => v || undefined, z.url().optional()),
+  /**
+   * Shared with the preview gateway (its SECRET): registers previews there, and signs the
+   * access tokens that let people in.
+   */
+  PREVIEW_GATEWAY_SECRET: z.string().min(32).optional(),
   /** Shared with the collab server: signs editors' tokens and authenticates its calls. */
   COLLAB_SECRET: z.string().min(32).optional(),
   /**
@@ -92,6 +129,25 @@ const Env = z.object({
    */
   CROSS_SITE_COOKIES: z.stringbool().default(false),
   /**
+   * Sign-up with a password. Off by default: members sign up with Google or a code mailed
+   * to them (src/sign-in-code.ts), which proves they own the address; only accounts given a
+   * password by hand (src/password-sign-in.ts) sign in with one. On locally and in previews
+   * (.env.example), where the dev accounts have a password (prisma/seed.ts).
+   */
+  PASSWORD_SIGN_IN: z.stringbool().default(false),
+  /**
+   * Without a mail service (RESEND_API_KEY), sign-in and deletion codes go to the API's log
+   * instead (src/mail/codes.ts). Off by default, so production never logs one even when its
+   * mail is misconfigured; on locally and in previews (.env.example, scripts/preview/setup.sh).
+   */
+  MAIL_CODES_IN_LOG: z.stringbool().default(false),
+  /**
+   * Cloudflare Turnstile's secret key: a sign-in code is mailed only after the visitor
+   * passed its check (the dashboard has the widget's site key, NEXT_PUBLIC_TURNSTILE_SITE_KEY).
+   * Without it, no check.
+   */
+  TURNSTILE_SECRET_KEY: z.string().optional(),
+  /**
    * Web push to the dashboard (src/notifications.ts): a P-256 key pair, base64url, from
    * `pnpm --filter @brigade/api vapid`. Without them, notifications are off.
    */
@@ -99,6 +155,108 @@ const Env = z.object({
   VAPID_PRIVATE_KEY: z.string().optional(),
   /** Who push services may contact about Brigade's pushes: mailto: or https:. Default: the dashboard's address. */
   VAPID_SUBJECT: z.string().optional(),
+  /**
+   * Billing (src/billing.ts): the Cloud plan, per workspace, gives it the cloud computer.
+   * A Stripe secret key, restricted or not, of the account with the price whose lookup key
+   * is brigade_cloud_monthly (scripts/stripe-setup.mjs). Without it, billing is off and every workspace has the cloud
+   * computer (when a provider is configured), as on a self-hosted Brigade.
+   */
+  STRIPE_SECRET_KEY: z.string().optional(),
+  /**
+   * The signing secret of the Stripe webhook to {API_URL}/api/billing/webhook, with the
+   * events checkout.session.completed and customer.subscription.created, .updated and .deleted.
+   * Without it, a subscription is recorded when its Checkout returns, and Settings › Billing
+   * reads it from Stripe each time it opens (a preview).
+   */
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  /**
+   * The Email App (src/mail/): agents' addresses on MAIL_DOMAIN, received and sent through
+   * Resend. A Resend API key with full access, of the account where MAIL_DOMAIN is verified
+   * for sending and receiving. Without it, the Email App is unavailable.
+   */
+  RESEND_API_KEY: z.string().optional(),
+  /**
+   * The signing secret (whsec_…) of the Resend webhook to {API_URL}/events/resend, with the
+   * events email.received, email.sent, email.delivered, email.bounced and email.failed.
+   */
+  RESEND_WEBHOOK_SECRET: z.string().optional(),
+  /**
+   * Dictation in the composers (src/dictation.ts), by Whisper Large v3 Turbo: an OpenRouter API
+   * key, or a Groq one (used first when both are set). It comes with Brigade Cloud while billing
+   * is on. Without either, no microphone button. DICTATION_MODEL picks another of the
+   * provider's transcription models (OpenRouter's x-ai/grok-stt-1.0, say).
+   */
+  OPENROUTER_API_KEY: z.string().optional(),
+  GROQ_API_KEY: z.string().optional(),
+  DICTATION_MODEL: z.string().optional(),
+  /** The domain agents' addresses are on. */
+  MAIL_DOMAIN: z.string().default('mails.brigade.lol'),
+  /**
+   * Alerts to Brigade's operators (src/ops/, docs/monitoring.md): addresses, comma-separated,
+   * mailed through Resend (RESEND_API_KEY) from alerts@MAIL_DOMAIN.
+   */
+  OPS_ALERT_EMAILS: z
+    .string()
+    .optional()
+    .transform((v) =>
+      (v ?? '')
+        .split(',')
+        .map((a) => a.trim())
+        .filter(Boolean),
+    ),
+  /** A URL alerts are posted to as JSON: Slack's or Discord's incoming webhook, a Brigade custom app's. */
+  OPS_ALERT_WEBHOOK_URL: z.url().optional(),
+  /** Signs those posts (x-brigade-signature), for a receiver that checks them. */
+  OPS_ALERT_WEBHOOK_SECRET: z.string().optional(),
+  /** Bearer token for GET /health/ops, the alerts open now, for an uptime monitor outside. */
+  OPS_TOKEN: z.string().min(24).optional(),
+  /**
+   * The signing secret (whsec_…) of boat's webhook to POST /api/boat/webhook: its stops come in
+   * at once (docs/vm-costs.md). Without it, the minute's check with boat's list sees them.
+   */
+  BOAT_WEBHOOK_SECRET: z.string().optional(),
+  /**
+   * Cloudflare's analytics, for the Workers' failed invocations (exceptions, exceeded
+   * limits): an API token with Account Analytics: Read, and the account's id.
+   */
+  CLOUDFLARE_API_TOKEN: z.string().optional(),
+  CLOUDFLARE_ACCOUNT_ID: z.string().optional(),
+  /**
+   * Product analytics (src/analytics.ts, docs/analytics.md): the PostHog project's API key
+   * (phc_…). Without it, nothing is sent: locally, in tests, previews and self-hosted.
+   */
+  POSTHOG_KEY: z.string().optional(),
+  /**
+   * Google Ads' conversions (src/google-ads.ts, docs/analytics.md "Google Ads"): sign-ups and
+   * subscriptions of people who came from a Google ad, sent through Google's Data Manager API.
+   * The Google Ads account's id (digits, no dashes), its manager's when the service account
+   * reaches it through one, the ids of the two conversion actions (type "Import from clicks"),
+   * and the service account's JSON key (a secret). Without all but the manager, nothing is
+   * sent: conversions wait, and go once they are set (within Google's 90 days). Checked where
+   * used, so a mistyped value turns them off rather than stopping the API.
+   */
+  GOOGLE_ADS_CUSTOMER_ID: z.string().optional(),
+  GOOGLE_ADS_LOGIN_CUSTOMER_ID: z.string().optional(),
+  GOOGLE_ADS_SIGNUP_ACTION_ID: z.string().optional(),
+  GOOGLE_ADS_SUBSCRIPTION_ACTION_ID: z.string().optional(),
+  GOOGLE_ADS_SERVICE_ACCOUNT: z.string().optional(),
+  /** PostHog's ingestion address: its EU cloud unless set. */
+  POSTHOG_HOST: z.url().default('https://eu.i.posthog.com'),
+  /**
+   * Email domains whose people are Brigade's own (the team, demo accounts), comma-separated,
+   * and whole addresses for the team's accounts on a shared domain (`someone@gmail.com`):
+   * their events carry `internal: true`, to leave them out of analyses. The address itself is
+   * never sent.
+   */
+  POSTHOG_INTERNAL_EMAIL_DOMAINS: z
+    .string()
+    .optional()
+    .transform((v) =>
+      (v ?? '')
+        .split(',')
+        .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
+        .filter(Boolean),
+    ),
 })
 
 // An empty value (KEY= in .env, as .env.example has them) means unset.

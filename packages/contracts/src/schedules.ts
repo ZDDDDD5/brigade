@@ -3,8 +3,18 @@
 // and compute runs with these same helpers.
 import { Cron } from 'croner'
 import { z } from 'zod'
+import { AppOperations } from './apps.js'
+import { ChiefOperations } from './chief-answers.js'
 import { ChildOperations } from './children.js'
+import { GoalOperations } from './goals.js'
+import { ThemeOperations } from './themes.js'
+import { InitiativeOperations } from './initiatives.js'
+import { ListOperations } from './lists.js'
 import { PlaybookOperations } from './playbooks.js'
+import { ReviewOperations } from './reviews.js'
+import { StartedThreadOperations } from './started-threads.js'
+import { DoneOperations } from './thread-done.js'
+import { TriggerOperations } from './triggers.js'
 import { WakeupOperations } from './wakeups.js'
 
 /** Runs closer together than this are refused. */
@@ -113,6 +123,57 @@ export const ScheduleOperation = z.discriminatedUnion('name', [
   }),
   ...WakeupOperations,
   ...ChildOperations,
+  ...StartedThreadOperations,
   ...PlaybookOperations,
+  ...ReviewOperations,
+  ...TriggerOperations,
+  ...ListOperations,
+  ...AppOperations,
+  ...DoneOperations,
+  ...ChiefOperations,
+  ...GoalOperations,
+  ...ThemeOperations,
+  ...InitiativeOperations,
 ])
 export type ScheduleOperation = z.infer<typeof ScheduleOperation>
+
+const RUN_HEAD =
+  'Nobody is watching this thread live: do the work below, and open a ticket if you need a person.'
+
+/** The message a schedule's run starts its thread with (src/schedules.ts in the API). */
+export function scheduledRunMessage(run: {
+  title: string
+  /** When it was due, as its owner reads it in the schedule's timezone. */
+  due: string
+  timezone: string
+  /** The thread it reports to, when it is a child of one. */
+  parentTitle?: string
+  instructions: string
+}) {
+  return [
+    `Scheduled run of "${run.title}", due ${run.due} (${run.timezone}). ${RUN_HEAD}` +
+      (run.parentTitle !== undefined
+        ? ` It reports to the thread “${run.parentTitle}”: when you are done, call \`report\` once, with ` +
+          'status nothing when there is nothing new (that wakes nobody), report when there is something to tell, ' +
+          'needs_person when the work cannot go on without a person, or failed.'
+        : ''),
+    '',
+    run.instructions,
+  ].join('\n')
+}
+
+const RUN_MESSAGE = new RegExp(
+  `^Scheduled run of "(.*)", due (.+?) \\(([^()]+)\\)\\. ${RUN_HEAD.replace(/[.]/g, '\\.')}.*\\n\\n`,
+)
+
+/** A schedule's run message read back (scheduledRunMessage), for the dashboard's note; null for any other text. */
+export function scheduledRunNote(text: string) {
+  const m = RUN_MESSAGE.exec(text)
+  if (!m) return null
+  return {
+    title: m[1]!,
+    due: m[2]!,
+    timezone: m[3]!,
+    instructions: text.slice(m[0].length),
+  }
+}

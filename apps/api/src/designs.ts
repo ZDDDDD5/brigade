@@ -2,7 +2,9 @@
 // folder whose page runs the teammate's script, so it is served only from
 // DESIGN_URL, another site than the dashboard and the API, with no cookies:
 // under a short-lived signed address, as a sandboxed document.
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { mayWrite } from './account-sharing.js'
+import type { Role } from './scope.js'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import {
   DESIGN_ENTRY,
   DESIGN_KNOBS,
@@ -24,6 +26,8 @@ import {
   type DesignPersonEdit,
   type DesignSystem,
   type DesignView,
+  type DesignOption,
+  type DesignWhere,
   type SaveDesignThumbnail,
   type SaveKnobs,
   type SaveDesignSystem,
@@ -31,17 +35,21 @@ import {
   type ThreadDesignSystem,
 } from '@brigade/contracts'
 import { zipSync } from 'fflate'
-import { Hono, type MiddlewareHandler } from 'hono'
+import { Hono, type Context, type MiddlewareHandler } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import type { z } from 'zod'
 import { audit, type Actor } from './audit.js'
+import { directUploads, readHead } from './bucket.js'
+import { serveObject } from './serve-object.js'
 import { env } from './config.js'
 import { scoped, type Scope, type ScopedDb } from './db.js'
 import { bridgeScript } from './design-bridge.js'
 import { annotate, applyEdits, EditError } from './design-source.js'
-import { moveFolder, trashFolder } from './library-folders.js'
-import { actorNames } from './library-history.js'
+import { actorNames, trashLibraryFile } from './library-history.js'
+import { fileKey } from './library-objects.js'
 import { readLibraryFile, saveLibraryFile } from './library.js'
+import { sharedRow, shareKind } from './library-shares.js'
+import { discardUpload, readyUpload, uploadBytesKey } from './uploads.js'
 
 type Row = Awaited<ReturnType<ScopedDb['designSystem']['findFirstOrThrow']>>
 
@@ -202,18 +210,25 @@ export async function threadDesignSystems(
 /** How long a design's address works. Reopening the design gets a new one. */
 const VIEW_SECONDS = 4 * 60 * 60
 
-type ViewClaim = { o: string; w: string; p: string; e: number }
+/** `n`: a nonce, so each view has its own address and its pages' files are fetched anew. */
+type ViewClaim = { o: string; w: string; p: string; e: number; n?: string }
 
 const b64url = (data: Buffer | string) => Buffer.from(data).toString('base64url')
 const sign = (payload: string) =>
   b64url(createHmac('sha256', `design-view:${env.BETTER_AUTH_SECRET}`).update(payload).digest())
 
-function viewToken(scope: Scope, folder: string) {
+/**
+ * A design's address for one view. Never the same twice, even within a second: a canvas that
+ * reloads a page after its styles or images changed gets their new versions, not the ones the
+ * browser cached under the last address.
+ */
+export function viewToken(scope: Pick<Scope, 'organizationId' | 'workspaceId'>, folder: string) {
   const claim: ViewClaim = {
     o: scope.organizationId,
     w: scope.workspaceId,
     p: folder,
     e: Math.floor(Date.now() / 1000) + VIEW_SECONDS,
+    n: randomBytes(6).toString('base64url'),
   }
   const payload = b64url(JSON.stringify(claim))
   return { token: `${payload}.${sign(payload)}`, expiresAt: new Date(claim.e * 1000) }
@@ -239,12 +254,12 @@ const libraryRow = (db: ScopedDb, path: string) =>
 /** A JSON file of the library, parsed by `schema`; null when missing or unreadable. */
 async function readJson<T>(
   scope: Scope,
-  row: { id: string } | null,
+  row: { id: string; objectKey: string | null; size: number } | null,
   schema: { safeParse: (v: unknown) => { data?: T } },
 ) {
   if (!row) return null
   try {
-    const text = new TextDecoder().decode(await readLibraryFile(scope, row.id))
+    const text = new TextDecoder().decode(await readLibraryFile(scope, row))
     return schema.safeParse(JSON.parse(text)).data ?? null
   } catch {
     // Not JSON: the design still shows.
@@ -260,13 +275,31 @@ const designRows = (db: ScopedDb, folder: string) =>
   })
 
 /**
+ * What the pages of a design load besides themselves (styles, scripts, images), as one digest:
+ * it changes when one of those does, so a canvas showing the design loads its pages again.
+ */
+export function designAssets(
+  folder: string,
+  rows: { path: string; sha256: string; contentType: string }[],
+) {
+  const own = new Set(
+    [DESIGN_MANIFEST, DESIGN_KNOBS, DESIGN_THUMBNAIL].map((n) => `${folder}/${n}`),
+  )
+  const lines = rows
+    .filter((r) => r.contentType !== 'text/html' && !own.has(r.path))
+    .map((r) => `${r.path}\n${r.sha256}`)
+    .sort()
+  return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 32)
+}
+
+/**
  * A design's address on the sandbox origin, what it says about itself, and
  * where comments go: the thread that saved it last, when this member may see
  * it. `path` is the folder or a file in it.
  */
 export async function openDesignView(
   db: ScopedDb,
-  scope: Scope & { memberId: string },
+  scope: Scope & { memberId: string; role: Role },
   path: string,
 ): Promise<DesignView> {
   const folder = designFolderOf(path)
@@ -290,6 +323,7 @@ export async function openDesignView(
             id: sessionId,
             OR: [{ private: false }, { startedByMemberId: scope.memberId }],
           },
+          include: { computer: { select: { kind: true } } },
         })
       : null,
     teammateId ? db.teammate.findFirst({ where: { id: teammateId, archivedAt: null } }) : null,
@@ -305,11 +339,12 @@ export async function openDesignView(
         .filter((r) => r.contentType === 'text/html')
         .map((r) => [r.path.slice(folder.length + 1), r.sha256]),
     ),
+    assets: designAssets(folder, rows),
     thread: session
       ? {
           id: session.id,
           title: session.title,
-          mayPrompt: session.startedByMemberId === scope.memberId || session.othersMayPrompt,
+          mayPrompt: mayWrite(session, scope),
         }
       : null,
     teammate: teammate ? { id: teammate.id, name: teammate.name } : null,
@@ -381,7 +416,7 @@ export async function designZip(db: ScopedDb, scope: Scope, path: string) {
   for (const row of rows) {
     total += row.size
     if (total > ZIP_MAX) throw new HTTPException(413, { message: 'The design is too large to zip' })
-    let bytes = await readLibraryFile(scope, row.id)
+    let bytes = await readLibraryFile(scope, row)
     if (row.contentType === 'text/html')
       bytes = new TextEncoder().encode(
         await withKnobs(scope, db, folder, new TextDecoder().decode(bytes)),
@@ -394,17 +429,23 @@ export async function designZip(db: ScopedDb, scope: Scope, path: string) {
 /** Largest design the API zips. */
 const ZIP_MAX = 100 * 1024 * 1024
 
-const designHost = new URL(env.DESIGN_URL).host
+export const designHost = new URL(env.DESIGN_URL).host
 /** The sandbox origin is its own host only when it differs from the API's. */
-const separateHost = designHost !== new URL(env.API_URL).host
+export const separateHost = designHost !== new URL(env.API_URL).host
 if (!separateHost)
   console.warn(
     `Designs are served from the API's own host (${designHost}). Set DESIGN_URL to another host that points at this API, ideally on another domain.`,
   )
 
-/** On the sandbox host, only designs answer: nothing else of the API is reachable there. */
+/** On the sandbox host, only designs and tools answer: nothing else of the API is reachable there. */
 export const sandboxHostOnlyDesigns: MiddlewareHandler = async (c, next) => {
-  if (separateHost && c.req.header('host') === designHost && !c.req.path.startsWith('/v/'))
+  if (
+    separateHost &&
+    c.req.header('host') === designHost &&
+    !c.req.path.startsWith('/v/') &&
+    !c.req.path.startsWith('/t/') &&
+    !c.req.path.startsWith('/s/')
+  )
     return c.text('Not found', 404)
   await next()
 }
@@ -413,7 +454,7 @@ export const sandboxHostOnlyDesigns: MiddlewareHandler = async (c, next) => {
  * Public CDNs of static files a design's script may fetch from: to inline fonts
  * and images when the viewer captures the page. Nothing there acts for anyone.
  */
-const STATIC_HOSTS = [
+export const STATIC_HOSTS = [
   'https://fonts.googleapis.com',
   'https://fonts.gstatic.com',
   'https://cdn.jsdelivr.net',
@@ -436,38 +477,38 @@ const DESIGN_CSP = [
   "default-src 'self' https: data: blob: 'unsafe-inline' 'unsafe-eval'",
   `connect-src 'self' data: blob: ${STATIC_HOSTS.join(' ')}`,
   "form-action 'none'",
-  `frame-ancestors ${env.WEB_URL.join(' ')}`,
+  `frame-ancestors ${[...env.WEB_URL, ...env.SANDBOX_FRAME_ANCESTORS].join(' ')}`,
 ].join('; ')
 
-/** A design's files, under `/v/<token>/`: relative links resolve inside its folder. */
-export const designFiles = new Hono().get('/:token/*', async (c) => {
-  if (separateHost && c.req.header('host') !== designHost) return c.text('Not found', 404)
-  const claim = readViewToken(c.req.param('token'))
-  if (!claim) return c.text('This link has expired. Open the design again.', 410)
-  const prefix = `/v/${c.req.param('token')}/`
+/** The file a design's address asks for, under `prefix`: its parts in the folder, or null. */
+export function askedFile(path: string, prefix: string) {
   let rest: string[]
   try {
-    rest = c.req.path.slice(prefix.length).split('/').map(decodeURIComponent)
+    rest = path.slice(prefix.length).split('/').map(decodeURIComponent)
   } catch {
-    return c.text('Not found', 404)
+    return null
   }
-  if (rest.some((part) => part === '..' || part === '.' || part.startsWith('.')))
-    return c.text('Not found', 404)
+  if (rest.some((part) => part === '..' || part === '.' || part.startsWith('.'))) return null
   if (rest.at(-1) === '') rest[rest.length - 1] = DESIGN_ENTRY
-  const scope: Scope = { organizationId: claim.o, workspaceId: claim.w }
+  return rest
+}
+
+/**
+ * A file of a design's folder on the sandbox origin, its pages with the knobs' values. On the
+ * canvas (`canvas`), its pages also carry the bridge and their elements' numbers.
+ */
+async function serveDesignFile(
+  c: Context,
+  scope: Scope,
+  folder: string,
+  rest: string[],
+  canvas: boolean,
+) {
   const db = scoped(scope)
-  const row = await libraryRow(db, [claim.p, ...rest].join('/'))
+  const row = await libraryRow(db, [folder, ...rest].join('/'))
   if (!row) return c.text('Not found', 404)
-  let bytes = await readLibraryFile(scope, row.id)
   const html = row.contentType === 'text/html'
-  if (html)
-    bytes = new TextEncoder().encode(
-      await withKnobs(scope, db, claim.p, new TextDecoder().decode(bytes), {
-        file: rest.join('/'),
-        sha256: row.sha256,
-      }),
-    )
-  return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
+  const headers = {
     'content-type': row.contentType.startsWith('text/')
       ? `${row.contentType}; charset=utf-8`
       : row.contentType,
@@ -479,8 +520,54 @@ export const designFiles = new Hono().get('/:token/*', async (c) => {
     'access-control-allow-origin': '*',
     // A page is numbered from its bytes of now: a cached one would number another version.
     'cache-control': html ? 'no-store' : 'private, max-age=60',
-  })
+    ...(!canvas && { 'x-robots-tag': 'noindex, nofollow' }),
+  }
+  // Any other file as it streams, by ranges: a video beside the page can be hundreds of MB.
+  if (!html) return serveObject(c, fileKey(scope, row), headers)
+  const page = await withKnobs(
+    scope,
+    db,
+    folder,
+    new TextDecoder().decode(await readLibraryFile(scope, row)),
+    canvas ? { file: rest.join('/'), sha256: row.sha256 } : undefined,
+  )
+  return c.body(new TextEncoder().encode(page), 200, headers)
+}
+
+/** A design's files, under `/v/<token>/`: relative links resolve inside its folder. */
+export const designFiles = new Hono().get('/:token/*', async (c) => {
+  if (separateHost && c.req.header('host') !== designHost) return c.text('Not found', 404)
+  const claim = readViewToken(c.req.param('token'))
+  if (!claim) return c.text('This link has expired. Open the design again.', 410)
+  const rest = askedFile(c.req.path, `/v/${c.req.param('token')}/`)
+  if (!rest) return c.text('Not found', 404)
+  return serveDesignFile(c, { organizationId: claim.o, workspaceId: claim.w }, claim.p, rest, true)
 })
+
+/**
+ * A shared design's files, under `/s/<share token>/` (src/library-shares.ts): as people see it,
+ * without the canvas's bridge, for as long as its link is on. Framed by the page at <web>/s/<token>.
+ */
+export const sharedDesignFiles = new Hono().get('/:token/*', async (c) => {
+  if (separateHost && c.req.header('host') !== designHost) return c.text('Not found', 404)
+  const shared = await sharedRow(c.req.param('token'))
+  const design = shared && shareKind(shared.document)
+  if (!shared || design?.kind !== 'design')
+    return c.text('This link is off or no longer exists.', 404)
+  const rest = askedFile(c.req.path, `/s/${c.req.param('token')}/`)
+  if (!rest) return c.text('Not found', 404)
+  return serveDesignFile(c, shared.scope, design.folder, rest, false)
+})
+
+/** A design's title for people: its `design.json` title, else its folder's name. */
+export async function designTitle(scope: Scope, db: ScopedDb, folder: string) {
+  const manifest = await readJson(
+    scope,
+    await libraryRow(db, `${folder}/${DESIGN_MANIFEST}`),
+    DesignManifest,
+  )
+  return manifest?.title || designName(folder)
+}
 
 // ---------------------------------------------------------------------------
 // Editing a design on the canvas
@@ -525,7 +612,7 @@ export async function editDesign(
       throw new HTTPException(409, {
         message: `Someone saved ${input.file} meanwhile: it was reloaded, make the change again`,
       })
-    const html = new TextDecoder().decode(await readLibraryFile(scope, row.id))
+    const html = new TextDecoder().decode(await readLibraryFile(scope, row))
     let next: string
     try {
       next = applyEdits(html, input.ops)
@@ -571,14 +658,31 @@ export async function saveDesignThumbnail(
   const folder = input.path.replace(/\/+$/, '')
   if (designFolderOf(folder) !== folder || !(await libraryRow(db, `${folder}/${DESIGN_ENTRY}`)))
     throw new HTTPException(400, { message: 'That is not a design folder' })
-  const bytes = Buffer.from(input.png, 'base64')
-  if (bytes.byteLength > THUMBNAIL_MAX || !PNG_SIGNATURE.every((b, i) => bytes[i] === b))
+  const path = `${folder}/${DESIGN_THUMBNAIL}`
+  const isPng = (head: Uint8Array | null) =>
+    head !== null && PNG_SIGNATURE.every((b, i) => head[i] === b)
+  if (input.uploadId) {
+    // Uploaded straight to the bucket by the canvas, and checked (uploads.ts).
+    const upload = await readyUpload(db, { memberId: actor.id }, input.uploadId, 'library')
+    const key = uploadBytesKey(scope, upload)
+    if (upload.size > THUMBNAIL_MAX || !isPng(await readHead(key, PNG_SIGNATURE.length))) {
+      await discardUpload(scope, upload.id)
+      throw new HTTPException(400, { message: 'A PNG picture up to 2 MB' })
+    }
+    await saveLibraryFile(db, scope, actor, {
+      path,
+      contentType: 'image/png',
+      upload: { key, size: upload.size, sha256: upload.sha256, text: '' },
+    })
+    await discardUpload(scope, upload.id)
+    return
+  }
+  // The picture in the body: only without R2, in development.
+  if (directUploads) throw new HTTPException(400, { message: 'Upload to the bucket' })
+  const bytes = Buffer.from(input.png ?? '', 'base64')
+  if (bytes.byteLength > THUMBNAIL_MAX || !isPng(bytes))
     throw new HTTPException(400, { message: 'A PNG picture up to 2 MB' })
-  await saveLibraryFile(db, scope, actor, {
-    path: `${folder}/${DESIGN_THUMBNAIL}`,
-    bytes,
-    contentType: 'image/png',
-  })
+  await saveLibraryFile(db, scope, actor, { path, bytes, contentType: 'image/png' })
 }
 
 /**
@@ -600,12 +704,13 @@ export async function personEdits(
   if (rows.length === 0) return []
   const ours = await db.documentVersion.findMany({
     where: { documentId: { in: rows.map((r) => r.id) }, sessionId: session.id },
-    select: { documentId: true, createdAt: true },
+    select: { documentId: true, updatedAt: true },
   })
+  // A version's last change: saves moments apart fold into one version (recordVersion).
   const lastSaved = (id: string) =>
     Math.max(
       session.createdAt.getTime(),
-      ...ours.filter((v) => v.documentId === id).map((v) => v.createdAt.getTime()),
+      ...ours.filter((v) => v.documentId === id).map((v) => v.updatedAt.getTime()),
     )
   const edited = rows.filter((r) => r.updatedAt.getTime() > lastSaved(r.id))
   const name = await actorNames(
@@ -652,12 +757,87 @@ export async function checkPick(db: ScopedDb, threadId: string, path: string) {
   const replaces = !!(await db.document.findFirst({
     where: { ...live, path: { startsWith: `${to}/` } },
   }))
-  return { folder, options, to, replaces }
+  return { threadId, folder, options, to, replaces }
 }
 
 /**
- * Make the picked option the design: the design it replaces, if any, and the
- * other options go to the trash, where they stay restorable for a while.
+ * Where a design is now: itself while it is there; for an option of an options
+ * folder that has been picked from, the design it became, or the trash. Options
+ * a teammate cleared by saving the design itself (no pick) lead to that design.
+ */
+export async function findDesign(db: ScopedDb, path: string): Promise<DesignWhere> {
+  const folder = path.replace(/\/+$/, '')
+  const here = { path: folder, trashed: false }
+  const options = designOptionsOf(folder)
+  if (!options) return here
+  const live = { kind: 'library' as const, deletedAt: null }
+  if (await db.document.findFirst({ where: { ...live, path: `${folder}/${DESIGN_ENTRY}` } }))
+    return here
+  const to = pickedDesignPath(options)
+  const last = await db.auditEntry.findFirst({
+    where: { action: 'design.picked', targetId: to },
+    orderBy: { at: 'desc' },
+  })
+  const pick = last?.data as { from?: string; to?: string } | undefined
+  // The options folder trashed after the last pick (a pick trashes it before it
+  // is recorded): a later round, settled by saving the design itself. The audit
+  // outlives the trash.
+  const cleared =
+    last &&
+    (await db.auditEntry.findFirst({
+      where: { action: 'library.folder_trashed', targetId: options, at: { gt: last.at } },
+      select: { at: true },
+    }))
+  if (!last || !pick?.to || cleared) {
+    const settled = await db.document.findFirst({
+      where: { ...live, path: `${to}/${DESIGN_ENTRY}` },
+    })
+    return settled ? { path: to, trashed: false } : here
+  }
+  return pick.from === folder ? { path: pick.to, trashed: false } : { ...here, trashed: true }
+}
+
+/**
+ * The options offered with a design, it included, in the order offered (a, b,
+ * c…), each with its title: none when it is not an option. Only those that
+ * have a page.
+ */
+export async function listDesignOptions(
+  db: ScopedDb,
+  scope: Scope,
+  path: string,
+): Promise<DesignOption[]> {
+  const folder = designFolderOf(path)
+  const options = folder && designOptionsOf(folder)
+  if (!options) return []
+  const rows = await db.document.findMany({
+    where: { kind: 'library', deletedAt: null, path: { startsWith: `${options}/` } },
+    orderBy: { path: 'asc' },
+  })
+  const designs = new Map<string, (typeof rows)[number] | null>()
+  for (const row of rows) {
+    const design = designFolderOf(row.path)
+    if (!design || designOptionsOf(design) !== options) continue
+    if (row.path === `${design}/${DESIGN_ENTRY}` && !designs.has(design)) designs.set(design, null)
+  }
+  for (const row of rows) {
+    const design = designFolderOf(row.path)
+    if (design && designs.has(design) && row.path === `${design}/${DESIGN_MANIFEST}`)
+      designs.set(design, row)
+  }
+  return Promise.all(
+    [...designs].map(async ([design, manifest]) => ({
+      path: design,
+      title: (await readJson(scope, manifest, DesignManifest))?.title ?? null,
+    })),
+  )
+}
+
+/**
+ * Make the picked option the design: its files are copied there, over the
+ * design it replaces, if any (whose earlier versions the library keeps, and
+ * whose files the option lacks go to the trash). The options stay, so the
+ * thread still shows each of them and the person can change their mind.
  */
 export async function applyPick(
   db: ScopedDb,
@@ -665,13 +845,48 @@ export async function applyPick(
   actor: Actor,
   pick: Awaited<ReturnType<typeof checkPick>>,
 ) {
-  if (pick.replaces) await trashFolder(db, scope, actor, pick.to)
-  await moveFolder(db, scope, actor, pick.folder, pick.to)
-  const rest = await db.document.findFirst({
-    where: { kind: 'library', deletedAt: null, path: { startsWith: `${pick.options}/` } },
+  const live = { kind: 'library' as const, deletedAt: null }
+  const files = await db.document.findMany({
+    where: { ...live, path: { startsWith: `${pick.folder}/` } },
+    select: {
+      id: true,
+      path: true,
+      objectKey: true,
+      contentType: true,
+      size: true,
+      sha256: true,
+      text: true,
+    },
   })
-  const folderRow = await db.libraryFolder.findFirst({ where: { path: pick.options } })
-  if (rest || folderRow) await trashFolder(db, scope, actor, pick.options)
+  const copied = new Set<string>()
+  for (const file of files) {
+    const path = pick.to + file.path.slice(pick.folder.length)
+    // Copied inside the bucket, never read here: a design's assets can be large. Saved from the
+    // thread, as its teammate's own saves are: the design is not a person's edit that its next
+    // save_design would stop at (personEdits).
+    const upload = {
+      key: fileKey(scope, file),
+      size: file.size,
+      sha256: file.sha256,
+      text: file.text,
+    }
+    await saveLibraryFile(
+      db,
+      scope,
+      actor,
+      { path, upload, contentType: file.contentType },
+      { sessionId: pick.threadId },
+    )
+    copied.add(path)
+  }
+  if (pick.replaces) {
+    const stale = await db.document.findMany({
+      where: { ...live, path: { startsWith: `${pick.to}/` } },
+      select: { id: true, path: true },
+    })
+    for (const file of stale.filter((f) => !copied.has(f.path)))
+      await trashLibraryFile(db, scope, actor, file.id)
+  }
   await audit({
     ...scope,
     actor,

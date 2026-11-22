@@ -7,7 +7,10 @@ import {
   LibraryPath,
   MoveLibraryFile,
   MoveLibraryFolder,
+  SaveLibraryUpload,
   SetFolderAccess,
+  LIBRARY_FILE_MAX,
+  LIBRARY_READ_MAX,
   TRASH_DAYS,
   WriteLibraryText,
   WriteMemory,
@@ -20,6 +23,7 @@ import {
 } from '@brigade/contracts'
 import { Hono, type Context } from 'hono'
 import { HTTPException } from 'hono/http-exception'
+import { directUploads, presignGet } from '../bucket.js'
 import { collabEnabled, COLLAB_PARTY, cursorColor, editToken } from '../collab.js'
 import { env } from '../config.js'
 import { prisma } from '../db.js'
@@ -44,10 +48,14 @@ import {
   ensureMemory,
   isEditable,
   isMarkdown,
+  LIBRARY_FILE_COLUMNS,
   libraryFile,
   libraryFileOf,
   libraryFiles,
   memoryHeader,
+  memoryLineInfo,
+  archivedMemoryLines,
+  restoreMemoryLine,
   moveLibraryFile,
   readLibraryFile,
   readMemory,
@@ -56,27 +64,45 @@ import {
   search,
   writeMemory,
 } from '../library.js'
+import { fileKey, versionBytesKey } from '../library-objects.js'
+import { inspectObject } from '../object-check.js'
+import { shareFile, shareOf, unshareFile } from '../library-shares.js'
 import { libraryPreview } from '../previews.js'
 import { parseBody, requireRole, requireUser, requireWorkspace, type AppEnv } from '../scope.js'
+import { serveObject } from '../serve-object.js'
+import { discardUpload, readyUpload, uploadBytesKey } from '../uploads.js'
 
 /** Types the browser may show inline from the API's origin; anything else downloads. */
 const INLINE =
   /^(text\/plain|text\/markdown|text\/csv|text\/tab-separated-values|application\/json|application\/pdf|image\/(png|jpeg|gif|webp|avif)|video\/(mp4|webm|quicktime)|audio\/(mpeg|mp4|wav|ogg))$/
 
-/** A file's bytes, to show or download. Never run as a page on this origin. */
-function fileResponse(
+/** Served from the bucket's short-lived URL: a player asks for many ranges, which the bucket answers itself. */
+const MEDIA = /^(audio|video)\//
+
+/**
+ * A file's bytes, to show or download, as they stream. Never run as a page on this origin. Audio,
+ * video and large files come from the bucket's short-lived URL, never through the API.
+ */
+export async function fileResponse(
   c: Context,
-  bytes: Uint8Array,
-  file: { path: string; contentType: string },
+  key: string,
+  file: { path: string; contentType: string; size: number },
   download: boolean,
 ) {
   const inline = !download && INLINE.test(file.contentType)
   const name = file.path.split('/').pop()!
-  return c.body(bytes as Uint8Array<ArrayBuffer>, 200, {
+  const disposition = `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`
+  if (directUploads && (MEDIA.test(file.contentType) || file.size > LIBRARY_READ_MAX)) {
+    const signed = await presignGet(key, { contentType: file.contentType, disposition })
+    // The signed URL works a little longer than the browser keeps this.
+    c.header('cache-control', `private, max-age=${signed.seconds - 60}`)
+    return c.redirect(signed.url, 302)
+  }
+  return serveObject(c, key, {
     'content-type': file.contentType.startsWith('text/')
       ? `${file.contentType}; charset=utf-8`
       : file.contentType,
-    'content-disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`,
+    'content-disposition': disposition,
     'x-content-type-options': 'nosniff',
     'content-security-policy': 'sandbox',
     'cache-control': 'private, no-cache',
@@ -91,13 +117,26 @@ const folderParam = (value: string | undefined) => {
 
 const memoryFile = (
   kind: MemoryFile['kind'],
-  row: { text: string; updatedAt: Date } | null,
+  row: { id: string; text: string; updatedAt: Date } | null,
   header: string,
+  info: Awaited<ReturnType<typeof memoryLineInfo>>,
 ): MemoryFile => ({
   kind,
   text: row?.text ?? header,
   updatedAt: row?.updatedAt.toISOString() ?? null,
+  documentId: row?.id ?? null,
+  lines: (row && info.get(row.id)?.lines) ?? {},
+  archived: (row && info.get(row.id)?.archived) ?? 0,
 })
+
+/** A memory file of this workspace, by its document id. */
+async function memoryDocument(db: AppEnv['Variables']['db'], id: string) {
+  const row = await db.document.findFirst({
+    where: { id, kind: { in: ['workspace_memory', 'teammate_memory', 'project_memory'] } },
+  })
+  if (!row) throw new HTTPException(404, { message: 'Memory not found' })
+  return row
+}
 
 export const library = new Hono<AppEnv>()
   .use(requireUser, requireWorkspace)
@@ -107,21 +146,32 @@ export const library = new Hono<AppEnv>()
     const rows = await db.document.findMany({
       where: { kind: 'library', deletedAt: null },
       orderBy: { path: 'asc' },
+      select: LIBRARY_FILE_COLUMNS,
     })
     return c.json(await libraryFiles(db, rows))
   })
 
-  /** The files and the folders people made or set access on, at once. */
+  /** The files, the folders people made or set access on, and this member's pins, at once. */
   .get('/tree', async (c) => {
-    const { db } = c.var
-    const [rows, folders] = await Promise.all([
+    const { db, scope } = c.var
+    const [rows, folders, pins] = await Promise.all([
       db.document.findMany({
         where: { kind: 'library', deletedAt: null },
         orderBy: { path: 'asc' },
+        select: LIBRARY_FILE_COLUMNS,
       }),
       explicitFolders(db),
+      db.documentPin.findMany({
+        where: { memberId: scope.memberId, document: { deletedAt: null } },
+        orderBy: { pinnedAt: 'asc' },
+        select: { documentId: true },
+      }),
     ])
-    return c.json({ files: await libraryFiles(db, rows), folders } satisfies LibraryTree)
+    return c.json({
+      files: await libraryFiles(db, rows),
+      folders,
+      pinned: pins.map((p) => p.documentId),
+    } satisfies LibraryTree)
   })
 
   /** The folders people made or set access on. */
@@ -216,9 +266,39 @@ export const library = new Hono<AppEnv>()
     return c.body(null, 204)
   })
 
-  /** Upload one file (multipart: `file`, and `path` to put it somewhere other than its name). */
+  /** Save a file uploaded straight to the bucket (POST /api/uploads, then its complete). */
+  .post('/files', async (c) => {
+    const { scope, db } = c.var
+    const { path, uploadId } = await parseBody(c.req.raw, SaveLibraryUpload)
+    const upload = await readyUpload(db, { memberId: scope.memberId }, uploadId, 'library')
+    const row = await saveLibraryFile(
+      db,
+      scope,
+      { type: 'member', id: scope.memberId },
+      {
+        path,
+        contentType: upload.contentType,
+        upload: {
+          key: uploadBytesKey(scope, upload),
+          size: upload.size,
+          sha256: upload.sha256,
+          text: upload.text,
+        },
+      },
+    )
+    await discardUpload(scope, upload.id)
+    return c.json(await libraryFileOf(db, row), 201)
+  })
+
+  /**
+   * Upload one file (multipart: `file`, and `path` to put it somewhere other than its name).
+   * Only without R2 (development): with it, files go straight to the bucket (/files).
+   */
   .post('/upload', async (c) => {
     const { scope, db } = c.var
+    if (directUploads) throw new HTTPException(400, { message: 'Upload to the bucket' })
+    if (Number(c.req.header('content-length') ?? 0) > LIBRARY_FILE_MAX + 64 * 1024)
+      throw new HTTPException(413, { message: 'Files in the library can be up to 500 MB' })
     const form = await c.req.parseBody()
     const file = form.file
     if (!(file instanceof File)) throw new HTTPException(400, { message: 'Attach a file' })
@@ -259,25 +339,34 @@ export const library = new Hono<AppEnv>()
 
   .get('/memory', async (c) => {
     const { db, scope } = c.var
-    const [workspace, teammates, memories, summaries] = await Promise.all([
-      readMemory(db, { kind: 'workspace_memory' }),
-      db.teammate.findMany({ where: { archivedAt: null }, orderBy: { createdAt: 'asc' } }),
-      db.document.findMany({ where: { kind: 'teammate_memory' } }),
-      db.document.findMany({
-        where: {
-          kind: 'thread_summary',
-          session: { OR: [{ private: false }, { startedByMemberId: scope.memberId }] },
-        },
-        include: { session: { select: { title: true } } },
-        orderBy: { updatedAt: 'desc' },
-        take: 50,
-      }),
+    const [workspace, teammates, memories, projects, projectMemories, summaries] =
+      await Promise.all([
+        readMemory(db, { kind: 'workspace_memory' }),
+        db.teammate.findMany({ where: { archivedAt: null }, orderBy: { createdAt: 'asc' } }),
+        db.document.findMany({ where: { kind: 'teammate_memory' } }),
+        db.project.findMany({ where: { archivedAt: null }, orderBy: { createdAt: 'asc' } }),
+        db.document.findMany({ where: { kind: 'project_memory' } }),
+        db.document.findMany({
+          where: {
+            kind: 'thread_summary',
+            session: { OR: [{ private: false }, { startedByMemberId: scope.memberId }] },
+          },
+          include: { session: { select: { title: true } } },
+          orderBy: { updatedAt: 'desc' },
+          take: 50,
+        }),
+      ])
+    const info = await memoryLineInfo(db, [
+      ...(workspace ? [workspace.id] : []),
+      ...memories.map((m) => m.id),
+      ...projectMemories.map((m) => m.id),
     ])
     const overview: MemoryOverview = {
       workspace: memoryFile(
         'workspace_memory',
         workspace,
         memoryHeader({ kind: 'workspace_memory' }),
+        info,
       ),
       teammates: teammates.map((t) => ({
         teammateId: t.id,
@@ -286,6 +375,17 @@ export const library = new Hono<AppEnv>()
           'teammate_memory',
           memories.find((m) => m.teammateId === t.id) ?? null,
           memoryHeader({ kind: 'teammate_memory', teammateId: t.id }, t.name),
+          info,
+        ),
+      })),
+      projects: projects.map((p) => ({
+        projectId: p.id,
+        name: p.name,
+        memory: memoryFile(
+          'project_memory',
+          projectMemories.find((m) => m.projectId === p.id) ?? null,
+          memoryHeader({ kind: 'project_memory', projectId: p.id }, p.name),
+          info,
         ),
       })),
       summaries: summaries.map((s) => ({
@@ -297,6 +397,27 @@ export const library = new Hono<AppEnv>()
       })),
     }
     return c.json(overview)
+  })
+
+  /** A memory file's archived lines, newest first; ?q= filters by text. */
+  .get('/memory/:documentId/archive', async (c) => {
+    const { db } = c.var
+    const row = await memoryDocument(db, c.req.param('documentId'))
+    const query = (c.req.query('q') ?? '').trim().slice(0, 200)
+    return c.json(await archivedMemoryLines(db, row.id, query))
+  })
+
+  /** Put an archived line back in its memory file. */
+  .post('/memory/:documentId/archive/:lineId/restore', async (c) => {
+    const { db, scope } = c.var
+    await memoryDocument(db, c.req.param('documentId'))
+    await restoreMemoryLine(
+      db,
+      scope,
+      { type: 'member', id: scope.memberId },
+      c.req.param('lineId'),
+    )
+    return c.json({ ok: true })
   })
 
   .put('/memory/workspace', async (c) => {
@@ -331,11 +452,23 @@ export const library = new Hono<AppEnv>()
 
   /**
    * Open a Markdown file or a memory file to edit (memory is created on first
-   * open). Live through the collab server when it is configured.
+   * open). Live through the collab server when it is configured. A viewer
+   * (src/viewers.ts) opens it to read: no collab token, nothing created.
    */
   .post('/edit', async (c) => {
     const { db, scope } = c.var
     const target = await parseBody(c.req.raw, EditTarget)
+    const viewer = scope.role === 'viewer'
+    if (viewer && target.kind !== 'library') {
+      const memory = await readMemory(db, target)
+      const session: EditSession = {
+        documentId: memory?.id ?? `${target.kind}-unwritten`,
+        text: memory ? await documentText(scope, memory) : '',
+        live: null,
+        readOnly: true,
+      }
+      return c.json(session)
+    }
     let row
     if (target.kind === 'library') {
       row = await libraryFile(db, target.id)
@@ -355,7 +488,7 @@ export const library = new Hono<AppEnv>()
       row = await ensureMemory(db, scope, target, teammate.name)
     }
     let live: EditSession['live'] = null
-    if (collabEnabled()) {
+    if (collabEnabled() && !viewer) {
       const user = await prisma.user.findUnique({ where: { id: scope.userId } })
       const name = user?.name || user?.email || 'Someone'
       live = {
@@ -368,8 +501,10 @@ export const library = new Hono<AppEnv>()
     }
     const session: EditSession = {
       documentId: row.id,
-      text: await documentText(scope, row),
+      // A live document's text comes from its room: reading the file here would only slow the open.
+      ...(!live && { text: await documentText(scope, row) }),
       live,
+      ...(viewer && { readOnly: true }),
     }
     return c.json(session)
   })
@@ -386,11 +521,40 @@ export const library = new Hono<AppEnv>()
     return c.json({ ok: true })
   })
 
+  /**
+   * One file as the list shows it, for the dashboard's file panel, which opens a file from a
+   * mention, a thread or search knowing only its id: what it is decides how it shows. 404 once
+   * it is gone, or in the trash.
+   */
+  .get('/:id', async (c) => {
+    const { db } = c.var
+    const row = await db.document.findFirst({
+      where: { id: c.req.param('id'), kind: 'library', deletedAt: null },
+      select: LIBRARY_FILE_COLUMNS,
+    })
+    if (!row) throw new HTTPException(404, { message: 'File not found' })
+    return c.json(await libraryFileOf(db, row))
+  })
+
+  /**
+   * Its public link (docs/public-links.md), or null. POST turns it on (the one it has, or a new
+   * one), DELETE turns it off: its address stops working at once. A viewer may only look.
+   */
+  .get('/:id/share', async (c) => c.json({ share: await shareOf(c.var.db, c.req.param('id')) }))
+  .post('/:id/share', async (c) => {
+    const { scope, db } = c.var
+    return c.json({ share: await shareFile(db, scope, scope.memberId, c.req.param('id')) })
+  })
+  .delete('/:id/share', async (c) => {
+    const { scope, db } = c.var
+    await unshareFile(db, scope, scope.memberId, c.req.param('id'))
+    return c.json({ share: null })
+  })
+
   /** The file's bytes. Shown inline only for types that cannot run script on this origin. */
   .get('/:id/content', async (c) => {
     const row = await libraryFile(c.var.db, c.req.param('id'))
-    const bytes = await readLibraryFile(c.var.scope, row.id)
-    return fileResponse(c, bytes, row, c.req.query('download') !== undefined)
+    return fileResponse(c, fileKey(c.var.scope, row), row, c.req.query('download') !== undefined)
   })
 
   /** A Word document, spreadsheet or deck, readable in the dashboard. `?version=` for an older one. */
@@ -402,9 +566,10 @@ export const library = new Hono<AppEnv>()
       ? await db.documentVersion.findFirst({ where: { id: versionId, documentId: row.id } })
       : null
     if (versionId && !version) throw new HTTPException(404, { message: 'Version not found' })
-    const bytes = version
-      ? await readVersion(scope, version.id)
-      : await readLibraryFile(scope, row.id)
+    // Read whole to unzip it: past this, it is only downloaded.
+    if ((version ?? row).size > LIBRARY_READ_MAX)
+      throw new HTTPException(413, { message: 'The file is too large to preview' })
+    const bytes = version ? await readVersion(scope, version) : await readLibraryFile(scope, row)
     return c.json(await libraryPreview(bytes, version?.contentType ?? row.contentType))
   })
 
@@ -444,8 +609,12 @@ export const library = new Hono<AppEnv>()
       where: { id: c.req.param('versionId'), documentId: row.id },
     })
     if (!version) throw new HTTPException(404, { message: 'Version not found' })
-    const bytes = await readVersion(scope, version.id)
-    return fileResponse(c, bytes, version, c.req.query('download') !== undefined)
+    return fileResponse(
+      c,
+      versionBytesKey(scope, version),
+      version,
+      c.req.query('download') !== undefined,
+    )
   })
 
   /** Make an older version the current one. The newer ones stay in the history. */
@@ -456,15 +625,29 @@ export const library = new Hono<AppEnv>()
       where: { id: c.req.param('versionId'), documentId: row.id },
     })
     if (!version) throw new HTTPException(404, { message: 'Version not found' })
+    // A large one is copied inside the bucket, its text for search read as it streams by.
+    const key = versionBytesKey(scope, version)
+    const large = version.size > LIBRARY_READ_MAX
+    const inspected = large
+      ? await inspectObject(key, { name: row.path, contentType: version.contentType, text: true })
+      : null
+    if (large && !inspected)
+      throw new HTTPException(404, { message: 'That version is missing from storage' })
     const saved = await saveLibraryFile(
       db,
       scope,
       { type: 'member', id: scope.memberId },
-      {
-        path: row.path,
-        bytes: await readVersion(scope, version.id),
-        contentType: version.contentType,
-      },
+      inspected
+        ? {
+            path: row.path,
+            upload: { key, size: inspected.size, sha256: inspected.sha256, text: inspected.text },
+            contentType: version.contentType,
+          }
+        : {
+            path: row.path,
+            bytes: await readVersion(scope, version),
+            contentType: version.contentType,
+          },
       { restoredFrom: version.id },
       { restoredFromId: version.id },
     )
@@ -485,6 +668,30 @@ export const library = new Hono<AppEnv>()
       { path: row.path, bytes: new TextEncoder().encode(text), contentType: row.contentType },
     )
     return c.json(await libraryFileOf(db, saved))
+  })
+
+  /** Pin it to the top of this member's Library; DELETE unpins it. Each member's own. */
+  .post('/:id/pin', async (c) => {
+    const { scope, db } = c.var
+    const row = await libraryFile(db, c.req.param('id'))
+    await db.documentPin.upsert({
+      where: { memberId_documentId: { memberId: scope.memberId, documentId: row.id } },
+      create: {
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
+        memberId: scope.memberId,
+        documentId: row.id,
+      },
+      update: {},
+    })
+    return c.json({ ok: true })
+  })
+  .delete('/:id/pin', async (c) => {
+    const { scope, db } = c.var
+    await db.documentPin.deleteMany({
+      where: { memberId: scope.memberId, documentId: c.req.param('id') },
+    })
+    return c.json({ ok: true })
   })
 
   /** Rename or move. */

@@ -26,15 +26,23 @@ const ALL = '*'
  * Every repository's pull requests in one list, with where each review loop
  * stands. In a project (`projectId`): those of its repositories and threads.
  */
-export function PullList({ projectId }: { projectId?: string }) {
+export function PullList({
+  projectId,
+  initialFilter = '',
+}: {
+  projectId?: string
+  /** The project filter it opens with, e.g. from `?project=` (a project's page links there). */
+  initialFilter?: string
+}) {
   const [state, setState] = useState<'open' | 'closed'>('open')
   const [repository, setRepository] = useState(ALL)
-  const [filter, setFilter] = useState('')
+  const [filter, setFilter] = useState(initialFilter)
   const github = useGitHub()
   const list = useApi<PullRequestList>(
     github === 'connected'
       ? `/pulls?state=${state}${projectQuery(projectId ?? filter, '&')}`
       : null,
+    ['pulls.updated'],
   )
   const shown = (list.data?.pulls ?? []).filter(
     (p) => repository === ALL || p.repository === repository,
@@ -169,7 +177,10 @@ export function PullList({ projectId }: { projectId?: string }) {
                       <span className="font-mono">{p.repository}</span>
                       {' · '}
                       {p.tracking?.author ? p.tracking.author.name : p.author}
-                      {p.tracking?.reviewer && ` → ${p.tracking.reviewer.name}`}
+                      {p.tracking?.review &&
+                        p.tracking.review.state !== 'skipped' &&
+                        p.tracking.review.reviewer &&
+                        ` → ${p.tracking.review.reviewer.name}`}
                       {' · '}
                       {timeAgo(p.updatedAt)}
                     </span>

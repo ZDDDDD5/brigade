@@ -4,21 +4,25 @@
 // live in the database and the minute tick fires them, so a restart or a deploy
 // loses none, and the API runs them the same on a server and on Workers.
 import {
+  ACTION_SOURCE,
   WAKEUPS_IN_A_ROW,
   WAKEUPS_PER_THREAD,
   wakeTime,
+  wakeupMessage,
   type ScheduleOperation,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { audit, type Actor } from './audit.js'
 import { prisma, scoped, type Scope, type ScopedDb } from './db.js'
-import { broadcastThreadStatus } from './hub.js'
+import { hubs, threadUpdated } from './hub.js'
 import { localTime, memberTimezone } from './schedules.js'
 import type { WorkspaceScope } from './scope.js'
 import { loadThread } from './thread-spec.js'
-import { settleOverdueChildren } from './children.js'
-import { settleOverdueDryRuns } from './playbook-dry-runs.js'
+import { dueChildren, outlastWakeup, reportHeld, settleOverdueChildren } from './children.js'
+import { CHIEF_SOURCE, wakeupCommandId } from './chief-order.js'
+import { dueDryRuns, settleOverdueDryRuns } from './playbook-dry-runs.js'
 import { promptThread } from './work.js'
+import { GOAL_SOURCE, goalOpenIn } from './goals.js'
 
 type WakeupOperation = Extract<
   ScheduleOperation,
@@ -28,13 +32,73 @@ type WakeupOperation = Extract<
 /** A wake-up whose computer stays offline this long after it was due is given up. */
 const MISSED_AFTER_MS = 24 * 60 * 60_000
 
+/**
+ * A merge's wake-up (src/thread-done.ts), by its sourceId: `merged:<repository>#<number>`. Brigade
+ * set it, not the teammate, so its note is the prompt itself.
+ */
+export const MERGE_SOURCE = 'merged:'
+
+/** An answer of Chief's for the person (src/chief-answers.ts), by its sourceId: `chief:<decision>`. */
+export { CHIEF_SOURCE }
+
 export const isWakeupOperation = (op: ScheduleOperation): op is WakeupOperation =>
   op.name === 'wake' || op.name === 'list_wakeups' || op.name === 'cancel_wakeup'
 
-type Session = { id: string; origin: string; startedByMemberId: string; status: string }
+type Session = {
+  id: string
+  origin: string
+  startedByMemberId: string
+  status: string
+  parentId?: string | null
+  playbookRunId?: string | null
+  chiefDecisionId?: string | null
+}
+
+/**
+ * Where a teammate may set wake-ups: a thread a person started, or a child thread a teammate
+ * started (start_child, a review), which waits on something as its parent would (a scan, a CI
+ * run). Not a schedule's or a trigger's run, nor a playbook's thread or Chief's decision: nobody
+ * set those up to wait. A child's report waits for the turn its wake-up brings (wakeupHold).
+ */
+export const mayWake = (session: Session) =>
+  session.origin === 'member' ||
+  (session.origin === 'child' &&
+    !!session.parentId &&
+    !session.playbookRunId &&
+    !session.chiefDecisionId)
+
+/** How long a wake-up that fired still holds its child's report while its prompt has not shown. */
+const UNSHOWN_HOLD_MS = 24 * 60 * 60_000
+
+/**
+ * A child thread's own wake-up still to come: its report waits for the turn it brings. Pending,
+ * or fired and its prompt not shown yet: fire() settles it once the prompt is kept, which may
+ * queue behind a turn at work (a person's message, its parent's); that turn's end does not
+ * report. Its prompt shows with its id (wakeupMessageId) when its own turn comes. One that never
+ * shows holds a day at most; its parent's wait runs out before (outlastWakeup).
+ */
+export async function wakeupHold(db: ScopedDb, sessionId: string) {
+  const own = { sessionId, kind: 'wakeup' as const, sourceId: null }
+  if (await db.wakeup.count({ where: { ...own, status: 'pending' } })) return true
+  const last = await db.wakeup.findFirst({
+    where: { ...own, status: 'fired', firedAt: { gt: new Date(Date.now() - UNSHOWN_HOLD_MS) } },
+    orderBy: { firedAt: 'desc' },
+    select: { id: true },
+  })
+  if (!last) return false
+  const shown = await db.sessionEvent.findFirst({
+    where: {
+      sessionId,
+      type: 'message.user',
+      data: { path: ['messageId'], equals: wakeupMessageId(last.id) },
+    },
+    select: { seq: true },
+  })
+  return !shown
+}
 
 const changed = (scope: Scope, session: { id: string; status: string }) =>
-  broadcastThreadStatus(scope.workspaceId, session.id, session.status)
+  void hubs.get(scope.workspaceId).broadcast(threadUpdated(session.id, session.status))
 
 /**
  * Wake-ups fired in the thread since a person last wrote in it. A wake-up's own
@@ -48,12 +112,18 @@ export async function firedInARow(db: ScopedDb, sessionId: string) {
     select: { data: true, at: true },
   })
   const last = messages.find((m) => (m.data as { memberId?: string | null }).memberId)
+  // A mission's actions (src/initiatives.ts) are its plan at work, not the teammate checking again.
   return db.wakeup.count({
-    where: { sessionId, status: 'fired', firedAt: { gt: last?.at ?? new Date(0) } },
+    where: {
+      sessionId,
+      status: 'fired',
+      firedAt: { gt: last?.at ?? new Date(0) },
+      OR: [{ sourceId: null }, { NOT: { sourceId: { startsWith: ACTION_SOURCE } } }],
+    },
   })
 }
 
-/** A teammate's wake-up tools, from a thread a person started. */
+/** A teammate's wake-up tools, from a thread a person started or a child thread (mayWake). */
 export async function handleWakeup(
   db: ScopedDb,
   scope: Scope,
@@ -61,10 +131,11 @@ export async function handleWakeup(
   teammate: { id: string; name: string },
   op: WakeupOperation,
 ): Promise<object | { error: string }> {
-  if (session.origin !== 'member')
+  if (!mayWake(session))
     return {
       error:
-        'Wake-ups are set only in a thread a person started. Finish the work now, or open a ticket.',
+        'Wake-ups are set only in a thread a person started or in a child thread. Finish the work ' +
+        'now, or open a ticket.',
     }
   const timezone = await memberTimezone(db, session.startedByMemberId)
   const brief = (w: { id: string; note: string; wakeAt: Date }) => ({
@@ -96,7 +167,9 @@ export async function handleWakeup(
         `You already have ${pending.length} wake-ups pending in this thread, the most it holds. ` +
         'Cancel one (list_wakeups shows them) or wait for it.',
     }
-  if ((await firedInARow(db, session.id)) >= WAKEUPS_IN_A_ROW)
+  // A goal under way bounds itself (its budget, its deadline, its turns without progress): its
+  // teammate waits on the world with wake-ups for as long as it runs (docs/goals.md).
+  if (!(await goalOpenIn(session.id)) && (await firedInARow(db, session.id)) >= WAKEUPS_IN_A_ROW)
     return {
       error:
         `You woke yourself ${WAKEUPS_IN_A_ROW} times in a row in this thread with no word from a person. ` +
@@ -113,11 +186,15 @@ export async function handleWakeup(
     data: { wakeupId: wakeup.id, wakeAt: when.toISOString() },
   })
   changed(scope, session)
+  // A child: its parent waits for it past the wake-up, to hear what it brings.
+  if (session.parentId) await outlastWakeup(scope, session.id, when)
   return {
     ...brief(wakeup),
-    next:
-      'Set. At that time you are prompted again in this thread with your note. End your turn now; ' +
-      'do not wait or poll. Tell the person in one line when you will check again.',
+    next: session.parentId
+      ? 'Set. At that time you are prompted again in this thread with your note. End your turn now; ' +
+        'do not wait or poll. Your report waits for the turn it brings: report then, with what you found.'
+      : 'Set. At that time you are prompted again in this thread with your note. End your turn now; ' +
+        'do not wait or poll. Tell the person in one line when you will check again.',
   }
 }
 
@@ -141,6 +218,11 @@ async function cancel(
     data: { wakeupId: id },
   })
   changed(scope, session)
+  // A child its wake-up held from reporting, idle: what it has goes to its parent now. Cancelled
+  // all the same when that fails: the parent's wait running out settles it.
+  await reportHeld(scope, session.id).catch((error: unknown) =>
+    console.error(`thread ${session.id}: could not send its held report`, error),
+  )
   return true
 }
 
@@ -155,6 +237,13 @@ export async function cancelWakeup(
     throw new HTTPException(404, { message: 'No pending wake-up with that id in this thread' })
 }
 
+/**
+ * The id a report's wake-up gives its message in the thread: the runner keeps it on the message,
+ * queued and shown (message.user), so auto-merge knows which turn read which report
+ * (src/pull-requests.ts). Stable, so a prompt tried again after a restart keeps it too.
+ */
+export const wakeupMessageId = (wakeupId: string) => `wakeup-${wakeupId}`
+
 /** The prompt a wake-up brings back. */
 function prompt(
   wakeup: { note: string; wakeAt: Date; createdAt: Date },
@@ -162,14 +251,12 @@ function prompt(
   timezone: string,
 ) {
   const late = now.getTime() - wakeup.wakeAt.getTime()
-  return (
-    `Wake-up you set at ${localTime(wakeup.createdAt, timezone)} (${timezone})` +
-    (late > 5 * 60_000
-      ? `, ${Math.round(late / 60_000)} minutes late (the computer was offline)`
-      : '') +
-    `: ${wakeup.note}\n\n` +
-    'Check it now and tell the person what you found. Set another wake-up only if it is still not ready.'
-  )
+  return wakeupMessage({
+    set: localTime(wakeup.createdAt, timezone),
+    timezone,
+    ...(late > 5 * 60_000 ? { lateMinutes: Math.round(late / 60_000) } : {}),
+    note: wakeup.note,
+  })
 }
 
 /** Fire one due wake-up into its thread, or say it waits for the next tick. */
@@ -180,16 +267,16 @@ async function fire(wakeup: {
   sessionId: string
   teammateId: string
   note: string
-  kind: 'wakeup' | 'report'
+  kind: 'wakeup' | 'report' | 'reply'
   wakeAt: Date
   createdAt: Date
+  sourceId: string | null
 }) {
   const scope: Scope = { organizationId: wakeup.organizationId, workspaceId: wakeup.workspaceId }
   const db = scoped(scope)
   const now = new Date()
   const thread = await loadThread(db, wakeup.sessionId)
   const settle = async (status: 'fired' | 'missed') => {
-    // Moving it off pending is the claim: another tick that read it too does nothing.
     const { count } = await db.wakeup.updateMany({
       where: { id: wakeup.id, status: 'pending' },
       data: { status, firedAt: now },
@@ -198,82 +285,117 @@ async function fire(wakeup: {
   }
   // A person has the computer: it waits until they hand back, as the teammate does.
   if (thread.controlledByMemberId) return
-  // The teammate left the thread or was archived: nobody to wake. Children's reports go to whoever is there.
+  // The teammate left the thread or was archived: nobody to wake. Children's reports and
+  // emails' replies go to whoever is there.
   const seat = thread.teammates.find((t) => t.teammateId === wakeup.teammateId)
-  const report = wakeup.kind === 'report'
-  if ((!seat || seat.teammate.archivedAt) && !report) {
-    await settle('missed')
+  if ((!seat || seat.teammate.archivedAt) && wakeup.kind === 'wakeup') {
+    if (await settle('missed')) await reportHeld(scope, thread.id)
     return changed(scope, thread)
   }
-  if (!(await settle('fired'))) return
-  // Archived meanwhile, the thread comes back with the reports, as with a new message.
-  if (report && thread.archivedAt)
+  // An answer of Chief's for the person (src/chief-answers.ts) the person's word or their
+  // dismissal settled meanwhile: it never goes. Whether it still may is settled as its prompt is
+  // kept, in order with the person's word (src/chief-order.ts): then a moot one is not kept, and
+  // its wake-up is cancelled.
+  const chiefDecision = wakeup.sourceId?.startsWith(CHIEF_SOURCE)
+    ? wakeup.sourceId.slice(CHIEF_SOURCE.length)
+    : null
+  if (
+    chiefDecision &&
+    !(await db.chiefDecision.count({ where: { id: chiefDecision, status: 'answered' } }))
+  ) {
+    await db.wakeup.updateMany({
+      where: { id: wakeup.id, status: 'pending' },
+      data: { status: 'cancelled' },
+    })
+    return changed(scope, thread)
+  }
+  // Settled only once its prompt is kept (src/runner-commands.ts): a restart in between fires it
+  // again, and the prompt's id, the wake-up's own, keeps it from reaching the thread twice.
+  // Archived meanwhile, the thread comes back with the reports and replies, as with a new message.
+  if (wakeup.kind !== 'wakeup' && thread.archivedAt)
     await db.session.updateMany({ where: { id: thread.id }, data: { archivedAt: null } })
-  const outcome = await promptThread(db, scope, thread, {
-    text: report
-      ? wakeup.note
-      : prompt(wakeup, now, await memberTimezone(db, thread.startedByMemberId)),
-    memberId: null,
-    ...(seat && !seat.teammate.archivedAt ? { teammateIds: [wakeup.teammateId] } : {}),
-  }).catch((error: unknown) => {
+  const outcome = await promptThread(
+    db,
+    scope,
+    thread,
+    {
+      // A report's and a reply's note is the message itself, and so is a merge's, a goal's and a
+      // mission action's.
+      text:
+        wakeup.kind === 'wakeup' &&
+        !wakeup.sourceId?.startsWith(MERGE_SOURCE) &&
+        !wakeup.sourceId?.startsWith(GOAL_SOURCE) &&
+        // A mission's action (src/initiatives.ts): its prompt, or why it does not go.
+        !wakeup.sourceId?.startsWith(ACTION_SOURCE)
+          ? prompt(wakeup, now, await memberTimezone(db, thread.startedByMemberId))
+          : wakeup.note,
+      memberId: null,
+      ...(seat && !seat.teammate.archivedAt ? { teammateIds: [wakeup.teammateId] } : {}),
+      // A child's own wake-up too: its report waits until its prompt shows (wakeupHold).
+      ...(wakeup.kind === 'report' || (wakeup.kind === 'wakeup' && thread.parentId)
+        ? { messageId: wakeupMessageId(wakeup.id) }
+        : {}),
+    },
+    { commandId: wakeupCommandId(wakeup.id) },
+  ).catch((error: unknown) => {
     console.error(`wake-up ${wakeup.id}: could not prompt`, error)
     return 'offline' as const
   })
   // A member's machine asleep: pending again, tried each minute, until it is too late.
   if (outcome === 'offline') {
-    const missed = now.getTime() - wakeup.wakeAt.getTime() > MISSED_AFTER_MS
-    await db.wakeup.updateMany({
-      where: { id: wakeup.id },
-      data: missed ? { status: 'missed' } : { status: 'pending', firedAt: null },
-    })
-  }
+    if (now.getTime() - wakeup.wakeAt.getTime() > MISSED_AFTER_MS && (await settle('missed')))
+      await reportHeld(scope, thread.id)
+  } else if (!(await settle('fired'))) return
   // paused: a cap ticket holds the prompt and sends it when allowed.
   changed(scope, thread)
 }
 
-/** A children's report, fired as soon as it is made (src/children.ts); it waits like any wake-up when it cannot go. */
-export async function fireReport(id: string) {
+/**
+ * A wake-up fired as soon as it is made: a children's report (src/children.ts) or an email's
+ * reply (src/replies.ts). It waits like any wake-up when it cannot go.
+ */
+export async function fireNow(id: string) {
   const wakeup = await prisma.wakeup.findFirst({ where: { id, status: 'pending' } })
   if (wakeup)
     await fire(wakeup).catch((error: unknown) =>
-      console.error(`report ${wakeup.id}: could not fire`, error),
+      console.error(`wake-up ${wakeup.id}: could not fire`, error),
     )
 }
 
-let ticking = false
-
-/** Fire every wake-up that is due. */
-export async function fireDueWakeups() {
-  if (ticking) return
-  ticking = true
-  try {
-    const due = await prisma.wakeup.findMany({
-      where: { status: 'pending', wakeAt: { lte: new Date() } },
-      orderBy: { wakeAt: 'asc' },
-      take: 100,
-    })
-    for (const wakeup of due)
-      await fire(wakeup).catch((error: unknown) =>
-        console.error(`wake-up ${wakeup.id}: could not fire`, error),
-      )
-    // Children whose parent's wait ran out: it hears what is done.
-    await settleOverdueChildren()
-    // Dry runs' events that took too long: left out, so the report comes.
-    await settleOverdueDryRuns()
-  } finally {
-    ticking = false
-  }
+/** Workspaces with a wake-up, a child's report or a dry run due now (src/jobs.ts). */
+export async function dueWakeups(now = new Date()) {
+  const [wakeups, children, dryRuns] = await Promise.all([
+    prisma.wakeup.findMany({
+      where: { status: 'pending', wakeAt: { lte: now } },
+      distinct: ['workspaceId'],
+      select: { workspaceId: true },
+    }),
+    dueChildren(now),
+    dueDryRuns(now.getTime()),
+  ])
+  return [...wakeups.map((w) => w.workspaceId), ...children, ...dryRuns]
 }
 
-/** Tick at the start of every minute, as schedules do. */
-export function watchWakeups() {
-  const later = () =>
-    setTimeout(
-      () =>
-        void fireDueWakeups()
-          .catch((error) => console.error('wake-up tick failed', error))
-          .finally(later),
-      60_000 - (Date.now() % 60_000) + 500,
+/**
+ * Fire every wake-up that is due, of one workspace or all; and what else is due to tell a
+ * thread. Each minute, at its start, as schedules (src/jobs.ts).
+ */
+export async function fireDueWakeups(workspaceId?: string) {
+  const due = await prisma.wakeup.findMany({
+    where: {
+      status: 'pending',
+      wakeAt: { lte: new Date() },
+      ...(workspaceId ? { workspaceId } : {}),
+    },
+    orderBy: { wakeAt: 'asc' },
+    take: 100,
+  })
+  for (const wakeup of due)
+    await fire(wakeup).catch((error: unknown) =>
+      console.error(`wake-up ${wakeup.id}: could not fire`, error),
     )
-  later()
+  // Children whose parent's wait ran out: it hears what is done.
+  await settleOverdueChildren(workspaceId)
+  // Dry runs' events that took too long: left out, so the report comes.
+  await settleOverdueDryRuns(workspaceId)
 }

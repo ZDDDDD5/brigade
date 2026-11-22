@@ -1,14 +1,29 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
   bootstrapScript,
+  DESKTOP_WALLPAPER,
+  EGRESS_SCRIPT,
+  GIVE_HOMES_BACK,
   setupScript,
   TEAMMATE_HELPER,
   THREAD_HELPER,
+  WALLPAPER_SCRIPT,
 } from '../src/cloud-bootstrap.js'
 
 /** sh -n: the script parses, with the template's escapes resolved as the computer gets them. */
@@ -22,6 +37,40 @@ test('the helpers and the setup the computer runs are valid shell', () => {
   parses(THREAD_HELPER)
   parses(setupScript())
   parses(bootstrapScript({ apiUrl: 'https://api.example.com', code: 'abc' }))
+  parses(GIVE_HOMES_BACK)
+  parses(EGRESS_SCRIPT)
+})
+
+test('the setup sets the egress limits at each boot, and goes on when they fail', () => {
+  const setup = setupScript()
+  assert.match(setup, /tee \/usr\/local\/sbin\/brigade-egress/)
+  assert.match(setup, /ExecStart=\/usr\/local\/sbin\/brigade-egress apply/)
+  assert.match(setup, /systemctl enable brigade-egress\.service/)
+  assert.match(setup, /restart brigade-egress\.service \|\| echo/)
+  // The template's escapes resolved: no JavaScript in the script.
+  assert.doesNotMatch(EGRESS_SCRIPT, /undefined/)
+  assert.match(EGRESS_SCRIPT, /case "\$\{1:-\}" in/)
+})
+
+test("brigade-egress's counts add up each rule's packets, IPv4 and IPv6", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'egress-'))
+  const listing = (n: number) =>
+    `Chain BRIGADE-EGRESS (2 references)\n    pkts      bytes target     prot opt in     out     source               destination\n       ${n}      120 DROP       6    --  *      *       0.0.0.0/0            0.0.0.0/0            tcp dpt:25 ctstate NEW /* smtp */\n       0        0 DROP       0    --  *      *       0.0.0.0/0            0.0.0.0/0            ctstate NEW limit: above 100/sec burst 1000 mode srcip /* scan */\n`
+  for (const [name, n] of [
+    ['iptables', 2],
+    ['ip6tables', 3],
+  ] as const)
+    writeFileSync(
+      join(dir, name),
+      `#!/bin/sh\ncase "$*" in *"-nvxL BRIGADE-EGRESS") printf '${listing(n).replaceAll('\n', '\\n')}' ;; *) exit 1 ;; esac\n`,
+      { mode: 0o755 },
+    )
+  const result = spawnSync('sh', ['-c', EGRESS_SCRIPT, 'brigade-egress', 'counts'], {
+    env: { PATH: `${dir}:/usr/bin:/bin` },
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(result.stdout, 'scan 0\nsmtp 5\n')
 })
 
 test('the thread helper reads its command from its first argument', () => {
@@ -117,3 +166,568 @@ test('the thread helper takes a thread down only when none of its processes is l
   assert.equal(existsSync(join(dir, 'state', 'cmthread1')), false)
   assert.equal(existsSync(join(dir, 'tmp', 'cmthread1')), false)
 })
+
+test('the swap file is as large as the memory, within 8 GiB, a tenth of the disk and a quarter of what is free', () => {
+  const swapGib = /^swap_gib\(\) \{$[\s\S]*?^\}$/m.exec(setupScript())?.[0]
+  assert.ok(swapGib)
+  const size = (memoryKib: number, diskGib: number, freeGib: number) => {
+    const result = spawnSync(
+      'sh',
+      ['-c', `${swapGib}\nswap_gib ${Math.round(memoryKib)} ${diskGib} ${freeGib}`],
+      { encoding: 'utf8' },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    return Number(result.stdout.trim())
+  }
+  const GIB = 1024 * 1024
+  // default: 8 GB of memory, 69 GB disk. Twice the memory used to take 12 GiB of it.
+  assert.equal(size(7.9 * GIB, 69, 48), 6)
+  // large: 16 GB of memory, 125 GB disk.
+  assert.equal(size(15.9 * GIB, 125, 100), 8)
+  // A disk already short of room.
+  assert.equal(size(7.9 * GIB, 69, 12), 3)
+  // small: 4 GB of memory, a small disk.
+  assert.equal(size(3.9 * GIB, 20, 15), 2)
+})
+
+test('swapping goes through zswap, compressed with zstd, where the kernel has it', () => {
+  const zswapOn = /^zswap_on\(\) \{$[\s\S]*?^\}$/m.exec(setupScript())?.[0]
+  assert.ok(zswapOn)
+  const dir = mkdtempSync(join(tmpdir(), 'zswap-'))
+  const params = {
+    enabled: 'N',
+    compressor: 'lzo',
+    zpool: 'zbud',
+    max_pool_percent: '20',
+    shrinker_enabled: 'N',
+  }
+  for (const [name, value] of Object.entries(params)) writeFileSync(join(dir, name), `${value}\n`)
+  const run = (folder: string) =>
+    spawnSync('sh', ['-c', `set -eu\n${zswapOn}\nzswap_on "$1"`, 'sh', folder], {
+      encoding: 'utf8',
+    })
+  assert.equal(run(dir).status, 0)
+  const read = (name: string) => readFileSync(join(dir, name), 'utf8').trim()
+  assert.equal(read('enabled'), 'Y')
+  assert.equal(read('compressor'), 'zstd')
+  assert.equal(read('zpool'), 'zsmalloc')
+  assert.equal(read('shrinker_enabled'), 'Y')
+  // A kernel without zswap: nothing to do, and the swap file is still made.
+  assert.equal(run(join(dir, 'missing')).status, 0)
+})
+
+test("the teammate helper prunes the computer's own Docker, never its volumes", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'system-docker-'))
+  const stub = (name: string, body: string) =>
+    writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+  stub('docker', 'echo "$*" >>"$LOG"; echo "Total reclaimed space: 2.979GB"')
+  stub('systemctl', '[ "$ACTIVE" = yes ]')
+  const prune = (active: string) => {
+    const log = join(dir, `${active}.log`)
+    const result = spawnSync(
+      'sh',
+      ['-c', TEAMMATE_HELPER, 'brigade-teammate', 'prune-system-docker'],
+      {
+        env: { PATH: `${dir}:/usr/bin:/bin`, LOG: log, ACTIVE: active },
+        encoding: 'utf8',
+      },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    return { out: result.stdout.trim(), calls: existsSync(log) ? readFileSync(log, 'utf8') : '' }
+  }
+  const { out, calls } = prune('yes')
+  assert.equal(out, 'Total reclaimed space: 2.979GB')
+  assert.equal(calls.trim(), 'system prune --all --force')
+  // No Docker running on the computer: nothing to prune.
+  assert.deepEqual(prune('no'), { out: '', calls: '' })
+})
+
+test("a restored computer's teammate homes are given back, only for users that exist", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'homes-back-'))
+  const home = join(dir, 'home')
+  for (const user of ['bt-riley', 'bt-gone', 'bt-kai'])
+    mkdirSync(join(home, user), { recursive: true })
+  mkdirSync(join(home, 'user'))
+  const bin = join(dir, 'bin')
+  mkdirSync(bin)
+  const stub = (name: string, body: string) =>
+    writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+  stub('id', '[ "$1" != bt-gone ]')
+  stub('sudo', 'echo "$*" >>"$LOG"; [ "$3" != "$FAILS" ]')
+  const giveBack = (fails: string) => {
+    const log = join(dir, `${fails || 'ok'}.log`)
+    const result = spawnSync('sh', ['-c', GIVE_HOMES_BACK.replaceAll('/home/', `${home}/`)], {
+      env: { PATH: `${bin}:/usr/bin:/bin`, LOG: log, FAILS: fails },
+      encoding: 'utf8',
+    })
+    return { status: result.status, calls: readFileSync(log, 'utf8').trim().split('\n') }
+  }
+  const calls = [
+    '/usr/local/sbin/brigade-teammate ensure-user bt-kai',
+    '/usr/local/sbin/brigade-teammate ensure-user bt-riley',
+  ]
+  assert.deepEqual(giveBack(''), { status: 0, calls })
+  // One that fails fails the run, after the others had theirs.
+  assert.deepEqual(giveBack('bt-kai'), { status: 1, calls })
+})
+
+/**
+ * The thread helper in a folder of its own, for a teammate's Docker: its state, network pins,
+ * threads' Docker folders and the teammate's /run/user there, and what needs root stubbed.
+ * iptables (on the host, and in a thread's network through ip) logs its calls and has no rule
+ * yet; docker answers with DOCKER_PS and DOCKER_INSPECT.
+ */
+function dockerHelper() {
+  const dir = mkdtempSync(join(tmpdir(), 'thread-docker-'))
+  const bin = join(dir, 'bin')
+  for (const sub of ['bin', 'state', 'netns', 'run', 'user/1500'])
+    mkdirSync(join(dir, sub), { recursive: true })
+  writeFileSync(join(dir, 'subuid'), 'bt-test:100000:65536\n')
+  const stub = (name: string, body: string) =>
+    writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+  stub('id', 'case "$1" in -u) echo 1500 ;; *) exit 0 ;; esac')
+  for (const name of ['dockerd-rootless.sh', 'newuidmap', 'loginctl']) stub(name, 'exit 0')
+  // As the teammate: here, with this PATH, its env -i and assignments dropped.
+  stub(
+    'runuser',
+    [
+      'while [ "$1" != -- ]; do shift; done; shift',
+      '[ "$1" = env ] && shift && [ "$1" = -i ] && shift',
+      'while case "$1" in *=*) true ;; *) false ;; esac; do shift; done',
+      'exec "$@"',
+    ].join('\n'),
+  )
+  stub(
+    'docker',
+    'case "$*" in *" ps -q") printf "%s" "$DOCKER_PS" ;; *" inspect "*) printf "%b" "$DOCKER_INSPECT" ;; esac',
+  )
+  stub('iptables', 'echo "host $*" >>"$LOG"; case "$*" in *" -C "*|"-C "*) exit 1 ;; esac')
+  stub(
+    'ip',
+    'if [ "$1 $2" = "netns exec" ]; then N=$3; shift 4; echo "netns $N $*" >>"$LOG"; case "$*" in *" -C "*|"-C "*) exit 1 ;; esac; fi',
+  )
+  stub(
+    'install',
+    'A=""; while [ $# -gt 0 ]; do case "$1" in -o|-g) shift ;; *) A="$A $1" ;; esac; shift; done; exec /usr/bin/install $A',
+  )
+  // The teammate's systemd: its proxy runs once started, and listens in each folder on SIGHUP.
+  const listen = `for D in "$DIR"/run/*/bt-test; do [ -S "$D/docker.sock" ] || python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$D/docker.sock"; done`
+  stub(
+    'systemctl',
+    `echo "systemctl $*" >>"$LOG"; case "$*" in *is-active*) [ -e "$DIR/proxy-up" ] ;; *"kill -s HUP"*) ${listen} ;; esac`,
+  )
+  stub('systemd-run', `echo "systemd-run $*" >>"$LOG"; : >"$DIR/proxy-up"; ${listen}`)
+  // The runner's wrapper, as its installer writes it, with the computer's own Node.js.
+  writeFileSync(
+    join(dir, 'brigade-runner'),
+    `#!/bin/sh\nwhile :; do\n  "${bin}/node" "/opt/brigade/runner/dist/index.js" "$@"\ndone\n`,
+  )
+  stub('node', 'exit 0')
+  const helper = THREAD_HELPER.replace('STATE=/run/brigade-threads', `STATE=${dir}/state`)
+    .replace('DOCKER_RUN=/run/brigade-docker', `DOCKER_RUN=${dir}/run`)
+    .replace('RUNNER=/opt/brigade/bin/brigade-runner', `RUNNER=${dir}/brigade-runner`)
+    .replaceAll('/run/netns/', `${dir}/netns/`)
+    .replaceAll('/run/user/', `${dir}/user/`)
+    .replaceAll('/etc/subuid', `${dir}/subuid`)
+  const log = join(dir, 'log')
+  const call = (args: string[], env: Record<string, string> = {}) => {
+    writeFileSync(log, '')
+    const result = spawnSync('sh', ['-c', helper, 'brigade-thread', ...args], {
+      env: { PATH: `${bin}:/usr/bin:/bin`, LOG: log, DIR: dir, ...env },
+      encoding: 'utf8',
+    })
+    return { ...result, log: readFileSync(log, 'utf8') }
+  }
+  // Thread 7's network: 10.231.0.29 on the host's side, its containers on 127.231.0.7.
+  const thread = (name: string, index: number) => {
+    writeFileSync(join(dir, 'state', name), `${index}\n`)
+    writeFileSync(join(dir, 'netns', `bt-${name}`), '')
+  }
+  return { dir, call, thread }
+}
+
+const canRun = (...commands: string[]) =>
+  commands.every((c) => spawnSync('sh', ['-c', `command -v ${c}`]).status === 0)
+
+test("a thread's localhost reaches the ports its teammate's containers publish on its address, and only those", () => {
+  const { dir, call, thread } = dockerHelper()
+  thread('cmthread1', 7)
+  mkdirSync(join(dir, 'run', 'cmthread1', 'bt-test'), { recursive: true })
+  writeFileSync(join(dir, 'run', 'cmthread1', 'bt-test.address'), '127.231.0.7\n')
+  const inspect = [
+    '127.231.0.7 5432 5432/tcp',
+    '127.231.0.7 32768 80/tcp',
+    '127.231.0.7 5353 53/udp',
+    // Another thread's container, and what the helper must not trust.
+    '127.231.0.8 6379 6379/tcp',
+    '127.231.0.7 99999 1/tcp',
+    '127.231.0.7 22 22/sctp',
+    '127.231.0.7 1 1/tcp -j ACCEPT',
+    '',
+  ].join('\\n')
+  const result = call(['docker-ports', 'cmthread1', 'bt-test'], {
+    DOCKER_PS: 'c1\nc2',
+    DOCKER_INSPECT: inspect,
+  })
+  assert.equal(result.status, 0, result.stderr)
+  const rules = result.log
+    .split('\n')
+    .filter((line) => / -A BD-| -A OUTPUT| -A PREROUTING| -I INPUT/.test(line))
+  assert.deepEqual(rules, [
+    'host -t nat -A PREROUTING -i btn7 -j BD-7-1500',
+    'host -I INPUT 1 -i btn7 -j BD-7-1500',
+    'netns bt-cmthread1 -t nat -A OUTPUT -j BD-1500',
+    ...[
+      ['tcp', 32768],
+      ['tcp', 5432],
+      ['udp', 5353],
+    ].flatMap(([proto, port]) => [
+      `host -t nat -A BD-7-1500 -d 10.231.0.29 -p ${proto} --dport ${port} -j DNAT --to-destination 127.231.0.7`,
+      `host -A BD-7-1500 -d 127.231.0.7 -p ${proto} --dport ${port} -j ACCEPT`,
+      `netns bt-cmthread1 -t nat -A BD-1500 -d 127.0.0.1 -p ${proto} --dport ${port} -j DNAT --to-destination 10.231.0.29`,
+      `netns bt-cmthread1 -t nat -A BD-1500 -d 127.231.0.7 -p ${proto} --dport ${port} -j DNAT --to-destination 10.231.0.29`,
+    ]),
+  ])
+  // Made again from scratch each time: what stopped is gone.
+  assert.match(result.log, /^host -t nat -N BD-7-1500$/m)
+
+  // Without the teammate's Docker socket in the thread, none of its ports is the thread's.
+  rmSync(join(dir, 'run', 'cmthread1', 'bt-test.address'))
+  const none = call(['docker-ports', 'cmthread1', 'bt-test'], {
+    DOCKER_PS: 'c1',
+    DOCKER_INSPECT: inspect,
+  })
+  assert.equal(none.status, 0, none.stderr)
+  assert.doesNotMatch(none.log, /DNAT/)
+})
+
+test("a teammate's proxy makes only its own containers' ports a thread's", () => {
+  const { call, thread } = dockerHelper()
+  thread('cmthread1', 7)
+  const other = call(['docker-ports', 'cmthread1', 'bt-test'], { SUDO_USER: 'bt-other' })
+  assert.equal(other.status, 2)
+  assert.match(other.stderr, /not yours/)
+  assert.equal(call(['docker-ports', 'cmthread1', 'bt-test'], { SUDO_USER: 'bt-test' }).status, 0)
+  assert.equal(call(['docker-ports', 'cmthread1', 'bt-test'], { SUDO_USER: 'brigade' }).status, 0)
+  // Allowed in sudoers for that command alone.
+  assert.match(
+    setupScript(),
+    /^%brigade-teammates ALL=\(root\) NOPASSWD: \/usr\/local\/sbin\/brigade-thread docker-ports \*$/m,
+  )
+})
+
+test(
+  "a thread's Docker socket is its teammate's proxy, started once, told of each new thread",
+  { skip: !canRun('flock', 'python3') && 'no flock or python3 here' },
+  () => {
+    const { dir, call, thread } = dockerHelper()
+    thread('cmthread1', 7)
+    thread('cmthread2', 300)
+    const bus = join(dir, 'user', '1500', 'bus')
+    spawnSync('python3', [
+      '-c',
+      'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])',
+      bus,
+    ])
+
+    // The teammate's own folder, where it left a link to a file of root's: root writes nothing
+    // in it.
+    mkdirSync(join(dir, 'run', 'cmthread1', 'bt-test'), { recursive: true })
+    writeFileSync(join(dir, 'passwd'), 'root:x:0:0\n')
+    symlinkSync(join(dir, 'passwd'), join(dir, 'run', 'cmthread1', 'bt-test', 'address'))
+
+    const first = call(['docker', 'cmthread1', 'bt-test'])
+    assert.equal(first.status, 0, first.stderr)
+    assert.equal(readFileSync(join(dir, 'passwd'), 'utf8'), 'root:x:0:0\n')
+    assert.equal(first.stdout.trim(), `${dir}/run/cmthread1/bt-test/docker.sock`)
+    assert.equal(
+      readFileSync(join(dir, 'run', 'cmthread1', 'bt-test.address'), 'utf8'),
+      '127.231.0.7\n',
+    )
+    const started = first.log.split('\n').filter((line) => line.startsWith('systemd-run'))
+    assert.deepEqual(started, [
+      // On the Node.js the runner runs on.
+      `systemd-run --user --quiet --collect --unit=brigade-docker-proxy.service -p Restart=on-failure ${dir}/bin/node /opt/brigade/runner/dist/docker-proxy.js`,
+    ])
+    // Docker on first use only: not with the teammate's systemd.
+    assert.match(first.log, /systemctl --user disable --quiet docker\.service/)
+    assert.doesNotMatch(first.log, /dockerd/)
+
+    // Running already: told, not started again. Thread 300's address is its own.
+    const second = call(['docker', 'cmthread2', 'bt-test'])
+    assert.equal(second.status, 0, second.stderr)
+    assert.equal(
+      readFileSync(join(dir, 'run', 'cmthread2', 'bt-test.address'), 'utf8'),
+      '127.231.1.44\n',
+    )
+    assert.doesNotMatch(second.log, /systemd-run/)
+    assert.match(second.log, /systemctl --user kill -s HUP brigade-docker-proxy\.service/)
+
+    // Its socket in a thread gone, the thread's ports with it.
+    const stop = call(['docker-stop', 'cmthread2', 'bt-test'])
+    assert.equal(stop.status, 0, stop.stderr)
+    assert.equal(existsSync(join(dir, 'run', 'cmthread2')), false)
+    assert.match(stop.log, /systemctl --user kill -s HUP brigade-docker-proxy\.service/)
+    assert.match(stop.log, /^host -t nat -D PREROUTING -i btn300 -j BD-300-1500$/m)
+    assert.match(stop.log, /^netns bt-cmthread2 -t nat -D OUTPUT -j BD-1500$/m)
+  },
+)
+
+test("each thread's containers publish on a loopback address of its own", () => {
+  const loopAddr = /^loop_addr\(\) \{.*\}$/m.exec(THREAD_HELPER)?.[0]
+  assert.ok(loopAddr)
+  const of = (index: number) =>
+    spawnSync('sh', ['-c', `${loopAddr}\nloop_addr ${index}`], { encoding: 'utf8' }).stdout.trim()
+  // make_net hands out 1 to 16382.
+  const all = [1, 2, 255, 256, 257, 16382].map(of)
+  assert.deepEqual(all, [
+    '127.231.0.1',
+    '127.231.0.2',
+    '127.231.0.255',
+    '127.231.1.0',
+    '127.231.1.1',
+    '127.231.63.254',
+  ])
+})
+
+test("a teammate's Chrome starts dark, unless its profile chose its colors already", () => {
+  const chromeDark = /^CHROME_DARK='$[\s\S]*?^'$/m.exec(TEAMMATE_HELPER)?.[0]
+  assert.ok(chromeDark)
+  assert.match(TEAMMATE_HELPER, /python3 -I -c "\$CHROME_DARK"/)
+  const dir = mkdtempSync(join(tmpdir(), 'chrome-dark-'))
+  const prefs = join(dir, 'Default', 'Preferences')
+  const run = () =>
+    spawnSync('sh', ['-c', `${chromeDark}\npython3 -I -c "$CHROME_DARK" "$1"`, 'sh', prefs], {
+      encoding: 'utf8',
+    })
+  const read = () => JSON.parse(readFileSync(prefs, 'utf8'))
+  try {
+    // A new profile.
+    assert.equal(run().status, 0)
+    assert.equal(read().browser.theme.color_scheme2, 2)
+    // A profile with settings of its own: they stay.
+    writeFileSync(prefs, JSON.stringify({ profile: { name: 'Riley' }, browser: { a: 1 } }))
+    assert.equal(run().status, 0)
+    assert.deepEqual(read(), {
+      profile: { name: 'Riley' },
+      browser: { a: 1, theme: { color_scheme2: 2 } },
+    })
+    // Light, chosen in Chrome's settings: kept.
+    writeFileSync(prefs, JSON.stringify({ browser: { theme: { color_scheme2: 1 } } }))
+    assert.equal(run().status, 0)
+    assert.equal(read().browser.theme.color_scheme2, 1)
+    // A file Chrome left broken: left as it is (the helper ignores the failure).
+    writeFileSync(prefs, '{"browser":')
+    assert.notEqual(run().status, 0)
+    assert.equal(readFileSync(prefs, 'utf8'), '{"browser":')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("Brigade's wallpaper goes on the desktop, is tried again after a failed download, and leaves someone else's", () => {
+  const setup = setupScript()
+  assert.ok(setup.includes(WALLPAPER_SCRIPT))
+  assert.match(setup, /systemctl enable brigade-wallpaper\.service/)
+  assert.ok(WALLPAPER_SCRIPT.includes(`${DESKTOP_WALLPAPER.url} -o`))
+  const dir = mkdtempSync(join(tmpdir(), 'wallpaper-'))
+  const state = join(dir, 'state')
+  const bin = join(dir, 'bin')
+  const home = join(dir, 'home')
+  mkdirSync(state)
+  mkdirSync(bin)
+  const script = join(dir, 'brigade-wallpaper')
+  writeFileSync(script, WALLPAPER_SCRIPT, { mode: 0o755 })
+  const stub = (name: string, body: string) =>
+    writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+  stub('id', 'exit 0')
+  stub('ascii-desktop', 'exit 0')
+  // sudo -H -u user <command>: the command, as this user.
+  stub('sudo', 'shift 3; exec "$@"')
+  // The download: the file at $SERVED, or a failure without one.
+  stub(
+    'curl',
+    '[ -n "${SERVED:-}" ] || exit 22\nwhile [ "$1" != -o ]; do shift; done\ncp "$SERVED" "$2"',
+  )
+  const served = join(dir, 'served.png')
+  const sha = (file: string) =>
+    spawnSync('sh', ['-c', 'sha256sum "$1" | cut -d" " -f1', 'sh', file], {
+      encoding: 'utf8',
+    }).stdout.trim()
+  const run = (serve: boolean) =>
+    spawnSync(script, [state], {
+      encoding: 'utf8',
+      env: { PATH: `${bin}:/usr/bin:/bin`, HOME: home, ...(serve ? { SERVED: served } : {}) },
+    })
+  const target = join(home, '.config', 'boat', 'wallpaper.png')
+  const put = join(state, 'wallpaper.put')
+  // The wallpaper this script wants: its SHA-256 replaced by the served file's.
+  writeFileSync(served, 'brigade wallpaper')
+  writeFileSync(script, WALLPAPER_SCRIPT.replaceAll(DESKTOP_WALLPAPER.sha256, sha(served)), {
+    mode: 0o755,
+  })
+  try {
+    // The download fails: nothing put, nothing recorded, and a failure for the boot's run to retry.
+    assert.equal(run(false).status, 1)
+    assert.equal(existsSync(target), false)
+    assert.equal(existsSync(put), false)
+    // It works the next time: Brigade's wallpaper, and its hash recorded.
+    assert.equal(run(true).status, 0)
+    assert.equal(readFileSync(target, 'utf8'), 'brigade wallpaper')
+    assert.equal(readFileSync(put, 'utf8').trim(), sha(served))
+    // Run again (each boot): nothing downloaded, nothing changed.
+    assert.equal(run(false).status, 0)
+    assert.equal(readFileSync(target, 'utf8'), 'brigade wallpaper')
+    // A new wallpaper whose download fails: the one in place stays, and so does its hash.
+    const v1 = sha(served)
+    writeFileSync(served, 'brigade wallpaper v2')
+    writeFileSync(script, WALLPAPER_SCRIPT.replaceAll(DESKTOP_WALLPAPER.sha256, sha(served)), {
+      mode: 0o755,
+    })
+    assert.equal(run(false).status, 1)
+    assert.equal(readFileSync(target, 'utf8'), 'brigade wallpaper')
+    assert.equal(readFileSync(put, 'utf8').trim(), v1)
+    // Then it downloads: Brigade's last one is replaced by the new one.
+    assert.equal(run(true).status, 0)
+    assert.equal(readFileSync(target, 'utf8'), 'brigade wallpaper v2')
+    assert.equal(readFileSync(put, 'utf8').trim(), sha(served))
+    // Someone else's: kept, and Brigade's hash stays as it was.
+    writeFileSync(target, 'their own')
+    assert.equal(run(true).status, 0)
+    assert.equal(readFileSync(target, 'utf8'), 'their own')
+    assert.equal(readFileSync(put, 'utf8').trim(), sha(served))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("a teammate's Chrome starts on its own accessibility bus when it has one, and as before when not", () => {
+  const dir = mkdtempSync(join(tmpdir(), 'browser-a11y-'))
+  const log = join(dir, 'log')
+  const stub = (name: string, body: string) =>
+    writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 })
+  // The helper's commands, logged: what Chrome is started with is what matters here.
+  for (const name of ['install', 'xhost', 'python3', 'iptables', 'ip6tables', 'sleep'])
+    stub(name, `echo "${name} $*" >>"$LOG"`)
+  stub('id', 'echo 1001')
+  stub('pgrep', 'exit 0')
+  stub('ps', 'echo "/usr/lib/xorg/Xorg :0 -auth /var/run/x/:0 -nolisten tcp"')
+  stub('timeout', 'shift; exec "$@"')
+  stub('setsid', '[ "$1" = -f ] && shift; exec "$@"')
+  // runuser -u <user> -- env -i VAR=value... command: the variables logged, the command run here.
+  stub(
+    'runuser',
+    'shift 3; [ "$1" = env ] && shift && [ "$1" = -i ] && shift\n' +
+      'while case "$1" in *=*) true ;; *) false ;; esac; do echo "env $1" >>"$LOG"; shift; done\n' +
+      'exec "$@"',
+  )
+  stub('dbus-daemon', 'echo "dbus-daemon $*" >>"$LOG"')
+  stub(
+    'dbus-send',
+    'case "$*" in *GetId*) exit "$GETID" ;; *GetAddress*) [ -n "$ADDRESS" ] && echo "   $ADDRESS" ;; esac',
+  )
+  stub('google-chrome', 'echo "chrome $*" >>"$LOG"')
+  const start = (env: { GETID: string; ADDRESS: string }) => {
+    rmSync(log, { force: true })
+    const result = spawnSync(
+      'sh',
+      ['-c', TEAMMATE_HELPER, 'brigade-teammate', 'browser', 'bt-riley', '21001', 'Riley browser'],
+      { env: { PATH: `${dir}:/usr/bin:/bin`, LOG: log, HOME: dir, ...env }, encoding: 'utf8' },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    return readFileSync(log, 'utf8')
+  }
+  try {
+    const bus = 'unix:path=/run/brigade-a11y/bt-riley/at-spi/bus_0,guid=0123abcd'
+    // Its session bus answers: not started again. Chrome gets the accessibility bus's address.
+    let calls = start({ GETID: '0', ADDRESS: bus })
+    assert.doesNotMatch(calls, /dbus-daemon/)
+    assert.match(calls, new RegExp(`env AT_SPI_BUS_ADDRESS=${bus.replace(/[.,]/g, '\\$&')}\\n`))
+    assert.match(calls, /env ACCESSIBILITY_ENABLED=1\n/)
+    assert.match(
+      calls,
+      /chrome --user-data-dir=.*\/home\/bt-riley\/.browser .*--window-name=Riley browser/,
+    )
+    // None yet: started, as the teammate, in its own folder.
+    calls = start({ GETID: '1', ADDRESS: bus })
+    assert.match(
+      calls,
+      /dbus-daemon --session --nofork --address=unix:path=\/run\/brigade-a11y\/bt-riley\/session/,
+    )
+    assert.match(calls, /env XDG_RUNTIME_DIR=\/run\/brigade-a11y\/bt-riley\n/)
+    assert.match(calls, /env AT_SPI_BUS_ADDRESS=/)
+    // No accessibility bus, or an address somewhere else: Chrome starts as it did before.
+    for (const address of [
+      '',
+      'unix:path=/tmp/other/bus',
+      'unix:path=/run/brigade-a11y/bt-other/bus',
+    ]) {
+      calls = start({ GETID: '0', ADDRESS: address })
+      assert.doesNotMatch(calls, /AT_SPI_BUS_ADDRESS|ACCESSIBILITY_ENABLED/)
+      assert.match(calls, /chrome --user-data-dir=/)
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/**
+ * The teammate helper with its accounts folder and owner set to a temporary folder and the
+ * current user, so its share-login and share-account run here without root.
+ */
+function helperHere(accounts: string) {
+  const user = spawnSync('id', ['-un'], { encoding: 'utf8' }).stdout.trim()
+  const group = spawnSync('id', ['-gn'], { encoding: 'utf8' }).stdout.trim()
+  const script = TEAMMATE_HELPER.replace(/^ACCOUNTS=.*$/m, `ACCOUNTS=${accounts}`)
+    .replace(/^GROUP=.*$/m, `GROUP=${group}`)
+    .replaceAll('brigade "$GROUP"', `${user} "$GROUP"`)
+    .replaceAll('brigade:"$GROUP"', `${user}:"$GROUP"`)
+  return (...args: string[]) =>
+    spawnSync('sh', ['-s', '--', ...args], { input: script, encoding: 'utf8' })
+}
+
+const hasPython = spawnSync('python3', ['-c', '1']).status === 0
+
+test(
+  'share-login shares only the login files, opened, never through a link or another name',
+  { skip: !hasPython && 'no python3' },
+  () => {
+    const dir = mkdtempSync(join(tmpdir(), 'brigade-share-login-'))
+    try {
+      const accounts = join(dir, 'accounts')
+      const account = join(accounts, 'acct1')
+      mkdirSync(account, { recursive: true })
+      const mode = (path: string) => statSync(path).mode & 0o777
+      const file = (path: string, m: number) => {
+        writeFileSync(path, 'x')
+        chmodSync(path, m)
+      }
+      // What Codex leaves after a refresh: 0600, the teammate's.
+      file(join(account, 'auth.json'), 0o600)
+      // A teammate's links and names planted where the helper looks.
+      file(join(dir, 'outside'), 0o600)
+      symlinkSync(join(dir, 'outside'), join(account, '.credentials.json'))
+      file(join(dir, 'other-name'), 0o600)
+      linkSync(join(dir, 'other-name'), join(account, 'auth.json.lock'))
+      file(join(account, '.oauth-token'), 0o600)
+      symlinkSync(account, join(accounts, 'linked'))
+      const helper = helperHere(accounts)
+
+      const shared = helper('share-login', 'acct1')
+      assert.equal(shared.status, 0, shared.stderr)
+      assert.equal(mode(join(account, 'auth.json')), 0o660)
+      assert.equal(mode(join(dir, 'outside')), 0o600, 'a link is not followed')
+      assert.equal(mode(join(dir, 'other-name')), 0o600, 'a file with another name is left')
+      assert.equal(mode(join(account, '.oauth-token')), 0o600, 'the token is never shared')
+      assert.notEqual(helper('share-login', 'linked').status, 0, 'a linked folder is refused')
+      assert.equal(helper('share-login', 'missing').status, 0)
+
+      // After its recursive chmod, share-account gives the token back to the runner alone.
+      const all = helper('share-account', 'acct1')
+      assert.equal(all.status, 0, all.stderr)
+      assert.equal(mode(join(account, '.oauth-token')), 0o600)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  },
+)

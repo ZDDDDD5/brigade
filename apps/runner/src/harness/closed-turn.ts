@@ -77,6 +77,49 @@ export function withoutBridge(resume: unknown): unknown {
 }
 
 /**
+ * The port of the bridge a saved session can attach to, if any. Since harness-claude-code 1.0.191
+ * and harness-codex 1.0.189, the host proves itself to its bridge with the key pair it started
+ * it with (`privateKey`). A bridge started by an older runner takes a token instead, which the
+ * new host cannot give: attached to, it refuses the connection, and the session starts a second
+ * bridge on the same conversation while the first one's turn goes on. So such a bridge is not
+ * attachable: it is stopped, and the turn continued from its conversation.
+ */
+export function attachablePort(resume: unknown): number | undefined {
+  const state = resume as
+    { continueFrom?: { data?: { bridge?: { port?: unknown; privateKey?: unknown } } } } | undefined
+  const bridge = state?.continueFrom?.data?.bridge
+  if (typeof bridge?.port !== 'number' || typeof bridge.privateKey !== 'string') return
+  return bridge.port
+}
+
+/**
+ * The saved session as runners from before the key-pair bridges can read it too. Their harness
+ * refuses saved bridge coordinates without a `token` before anything else, so a runner rolled
+ * back while a turn ran could not take the thread up at all. With one that no bridge accepts, it
+ * reads them, fails to attach, and starts a bridge of its own on the conversation, as after a
+ * bridge that stopped. This runner's harness ignores it (attachablePort looks for `privateKey`).
+ */
+export function readableByOlderRunners(resume: unknown): unknown {
+  if (!resume || typeof resume !== 'object') return resume
+  const state = resume as { data?: unknown; continueFrom?: { data?: unknown } }
+  const add = (data: unknown) => {
+    const bridge = (data as { bridge?: Record<string, unknown> } | undefined)?.bridge
+    if (!bridge || typeof bridge !== 'object' || 'token' in bridge) return data
+    return { ...(data as object), bridge: { ...bridge, token: OLDER_RUNNERS_TOKEN } }
+  }
+  return {
+    ...state,
+    ...(state.data !== undefined ? { data: add(state.data) } : {}),
+    ...(state.continueFrom
+      ? { continueFrom: { ...state.continueFrom, data: add(state.continueFrom.data) } }
+      : {}),
+  }
+}
+
+/** A token no bridge takes: key-pair ones read none, and token ones were each given their own. */
+const OLDER_RUNNERS_TOKEN = 'none'
+
+/**
  * A saved turn, for an agent made with these tools. The harness continues a turn with the
  * tools it started with, and stops it outright when one of them is gone: an App granted or
  * removed since, or a second account of a kind, which renames that kind's tools
@@ -137,6 +180,53 @@ export const approvalAfterRestart = (
     (approved
       ? 'They approved it: make the same call again now, unchanged, then carry on.'
       : `They declined it${reason ? `: ${reason}` : ''}. Do not make it; carry on without it or stop.`)
+  )
+}
+
+/** A call's input as JSON, whether kept as an object or still as JSON text. */
+const shown = (input: unknown) => JSON.stringify(parsed(input))
+
+/**
+ * A person's answer to a call of a conversation the harness no longer has (HarnessThread's
+ * startAnew), as the new session's message. With the call: the answer alone does not say
+ * what it is for (a ticket's names its asks, not the draft or recipient they approve). Without
+ * it, the new session checks before acting on it.
+ */
+export const answerInNewSession = (
+  call: Pick<WaitingCall, 'toolName' | 'input'> | undefined,
+  result: { toolName: string; output: { value: unknown } },
+) =>
+  call
+    ? `In your previous session you made this ${call.toolName} call, which waited on the person:\n\n` +
+      `${shown(call.input)}\n\nThey answered it:\n\n${JSON.stringify(result.output.value)}\n\n` +
+      'Carry on from there, without asking again.'
+    : `In your previous session you asked the person something with ${result.toolName}, and they answered:\n\n` +
+      `${JSON.stringify(result.output.value)}\n\n` +
+      'What you asked is not known here: check the thread before acting on this answer, and ask again if it is unclear.'
+
+/**
+ * A person's decision on a built-in call of a conversation the harness no longer has, as the
+ * new session's message. Approved, the same call runs without asking twice (sameCall).
+ */
+export const approvalInNewSession = (
+  call: Pick<WaitingApproval, 'toolName' | 'input'> | undefined,
+  approved: boolean,
+  reason?: string,
+) => {
+  const declined = `They declined it${reason ? `: ${reason}` : ''}.`
+  if (!call)
+    return (
+      "In your previous session a call of yours waited for the person's approval and never ran; which one is not known here. " +
+      (approved
+        ? 'They approved it, but check the thread and ask again before making it.'
+        : declined)
+    )
+  return (
+    `In your previous session you asked to make this ${call.toolName} call, which waited for the person's approval and never ran:\n\n` +
+    `${shown(call.input)}\n\n` +
+    (approved
+      ? 'They approved it: make the same call now, unchanged, then carry on.'
+      : `${declined} Do not make it; carry on without it or stop.`)
   )
 }
 

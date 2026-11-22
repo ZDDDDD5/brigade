@@ -1,21 +1,63 @@
-import { Effort, folderExceptions, MCP_PROTOCOL, type ThreadSpec } from '@brigade/contracts'
+import {
+  APP_FEATURES,
+  Effort,
+  type Feature,
+  loginOf,
+  PI_PROTOCOL,
+  ANTIGRAVITY_PROTOCOL,
+  loginName,
+  folderExceptions,
+  libraryAccessFor,
+  MCP_PROTOCOL,
+  type TeammateHarness,
+  type ThreadSpec,
+} from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
+import { mayWrite } from './account-sharing.js'
+import { chiefActs, personRules } from './chief-rules.js'
 import { usableIn } from './apps.js'
-import { runnerProtocol } from './hub.js'
+import { hubs } from './hub.js'
 import { customMcp } from './mcp-servers.js'
-import { isMcp, mcpOperationSpecs } from './mcp-tools.js'
+import { isMcp } from './mcp-tools.js'
+import { catalogVersion, grantOperations, takesCatalogs } from './catalogs.js'
 import { threadAttachments } from './attachments.js'
 import { chiefRoster } from './chief.js'
-import type { ScopedDb } from './db.js'
+import { prisma, type ScopedDb } from './db.js'
 import type { WorkspaceScope } from './scope.js'
-import { connectors, operationSpecs } from './connectors/index.js'
+import type { ConnectorKind } from './connectors/types.js'
+import { connectors } from './connectors/index.js'
+import { threadAddress } from './connectors/email.js'
 import { threadDesignSystems } from './designs.js'
 import { threadSkills } from './skills.js'
 import { playbookAccount, threadPlaybook } from './playbooks.js'
+import { wantsMachine } from './preview-machines.js'
+import { appOpen, featuresOfMember } from './features.js'
 import { gitAccess } from './git.js'
+import { specItems } from './lists.js'
 import { folderRules } from './library-folders.js'
+import { threadInitiative } from './initiatives.js'
 import { projectCatalog, threadProject } from './projects.js'
 import { accountRef, usableAccounts } from './routes/accounts.js'
+
+/** A teammate of the workspace by id or name, so "Ada" works as well as its id. */
+export async function findTeammate(db: ScopedDb, ref: string) {
+  return (
+    (await db.teammate.findFirst({ where: { id: ref, archivedAt: null } })) ??
+    (await db.teammate.findFirst({
+      where: { name: { equals: ref.trim(), mode: 'insensitive' }, archivedAt: null },
+    }))
+  )
+}
+
+/** Why no teammate has that name, with the names it may be: the team, as a teammate reads it. */
+export async function noSuchTeammate(db: ScopedDb, ref: string) {
+  const team = await db.teammate.findMany({
+    where: { archivedAt: null },
+    select: { name: true },
+    orderBy: { name: 'asc' },
+  })
+  return `No teammate is called "${ref}". The team: ${team.map((t) => t.name).join(', ')}.`
+}
 
 /**
  * Harness permission mode for a thread: built-in tools run without asking, on
@@ -33,8 +75,8 @@ export async function loadThread(db: ScopedDb, id: string) {
       teammate: true,
       computer: true,
       teammates: { include: { teammate: true }, orderBy: { joinedAt: 'asc' } },
-      task: { select: { id: true, title: true, description: true, completedAt: true } },
       parent: { select: { id: true, title: true } },
+      startedBy: { select: { suggestions: true } },
     },
   })
   if (!thread) throw new HTTPException(404, { message: 'Thread not found' })
@@ -77,12 +119,137 @@ export async function actingTeammate(
 
 export const noAccount = (harness: string) =>
   new HTTPException(409, {
-    message: `No ${harness === 'codex' ? 'Codex' : 'Claude'} account of yours on this computer is ready. Add or sign in to one under Accounts.`,
+    message: `No ${loginName(harness === 'codex' || harness === 'antigravity' ? harness : 'claude_code')} account you can use on this computer is ready. Add or sign in to one under Accounts.`,
+  })
+
+/** The thread's latest arrival on its computer, as a spec says it (ThreadSpec.moved). */
+export function movedOf(thread: {
+  movedAt: Date | null
+  movedFrom: string | null
+  movedSeq: number | null
+  computer: { kind: string; name: string }
+}) {
+  if (!thread.movedAt) return undefined
+  return {
+    at: thread.movedAt.toISOString(),
+    from: thread.movedFrom ?? 'another computer',
+    to: thread.computer.kind === 'cloud' ? 'the cloud computer' : thread.computer.name,
+    seq: thread.movedSeq ?? 0,
+  }
+}
+
+/** The App accounts a teammate is granted, with their App: usableGrants picks a thread's. */
+export const teammateGrants = (db: ScopedDb, teammateId: string) =>
+  db.grant.findMany({
+    where: { teammateId, connection: { status: { not: 'removed' } } },
+    include: {
+      connection: {
+        include: { app: { select: { disabledTools: true, mcp: true, updatedAt: true } } },
+      },
+    },
   })
 
 /**
+ * The granted accounts a teammate uses in a thread: its spec's connectors, and list_apps'
+ * own (src/app-calls.ts). A member's own account (reach mine) only in the threads they
+ * started. In a playbook's thread, only the Apps it declares, and no more than the access it
+ * declares for each: a mail written to trap it cannot reach any other App its teammate has.
+ * Brigade's own addresses: a project's inbox only in its project's threads, an agent's address
+ * only for that agent, shown as the variant this thread writes from (riley.lovarank@).
+ */
+export async function usableGrants(
+  db: ScopedDb,
+  thread: { startedByMemberId: string; projectId: string | null },
+  teammateId: string,
+  granted: Awaited<ReturnType<typeof teammateGrants>>,
+  playbook: Parameters<typeof playbookAccount>[0] | null,
+) {
+  const mailIds = granted.filter((g) => g.connection.kind === 'email').map((g) => g.connection.id)
+  const mail = mailIds.length
+    ? await db.mailAddress.findMany({ where: { connectionId: { in: mailIds }, releasedAt: null } })
+    : []
+  const mailAddress = new Map<string, string>()
+  for (const address of mail) {
+    if (!address.connectionId) continue
+    if (address.kind === 'inbox' && address.projectId !== thread.projectId) continue
+    if (address.kind === 'agent' && address.teammateId !== teammateId) continue
+    mailAddress.set(
+      address.connectionId,
+      (await threadAddress(db, address.connectionId, thread.projectId)) ?? '',
+    )
+  }
+  return granted
+    .filter((g) => usableIn(g.connection, thread))
+    .filter((g) => g.connection.kind !== 'email' || mailAddress.has(g.connection.id))
+    .map((g) =>
+      g.connection.kind === 'email'
+        ? {
+            ...g,
+            connection: {
+              ...g.connection,
+              externalAccount: mailAddress.get(g.connection.id) || g.connection.externalAccount,
+            },
+          }
+        : g,
+    )
+    .flatMap((g) => {
+      if (!playbook) return [g]
+      // An App one of its roles accepts; where a setting picks the role's account (its inbox,
+      // its analytics tool), that account alone. A server added by its URL only when picked.
+      const access = playbookAccount(playbook, g.connection)
+      if (!access) return []
+      return [access === 'read' ? { ...g, scope: 'read' as const } : g]
+    })
+}
+
+/**
+ * A teammate on Pi runs only where the pi_harness feature is open to the person the thread works
+ * for, and on a runner that knows Pi (PI_PROTOCOL): an older one could not read its spec.
+ */
+async function piAllowed(thread: LoadedThread) {
+  if (!(await featuresOfMember(thread.startedByMemberId, thread.workspaceId)).has('pi_harness'))
+    throw new HTTPException(409, {
+      message: 'Teammates on Pi are not open to this workspace. Switch it to Claude Code or Codex.',
+    })
+  const protocol = await hubs
+    .get(thread.workspaceId)
+    .runnerProtocol(thread.computer.id)
+    .catch(() => undefined)
+  if (protocol !== undefined && protocol < PI_PROTOCOL)
+    throw new HTTPException(409, {
+      message:
+        "This computer's Brigade is too old to run a teammate on Pi. It updates by itself after a quiet while; try again then.",
+    })
+}
+
+/**
+ * A teammate on Antigravity runs only where the antigravity_harness feature is open to the person
+ * the thread works for, and on a runner that knows Antigravity (ANTIGRAVITY_PROTOCOL).
+ */
+async function antigravityAllowed(thread: LoadedThread) {
+  if (
+    !(await featuresOfMember(thread.startedByMemberId, thread.workspaceId)).has(
+      'antigravity_harness',
+    )
+  )
+    throw new HTTPException(409, {
+      message:
+        'Teammates on Antigravity are not open to this workspace. Switch it to Claude Code or Codex.',
+    })
+  const protocol = await hubs
+    .get(thread.workspaceId)
+    .runnerProtocol(thread.computer.id)
+    .catch(() => undefined)
+  if (protocol !== undefined && protocol < ANTIGRAVITY_PROTOCOL)
+    throw new HTTPException(409, {
+      message:
+        "This computer's Brigade is too old to run a teammate on Antigravity. It updates by itself after a quiet while; try again then.",
+    })
+}
+
+/**
  * The thread's spec, with the account it should run on next: its current
- * account if still usable, else the starter's next one. Never another member's.
+ * account if still usable, else the next one its starter may run on (src/account-sharing.ts).
  */
 export async function specFor(
   db: ScopedDb,
@@ -91,6 +258,10 @@ export async function specFor(
 ): Promise<ThreadSpec> {
   // The teammate whose turn it is; by default the one asked last.
   const teammate = options.teammate ?? currentTeammate(thread)
+  if (teammate.harness === 'pi') await piAllowed(thread)
+  if (teammate.harness === 'antigravity') await antigravityAllowed(thread)
+  // The login its turns run on: Pi's is its model's vendor's (loginOf).
+  const login = loginOf(teammate.harness, teammate.model)
   // Each a trip to the database, none waiting on another: asked together.
   const [
     [account, ...fallbacks],
@@ -103,61 +274,94 @@ export async function specFor(
     projects,
     [imageAccount],
     playbook,
+    items,
   ] = await Promise.all([
     usableAccounts(db, {
       memberId: thread.startedByMemberId,
       computerId: thread.computerId,
-      provider: teammate.harness,
+      provider: login,
       preferredId: thread.accountId,
     }),
     // The connections this teammate is granted, as tool specs. Never a credential.
-    db.grant.findMany({
-      where: { teammateId: teammate.id, connection: { status: { not: 'removed' } } },
-      include: {
-        connection: { include: { app: { select: { disabledTools: true, mcp: true } } } },
-      },
-    }),
+    teammateGrants(db, teammate.id),
     teammate.kind === 'chief' ? chiefRoster(db) : [],
     folderRules(db),
     threadAttachments(db, thread.id),
     threadDesignSystems(db, teammate.id, thread.projectId),
     threadProject(db, thread.projectId),
     projectCatalog(db),
-    teammate.harness === 'codex'
+    login === 'codex'
       ? []
       : usableAccounts(db, {
           memberId: thread.startedByMemberId,
           computerId: thread.computerId,
           provider: 'codex',
         }),
-    threadPlaybook(db, thread.playbookRunId),
+    threadPlaybook(db, thread.playbookRunId, thread.playbookTeammate),
+    specItems(db, thread.id),
   ])
   // Takeover and terminals need no usage: they may use the thread's current account as is.
   const current =
     account ??
     (options.requireUsage === false && thread.accountId
-      ? await db.account.findFirst({ where: { id: thread.accountId, provider: teammate.harness } })
+      ? await db.account.findFirst({ where: { id: thread.accountId, provider: login } })
       : null)
-  if (!current) throw noAccount(teammate.harness)
-  // A member's own account (reach mine) only in the threads they started. In a playbook's
-  // thread, only the Apps it declares, and no more than the access it declares for each: a
-  // mail written to trap it cannot reach any other App its teammate has.
-  const grants = granted
-    .filter((g) => usableIn(g.connection, thread))
-    .flatMap((g) => {
-      if (!playbook) return [g]
-      // An App one of its roles accepts; where a setting picks the role's account (its inbox,
-      // its analytics tool), that account alone. A server added by its URL only when picked.
-      const access = playbookAccount(playbook, g.connection)
-      if (!access) return []
-      return [access === 'read' ? { ...g, scope: 'read' as const } : g]
-    })
+  if (!current) throw noAccount(login)
+  // Chief's daily pass for a person (src/chief-pass.ts): it reads and answers by their rules, with
+  // no App, repository or computer of anyone's to act on.
+  const passing = !!thread.chiefPassId && teammate.kind === 'chief'
+  // The person the thread works for (src/chief-rules.ts): once Chief acts on their rules
+  // (chiefActs), they reach its teammates, and with their pass on, each is told what Chief's answers
+  // in their name are, in their own threads, where a pass answers. While rules are calibrated, only
+  // their pass reads them, to recommend: teammates ask as before. Not in a playbook's run, which its
+  // playbook says how to run, nor in a pass, whose brief has them, nor in a thread several people
+  // ask in: whose rules would they be?
+  const asker = await askedBy(db, thread.id)
+  const personId = asker === SEVERAL_ASKERS ? null : (asker ?? thread.startedByMemberId)
+  const person = personId && !playbook && !passing ? await personRules(db, personId) : null
+  // The pass's person, or the thread's: whether their rules act. Asked only of someone with rules,
+  // a pass on, or a pass running.
+  const rulesAct = passing
+    ? await chiefActs(thread.startedByMemberId, thread.workspaceId)
+    : !!personId &&
+      (!!person?.text || !!person?.pass) &&
+      (await chiefActs(personId, thread.workspaceId))
+  const personRule = rulesAct && person?.text ? { person: person.person, text: person.text } : null
+  const chiefAnswers = rulesAct && !!person?.pass && thread.origin === 'member' && !thread.parentId
+  const grants = passing ? [] : await usableGrants(db, thread, teammate.id, granted, playbook)
   const github = grants.some(
     (g) => g.connection.kind === 'github' && g.connection.status === 'active',
   )
+  // A machine of its own (the preview_machines feature, which its starter turned on): its preview
+  // runs there, and its teammates get the tools to run heavy commands there. Not in Chief's pass.
+  const machine = !passing && thread.computer.kind === 'cloud' && (await wantsMachine(thread))
+  const features = await featuresOfMember(thread.startedByMemberId, thread.workspaceId)
+  // Tools (docs/tools.md): for teammates of a thread whose starter has the feature.
+  const tools = !passing && features.has('tools')
+  const closedApps = await closedAppKinds(db, thread, features)
+  // The harnesses its teammates may run on, named in the instructions (Questions about Brigade).
+  const harnesses: TeammateHarness[] = [
+    'claude_code',
+    'codex',
+    ...(features.has('pi_harness') ? (['pi'] as const) : []),
+    ...(features.has('antigravity_harness') ? (['antigravity'] as const) : []),
+  ]
+  // Missions (docs/missions.md): the mission the thread works for, when its starter has the feature.
+  // Not in Chief's pass nor a playbook's run, which their own briefs steer.
+  const mission = passing || playbook ? null : await threadInitiative(db, thread)
+  const missions = !passing && !playbook && features.has('missions')
+  // Themes (docs/themes.md): the starter's own look, in a thread they started, when they have it,
+  // while nobody else asks there (the API checks again at each call).
+  const themes =
+    !passing &&
+    !playbook &&
+    thread.origin === 'member' &&
+    features.has('themes') &&
+    (await shownAccounts(db, thread)).person === thread.startedByMemberId
   // An MCP connector's tools come from its server; a runner too old to know its kind gets none.
-  const protocol = runnerProtocol(thread.computerId)
+  const protocol = await hubs.get(thread.workspaceId).runnerProtocol(thread.computerId)
   const scope = { organizationId: thread.organizationId, workspaceId: thread.workspaceId }
+  const catalogs = takesCatalogs(protocol)
   const specs = await Promise.all(
     grants
       .filter((g) => connectors[g.connection.kind] || g.connection.kind === 'mcp')
@@ -172,19 +376,13 @@ export async function specFor(
         label: g.connection.label,
         externalAccount: g.connection.externalAccount,
         scope: g.scope,
-        operations: isMcp(g.connection.kind)
-          ? await mcpOperationSpecs(
-              db,
-              scope,
-              g.connection,
-              g.scope,
-              g.connection.app.disabledTools,
-            ).catch((error) => {
-              // Signed out or the server is down: the thread runs without its tools.
-              console.warn(`mcp tools of ${g.connection.id}: ${String(error)}`)
-              return []
-            })
-          : operationSpecs(g.connection.kind, g.scope, g.connection.app.disabledTools),
+        // Refused by its provider: the teammate is told to ask for a reconnect (instructions.ts).
+        ...(g.connection.status === 'needs_reauth' ? { unavailable: 'signed_out' as const } : {}),
+        // Named by their App's catalog, which the runner fetches once (src/catalogs.ts): listed
+        // here, an App's tools came to megabytes in every spec. Whole for an older runner.
+        ...(catalogs
+          ? { operations: [], catalog: { version: catalogVersion(g.connection) } }
+          : { operations: await grantOperations(db, scope, g.connection, g.scope) }),
       })),
   )
   // An App's skills only for teammates that can use one of its accounts here.
@@ -195,6 +393,8 @@ export async function specFor(
     new Set(grants.map((g) => g.connection.appId)),
     playbook?.installationId ?? null,
   )
+  // Brigade's own skills an admin turned off here (src/routes/skills.ts, /builtin).
+  const off = await db.workspace.findFirst({ select: { builtinSkillsOff: true } })
   return {
     connectors: specs,
     account: accountRef(current),
@@ -211,14 +411,43 @@ export async function specFor(
     },
     permissionMode: permissionMode(thread.computer.kind),
     effort: Effort.nullable().catch(null).parse(thread.effort),
+    // A guess at the person's next message after each turn, on the starter's account: in a
+    // thread a member started, while they keep it on. Older runners ignore it.
+    suggestions:
+      teammate.harness === 'claude_code' &&
+      thread.origin === 'member' &&
+      !playbook &&
+      thread.startedBy.suggestions,
     starter: teammate.id === thread.teammateId,
     teammates: thread.teammates.map((t) => ({ id: t.teammate.id, name: t.teammate.name })),
-    roster,
+    // In its pass, Chief brings nobody in.
+    roster: passing ? [] : roster,
     library: teammate.libraryAccess,
     libraryFolders: folderExceptions({ id: teammate.id, library: teammate.libraryAccess }, rules),
     private: thread.private,
     // A child reports to it; older runners ignore it, and its last message stands for its report.
     parent: thread.parent,
+    // Chief's answers in the person's name, by their pass: false when it is off, and the
+    // instructions are as before.
+    chiefAnswers,
+    // Their rules, once they act: none, and the instructions are as before. Older runners ignore them.
+    rules: personRule,
+    // What Chief tells of their rules: that they act, or that its pass only recommends by them.
+    rulesAct,
+    // A pass that only recommends is told so by its brief too, whatever its runner.
+    ...(passing ? { pass: { id: thread.chiefPassId!, acts: rulesAct } } : {}),
+    // What the instructions and tools offer depends on it (schedules, wake-ups, a merge's wake-up).
+    origin: thread.origin,
+    // Older runners ignore it, and offer no command on the machine.
+    machine,
+    tools,
+    // Older runners ignore them, and offer no mission tools.
+    missions,
+    themes,
+    closedApps,
+    // Older runners ignore it.
+    harnesses,
+    mission,
     playbook: playbook
       ? {
           installationId: playbook.installationId,
@@ -236,29 +465,27 @@ export async function specFor(
               }
             }),
           dryRun: playbook.dryRun,
+          ...(playbook.teammates ? { teammates: playbook.teammates } : {}),
         }
       : null,
     attachments,
-    task: thread.task
-      ? { id: thread.task.id, title: thread.task.title, description: thread.task.description }
-      : null,
+    // Only those of lists this teammate may read, with the files it may: the thread's items are
+    // anyone's who joins it.
+    items: items.flatMap(({ files, ...item }) => {
+      const who = { id: teammate.id, library: teammate.libraryAccess }
+      if (libraryAccessFor(item.path, who, rules) === 'none') return []
+      const readable = files?.filter((path) => libraryAccessFor(path, who, rules) !== 'none') ?? []
+      return [{ ...item, ...(readable.length ? { files: readable } : {}) }]
+    }),
     designSystems,
     skills,
+    builtinSkillsOff: off?.builtinSkillsOff ?? [],
     project,
     projects,
     // Taken in once by the computer it moved to; older runners ignore it.
-    ...(thread.movedAt
-      ? {
-          moved: {
-            at: thread.movedAt.toISOString(),
-            from: thread.movedFrom ?? 'another computer',
-            to: thread.computer.kind === 'cloud' ? 'the cloud computer' : thread.computer.name,
-            seq: thread.movedSeq ?? 0,
-          },
-        }
-      : {}),
+    ...(thread.movedAt ? { moved: movedOf(thread) } : {}),
     // A GitHub grant also reaches its repositories through git, via the API's proxy.
-    ...(github
+    ...(github && !passing
       ? {
           git: gitAccess(
             { sessionId: thread.id, teammateId: teammate.id, computerId: thread.computerId },
@@ -269,18 +496,135 @@ export async function specFor(
   }
 }
 
-/** Prompting or approving spends the starter's subscription: only they may, unless they allow it. */
+/**
+ * Whose requests a thread's teammate works on (Session.askedByMemberId): the one member who
+ * wrote, answered or decided in it, or who had asked for the work a teammate passed on to it;
+ * SEVERAL_ASKERS once another took part. Null when no person asked (a trigger's, a routine's
+ * thread). Threads from before it was kept: the author of their latest person's input.
+ */
+export async function askedBy(db: ScopedDb, sessionId: string): Promise<string | null> {
+  const thread = await db.session.findFirst({
+    where: { id: sessionId },
+    select: { askedByMemberId: true },
+  })
+  if (thread?.askedByMemberId) return thread.askedByMemberId
+  return askedByEvents(db, sessionId)
+}
+
+/**
+ * Which App accounts a teammate is shown and offered in a thread (list_apps, list_triggers,
+ * create_trigger): scoped to the person the thread works for, never to the teammate, which works
+ * for every member and in threads an event or a routine started. The workspace's shared accounts
+ * (reach workspace) always; a member's own (reach mine) only its starter's, while nobody else asks
+ * in it (an event's or a routine's thread runs on its starter's accounts, and nobody asks there).
+ * Once another member asks, no member's own account shows, as none answers there
+ * (connector-calls.ts). person: whose own accounts show; null, nobody's.
+ */
+/**
+ * The App kinds behind a feature the thread's starter lacks (src/features.ts) with no active
+ * account in the workspace a ticket could grant them from (one shown in the thread, as list_apps
+ * shows them): the runner refuses an access ticket for one, which nobody could grant. An account
+ * of it already connected, such as a mailbox an owner with the feature shared, stays askable; an
+ * expired one doesn't, since a grant needs it active and its Reconnect needs the feature.
+ */
+export async function closedAppKinds(
+  db: ScopedDb,
+  thread: { id: string; startedByMemberId: string },
+  features: Set<Feature>,
+) {
+  const closed = Object.keys(APP_FEATURES).filter((kind) => !appOpen(kind, features))
+  if (!closed.length) return []
+  const [accounts, { shown }] = await Promise.all([
+    db.connection.findMany({
+      where: { status: 'active', kind: { in: closed as ConnectorKind[] } },
+      select: { kind: true, reach: true, createdByMemberId: true },
+    }),
+    shownAccounts(db, thread),
+  ])
+  const connected = new Set(accounts.filter(shown).map((c) => c.kind as string))
+  return closed.filter((kind) => !connected.has(kind))
+}
+
+export async function shownAccounts(
+  db: ScopedDb,
+  thread: { id: string; startedByMemberId: string },
+) {
+  const asker = await askedBy(db, thread.id)
+  const person = !asker || asker === thread.startedByMemberId ? thread.startedByMemberId : null
+  return {
+    person,
+    shown: (c: { reach: string; createdByMemberId: string }) =>
+      c.reach === 'workspace' || c.createdByMemberId === person,
+  }
+}
+
+/** The person's inputs that tell whose request a thread from before askedByMemberId works on. */
+const personInputs = (sessionId: string) => ({
+  where: {
+    sessionId,
+    type: { in: ['message.user', 'question.answered', 'ticket.answered', 'approval.resolved'] },
+  },
+  orderBy: { seq: 'desc' as const },
+  select: { data: true },
+  take: 20,
+})
+
+/** The member who wrote the latest of them. */
+const latestAsker = (rows: { data: unknown }[]) => {
+  for (const { data } of rows) {
+    const memberId = (data as { memberId?: string | null } | null)?.memberId
+    if (memberId) return memberId
+  }
+  return null
+}
+
+/** Whose request a thread from before Session.askedByMemberId works on: its latest person's input. */
+async function askedByEvents(db: ScopedDb, sessionId: string) {
+  return latestAsker(await db.sessionEvent.findMany(personInputs(sessionId)))
+}
+
+/** Several members asked in a thread: no one member's own App account answers it any more. */
+export const SEVERAL_ASKERS = '*'
+
+/**
+ * A member wrote, answered or decided in a thread. Its teammate works on its asker's requests
+ * alone while nobody else takes part; once another member does, on several members' for good
+ * (SEVERAL_ASKERS), whatever is queued or under way: a member's own Apps stay out of it. Taken
+ * under the thread's row lock, so two members at once both count.
+ */
+export async function noteAsker(db: ScopedDb, sessionId: string, memberId: string) {
+  const thread = await db.session.findFirst({ where: { id: sessionId }, select: { id: true } })
+  if (!thread) return
+  await prisma.$transaction(async (tx) => {
+    const [row] = await tx.$queryRaw<{ askedByMemberId: string | null }[]>`
+      SELECT "askedByMemberId" FROM "Session" WHERE id = ${thread.id} FOR UPDATE`
+    if (!row) return
+    // Unknown (a thread from before it was kept): read from what people wrote in it.
+    // On the transaction's own connection: it holds the lock, and needs no other from the pool.
+    const before =
+      row.askedByMemberId ?? latestAsker(await tx.sessionEvent.findMany(personInputs(thread.id)))
+    const next = !before || before === memberId ? memberId : SEVERAL_ASKERS
+    if (next !== row.askedByMemberId)
+      await tx.session.update({ where: { id: thread.id }, data: { askedByMemberId: next } })
+  })
+}
+
+/** Prompting or approving: its starter, or any member but a viewer once it is open (mayWrite). */
 export function requireMayPrompt(
   scope: WorkspaceScope,
   thread: {
     startedByMemberId: string
     othersMayPrompt: boolean
+    computer: { kind: string }
     controlledByMemberId: string | null
   },
 ) {
-  if (thread.startedByMemberId !== scope.memberId && !thread.othersMayPrompt) {
+  if (!mayWrite(thread, scope)) {
     throw new HTTPException(403, {
-      message: "This thread runs on another member's subscription. Fork it to continue.",
+      message:
+        scope.role === 'viewer'
+          ? 'You can view this workspace but not change it. Ask an owner or admin.'
+          : 'Only the member who started this thread writes in it. Fork it to continue.',
     })
   }
   if (thread.controlledByMemberId) {

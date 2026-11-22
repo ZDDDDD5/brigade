@@ -221,6 +221,9 @@ export const Skill = z.object({
 })
 export type Skill = z.infer<typeof Skill>
 
+/** A skill that is on, as the composer offers it (`/name`): no instructions or files to carry. */
+export type SkillCommand = { name: string; description: string }
+
 /**
  * A skill in a thread's spec: what the runner writes into the teammate's skills
  * folder. Its files come from the bucket by their SHA-256 (`refs`); `files`,
@@ -296,13 +299,25 @@ export function skillSlug(text: string) {
 export const PROPOSE_SKILL_TOOL = 'propose_skill'
 
 /** A teammate's proposal: a new skill, or a change to the one with that name. */
-export const SkillProposal = z.object({
-  skill: SkillContent,
-  /** Why it is worth keeping: what work it came from. */
-  reason: z.string().trim().max(1000).default(''),
-  /** A new skill for the proposing teammate's threads only, not everywhere (a task it was taught). */
-  teammateOnly: z.boolean().default(false),
-})
+export const SkillProposal = z
+  .object({
+    /** Its files are in `refs`; runners before DIRECT_UPLOAD_PROTOCOL send them as text in `skill.files`. */
+    skill: SkillContent,
+    /** Its files, each uploaded first (POST /runner/uploads for a `skill_file`), by their SHA-256. */
+    refs: z.array(SkillFileRef).max(SKILL_TEXT_FILES_MAX).default([]),
+    /** Why it is worth keeping: what work it came from. */
+    reason: z.string().trim().max(1000).default(''),
+    /** A new skill for the proposing teammate's threads only, not everywhere (a task it was taught). */
+    teammateOnly: z.boolean().default(false),
+  })
+  .refine((p) => uniquePaths([...p.skill.files, ...p.refs]), {
+    message: 'two files have the same path',
+    path: ['refs'],
+  })
+  .refine((p) => p.refs.reduce((sum, f) => sum + f.size, 0) <= SKILL_TOTAL_MAX, {
+    message: 'the skill is too large',
+    path: ['refs'],
+  })
 export type SkillProposal = z.infer<typeof SkillProposal>
 
 /** A skill proposal's ticket payload, as the dashboard reads it. */
@@ -311,6 +326,8 @@ export type SkillProposalPayload = {
   /** The skill it changes. */
   skillId?: string
   skill: SkillContent
+  /** Its files in the bucket, by reference: a proposal from a runner since DIRECT_UPLOAD_PROTOCOL. */
+  refs?: SkillFileRef[]
   /** What the skill said before, for a change. */
   previous?: { description: string; instructions: string; files: string[] }
   teammateId: string

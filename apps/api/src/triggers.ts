@@ -3,6 +3,8 @@
 // against the connection's triggers from the catalog, and each match starts one
 // thread. The event is untrusted: it summons nobody, and its thread's changes
 // are bounded by the teammate's grants, policy and caps like any other thread.
+import { randomUUID } from 'node:crypto'
+import { triggerEventText } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { ingestExternal } from './attachments.js'
 import { audit } from './audit.js'
@@ -15,40 +17,171 @@ import type {
   TriggerDefinition,
   VendorEvent,
 } from './connectors/types.js'
-import { prisma, scoped, type Scope } from './db.js'
+import { prisma, scoped, type Scope, type ScopedDb } from './db.js'
+import { isOwnAlert } from './ops/alerts.js'
 import { loadThread } from './thread-spec.js'
 import { promptWithAttachments, startThread } from './work.js'
 
-/** Raw payloads past this are cut: the summary carries what matters. */
-const PAYLOAD_MAX = 40_000
-
 const include = { teammate: true, connection: true } as const
+/** The connections whose events are mail. */
+const MAIL_KINDS = new Set<string>(['email', 'gmail'])
+
+/** An event that is Brigade's own alert, mailed back in. Mail only: a custom app's JSON with a from and a subject is not one. */
+export const ownAlertMail = (connection: { kind: string }, event: Pick<VendorEvent, 'payload'>) =>
+  MAIL_KINDS.has(connection.kind) &&
+  isOwnAlert((event.payload ?? {}) as Parameters<typeof isOwnAlert>[0])
+
 type Trigger = NonNullable<Awaited<ReturnType<typeof findTrigger>>>
 type Connection = Trigger['connection']
 
 export const findTrigger = (pathToken: string) =>
   prisma.trigger.findUnique({ where: { pathToken }, include })
 
-/** A fenced block that the content cannot close early. */
-export function fenced(content: string, lang = '') {
-  const longest = Math.max(2, ...(content.match(/`+/g) ?? []).map((run) => run.length))
-  const fence = '`'.repeat(longest + 1)
-  return `${fence}${lang}\n${content}\n${fence}`
-}
-
 export type Delivery =
   | { ok: true; threadId: string; paused: boolean }
-  | { duplicate: true }
+  /** Seen before: the thread it went to then, if it went to one. */
+  | { duplicate: true; threadId?: string }
   /** A playbook's trigger while the playbook is not active: the event starts nothing. */
   | { skipped: string }
+  /** A mailbox's rule past its threads for the day: the mail stays in its box, a person is told. */
+  | { capped: string }
   | { error: string }
+
+/** A mailbox rule's threads in a day, unless its perDay option says otherwise. */
+export const RULE_THREADS_PER_DAY = 50
+/** Events of one conversation a trigger's thread takes within the hour before it is a loop. */
+const CONVERSATION_LOOP_LIMIT = 8
+const CONVERSATION_LOOP_MS = 60 * 60_000
+
+/** A claim this old, still starting, was cut off (the API restarted): another try takes it over. */
+const CLAIM_STALE_MS = 10 * 60_000
+/** Deliveries are remembered this long: a vendor's retry or a mailbox read again comes within it. */
+const DELIVERIES_KEPT_MS = 30 * 24 * 60 * 60_000
+
+type Claim =
+  /** Ours to deliver, with the id its new thread takes (a try before ours may have made it). */
+  | { id: string; threadId: string }
+  | { duplicate: true; threadId?: string }
+  /** Another try is on it right now: this one is tried again later, in case that one dies. */
+  | { busy: true }
+
+/**
+ * Claim one event for a trigger before its thread starts: one row per trigger and event id
+ * (TriggerDelivery), so two tries at once start one thread. A try that failed, or one a restart
+ * cut off, is taken over; one that went says where it went.
+ */
+async function claimDelivery(db: ScopedDb, triggerId: string, eventId: string): Promise<Claim> {
+  try {
+    // The id of the thread it may start, chosen with the claim: a try after a crash finds it.
+    const row = await db.triggerDelivery.create({
+      data: {
+        triggerId,
+        eventId: eventId.slice(0, 500),
+        status: 'starting',
+        threadId: randomUUID(),
+      } as never,
+      select: { id: true, threadId: true },
+    })
+    // Delivered before deliveries had their own row: its audit entry says so.
+    const seen = await db.auditEntry.findFirst({
+      where: {
+        action: 'trigger.received',
+        targetId: triggerId,
+        data: { path: ['eventId'], equals: eventId },
+      },
+    })
+    if (!seen) return { id: row.id, threadId: row.threadId! }
+    const { threadId } = (seen.data ?? {}) as { threadId?: string }
+    await db.triggerDelivery.updateMany({
+      where: { id: row.id },
+      data: { status: 'done', ...(threadId ? { threadId } : {}) },
+    })
+    return went(db, threadId)
+  } catch (error) {
+    if ((error as { code?: string }).code !== 'P2002') throw error
+  }
+  const row = await db.triggerDelivery.findFirst({
+    where: { triggerId, eventId: eventId.slice(0, 500) },
+  })
+  if (!row) return { duplicate: true }
+  const stale =
+    row.status === 'failed' ||
+    (row.status === 'starting' && row.updatedAt.getTime() < Date.now() - CLAIM_STALE_MS)
+  if (stale) {
+    // Its thread is kept, unless that one could not start (failed): then a new one.
+    const failed =
+      !row.threadId ||
+      (await db.session.count({ where: { id: row.threadId, status: 'failed' } })) > 0
+    const threadId = failed ? randomUUID() : row.threadId!
+    // The run of a thread that could not start goes with it (settleRun), as it would have had
+    // the try not been cut off before saying so: the next try's run is counted alone.
+    if (failed && row.threadId) await settleRun(db, `run-${row.threadId}`, null)
+    const { count } = await db.triggerDelivery.updateMany({
+      where: { id: row.id, status: row.status, updatedAt: row.updatedAt },
+      data: { status: 'starting', threadId },
+    })
+    if (count === 1) return { id: row.id, threadId }
+  }
+  // Being started by another try: not done yet, so tried again later rather than taken as done.
+  if (row.status === 'starting' || row.status === 'failed') return { busy: true }
+  // Delivered: never a second thread.
+  return went(db, row.status === 'loop' ? undefined : (row.threadId ?? undefined))
+}
+
+/** Seen before: the thread it went to, unless that thread is gone since (deleted). */
+async function went(db: ScopedDb, threadId?: string): Promise<Claim> {
+  const there = threadId && (await db.session.count({ where: { id: threadId } }))
+  return { duplicate: true, ...(there ? { threadId } : {}) }
+}
+
+/** Deliveries remembered long enough: deleted (src/jobs.ts). */
+export const sweepDeliveries = (now = Date.now()) =>
+  prisma.triggerDelivery.deleteMany({
+    where: { createdAt: { lt: new Date(now - DELIVERIES_KEPT_MS) } },
+  })
 
 /**
  * Start a thread for one event, once per event id, or continue the thread of
  * the event's conversation (a reply in the same Gmail thread). When it cannot
- * start, a ticket tells the member who set the trigger up; the caller retries later.
+ * start, a ticket tells the member who set the trigger up; the caller retries later,
+ * and the retry, unlike a second delivery, may start it.
  */
 export async function deliver(
+  trigger: Trigger,
+  event: Parameters<typeof deliverOnce>[1],
+): Promise<Delivery> {
+  if (!event.eventId) return deliverOnce(trigger, event)
+  const db = scoped({ organizationId: trigger.organizationId, workspaceId: trigger.workspaceId })
+  const claim = await claimDelivery(db, trigger.id, event.eventId)
+  if ('busy' in claim) return { error: 'another try is starting its thread' }
+  if (!('id' in claim)) return claim
+  const settle = (data: { status: string; threadId?: string }) =>
+    db.triggerDelivery.updateMany({ where: { id: claim.id }, data })
+  // Its prompt's id is the delivery's: a try after a crash sends it once (src/runner-commands.ts).
+  const commandId = `delivery:${claim.id}`
+  try {
+    // A try before this one that was cut off may have made the thread: it is taken up, its first
+    // message sent once.
+    const delivery = await deliverOnce(trigger, event, { commandId, threadId: claim.threadId })
+    await settle(
+      'error' in delivery
+        ? { status: 'failed' }
+        : 'ok' in delivery
+          ? { status: 'done', threadId: delivery.threadId }
+          : 'capped' in delivery
+            ? { status: 'capped' }
+            : 'skipped' in delivery
+              ? { status: delivery.skipped.includes('loop') ? 'loop' : 'skipped' }
+              : { status: 'done', ...(delivery.threadId ? { threadId: delivery.threadId } : {}) },
+    )
+    return delivery
+  } catch (error) {
+    await settle({ status: 'failed' }).catch(() => undefined)
+    throw error
+  }
+}
+
+async function deliverOnce(
   trigger: Trigger,
   event: {
     eventId: string | null
@@ -58,20 +191,17 @@ export async function deliver(
     conversationKey?: string
     /** The event's files, already taken from the connection. */
     attachmentIds?: string[]
+    /**
+     * A mailbox's rule (an exclusive trigger): its threads stay out of the sidebar until they
+     * need a person, and it starts at most its perDay threads a day.
+     */
+    mailbox?: boolean
   },
+  /** A delivery's stable ids: its prompt's, and its new thread's. */
+  once: { commandId?: string; threadId?: string } = {},
 ): Promise<Delivery> {
   const scope: Scope = { organizationId: trigger.organizationId, workspaceId: trigger.workspaceId }
   const db = scoped(scope)
-  if (event.eventId) {
-    const seen = await db.auditEntry.findFirst({
-      where: {
-        action: 'trigger.received',
-        targetId: trigger.id,
-        data: { path: ['eventId'], equals: event.eventId },
-      },
-    })
-    if (seen) return { duplicate: true }
-  }
 
   const failed = async (message: string): Promise<Delivery> => {
     // Never silent: a ticket for the member who set the trigger up.
@@ -102,14 +232,54 @@ export async function deliver(
       data: { eventId: event.eventId, eventType: event.eventType, threadId, outcome },
     })
 
-  // The conversation's latest thread, unless it failed or a member has taken it over.
+  // The conversation's latest thread, unless it failed.
   const ongoing =
     event.conversationKey &&
     (await db.session.findFirst({
-      where: { triggerId: trigger.id, conversationKey: event.conversationKey },
+      where: {
+        triggerId: trigger.id,
+        conversationKey: event.conversationKey,
+        // Its own thread, made by a try a crash cut off, is taken up as a new one (startThread).
+        ...(once.threadId ? { NOT: { id: once.threadId } } : {}),
+      },
       orderBy: { createdAt: 'desc' },
     }))
-  if (ongoing && ongoing.status !== 'failed' && !ongoing.controlledByMemberId) {
+  // A person took it over: the conversation stays theirs. The event waits in the thread, as a
+  // wake-up does, until they hand it back; no other thread starts for it.
+  if (ongoing && ongoing.status !== 'failed' && ongoing.controlledByMemberId) {
+    try {
+      await db.wakeup.create({
+        data: {
+          sessionId: ongoing.id,
+          teammateId: ongoing.teammateId,
+          kind: 'reply',
+          note: event.text,
+          wakeAt: new Date(),
+          sourceId: `trigger:${trigger.id}:${event.eventId ?? randomUUID()}`,
+        } as never,
+      })
+    } catch (error) {
+      // Offered twice: the first one waits already.
+      if ((error as { code?: string }).code !== 'P2002') throw error
+    }
+    await received(ongoing.id, 'held')
+    return { ok: true, threadId: ongoing.id, paused: true }
+  }
+  if (ongoing && ongoing.status !== 'failed') {
+    // Two agents, or an agent and an autoresponder, answering each other: past so many events of
+    // one conversation in an hour, the next starts nothing.
+    const lately = await db.auditEntry.count({
+      where: {
+        action: 'trigger.received',
+        targetId: trigger.id,
+        at: { gt: new Date(Date.now() - CONVERSATION_LOOP_MS) },
+        data: { path: ['threadId'], equals: ongoing.id },
+      },
+    })
+    if (lately >= CONVERSATION_LOOP_LIMIT) {
+      await received(ongoing.id, 'loop')
+      return { skipped: 'its conversation looks like a loop: too many events within the hour' }
+    }
     try {
       const outcome = await promptWithAttachments(
         db,
@@ -117,6 +287,7 @@ export async function deliver(
         await loadThread(db, ongoing.id),
         { text: event.text, memberId: null, attachmentIds: event.attachmentIds ?? [] },
         null,
+        once.commandId ? { commandId: once.commandId } : {},
       )
       if (outcome === 'offline') return failed('the computer is offline')
       await continueRun(db, ongoing.playbookRunId)
@@ -125,6 +296,44 @@ export async function deliver(
     } catch (error) {
       if (error instanceof HTTPException) return failed(error.message)
       throw error
+    }
+  }
+
+  // A mailbox's rule: so many threads a day at most; past it the mail stays in its box.
+  if (event.mailbox) {
+    const perDay =
+      Number((trigger.options as Record<string, string>)?.perDay) || RULE_THREADS_PER_DAY
+    const started = await db.session.count({
+      where: {
+        triggerId: trigger.id,
+        createdAt: { gt: new Date(Date.now() - 86_400_000) },
+        // Its own thread, made by a try a crash cut off, is this event's: not one more.
+        ...(once.threadId ? { NOT: { id: once.threadId } } : {}),
+      },
+    })
+    if (started >= perDay) {
+      const message = `the rule "${trigger.label}" started its ${perDay} threads of the last 24 hours`
+      const open = await db.ticket.count({
+        where: {
+          type: 'question',
+          status: 'open',
+          payload: { path: ['capOfTriggerId'], equals: trigger.id },
+        },
+      })
+      if (!open)
+        await db.ticket.create({
+          data: {
+            type: 'question',
+            title: `Rule "${trigger.label}" reached ${perDay} threads in a day: new mail stays in the box`,
+            payload: {
+              capOfTriggerId: trigger.id,
+              triggerId: trigger.id,
+              memberId: trigger.createdByMemberId,
+            },
+          } as never,
+        })
+      await received('', 'capped')
+      return { capped: message }
     }
   }
 
@@ -140,16 +349,29 @@ export async function deliver(
   if (!computer) return failed('the workspace has no computer')
 
   // A playbook's trigger: each event a run, within its runs a day (past them, the event waits).
+  // Its run's id follows its thread's: a try after a crash takes up the run the cut-off try
+  // began, whether or not its thread was made, and counts it once.
   const run = trigger.playbookInstallationId
-    ? await beginRun(db, trigger.playbookInstallationId, event.conversationKey)
+    ? await beginRun(
+        db,
+        trigger.playbookInstallationId,
+        event.conversationKey,
+        once.threadId ? `run-${once.threadId}` : undefined,
+      )
     : null
   if (run && 'skipped' in run) return { skipped: run.skipped }
   if (run && 'limit' in run) return { error: run.limit }
   const runId = run?.runId
+  // A rule with nobody keeps its mail for a person (dispatch): it never starts a thread.
+  const teammate = trigger.teammate
+  if (!teammate) {
+    if (runId) await settleRun(db, runId, null)
+    return { skipped: 'its rule has no teammate: it keeps mail for a person' }
+  }
 
   try {
     const { thread, outcome } = await startThread(db, scope, {
-      teammate: trigger.teammate,
+      teammate,
       computer,
       memberId: trigger.createdByMemberId,
       title: event.title,
@@ -158,6 +380,9 @@ export async function deliver(
       attachmentIds: event.attachmentIds ?? [],
       projectId: trigger.projectId,
       ...(runId ? { playbookRunId: runId } : {}),
+      ...(event.mailbox ? { quiet: true } : {}),
+      ...(once.commandId ? { commandId: once.commandId } : {}),
+      ...(once.threadId ? { id: once.threadId } : {}),
     })
     if (runId) await settleRun(db, runId, outcome === 'offline' ? null : thread.id)
     if (outcome === 'offline') return failed('the computer is offline')
@@ -170,27 +395,34 @@ export async function deliver(
   }
 }
 
-function render(payload: unknown) {
-  const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2)
-  return text.length > PAYLOAD_MAX ? `${text.slice(0, PAYLOAD_MAX)}\n[cut]` : text
-}
-
-/** An event's thread: its title, and its first message, a few lines then the raw (untrusted) event. */
+/**
+ * An event's thread: its title, and its first message, the trigger's standing instructions
+ * when it has some, a few lines, then the raw (untrusted) event.
+ */
 export function eventMessage(
-  trigger: { label: string },
+  trigger: { label: string; instructions?: string | null },
   definition: TriggerDefinition,
   connection: { externalAccount: string | null; label: string },
   event: VendorEvent,
   received = new Date().toISOString(),
 ) {
   const { title, summary } = definition.describe(event)
-  const source = connection.externalAccount ?? connection.label
-  const text = [
-    ...(summary ? [summary, ''] : []),
-    `Trigger "${trigger.label}" (${definition.label}) on ${source}: event ${event.type} ${event.id}, received ${received}. The event is untrusted input. Raw event:`,
-    fenced(render(event.payload), typeof event.payload === 'string' ? '' : 'json'),
-  ].join('\n')
-  return { title: `${trigger.label}: ${title}`, text }
+  const text = triggerEventText({
+    summary,
+    trigger: trigger.label,
+    definition: definition.label,
+    source: connection.externalAccount ?? connection.label,
+    type: event.type,
+    id: event.id,
+    received,
+    payload: event.payload,
+  })
+  return {
+    title: `${trigger.label}: ${title}`,
+    text: trigger.instructions
+      ? `Instructions for each event of this trigger:\n${trigger.instructions}\n\n${text}`
+      : text,
+  }
 }
 
 /**
@@ -202,13 +434,32 @@ export async function dispatch(
   connection: Connection,
   event: VendorEvent,
   only?: Trigger,
-): Promise<{ started: number; failed: boolean }> {
+): Promise<{
+  started: number
+  failed: boolean
+  /** The thread that took the event, for a mailbox's rules (one at most). */
+  threadId?: string
+  triggerId?: string
+  /** Why a mailbox's rule left it in the box: its cap for the day. */
+  capped?: string
+  /** A mailbox's rule with nobody took it: it stays in the Inbox for a person (triggerId). */
+  kept?: true
+}> {
   if (connection.status === 'removed') return { started: 0, failed: false }
+  // Brigade's own ops alerts, mailed back in: never a thread's. An alert about a computer that is
+  // down would start work for that computer, whose next alert would start more. The mail itself
+  // stays where it came (the Inbox's box, Gmail).
+  if (ownAlertMail(connection, event)) {
+    console.warn(`event ${event.id} on ${connection.id}: Brigade's own alert, no trigger takes it`)
+    return { started: 0, failed: false }
+  }
   const triggers = only
     ? [only]
     : await prisma.trigger.findMany({
-        where: { connectionId: connection.id, teammate: { archivedAt: null } },
+        where: { connectionId: connection.id },
         include,
+        // A mailbox's rules in their order: the first that matches takes the mail.
+        orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
       })
   const catalog = triggersOf(connection.kind as ConnectorKind)
   const scope: Scope = {
@@ -227,13 +478,77 @@ export async function dispatch(
   // The event's files, taken once for every trigger it starts a thread for.
   let attachmentIds: string[] | undefined
 
+  // A mailbox's conversation stays with the rule whose thread already holds it, even when an
+  // earlier rule would match its next mail now (a reply whose subject says "urgent").
+  const exclusive = triggers.some((t) => catalog[t.event]?.exclusive)
+  if (exclusive && triggers.length > 1) {
+    const keys = new Set(
+      triggers.map((t) => catalog[t.event]?.conversation?.(event)).filter((k): k is string => !!k),
+    )
+    if (keys.size) {
+      const holder = await prisma.session.findFirst({
+        where: {
+          triggerId: { in: triggers.map((t) => t.id) },
+          conversationKey: { in: [...keys] },
+          status: { not: 'failed' },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { triggerId: true },
+      })
+      if (holder?.triggerId) {
+        const first = triggers.findIndex((t) => t.id === holder.triggerId)
+        if (first > 0) triggers.unshift(...triggers.splice(first, 1))
+      }
+    }
+  }
+
   let started = 0
   let failed = false
   for (const trigger of triggers) {
     const definition = catalog[trigger.event]
     if (!definition?.events.includes(event.type)) continue
     const options = (trigger.options ?? {}) as Record<string, string>
-    if (definition.matches && !(await definition.matches(event, options, ctx))) continue
+    // Brigade's addresses: an agent's rule is for its project's variant only.
+    if (
+      connection.kind === 'email' &&
+      'projectId' in (event.payload ?? {}) &&
+      (trigger.projectId ?? null) !==
+        ((event.payload as { projectId?: string | null }).projectId ?? null)
+    )
+      continue
+    const conversationKey = definition.conversation?.(event)
+    // A reply in a conversation this trigger already took up continues it even if its
+    // filter would not match (a reply to support@ comes back to the inbox's own address).
+    const ongoing =
+      conversationKey &&
+      (await prisma.session.count({ where: { triggerId: trigger.id, conversationKey } })) > 0
+    if (
+      !ongoing &&
+      definition.matches &&
+      !(await definition.matches(event, options, { ...ctx, connectionId: connection.id }))
+    )
+      continue
+    // A rule with nobody: the first that matches takes the mail and keeps it in the Inbox for a
+    // person. No thread starts, so nothing of the mail is fetched or handed to a teammate.
+    if (!trigger.teammate) {
+      if (!definition.exclusive) continue
+      await audit({
+        ...scope,
+        actor: { type: 'system', id: `trigger:${trigger.id}` },
+        action: 'trigger.received',
+        target: { type: 'trigger', id: trigger.id },
+        data: { eventId: event.id, eventType: event.type, outcome: 'kept' },
+      })
+      return { started, failed, kept: true, triggerId: trigger.id }
+    }
+    // A rule whose teammate was archived: the mail is not lost, a person is told.
+    if (trigger.teammate.archivedAt) {
+      if (definition.exclusive) {
+        await deliverToNobody(trigger, `${trigger.teammate.name} is archived`)
+        continue
+      }
+      continue
+    }
     const files = definition.attachments?.(event) ?? []
     if (files.length > 0 && !attachmentIds) {
       try {
@@ -251,11 +566,48 @@ export async function dispatch(
       eventType: event.type,
       title,
       text,
-      conversationKey: definition.conversation?.(event),
+      conversationKey,
       ...(files.length > 0 ? { attachmentIds } : {}),
+      ...(definition.exclusive ? { mailbox: true } : {}),
     })
     if ('error' in delivery) failed = true
     if ('ok' in delivery) started++
+    // A mailbox's rules: the first that matched takes the mail, the others never see it.
+    if (definition.exclusive) {
+      if ('ok' in delivery)
+        return { started, failed, threadId: delivery.threadId, triggerId: trigger.id }
+      if ('capped' in delivery)
+        return { started, failed, capped: delivery.capped, triggerId: trigger.id }
+      // Seen before (the reader read it again): where it went then.
+      if ('duplicate' in delivery)
+        return {
+          started,
+          failed,
+          triggerId: trigger.id,
+          ...(delivery.threadId ? { threadId: delivery.threadId } : {}),
+        }
+      if ('error' in delivery) return { started, failed, triggerId: trigger.id }
+    }
   }
   return { started, failed }
+}
+
+/** A mailbox's rule that cannot take a mail (its teammate archived): a ticket, once, for its owner. */
+async function deliverToNobody(trigger: Trigger, reason: string) {
+  const db = scoped({ organizationId: trigger.organizationId, workspaceId: trigger.workspaceId })
+  const open = await db.ticket.count({
+    where: {
+      type: 'question',
+      status: 'open',
+      payload: { path: ['triggerId'], equals: trigger.id },
+    },
+  })
+  if (!open)
+    await db.ticket.create({
+      data: {
+        type: 'question',
+        title: `Rule "${trigger.label}" could not take a mail: ${reason}. Give the rule to another teammate.`,
+        payload: { triggerId: trigger.id, memberId: trigger.createdByMemberId },
+      } as never,
+    })
 }

@@ -1,0 +1,366 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import { claudeSettingsEnv } from '../src/harness/claude-settings.js'
+import { REFUSAL, THREAD_TOOLS } from '../src/harness/thread-tools.js'
+import { connectorTools } from '../src/harness/tools.js'
+import { bridgeTurn } from './fixtures/claude-bridge.js'
+
+// A turn of the Claude Code bridge (patched), with a stand-in for Claude Code that plays what
+// a session sends (fixtures/claude-bridge.ts): its background work holds the turn open, and the
+// thread's own tools are refused to its sub-agents.
+
+/**
+ * Claude Code starting a background sub-agent, answering the person, then hearing the agent's
+ * result (with BACKGROUND=0, no agent: the answer is the turn's end). The stand-in writes down
+ * when the bridge closed its input, which ends Claude Code's process and its agents with it.
+ */
+const HOLDING_SDK = `import { appendFileSync } from 'node:fs'
+import { setTimeout as sleep } from 'node:timers/promises'
+const note = (what) => appendFileSync(process.env.FAKE_SDK_RECORD, JSON.stringify({ what, at: Date.now() }) + '\\n')
+const background = process.env.BACKGROUND !== '0'
+export function query({ prompt }) {
+  const input = prompt[Symbol.asyncIterator]()
+  async function* run() {
+    const first = await input.next()
+    // Closed input: Claude Code's process ends, and the work it runs in the background with it.
+    void input.next().then(() => note('input closed'))
+    const base = { session_id: 'fake-session', usage: { input_tokens: 1, output_tokens: 1 } }
+    const said = (text) => ({ type: 'assistant', parent_tool_use_id: null, session_id: 'fake-session', message: { id: 'm-' + text, role: 'assistant', content: [{ type: 'text', text }] } })
+    yield { type: 'system', subtype: 'init', session_id: 'fake-session' }
+    if (background) {
+      yield { type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'a1', task_type: 'local_agent', description: 'Research' }], session_id: 'fake-session' }
+      yield { type: 'system', subtype: 'task_started', task_id: 'a1', task_type: 'local_agent', description: 'Research', session_id: 'fake-session' }
+    }
+    yield said('Waiting on my agent.')
+    yield { type: 'result', subtype: 'success', is_error: false, result: 'Waiting on my agent.', user_message_uuid: first.value.uuid, ...base }
+    if (!background) return
+    // The agent works on after the turn's answer.
+    await sleep(1500)
+    note('agent done')
+    yield { type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: 'fake-session' }
+    yield { type: 'system', subtype: 'task_notification', task_id: 'a1', status: 'completed', summary: 'Found it', session_id: 'fake-session' }
+    // Claude Code's own turn, reading the agent's result.
+    yield said('All of it is done.')
+    yield { type: 'result', subtype: 'success', is_error: false, result: 'All of it is done.', origin: { kind: 'task-notification' }, ...base }
+    await sleep(60_000)
+  }
+  const messages = run()
+  messages.interrupt = async () => {}
+  return messages
+}
+`
+
+const waitingWords = (parts: { type: string; rawValue?: any }[]) =>
+  parts
+    .filter((p) => p.type === 'raw' && p.rawValue?.subtype === 'brigade_waiting')
+    .map((p) => p.rawValue.waiting)
+
+test('a background sub-agent holds the turn open until the teammate has read its result', async () => {
+  const { parts, record } = await bridgeTurn(HOLDING_SDK, {
+    permissionMode: 'allow-all',
+    env: claudeSettingsEnv(),
+  })
+  const at = (what: string) => record.find((r) => r.what === what)?.at as number | undefined
+  // Claude Code's process lives on past the answer: its input closes only after the agent ends.
+  assert.ok(at('agent done'), 'the agent got to finish')
+  assert.ok(at('input closed')! >= at('agent done')!, 'the input stayed open while the agent ran')
+  // The thread hears the turn only waits on it, then that the teammate is at it again.
+  assert.deepEqual(waitingWords(parts as never), [true, false])
+  // The turn ends once, after the teammate answered the agent's result.
+  assert.equal(parts.filter((p) => p.type === 'finish').length, 1)
+  const notified = parts.findIndex(
+    (p) => p.type === 'raw' && (p.rawValue as any)?.subtype === 'task_notification',
+  )
+  assert.ok(notified >= 0 && parts.findIndex((p) => p.type === 'finish') > notified)
+})
+
+test('with nothing in the background the turn ends at its answer', async () => {
+  const { parts, record } = await bridgeTurn(HOLDING_SDK, {
+    permissionMode: 'allow-all',
+    env: { ...claudeSettingsEnv(), BACKGROUND: '0' },
+  })
+  assert.ok(record.some((r) => r.what === 'input closed'))
+  assert.deepEqual(waitingWords(parts as never), [])
+  assert.equal(parts.filter((p) => p.type === 'finish').length, 1)
+})
+
+/**
+ * Claude Code asking the bridge's PreToolUse hooks about tool calls, as the thread (no
+ * agent_id) and as a sub-agent (agent_id, agent_type): it writes down each call's decision.
+ */
+const HOOKS_SDK = `import { appendFileSync } from 'node:fs'
+const calls = JSON.parse(process.env.FAKE_CALLS)
+export function query({ prompt, options }) {
+  async function* run() {
+    const first = await prompt[Symbol.asyncIterator]().next()
+    for (const call of calls) {
+      const input = { hook_event_name: 'PreToolUse', session_id: 'fake-session', transcript_path: '', cwd: '', tool_name: call.tool, tool_input: {}, ...(call.agent ? { agent_id: 'a1', agent_type: 'general-purpose' } : {}) }
+      const decisions = []
+      for (const matcher of options.hooks.PreToolUse) {
+        if (matcher.matcher && matcher.matcher !== call.tool) continue
+        for (const hook of matcher.hooks) {
+          const out = await hook(input, 'toolu_' + calls.indexOf(call), { signal: new AbortController().signal })
+          if (out?.hookSpecificOutput?.permissionDecision) decisions.push(out.hookSpecificOutput)
+        }
+      }
+      appendFileSync(process.env.FAKE_SDK_RECORD, JSON.stringify({ ...call, decisions }) + '\\n')
+    }
+    yield { type: 'system', subtype: 'init', session_id: 'fake-session' }
+    yield { type: 'result', subtype: 'success', is_error: false, result: 'done', user_message_uuid: first.value.uuid, session_id: 'fake-session', usage: { input_tokens: 1, output_tokens: 1 } }
+  }
+  const messages = run()
+  messages.interrupt = async () => {}
+  return messages
+}
+`
+
+const brigade = (name: string) => `mcp__harness-tools__${name}`
+
+async function decide(
+  calls: { tool: string; agent: boolean }[],
+  env: Record<string, string> = claudeSettingsEnv(),
+) {
+  const { record } = await bridgeTurn(HOOKS_SDK, {
+    // The bridge's own approvals hook is there too, as in a thread that asks before edits.
+    permissionMode: 'allow-reads',
+    env: { ...env, FAKE_CALLS: JSON.stringify(calls) },
+  })
+  return record as {
+    tool: string
+    agent: boolean
+    decisions: { permissionDecision: string; permissionDecisionReason?: string }[]
+  }[]
+}
+
+test("a sub-agent's call to the thread's own tools is refused, the thread's own goes through", async () => {
+  const [subReport, ownReport, subChild, subPull, subSearch, subRead] = await decide([
+    { tool: brigade('report'), agent: true },
+    { tool: brigade('report'), agent: false },
+    { tool: brigade('start_child'), agent: true },
+    { tool: brigade('github_create_pull_request_gmpetrov_all_repositorie'), agent: true },
+    { tool: brigade('search_workspace'), agent: true },
+    { tool: 'Read', agent: true },
+  ])
+  assert.deepEqual(subReport!.decisions, [
+    {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: REFUSAL.replaceAll('{tool}', 'report'),
+    },
+  ])
+  assert.match(
+    subReport!.decisions[0]!.permissionDecisionReason!,
+    /^Only the thread itself may call report: you are a sub-agent/,
+  )
+  // The thread's own call: nothing refuses it (Brigade's tools need no approval).
+  assert.deepEqual(ownReport!.decisions, [])
+  assert.equal(subChild!.decisions[0]!.permissionDecision, 'deny')
+  // An App's tool, by its name's start: whichever account it goes through.
+  assert.equal(subPull!.decisions[0]!.permissionDecision, 'deny')
+  assert.match(subPull!.decisions[0]!.permissionDecisionReason!, /call github_create_pull_request_/)
+  // The work itself stays the sub-agent's.
+  assert.deepEqual(subSearch!.decisions, [])
+  assert.ok(!subRead!.decisions.some((d) => d.permissionDecision === 'deny'))
+})
+
+test('each of the thread tools is refused to a sub-agent', async () => {
+  const names = THREAD_TOOLS.map((name) => brigade(name.replace(/\*$/, 'some_account')))
+  const decided = await decide(names.map((tool) => ({ tool, agent: true })))
+  for (const call of decided)
+    assert.equal(call.decisions[0]?.permissionDecision, 'deny', `${call.tool} is refused`)
+})
+
+test('without the setting, a sub-agent may call report as before', async () => {
+  const { BRIGADE_THREAD_TOOLS: _, ...env } = claudeSettingsEnv()
+  const [sub] = await decide([{ tool: brigade('report'), agent: true }], env)
+  assert.deepEqual(sub!.decisions, [])
+})
+
+/** GitHub's tools as a thread gets them: bare with one account, suffixed with several. */
+function githubTools(accounts: string[]) {
+  const operations = [
+    'github_create_pull_request',
+    'github_mark_ready_for_review',
+    'github_review_pull_request',
+    'github_merge_pull_request',
+    'github_get_pull_request',
+  ].map((name) => ({ name, description: name, write: true, inputSchema: { type: 'object' } }))
+  const grants = accounts.map((account, i) => ({
+    connectionId: `c${i}`,
+    kind: 'github',
+    label: 'GitHub',
+    externalAccount: account,
+    operations,
+  }))
+  return Object.keys(connectorTools(grants as never, async () => ({}) as never))
+}
+
+for (const accounts of [['gmpetrov'], ['gmpetrov (all repositories)', 'acme']])
+  test(`a sub-agent may not open, ready, review or merge a pull request (${accounts.length} GitHub account${accounts.length > 1 ? 's' : ''})`, async () => {
+    const names = githubTools(accounts)
+    const calls = names.flatMap((name) => [
+      { tool: brigade(name), agent: true },
+      { tool: brigade(name), agent: false },
+    ])
+    const decided = await decide(calls)
+    for (const call of decided) {
+      const denied = call.decisions.some((d) => d.permissionDecision === 'deny')
+      // Reading a pull request stays the sub-agent's; the thread's own calls all go through.
+      const threadOnly = call.agent && !call.tool.includes('github_get_pull_request')
+      assert.equal(
+        denied,
+        threadOnly,
+        `${call.tool} from ${call.agent ? 'a sub-agent' : 'the thread'}`,
+      )
+    }
+  })
+
+/**
+ * Claude Code kept between turns (allow-all), whose background shell ends while the turn still
+ * runs: the teammate reads its result in that same turn, so no turn of its own comes for it.
+ * Then Claude Code idles, as a kept process does, until its next message; that one it answers.
+ */
+const FOLDED_REPORT_SDK = `import { appendFileSync } from 'node:fs'
+const note = (what) => appendFileSync(process.env.FAKE_SDK_RECORD, JSON.stringify({ what, at: Date.now() }) + '\\n')
+export function query({ prompt }) {
+  const input = prompt[Symbol.asyncIterator]()
+  async function* run() {
+    const base = { session_id: 'fake-session', usage: { input_tokens: 1, output_tokens: 1 } }
+    const said = (text) => ({ type: 'assistant', parent_tool_use_id: null, session_id: 'fake-session', message: { id: 'm-' + text, role: 'assistant', content: [{ type: 'text', text }] } })
+    const first = await input.next()
+    yield { type: 'system', subtype: 'init', session_id: 'fake-session' }
+    yield said('Waiting on CI.')
+    yield { type: 'system', subtype: 'task_started', task_id: 'b1', task_type: 'local_bash', description: 'Wait for CI', session_id: 'fake-session' }
+    yield { type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'b1', task_type: 'local_bash', description: 'Wait for CI' }], session_id: 'fake-session' }
+    yield { type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: 'fake-session' }
+    yield { type: 'system', subtype: 'task_notification', task_id: 'b1', status: 'completed', summary: 'CI passed', session_id: 'fake-session' }
+    yield said('CI passed: reported.')
+    yield { type: 'result', subtype: 'success', is_error: false, result: 'CI passed: reported.', user_message_uuid: first.value.uuid, ...base }
+    for (;;) {
+      const next = await input.next()
+      if (next.done) return note('input closed')
+      note('next message')
+      yield said('Answer.')
+      yield { type: 'result', subtype: 'success', is_error: false, result: 'Answer.', user_message_uuid: next.value.uuid, ...base }
+    }
+  }
+  const messages = run()
+  messages.interrupt = async () => {}
+  return messages
+}
+`
+
+test(
+  'a turn that read its background work itself ends once the wait for its report is over',
+  { timeout: 30_000 },
+  async () => {
+    const { turns, record } = await bridgeTurn(FOLDED_REPORT_SDK, {
+      permissionMode: 'allow-all',
+      // A child thread's: no guess at the next message, so nothing else ends the turn.
+      env: { ...claudeSettingsEnv(), BRIGADE_REPORT_WAIT_MS: '300' },
+      prompts: ['hello', 'and now?'],
+    })
+    // The first turn waited on the report, then ended, without a turn of Claude Code's for it.
+    assert.deepEqual(waitingWords(turns[0] as never), [true])
+    assert.equal(turns[0]!.filter((p) => p.type === 'finish').length, 1)
+    // The thread goes on: its next message reaches Claude Code and is answered.
+    assert.ok(
+      record.some((r) => r.what === 'next message'),
+      JSON.stringify(record),
+    )
+    assert.equal(turns[1]!.filter((p) => p.type === 'finish').length, 1)
+  },
+)
+
+/**
+ * Claude Code running a long shell command in the foreground, as 2.1.318 does: a local_bash task
+ * registered with is_backgrounded false, whose notification comes while the tool call that
+ * started it still runs (the 2026-11-06 health check's turn). With MOVED=1 the command is moved
+ * to the background before it ends: it reports back in a turn of Claude Code's own. Then Claude
+ * Code idles, as a kept process does, until its next message.
+ */
+const FOREGROUND_SDK = `import { appendFileSync } from 'node:fs'
+import { setTimeout as sleep } from 'node:timers/promises'
+const note = (what) => appendFileSync(process.env.FAKE_SDK_RECORD, JSON.stringify({ what, at: Date.now() }) + '\\n')
+const moved = process.env.MOVED === '1'
+export function query({ prompt }) {
+  const input = prompt[Symbol.asyncIterator]()
+  async function* run() {
+    const base = { session_id: 'fake-session', usage: { input_tokens: 1, output_tokens: 1 } }
+    const said = (text) => ({ type: 'assistant', parent_tool_use_id: null, session_id: 'fake-session', message: { id: 'm-' + text, role: 'assistant', content: [{ type: 'text', text }] } })
+    const first = await input.next()
+    yield { type: 'system', subtype: 'init', session_id: 'fake-session' }
+    yield said('Running the health check.')
+    yield { type: 'system', subtype: 'task_started', task_id: 'b1', task_type: 'local_bash', description: 'Run the health check', is_backgrounded: false, session_id: 'fake-session' }
+    if (moved) {
+      yield { type: 'system', subtype: 'task_updated', task_id: 'b1', patch: { is_backgrounded: true }, session_id: 'fake-session' }
+      yield { type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 'b1', task_type: 'local_bash', description: 'Run the health check' }], session_id: 'fake-session' }
+      yield said('It runs in the background now.')
+      yield { type: 'result', subtype: 'success', is_error: false, result: 'It runs in the background now.', user_message_uuid: first.value.uuid, ...base }
+      await sleep(500)
+      note('command done')
+      yield { type: 'system', subtype: 'background_tasks_changed', tasks: [], session_id: 'fake-session' }
+      yield { type: 'system', subtype: 'task_notification', task_id: 'b1', status: 'completed', summary: 'Run the health check', session_id: 'fake-session' }
+      yield said('The check passed.')
+      yield { type: 'result', subtype: 'success', is_error: false, result: 'The check passed.', origin: { kind: 'task-notification' }, ...base }
+    } else {
+      yield { type: 'system', subtype: 'task_notification', task_id: 'b1', status: 'completed', summary: 'Run the health check', output_file: '', session_id: 'fake-session' }
+      yield said('All normal: reported.')
+      yield { type: 'result', subtype: 'success', is_error: false, result: 'All normal: reported.', user_message_uuid: first.value.uuid, ...base }
+    }
+    for (;;) {
+      const next = await input.next()
+      if (next.done) return note('input closed')
+      note('next message')
+      yield said('Answer.')
+      yield { type: 'result', subtype: 'success', is_error: false, result: 'Answer.', user_message_uuid: next.value.uuid, ...base }
+    }
+  }
+  const messages = run()
+  messages.interrupt = async () => {}
+  return messages
+}
+`
+
+test(
+  'a command run in the foreground holds nothing: the turn ends at its answer',
+  { timeout: 30_000 },
+  async () => {
+    const started = Date.now()
+    const { turns } = await bridgeTurn(FOREGROUND_SDK, {
+      permissionMode: 'allow-all',
+      // A child thread's (no guess at the next message), with a wait for a report longer than
+      // the test allows: a turn that waited for one would not end in time.
+      env: { ...claudeSettingsEnv(), BRIGADE_REPORT_WAIT_MS: '20000' },
+      prompts: ['hello', 'and now?'],
+    })
+    // Nothing to wait for: the thread never hears the turn waits on background work.
+    assert.deepEqual(waitingWords(turns[0] as never), [])
+    assert.equal(turns[0]!.filter((p) => p.type === 'finish').length, 1)
+    assert.equal(turns[1]!.filter((p) => p.type === 'finish').length, 1)
+    assert.ok(Date.now() - started < 15_000, 'the turns ended without waiting for a report')
+  },
+)
+
+test(
+  'a command moved to the background holds the turn until the teammate has read its result',
+  { timeout: 30_000 },
+  async () => {
+    const { turns, record } = await bridgeTurn(FOREGROUND_SDK, {
+      permissionMode: 'allow-all',
+      env: { ...claudeSettingsEnv(), BRIGADE_REPORT_WAIT_MS: '20000', MOVED: '1' },
+      prompts: ['hello'],
+    })
+    assert.ok(
+      record.some((r) => r.what === 'command done'),
+      JSON.stringify(record),
+    )
+    // It waited on the command, then the teammate read its result, and the turn ended once.
+    assert.deepEqual(waitingWords(turns[0] as never), [true, false])
+    assert.equal(turns[0]!.filter((p) => p.type === 'finish').length, 1)
+    const notified = turns[0]!.findIndex(
+      (p) => p.type === 'raw' && (p.rawValue as any)?.subtype === 'task_notification',
+    )
+    assert.ok(notified >= 0 && turns[0]!.findIndex((p) => p.type === 'finish') > notified)
+  },
+)

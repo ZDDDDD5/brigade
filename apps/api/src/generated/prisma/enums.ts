@@ -9,6 +9,14 @@
 * 🟢 You can import this file directly.
 */
 
+export const HubMode = {
+  api: 'api',
+  object: 'object'
+} as const
+
+export type HubMode = (typeof HubMode)[keyof typeof HubMode]
+
+
 export const ComputerKind = {
   cloud: 'cloud',
   member_machine: 'member_machine'
@@ -32,7 +40,9 @@ export type ComputerStatus = (typeof ComputerStatus)[keyof typeof ComputerStatus
 
 export const Harness = {
   claude_code: 'claude_code',
-  codex: 'codex'
+  codex: 'codex',
+  pi: 'pi',
+  antigravity: 'antigravity'
 } as const
 
 export type Harness = (typeof Harness)[keyof typeof Harness]
@@ -89,7 +99,8 @@ export type TaskPriority = (typeof TaskPriority)[keyof typeof TaskPriority]
 
 export const WakeupKind = {
   wakeup: 'wakeup',
-  report: 'report'
+  report: 'report',
+  reply: 'reply'
 } as const
 
 export type WakeupKind = (typeof WakeupKind)[keyof typeof WakeupKind]
@@ -103,6 +114,50 @@ export const WakeupStatus = {
 } as const
 
 export type WakeupStatus = (typeof WakeupStatus)[keyof typeof WakeupStatus]
+
+
+export const ChiefDecisionStatus = {
+  pending: 'pending',
+  suggested: 'suggested',
+  answered: 'answered',
+  escalated: 'escalated',
+  superseded: 'superseded',
+  failed: 'failed'
+} as const
+
+export type ChiefDecisionStatus = (typeof ChiefDecisionStatus)[keyof typeof ChiefDecisionStatus]
+
+
+export const ChiefOutcome = {
+  agreed: 'agreed',
+  disagreed: 'disagreed',
+  overruled: 'overruled'
+} as const
+
+export type ChiefOutcome = (typeof ChiefOutcome)[keyof typeof ChiefOutcome]
+
+
+export const ChiefPassStatus = {
+  running: 'running',
+  done: 'done',
+  failed: 'failed',
+  idle: 'idle'
+} as const
+
+export type ChiefPassStatus = (typeof ChiefPassStatus)[keyof typeof ChiefPassStatus]
+
+
+export const GoalStatus = {
+  proposed: 'proposed',
+  declined: 'declined',
+  superseded: 'superseded',
+  active: 'active',
+  paused: 'paused',
+  achieved: 'achieved',
+  ended: 'ended'
+} as const
+
+export type GoalStatus = (typeof GoalStatus)[keyof typeof GoalStatus]
 
 
 export const AccountStatus = {
@@ -124,18 +179,22 @@ export const AccountSource = {
 export type AccountSource = (typeof AccountSource)[keyof typeof AccountSource]
 
 
-export const ReviewStatus = {
+export const MergeStatus = {
   none: 'none',
-  reviewing: 'reviewing',
-  fixing: 'fixing',
-  approved: 'approved',
-  changes_requested: 'changes_requested',
   stuck: 'stuck',
   resolving: 'resolving',
   merging: 'merging'
 } as const
 
-export type ReviewStatus = (typeof ReviewStatus)[keyof typeof ReviewStatus]
+export type MergeStatus = (typeof MergeStatus)[keyof typeof MergeStatus]
+
+
+export const ReviewPolicy = {
+  teammate: 'teammate',
+  manual: 'manual'
+} as const
+
+export type ReviewPolicy = (typeof ReviewPolicy)[keyof typeof ReviewPolicy]
 
 
 export const ReviewVerdict = {
@@ -157,6 +216,9 @@ export const ConnectorKind = {
   webhook: 'webhook',
   cloudflare: 'cloudflare',
   google_cloud: 'google_cloud',
+  google_drive_mcp: 'google_drive_mcp',
+  google_docs_mcp: 'google_docs_mcp',
+  google_sheets_mcp: 'google_sheets_mcp',
   neon: 'neon',
   supabase: 'supabase',
   atlassian: 'atlassian',
@@ -166,9 +228,18 @@ export const ConnectorKind = {
   resend: 'resend',
   replicate: 'replicate',
   openrouter: 'openrouter',
+  posthog: 'posthog',
+  dataforseo: 'dataforseo',
+  ahrefs: 'ahrefs',
+  revenuecat: 'revenuecat',
+  meta_ads: 'meta_ads',
+  expo: 'expo',
+  vercel: 'vercel',
   mcp: 'mcp',
   google_search_console: 'google_search_console',
-  google_analytics: 'google_analytics'
+  google_analytics: 'google_analytics',
+  google_ads: 'google_ads',
+  email: 'email'
 } as const
 
 export type ConnectorKind = (typeof ConnectorKind)[keyof typeof ConnectorKind]
@@ -239,7 +310,8 @@ export const TicketType = {
   request: 'request',
   sign_in: 'sign_in',
   cap: 'cap',
-  usage_limit: 'usage_limit'
+  usage_limit: 'usage_limit',
+  disk_full: 'disk_full'
 } as const
 
 export type TicketType = (typeof TicketType)[keyof typeof TicketType]
@@ -294,6 +366,44 @@ export const AttachmentStatus = {
 export type AttachmentStatus = (typeof AttachmentStatus)[keyof typeof AttachmentStatus]
 
 
+export const PreviewMachineStatus = {
+  creating: 'creating',
+  running: 'running',
+  stopping: 'stopping',
+  stopped: 'stopped',
+  destroying: 'destroying'
+} as const
+
+export type PreviewMachineStatus = (typeof PreviewMachineStatus)[keyof typeof PreviewMachineStatus]
+
+
+export const VmKind = {
+  computer: 'computer',
+  machine: 'machine'
+} as const
+
+export type VmKind = (typeof VmKind)[keyof typeof VmKind]
+
+
+export const VmStart = {
+  create: 'create',
+  resume: 'resume',
+  found: 'found'
+} as const
+
+export type VmStart = (typeof VmStart)[keyof typeof VmStart]
+
+
+export const VmRunStatus = {
+  pending: 'pending',
+  open: 'open',
+  closed: 'closed',
+  void: 'void'
+} as const
+
+export type VmRunStatus = (typeof VmRunStatus)[keyof typeof VmRunStatus]
+
+
 export const PreviewVariableKind = {
   setting: 'setting',
   secret: 'secret',
@@ -340,3 +450,85 @@ export const PlaybookRunStatus = {
 } as const
 
 export type PlaybookRunStatus = (typeof PlaybookRunStatus)[keyof typeof PlaybookRunStatus]
+
+
+export const MailAddressKind = {
+  agent: 'agent',
+  inbox: 'inbox'
+} as const
+
+export type MailAddressKind = (typeof MailAddressKind)[keyof typeof MailAddressKind]
+
+
+export const MailDirection = {
+  in: 'in',
+  out: 'out'
+} as const
+
+export type MailDirection = (typeof MailDirection)[keyof typeof MailDirection]
+
+
+export const MailStatus = {
+  pending: 'pending',
+  done: 'done',
+  failed: 'failed',
+  scheduled: 'scheduled',
+  sent: 'sent',
+  delivered: 'delivered',
+  bounced: 'bounced',
+  cancelled: 'cancelled'
+} as const
+
+export type MailStatus = (typeof MailStatus)[keyof typeof MailStatus]
+
+
+export const MailSender = {
+  member: 'member',
+  contact: 'contact',
+  unknown: 'unknown',
+  brigade: 'brigade'
+} as const
+
+export type MailSender = (typeof MailSender)[keyof typeof MailSender]
+
+
+export const HeldCallStatus = {
+  waiting: 'waiting',
+  decided: 'decided',
+  running: 'running',
+  done: 'done',
+  expired: 'expired'
+} as const
+
+export type HeldCallStatus = (typeof HeldCallStatus)[keyof typeof HeldCallStatus]
+
+
+export const RunnerCommandStatus = {
+  pending: 'pending',
+  acked: 'acked',
+  failed: 'failed',
+  expired: 'expired'
+} as const
+
+export type RunnerCommandStatus = (typeof RunnerCommandStatus)[keyof typeof RunnerCommandStatus]
+
+
+export const InboundEventStatus = {
+  pending: 'pending',
+  done: 'done',
+  failed: 'failed'
+} as const
+
+export type InboundEventStatus = (typeof InboundEventStatus)[keyof typeof InboundEventStatus]
+
+
+export const InitiativeActionStatus = {
+  planned: 'planned',
+  awaiting_approval: 'awaiting_approval',
+  declined: 'declined',
+  expired: 'expired',
+  fired: 'fired',
+  cancelled: 'cancelled'
+} as const
+
+export type InitiativeActionStatus = (typeof InitiativeActionStatus)[keyof typeof InitiativeActionStatus]

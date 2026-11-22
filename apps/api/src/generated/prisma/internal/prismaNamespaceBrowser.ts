@@ -52,25 +52,43 @@ export const AnyNull = runtime.AnyNull
 
 export const ModelName = {
   User: 'User',
+  AnalyticsFirst: 'AnalyticsFirst',
+  DownloadSource: 'DownloadSource',
+  AdConversion: 'AdConversion',
+  BillingSubscription: 'BillingSubscription',
   AuthSession: 'AuthSession',
   AuthAccount: 'AuthAccount',
   Verification: 'Verification',
+  RateLimit: 'RateLimit',
   Organization: 'Organization',
+  BillingClosing: 'BillingClosing',
   Member: 'Member',
   Invitation: 'Invitation',
+  InvitationSend: 'InvitationSend',
   Workspace: 'Workspace',
   Computer: 'Computer',
   Runner: 'Runner',
   Teammate: 'Teammate',
   ThreadRead: 'ThreadRead',
   ThreadPin: 'ThreadPin',
+  SidebarOrder: 'SidebarOrder',
+  ThreadLater: 'ThreadLater',
   HomeDismissal: 'HomeDismissal',
   Session: 'Session',
   Task: 'Task',
   Schedule: 'Schedule',
+  ChiefDecision: 'ChiefDecision',
+  ChiefPass: 'ChiefPass',
+  Goal: 'Goal',
+  GoalMeasurement: 'GoalMeasurement',
   Wakeup: 'Wakeup',
+  ReplyWatch: 'ReplyWatch',
   ThreadTeammate: 'ThreadTeammate',
   SessionEvent: 'SessionEvent',
+  ColdEventChunk: 'ColdEventChunk',
+  ThreadEventVolume: 'ThreadEventVolume',
+  WorkspaceEventDay: 'WorkspaceEventDay',
+  TokenUsage: 'TokenUsage',
   Account: 'Account',
   PullRequest: 'PullRequest',
   PullRequestReview: 'PullRequestReview',
@@ -87,27 +105,74 @@ export const ModelName = {
   Subscription: 'Subscription',
   Ticket: 'Ticket',
   Document: 'Document',
+  ListItem: 'ListItem',
+  ListItemThread: 'ListItemThread',
+  ListItemPull: 'ListItemPull',
+  LibraryLock: 'LibraryLock',
+  ListPin: 'ListPin',
+  DocumentPin: 'DocumentPin',
+  MemoryLine: 'MemoryLine',
   DocumentVersion: 'DocumentVersion',
+  LibraryObjectFolder: 'LibraryObjectFolder',
+  LibraryObject: 'LibraryObject',
   LibraryFolder: 'LibraryFolder',
   LibraryFolderGrant: 'LibraryFolderGrant',
+  LibraryShare: 'LibraryShare',
+  ToolState: 'ToolState',
+  Theme: 'Theme',
+  ThemeAsset: 'ThemeAsset',
+  ThemeChange: 'ThemeChange',
+  ToolAccount: 'ToolAccount',
   DocumentAsset: 'DocumentAsset',
+  BucketCleanup: 'BucketCleanup',
+  WorkspaceCleanup: 'WorkspaceCleanup',
   AuditEntry: 'AuditEntry',
+  Upload: 'Upload',
   Attachment: 'Attachment',
   ThreadAttachment: 'ThreadAttachment',
   DesignSystem: 'DesignSystem',
   Skill: 'Skill',
   SkillPack: 'SkillPack',
   PreviewRecipe: 'PreviewRecipe',
+  PreviewMachine: 'PreviewMachine',
+  VmRun: 'VmRun',
   PreviewVariable: 'PreviewVariable',
   Project: 'Project',
   ProjectRepository: 'ProjectRepository',
   PushDevice: 'PushDevice',
+  DesktopDevice: 'DesktopDevice',
+  DesktopMessage: 'DesktopMessage',
   PushNotice: 'PushNotice',
   PlaybookInstallation: 'PlaybookInstallation',
   PlaybookAction: 'PlaybookAction',
   PlaybookRun: 'PlaybookRun',
   PlaybookDryRun: 'PlaybookDryRun',
-  ThreadFollow: 'ThreadFollow'
+  ThreadFollow: 'ThreadFollow',
+  MailAddress: 'MailAddress',
+  MailProject: 'MailProject',
+  MailAlias: 'MailAlias',
+  MailMessage: 'MailMessage',
+  MailHtml: 'MailHtml',
+  MailDomain: 'MailDomain',
+  Contact: 'Contact',
+  MailMute: 'MailMute',
+  ContactHandle: 'ContactHandle',
+  OpsAlert: 'OpsAlert',
+  HeldCall: 'HeldCall',
+  RunnerCommand: 'RunnerCommand',
+  SpecPart: 'SpecPart',
+  TriggerDelivery: 'TriggerDelivery',
+  InboundEvent: 'InboundEvent',
+  FolderBackup: 'FolderBackup',
+  TeammateBackup: 'TeammateBackup',
+  AccountLoginBackup: 'AccountLoginBackup',
+  ComputerReplacement: 'ComputerReplacement',
+  FeatureFlag: 'FeatureFlag',
+  SpecPull: 'SpecPull',
+  Initiative: 'Initiative',
+  InitiativeAction: 'InitiativeAction',
+  InitiativeOutput: 'InitiativeOutput',
+  InitiativeValue: 'InitiativeValue'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -133,10 +198,71 @@ export const UserScalarFieldEnum = {
   emailVerified: 'emailVerified',
   image: 'image',
   createdAt: 'createdAt',
-  updatedAt: 'updatedAt'
+  updatedAt: 'updatedAt',
+  attribution: 'attribution',
+  onboardingAnswers: 'onboardingAnswers',
+  guest: 'guest'
 } as const
 
 export type UserScalarFieldEnum = (typeof UserScalarFieldEnum)[keyof typeof UserScalarFieldEnum]
+
+
+export const AnalyticsFirstScalarFieldEnum = {
+  userId: 'userId',
+  event: 'event',
+  at: 'at'
+} as const
+
+export type AnalyticsFirstScalarFieldEnum = (typeof AnalyticsFirstScalarFieldEnum)[keyof typeof AnalyticsFirstScalarFieldEnum]
+
+
+export const DownloadSourceScalarFieldEnum = {
+  visitor: 'visitor',
+  source: 'source',
+  createdAt: 'createdAt'
+} as const
+
+export type DownloadSourceScalarFieldEnum = (typeof DownloadSourceScalarFieldEnum)[keyof typeof DownloadSourceScalarFieldEnum]
+
+
+export const AdConversionScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  kind: 'kind',
+  at: 'at',
+  value: 'value',
+  currency: 'currency',
+  sendAfter: 'sendAfter',
+  attempts: 'attempts',
+  requestId: 'requestId',
+  sentAt: 'sentAt',
+  confirmedAt: 'confirmedAt',
+  failedAt: 'failedAt',
+  error: 'error'
+} as const
+
+export type AdConversionScalarFieldEnum = (typeof AdConversionScalarFieldEnum)[keyof typeof AdConversionScalarFieldEnum]
+
+
+export const BillingSubscriptionScalarFieldEnum = {
+  id: 'id',
+  workspaceId: 'workspaceId',
+  plan: 'plan',
+  tier: 'tier',
+  stripeCustomerId: 'stripeCustomerId',
+  stripeSubscriptionId: 'stripeSubscriptionId',
+  status: 'status',
+  periodStart: 'periodStart',
+  periodEnd: 'periodEnd',
+  cancelAtPeriodEnd: 'cancelAtPeriodEnd',
+  cancelAt: 'cancelAt',
+  canceledAt: 'canceledAt',
+  endedAt: 'endedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type BillingSubscriptionScalarFieldEnum = (typeof BillingSubscriptionScalarFieldEnum)[keyof typeof BillingSubscriptionScalarFieldEnum]
 
 
 export const AuthSessionScalarFieldEnum = {
@@ -186,6 +312,16 @@ export const VerificationScalarFieldEnum = {
 export type VerificationScalarFieldEnum = (typeof VerificationScalarFieldEnum)[keyof typeof VerificationScalarFieldEnum]
 
 
+export const RateLimitScalarFieldEnum = {
+  id: 'id',
+  key: 'key',
+  count: 'count',
+  lastRequest: 'lastRequest'
+} as const
+
+export type RateLimitScalarFieldEnum = (typeof RateLimitScalarFieldEnum)[keyof typeof RateLimitScalarFieldEnum]
+
+
 export const OrganizationScalarFieldEnum = {
   id: 'id',
   name: 'name',
@@ -199,13 +335,34 @@ export const OrganizationScalarFieldEnum = {
 export type OrganizationScalarFieldEnum = (typeof OrganizationScalarFieldEnum)[keyof typeof OrganizationScalarFieldEnum]
 
 
+export const BillingClosingScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  createdAt: 'createdAt'
+} as const
+
+export type BillingClosingScalarFieldEnum = (typeof BillingClosingScalarFieldEnum)[keyof typeof BillingClosingScalarFieldEnum]
+
+
 export const MemberScalarFieldEnum = {
   id: 'id',
   organizationId: 'organizationId',
   userId: 'userId',
   role: 'role',
   createdAt: 'createdAt',
-  notify: 'notify'
+  removingAt: 'removingAt',
+  notify: 'notify',
+  suggestions: 'suggestions',
+  autoMerge: 'autoMerge',
+  previewMachines: 'previewMachines',
+  chiefAnswers: 'chiefAnswers',
+  chiefAuto: 'chiefAuto',
+  chiefAutoChangedAt: 'chiefAutoChangedAt',
+  chiefPass: 'chiefPass',
+  chiefRules: 'chiefRules',
+  chiefRulesRefused: 'chiefRulesRefused',
+  timezone: 'timezone'
 } as const
 
 export type MemberScalarFieldEnum = (typeof MemberScalarFieldEnum)[keyof typeof MemberScalarFieldEnum]
@@ -225,12 +382,27 @@ export const InvitationScalarFieldEnum = {
 export type InvitationScalarFieldEnum = (typeof InvitationScalarFieldEnum)[keyof typeof InvitationScalarFieldEnum]
 
 
+export const InvitationSendScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  email: 'email',
+  at: 'at'
+} as const
+
+export type InvitationSendScalarFieldEnum = (typeof InvitationSendScalarFieldEnum)[keyof typeof InvitationSendScalarFieldEnum]
+
+
 export const WorkspaceScalarFieldEnum = {
   id: 'id',
   organizationId: 'organizationId',
   name: 'name',
+  logo: 'logo',
+  stripeCustomerId: 'stripeCustomerId',
+  hubMode: 'hubMode',
+  deletingAt: 'deletingAt',
   createdAt: 'createdAt',
-  updatedAt: 'updatedAt'
+  updatedAt: 'updatedAt',
+  builtinSkillsOff: 'builtinSkillsOff'
 } as const
 
 export type WorkspaceScalarFieldEnum = (typeof WorkspaceScalarFieldEnum)[keyof typeof WorkspaceScalarFieldEnum]
@@ -247,6 +419,8 @@ export const ComputerScalarFieldEnum = {
   size: 'size',
   machineId: 'machineId',
   status: 'status',
+  disk: 'disk',
+  hoursHeldAt: 'hoursHeldAt',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
@@ -275,6 +449,7 @@ export const TeammateScalarFieldEnum = {
   organizationId: 'organizationId',
   workspaceId: 'workspaceId',
   name: 'name',
+  title: 'title',
   kind: 'kind',
   instructions: 'instructions',
   harness: 'harness',
@@ -313,6 +488,31 @@ export const ThreadPinScalarFieldEnum = {
 export type ThreadPinScalarFieldEnum = (typeof ThreadPinScalarFieldEnum)[keyof typeof ThreadPinScalarFieldEnum]
 
 
+export const SidebarOrderScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  list: 'list',
+  ids: 'ids',
+  updatedAt: 'updatedAt'
+} as const
+
+export type SidebarOrderScalarFieldEnum = (typeof SidebarOrderScalarFieldEnum)[keyof typeof SidebarOrderScalarFieldEnum]
+
+
+export const ThreadLaterScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  sessionId: 'sessionId',
+  laterAt: 'laterAt',
+  until: 'until',
+  returnedAt: 'returnedAt'
+} as const
+
+export type ThreadLaterScalarFieldEnum = (typeof ThreadLaterScalarFieldEnum)[keyof typeof ThreadLaterScalarFieldEnum]
+
+
 export const HomeDismissalScalarFieldEnum = {
   organizationId: 'organizationId',
   workspaceId: 'workspaceId',
@@ -337,6 +537,7 @@ export const SessionScalarFieldEnum = {
   private: 'private',
   othersMayPrompt: 'othersMayPrompt',
   controlledByMemberId: 'controlledByMemberId',
+  askedByMemberId: 'askedByMemberId',
   origin: 'origin',
   parentId: 'parentId',
   parentTeammateId: 'parentTeammateId',
@@ -349,7 +550,13 @@ export const SessionScalarFieldEnum = {
   conversationKey: 'conversationKey',
   scheduleId: 'scheduleId',
   archivedAt: 'archivedAt',
+  doneAt: 'doneAt',
+  doneSummary: 'doneSummary',
+  doneByType: 'doneByType',
+  doneById: 'doneById',
+  choicesDismissedSeq: 'choicesDismissedSeq',
   lastSeq: 'lastSeq',
+  coldSeq: 'coldSeq',
   move: 'move',
   movedAt: 'movedAt',
   movedFrom: 'movedFrom',
@@ -358,9 +565,16 @@ export const SessionScalarFieldEnum = {
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
   taskId: 'taskId',
+  startedFromId: 'startedFromId',
   projectId: 'projectId',
   playbookRunId: 'playbookRunId',
-  surfacedAt: 'surfacedAt'
+  playbookTeammate: 'playbookTeammate',
+  surfacedAt: 'surfacedAt',
+  quiet: 'quiet',
+  chiefDecisionId: 'chiefDecisionId',
+  chiefPassId: 'chiefPassId',
+  chiefWordSeq: 'chiefWordSeq',
+  initiativeId: 'initiativeId'
 } as const
 
 export type SessionScalarFieldEnum = (typeof SessionScalarFieldEnum)[keyof typeof SessionScalarFieldEnum]
@@ -408,10 +622,109 @@ export const ScheduleScalarFieldEnum = {
   parentSessionId: 'parentSessionId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  playbookInstallationId: 'playbookInstallationId'
+  playbookInstallationId: 'playbookInstallationId',
+  initiativeId: 'initiativeId'
 } as const
 
 export type ScheduleScalarFieldEnum = (typeof ScheduleScalarFieldEnum)[keyof typeof ScheduleScalarFieldEnum]
+
+
+export const ChiefDecisionScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  sessionId: 'sessionId',
+  memberId: 'memberId',
+  teammateId: 'teammateId',
+  askSeq: 'askSeq',
+  question: 'question',
+  options: 'options',
+  childSessionId: 'childSessionId',
+  passId: 'passId',
+  status: 'status',
+  verdict: 'verdict',
+  kind: 'kind',
+  optionIndex: 'optionIndex',
+  reason: 'reason',
+  basis: 'basis',
+  parked: 'parked',
+  decidedAt: 'decidedAt',
+  sentAt: 'sentAt',
+  outcome: 'outcome',
+  outcomeAt: 'outcomeAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ChiefDecisionScalarFieldEnum = (typeof ChiefDecisionScalarFieldEnum)[keyof typeof ChiefDecisionScalarFieldEnum]
+
+
+export const ChiefPassScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  day: 'day',
+  sessionId: 'sessionId',
+  status: 'status',
+  items: 'items',
+  actions: 'actions',
+  report: 'report',
+  createdAt: 'createdAt',
+  finishedAt: 'finishedAt'
+} as const
+
+export type ChiefPassScalarFieldEnum = (typeof ChiefPassScalarFieldEnum)[keyof typeof ChiefPassScalarFieldEnum]
+
+
+export const GoalScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  status: 'status',
+  contract: 'contract',
+  revoked: 'revoked',
+  approvedByMemberId: 'approvedByMemberId',
+  approvedAt: 'approvedAt',
+  endedAt: 'endedAt',
+  endReason: 'endReason',
+  decidedByMemberId: 'decidedByMemberId',
+  turnSeq: 'turnSeq',
+  countedSeq: 'countedSeq',
+  turns: 'turns',
+  stalledTurns: 'stalledTurns',
+  best: 'best',
+  nextMeasureAt: 'nextMeasureAt',
+  heldUntil: 'heldUntil',
+  holdReason: 'holdReason',
+  driftWokeAt: 'driftWokeAt',
+  report: 'report',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type GoalScalarFieldEnum = (typeof GoalScalarFieldEnum)[keyof typeof GoalScalarFieldEnum]
+
+
+export const GoalMeasurementScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  goalId: 'goalId',
+  reason: 'reason',
+  status: 'status',
+  value: 'value',
+  met: 'met',
+  detail: 'detail',
+  turnSeq: 'turnSeq',
+  at: 'at',
+  measuredAt: 'measuredAt',
+  handledAt: 'handledAt'
+} as const
+
+export type GoalMeasurementScalarFieldEnum = (typeof GoalMeasurementScalarFieldEnum)[keyof typeof GoalMeasurementScalarFieldEnum]
 
 
 export const WakeupScalarFieldEnum = {
@@ -425,10 +738,29 @@ export const WakeupScalarFieldEnum = {
   wakeAt: 'wakeAt',
   status: 'status',
   firedAt: 'firedAt',
-  createdAt: 'createdAt'
+  createdAt: 'createdAt',
+  sourceId: 'sourceId'
 } as const
 
 export type WakeupScalarFieldEnum = (typeof WakeupScalarFieldEnum)[keyof typeof WakeupScalarFieldEnum]
+
+
+export const ReplyWatchScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  connectionId: 'connectionId',
+  conversationKey: 'conversationKey',
+  to: 'to',
+  subject: 'subject',
+  until: 'until',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ReplyWatchScalarFieldEnum = (typeof ReplyWatchScalarFieldEnum)[keyof typeof ReplyWatchScalarFieldEnum]
 
 
 export const ThreadTeammateScalarFieldEnum = {
@@ -454,6 +786,75 @@ export const SessionEventScalarFieldEnum = {
 } as const
 
 export type SessionEventScalarFieldEnum = (typeof SessionEventScalarFieldEnum)[keyof typeof SessionEventScalarFieldEnum]
+
+
+export const ColdEventChunkScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  sessionId: 'sessionId',
+  firstSeq: 'firstSeq',
+  lastSeq: 'lastSeq',
+  attempt: 'attempt',
+  events: 'events',
+  moved: 'moved',
+  bytes: 'bytes',
+  storedBytes: 'storedBytes',
+  createdAt: 'createdAt'
+} as const
+
+export type ColdEventChunkScalarFieldEnum = (typeof ColdEventChunkScalarFieldEnum)[keyof typeof ColdEventChunkScalarFieldEnum]
+
+
+export const ThreadEventVolumeScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  sessionId: 'sessionId',
+  bytes: 'bytes',
+  largest: 'largest'
+} as const
+
+export type ThreadEventVolumeScalarFieldEnum = (typeof ThreadEventVolumeScalarFieldEnum)[keyof typeof ThreadEventVolumeScalarFieldEnum]
+
+
+export const WorkspaceEventDayScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  day: 'day',
+  events: 'events',
+  deltas: 'deltas',
+  bytes: 'bytes',
+  largest: 'largest'
+} as const
+
+export type WorkspaceEventDayScalarFieldEnum = (typeof WorkspaceEventDayScalarFieldEnum)[keyof typeof WorkspaceEventDayScalarFieldEnum]
+
+
+export const TokenUsageScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  sessionId: 'sessionId',
+  seq: 'seq',
+  teammateId: 'teammateId',
+  accountId: 'accountId',
+  memberId: 'memberId',
+  projectId: 'projectId',
+  scheduleId: 'scheduleId',
+  provider: 'provider',
+  model: 'model',
+  source: 'source',
+  inputTokens: 'inputTokens',
+  cacheReadTokens: 'cacheReadTokens',
+  cacheWriteTokens: 'cacheWriteTokens',
+  outputTokens: 'outputTokens',
+  reasoningTokens: 'reasoningTokens',
+  at: 'at',
+  createdAt: 'createdAt',
+  responseId: 'responseId',
+  replaced: 'replaced'
+} as const
+
+export type TokenUsageScalarFieldEnum = (typeof TokenUsageScalarFieldEnum)[keyof typeof TokenUsageScalarFieldEnum]
 
 
 export const AccountScalarFieldEnum = {
@@ -484,20 +885,24 @@ export const PullRequestScalarFieldEnum = {
   organizationId: 'organizationId',
   workspaceId: 'workspaceId',
   repository: 'repository',
+  repositoryId: 'repositoryId',
   number: 'number',
   title: 'title',
   headRef: 'headRef',
   baseRef: 'baseRef',
   sessionId: 'sessionId',
   authorTeammateId: 'authorTeammateId',
-  reviewerTeammateId: 'reviewerTeammateId',
-  reviewStatus: 'reviewStatus',
-  autoMerge: 'autoMerge',
+  reviewSessionId: 'reviewSessionId',
+  noReviewReason: 'noReviewReason',
+  reviewClaimedAt: 'reviewClaimedAt',
+  mergeStatus: 'mergeStatus',
   mergeMethod: 'mergeMethod',
   requestedByMemberId: 'requestedByMemberId',
   round: 'round',
-  reviewedSha: 'reviewedSha',
+  resolveFromSha: 'resolveFromSha',
+  approvalCarriedTo: 'approvalCarriedTo',
   note: 'note',
+  autoMergeAt: 'autoMergeAt',
   state: 'state',
   mergedAt: 'mergedAt',
   createdAt: 'createdAt',
@@ -547,6 +952,7 @@ export const McpClientScalarFieldEnum = {
   redirectUri: 'redirectUri',
   clientId: 'clientId',
   clientSecret: 'clientSecret',
+  clientSealed: 'clientSealed',
   createdAt: 'createdAt'
 } as const
 
@@ -575,11 +981,14 @@ export const ConnectionScalarFieldEnum = {
   workspaceId: 'workspaceId',
   appId: 'appId',
   reach: 'reach',
+  inbox: 'inbox',
+  sendPolicy: 'sendPolicy',
   kind: 'kind',
   label: 'label',
   externalAccount: 'externalAccount',
   externalUrl: 'externalUrl',
   mcpUrl: 'mcpUrl',
+  settings: 'settings',
   status: 'status',
   vaultSecretId: 'vaultSecretId',
   createdByMemberId: 'createdByMemberId',
@@ -680,6 +1089,7 @@ export const TriggerScalarFieldEnum = {
   teammateId: 'teammateId',
   label: 'label',
   event: 'event',
+  instructions: 'instructions',
   options: 'options',
   pathToken: 'pathToken',
   verification: 'verification',
@@ -687,6 +1097,8 @@ export const TriggerScalarFieldEnum = {
   createdByMemberId: 'createdByMemberId',
   projectId: 'projectId',
   playbookInstallationId: 'playbookInstallationId',
+  position: 'position',
+  savingUntil: 'savingUntil',
   createdAt: 'createdAt'
 } as const
 
@@ -707,6 +1119,7 @@ export const SubscriptionScalarFieldEnum = {
   cursor: 'cursor',
   expiresAt: 'expiresAt',
   error: 'error',
+  retryAt: 'retryAt',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
@@ -750,6 +1163,9 @@ export const DocumentScalarFieldEnum = {
   updatedByType: 'updatedByType',
   updatedById: 'updatedById',
   updatedInSessionId: 'updatedInSessionId',
+  objectKey: 'objectKey',
+  bytesStaleAt: 'bytesStaleAt',
+  memoryTidiedAt: 'memoryTidiedAt',
   deletedAt: 'deletedAt',
   deletedByType: 'deletedByType',
   deletedById: 'deletedById',
@@ -758,6 +1174,106 @@ export const DocumentScalarFieldEnum = {
 } as const
 
 export type DocumentScalarFieldEnum = (typeof DocumentScalarFieldEnum)[keyof typeof DocumentScalarFieldEnum]
+
+
+export const ListItemScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  documentId: 'documentId',
+  text: 'text',
+  doneByType: 'doneByType',
+  doneById: 'doneById',
+  doneAt: 'doneAt',
+  remainderOfId: 'remainderOfId',
+  remainderSettledAt: 'remainderSettledAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ListItemScalarFieldEnum = (typeof ListItemScalarFieldEnum)[keyof typeof ListItemScalarFieldEnum]
+
+
+export const ListItemThreadScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  itemId: 'itemId',
+  sessionId: 'sessionId',
+  createdAt: 'createdAt'
+} as const
+
+export type ListItemThreadScalarFieldEnum = (typeof ListItemThreadScalarFieldEnum)[keyof typeof ListItemThreadScalarFieldEnum]
+
+
+export const ListItemPullScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  itemId: 'itemId',
+  pullRequestId: 'pullRequestId',
+  closes: 'closes',
+  remains: 'remains',
+  remainderId: 'remainderId',
+  settledAt: 'settledAt',
+  createdAt: 'createdAt'
+} as const
+
+export type ListItemPullScalarFieldEnum = (typeof ListItemPullScalarFieldEnum)[keyof typeof ListItemPullScalarFieldEnum]
+
+
+export const LibraryLockScalarFieldEnum = {
+  key: 'key',
+  owner: 'owner',
+  until: 'until'
+} as const
+
+export type LibraryLockScalarFieldEnum = (typeof LibraryLockScalarFieldEnum)[keyof typeof LibraryLockScalarFieldEnum]
+
+
+export const ListPinScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  documentId: 'documentId',
+  pinnedAt: 'pinnedAt',
+  position: 'position'
+} as const
+
+export type ListPinScalarFieldEnum = (typeof ListPinScalarFieldEnum)[keyof typeof ListPinScalarFieldEnum]
+
+
+export const DocumentPinScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  documentId: 'documentId',
+  pinnedAt: 'pinnedAt'
+} as const
+
+export type DocumentPinScalarFieldEnum = (typeof DocumentPinScalarFieldEnum)[keyof typeof DocumentPinScalarFieldEnum]
+
+
+export const MemoryLineScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  documentId: 'documentId',
+  key: 'key',
+  text: 'text',
+  topic: 'topic',
+  createdByType: 'createdByType',
+  createdById: 'createdById',
+  sessionId: 'sessionId',
+  createdAt: 'createdAt',
+  legacy: 'legacy',
+  confirmedAt: 'confirmedAt',
+  archivedAt: 'archivedAt',
+  archivedReason: 'archivedReason',
+  archivedByType: 'archivedByType',
+  archivedById: 'archivedById',
+  archivedSessionId: 'archivedSessionId'
+} as const
+
+export type MemoryLineScalarFieldEnum = (typeof MemoryLineScalarFieldEnum)[keyof typeof MemoryLineScalarFieldEnum]
 
 
 export const DocumentVersionScalarFieldEnum = {
@@ -773,11 +1289,33 @@ export const DocumentVersionScalarFieldEnum = {
   actorId: 'actorId',
   sessionId: 'sessionId',
   restoredFromId: 'restoredFromId',
+  objectKey: 'objectKey',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 } as const
 
 export type DocumentVersionScalarFieldEnum = (typeof DocumentVersionScalarFieldEnum)[keyof typeof DocumentVersionScalarFieldEnum]
+
+
+export const LibraryObjectFolderScalarFieldEnum = {
+  workspaceId: 'workspaceId',
+  organizationId: 'organizationId',
+  createdAt: 'createdAt'
+} as const
+
+export type LibraryObjectFolderScalarFieldEnum = (typeof LibraryObjectFolderScalarFieldEnum)[keyof typeof LibraryObjectFolderScalarFieldEnum]
+
+
+export const LibraryObjectScalarFieldEnum = {
+  key: 'key',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  documentId: 'documentId',
+  createdAt: 'createdAt',
+  unreferencedAt: 'unreferencedAt'
+} as const
+
+export type LibraryObjectScalarFieldEnum = (typeof LibraryObjectScalarFieldEnum)[keyof typeof LibraryObjectScalarFieldEnum]
 
 
 export const LibraryFolderScalarFieldEnum = {
@@ -807,6 +1345,102 @@ export const LibraryFolderGrantScalarFieldEnum = {
 export type LibraryFolderGrantScalarFieldEnum = (typeof LibraryFolderGrantScalarFieldEnum)[keyof typeof LibraryFolderGrantScalarFieldEnum]
 
 
+export const LibraryShareScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  documentId: 'documentId',
+  token: 'token',
+  createdByMemberId: 'createdByMemberId',
+  createdAt: 'createdAt'
+} as const
+
+export type LibraryShareScalarFieldEnum = (typeof LibraryShareScalarFieldEnum)[keyof typeof LibraryShareScalarFieldEnum]
+
+
+export const ToolStateScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  toolId: 'toolId',
+  owner: 'owner',
+  key: 'key',
+  value: 'value',
+  version: 'version',
+  deletedAt: 'deletedAt',
+  updatedByMemberId: 'updatedByMemberId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ToolStateScalarFieldEnum = (typeof ToolStateScalarFieldEnum)[keyof typeof ToolStateScalarFieldEnum]
+
+
+export const ThemeScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  slug: 'slug',
+  name: 'name',
+  file: 'file',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ThemeScalarFieldEnum = (typeof ThemeScalarFieldEnum)[keyof typeof ThemeScalarFieldEnum]
+
+
+export const ThemeAssetScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  themeId: 'themeId',
+  name: 'name',
+  contentType: 'contentType',
+  size: 'size',
+  status: 'status',
+  createdAt: 'createdAt'
+} as const
+
+export type ThemeAssetScalarFieldEnum = (typeof ThemeAssetScalarFieldEnum)[keyof typeof ThemeAssetScalarFieldEnum]
+
+
+export const ThemeChangeScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  seq: 'seq',
+  kind: 'kind',
+  name: 'name',
+  count: 'count',
+  byTeammateId: 'byTeammateId',
+  byName: 'byName',
+  wornSlug: 'wornSlug',
+  wornFile: 'wornFile',
+  createdAt: 'createdAt'
+} as const
+
+export type ThemeChangeScalarFieldEnum = (typeof ThemeChangeScalarFieldEnum)[keyof typeof ThemeChangeScalarFieldEnum]
+
+
+export const ToolAccountScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  toolId: 'toolId',
+  connectionId: 'connectionId',
+  access: 'access',
+  codeHash: 'codeHash',
+  attachedByMemberId: 'attachedByMemberId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ToolAccountScalarFieldEnum = (typeof ToolAccountScalarFieldEnum)[keyof typeof ToolAccountScalarFieldEnum]
+
+
 export const DocumentAssetScalarFieldEnum = {
   id: 'id',
   organizationId: 'organizationId',
@@ -815,6 +1449,7 @@ export const DocumentAssetScalarFieldEnum = {
   name: 'name',
   contentType: 'contentType',
   size: 'size',
+  sha256: 'sha256',
   status: 'status',
   uploadedByMemberId: 'uploadedByMemberId',
   createdAt: 'createdAt',
@@ -822,6 +1457,29 @@ export const DocumentAssetScalarFieldEnum = {
 } as const
 
 export type DocumentAssetScalarFieldEnum = (typeof DocumentAssetScalarFieldEnum)[keyof typeof DocumentAssetScalarFieldEnum]
+
+
+export const BucketCleanupScalarFieldEnum = {
+  id: 'id',
+  sessionId: 'sessionId',
+  prefix: 'prefix',
+  notBefore: 'notBefore',
+  createdAt: 'createdAt'
+} as const
+
+export type BucketCleanupScalarFieldEnum = (typeof BucketCleanupScalarFieldEnum)[keyof typeof BucketCleanupScalarFieldEnum]
+
+
+export const WorkspaceCleanupScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  prefix: 'prefix',
+  notBefore: 'notBefore',
+  createdAt: 'createdAt'
+} as const
+
+export type WorkspaceCleanupScalarFieldEnum = (typeof WorkspaceCleanupScalarFieldEnum)[keyof typeof WorkspaceCleanupScalarFieldEnum]
 
 
 export const AuditEntryScalarFieldEnum = {
@@ -838,6 +1496,28 @@ export const AuditEntryScalarFieldEnum = {
 } as const
 
 export type AuditEntryScalarFieldEnum = (typeof AuditEntryScalarFieldEnum)[keyof typeof AuditEntryScalarFieldEnum]
+
+
+export const UploadScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  purpose: 'purpose',
+  name: 'name',
+  contentType: 'contentType',
+  size: 'size',
+  sha256: 'sha256',
+  status: 'status',
+  memberId: 'memberId',
+  computerId: 'computerId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  text: 'text',
+  checked: 'checked',
+  createdAt: 'createdAt'
+} as const
+
+export type UploadScalarFieldEnum = (typeof UploadScalarFieldEnum)[keyof typeof UploadScalarFieldEnum]
 
 
 export const AttachmentScalarFieldEnum = {
@@ -954,6 +1634,48 @@ export const PreviewRecipeScalarFieldEnum = {
 export type PreviewRecipeScalarFieldEnum = (typeof PreviewRecipeScalarFieldEnum)[keyof typeof PreviewRecipeScalarFieldEnum]
 
 
+export const PreviewMachineScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  sessionId: 'sessionId',
+  status: 'status',
+  providerRef: 'providerRef',
+  generation: 'generation',
+  claimedUntil: 'claimedUntil',
+  usedAt: 'usedAt',
+  keptAliveAt: 'keptAliveAt',
+  stoppedAt: 'stoppedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type PreviewMachineScalarFieldEnum = (typeof PreviewMachineScalarFieldEnum)[keyof typeof PreviewMachineScalarFieldEnum]
+
+
+export const VmRunScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  kind: 'kind',
+  computerId: 'computerId',
+  machineId: 'machineId',
+  sessionId: 'sessionId',
+  sandboxId: 'sandboxId',
+  size: 'size',
+  start: 'start',
+  status: 'status',
+  startedAt: 'startedAt',
+  stoppedAt: 'stoppedAt',
+  stoppedBy: 'stoppedBy',
+  seenAt: 'seenAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type VmRunScalarFieldEnum = (typeof VmRunScalarFieldEnum)[keyof typeof VmRunScalarFieldEnum]
+
+
 export const PreviewVariableScalarFieldEnum = {
   id: 'id',
   organizationId: 'organizationId',
@@ -983,6 +1705,7 @@ export const ProjectScalarFieldEnum = {
   brief: 'brief',
   folder: 'folder',
   preferredConnectionIds: 'preferredConnectionIds',
+  reviewPolicy: 'reviewPolicy',
   archivedAt: 'archivedAt',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
@@ -1012,6 +1735,28 @@ export const PushDeviceScalarFieldEnum = {
 } as const
 
 export type PushDeviceScalarFieldEnum = (typeof PushDeviceScalarFieldEnum)[keyof typeof PushDeviceScalarFieldEnum]
+
+
+export const DesktopDeviceScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  tokenHash: 'tokenHash',
+  platform: 'platform',
+  lastSeenAt: 'lastSeenAt',
+  createdAt: 'createdAt'
+} as const
+
+export type DesktopDeviceScalarFieldEnum = (typeof DesktopDeviceScalarFieldEnum)[keyof typeof DesktopDeviceScalarFieldEnum]
+
+
+export const DesktopMessageScalarFieldEnum = {
+  id: 'id',
+  deviceId: 'deviceId',
+  message: 'message',
+  createdAt: 'createdAt'
+} as const
+
+export type DesktopMessageScalarFieldEnum = (typeof DesktopMessageScalarFieldEnum)[keyof typeof DesktopMessageScalarFieldEnum]
 
 
 export const PushNoticeScalarFieldEnum = {
@@ -1127,6 +1872,447 @@ export const ThreadFollowScalarFieldEnum = {
 export type ThreadFollowScalarFieldEnum = (typeof ThreadFollowScalarFieldEnum)[keyof typeof ThreadFollowScalarFieldEnum]
 
 
+export const MailAddressScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  name: 'name',
+  kind: 'kind',
+  teammateId: 'teammateId',
+  projectId: 'projectId',
+  connectionId: 'connectionId',
+  publicAddress: 'publicAddress',
+  domainId: 'domainId',
+  displayName: 'displayName',
+  releasedAt: 'releasedAt',
+  createdByMemberId: 'createdByMemberId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type MailAddressScalarFieldEnum = (typeof MailAddressScalarFieldEnum)[keyof typeof MailAddressScalarFieldEnum]
+
+
+export const MailProjectScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  slug: 'slug',
+  projectId: 'projectId',
+  createdAt: 'createdAt'
+} as const
+
+export type MailProjectScalarFieldEnum = (typeof MailProjectScalarFieldEnum)[keyof typeof MailProjectScalarFieldEnum]
+
+
+export const MailAliasScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  local: 'local',
+  addressId: 'addressId',
+  projectId: 'projectId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  purpose: 'purpose',
+  waitUntil: 'waitUntil',
+  createdAt: 'createdAt'
+} as const
+
+export type MailAliasScalarFieldEnum = (typeof MailAliasScalarFieldEnum)[keyof typeof MailAliasScalarFieldEnum]
+
+
+export const MailMessageScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  addressId: 'addressId',
+  connectionId: 'connectionId',
+  sourceId: 'sourceId',
+  projectId: 'projectId',
+  box: 'box',
+  aliasId: 'aliasId',
+  direction: 'direction',
+  status: 'status',
+  resendId: 'resendId',
+  messageId: 'messageId',
+  inReplyTo: 'inReplyTo',
+  references: 'references',
+  conversationId: 'conversationId',
+  fromAddress: 'fromAddress',
+  fromName: 'fromName',
+  to: 'to',
+  cc: 'cc',
+  replyTo: 'replyTo',
+  subject: 'subject',
+  text: 'text',
+  headers: 'headers',
+  authentication: 'authentication',
+  automatic: 'automatic',
+  noise: 'noise',
+  sender: 'sender',
+  memberId: 'memberId',
+  contactId: 'contactId',
+  attachments: 'attachments',
+  route: 'route',
+  routeNote: 'routeNote',
+  sessionId: 'sessionId',
+  triggerId: 'triggerId',
+  teammateId: 'teammateId',
+  approvedByMemberId: 'approvedByMemberId',
+  sendAt: 'sendAt',
+  doneAt: 'doneAt',
+  doneByMemberId: 'doneByMemberId',
+  handedByMemberId: 'handedByMemberId',
+  handedAt: 'handedAt',
+  outcome: 'outcome',
+  outcomeNote: 'outcomeNote',
+  outcomeAt: 'outcomeAt',
+  outcomeAskedAt: 'outcomeAskedAt',
+  sentByMemberId: 'sentByMemberId',
+  error: 'error',
+  attempts: 'attempts',
+  receivedAt: 'receivedAt',
+  expiresAt: 'expiresAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type MailMessageScalarFieldEnum = (typeof MailMessageScalarFieldEnum)[keyof typeof MailMessageScalarFieldEnum]
+
+
+export const MailHtmlScalarFieldEnum = {
+  mailId: 'mailId',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  html: 'html',
+  createdAt: 'createdAt'
+} as const
+
+export type MailHtmlScalarFieldEnum = (typeof MailHtmlScalarFieldEnum)[keyof typeof MailHtmlScalarFieldEnum]
+
+
+export const MailDomainScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  name: 'name',
+  resendDomainId: 'resendDomainId',
+  status: 'status',
+  receiving: 'receiving',
+  records: 'records',
+  createdByMemberId: 'createdByMemberId',
+  checkedAt: 'checkedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type MailDomainScalarFieldEnum = (typeof MailDomainScalarFieldEnum)[keyof typeof MailDomainScalarFieldEnum]
+
+
+export const ContactScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  name: 'name',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type ContactScalarFieldEnum = (typeof ContactScalarFieldEnum)[keyof typeof ContactScalarFieldEnum]
+
+
+export const MailMuteScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  kind: 'kind',
+  value: 'value',
+  createdByMemberId: 'createdByMemberId',
+  createdAt: 'createdAt'
+} as const
+
+export type MailMuteScalarFieldEnum = (typeof MailMuteScalarFieldEnum)[keyof typeof MailMuteScalarFieldEnum]
+
+
+export const ContactHandleScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  contactId: 'contactId',
+  kind: 'kind',
+  value: 'value',
+  lastSeenAt: 'lastSeenAt'
+} as const
+
+export type ContactHandleScalarFieldEnum = (typeof ContactHandleScalarFieldEnum)[keyof typeof ContactHandleScalarFieldEnum]
+
+
+export const OpsAlertScalarFieldEnum = {
+  key: 'key',
+  severity: 'severity',
+  title: 'title',
+  detail: 'detail',
+  firstAt: 'firstAt',
+  lastAt: 'lastAt',
+  notifiedAt: 'notifiedAt',
+  notifiedSeverity: 'notifiedSeverity',
+  resolvedAt: 'resolvedAt'
+} as const
+
+export type OpsAlertScalarFieldEnum = (typeof OpsAlertScalarFieldEnum)[keyof typeof OpsAlertScalarFieldEnum]
+
+
+export const HeldCallScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  ticketId: 'ticketId',
+  kind: 'kind',
+  fingerprint: 'fingerprint',
+  request: 'request',
+  status: 'status',
+  decision: 'decision',
+  result: 'result',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type HeldCallScalarFieldEnum = (typeof HeldCallScalarFieldEnum)[keyof typeof HeldCallScalarFieldEnum]
+
+
+export const RunnerCommandScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  computerId: 'computerId',
+  sessionId: 'sessionId',
+  type: 'type',
+  message: 'message',
+  status: 'status',
+  attempts: 'attempts',
+  sentAt: 'sentAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type RunnerCommandScalarFieldEnum = (typeof RunnerCommandScalarFieldEnum)[keyof typeof RunnerCommandScalarFieldEnum]
+
+
+export const SpecPartScalarFieldEnum = {
+  workspaceId: 'workspaceId',
+  sha256: 'sha256',
+  content: 'content',
+  createdAt: 'createdAt',
+  usedAt: 'usedAt'
+} as const
+
+export type SpecPartScalarFieldEnum = (typeof SpecPartScalarFieldEnum)[keyof typeof SpecPartScalarFieldEnum]
+
+
+export const TriggerDeliveryScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  triggerId: 'triggerId',
+  eventId: 'eventId',
+  status: 'status',
+  threadId: 'threadId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type TriggerDeliveryScalarFieldEnum = (typeof TriggerDeliveryScalarFieldEnum)[keyof typeof TriggerDeliveryScalarFieldEnum]
+
+
+export const InboundEventScalarFieldEnum = {
+  id: 'id',
+  source: 'source',
+  externalId: 'externalId',
+  type: 'type',
+  payload: 'payload',
+  status: 'status',
+  attempts: 'attempts',
+  nextAt: 'nextAt',
+  error: 'error',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InboundEventScalarFieldEnum = (typeof InboundEventScalarFieldEnum)[keyof typeof InboundEventScalarFieldEnum]
+
+
+export const FolderBackupScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  computerId: 'computerId',
+  size: 'size',
+  background: 'background',
+  takenAt: 'takenAt'
+} as const
+
+export type FolderBackupScalarFieldEnum = (typeof FolderBackupScalarFieldEnum)[keyof typeof FolderBackupScalarFieldEnum]
+
+
+export const TeammateBackupScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  teammateId: 'teammateId',
+  kind: 'kind',
+  computerId: 'computerId',
+  size: 'size',
+  takenAt: 'takenAt'
+} as const
+
+export type TeammateBackupScalarFieldEnum = (typeof TeammateBackupScalarFieldEnum)[keyof typeof TeammateBackupScalarFieldEnum]
+
+
+export const AccountLoginBackupScalarFieldEnum = {
+  accountId: 'accountId',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  ciphertext: 'ciphertext',
+  iv: 'iv',
+  authTag: 'authTag',
+  keyVersion: 'keyVersion',
+  sha256: 'sha256',
+  updatedAt: 'updatedAt'
+} as const
+
+export type AccountLoginBackupScalarFieldEnum = (typeof AccountLoginBackupScalarFieldEnum)[keyof typeof AccountLoginBackupScalarFieldEnum]
+
+
+export const ComputerReplacementScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  computerId: 'computerId',
+  memberId: 'memberId',
+  phase: 'phase',
+  oldProviderRef: 'oldProviderRef',
+  backup: 'backup',
+  problems: 'problems',
+  error: 'error',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt',
+  finishedAt: 'finishedAt'
+} as const
+
+export type ComputerReplacementScalarFieldEnum = (typeof ComputerReplacementScalarFieldEnum)[keyof typeof ComputerReplacementScalarFieldEnum]
+
+
+export const FeatureFlagScalarFieldEnum = {
+  key: 'key',
+  everyone: 'everyone',
+  emails: 'emails',
+  workspaceIds: 'workspaceIds',
+  note: 'note',
+  updatedAt: 'updatedAt'
+} as const
+
+export type FeatureFlagScalarFieldEnum = (typeof FeatureFlagScalarFieldEnum)[keyof typeof FeatureFlagScalarFieldEnum]
+
+
+export const SpecPullScalarFieldEnum = {
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  documentId: 'documentId',
+  pullRequestId: 'pullRequestId',
+  ships: 'ships',
+  settledAt: 'settledAt',
+  createdAt: 'createdAt'
+} as const
+
+export type SpecPullScalarFieldEnum = (typeof SpecPullScalarFieldEnum)[keyof typeof SpecPullScalarFieldEnum]
+
+
+export const InitiativeScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  teammateId: 'teammateId',
+  projectId: 'projectId',
+  title: 'title',
+  objective: 'objective',
+  metricLabel: 'metricLabel',
+  metricUnit: 'metricUnit',
+  metricTarget: 'metricTarget',
+  createdByMemberId: 'createdByMemberId',
+  createdByTeammateId: 'createdByTeammateId',
+  archivedAt: 'archivedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InitiativeScalarFieldEnum = (typeof InitiativeScalarFieldEnum)[keyof typeof InitiativeScalarFieldEnum]
+
+
+export const InitiativeActionScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  initiativeId: 'initiativeId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  title: 'title',
+  instructions: 'instructions',
+  draft: 'draft',
+  dueAt: 'dueAt',
+  approveBy: 'approveBy',
+  status: 'status',
+  ticketId: 'ticketId',
+  decidedByMemberId: 'decidedByMemberId',
+  decidedAt: 'decidedAt',
+  firedAt: 'firedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InitiativeActionScalarFieldEnum = (typeof InitiativeActionScalarFieldEnum)[keyof typeof InitiativeActionScalarFieldEnum]
+
+
+export const InitiativeOutputScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  initiativeId: 'initiativeId',
+  sessionId: 'sessionId',
+  teammateId: 'teammateId',
+  actionId: 'actionId',
+  kind: 'kind',
+  channel: 'channel',
+  url: 'url',
+  summary: 'summary',
+  at: 'at',
+  metrics: 'metrics',
+  metricsAt: 'metricsAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type InitiativeOutputScalarFieldEnum = (typeof InitiativeOutputScalarFieldEnum)[keyof typeof InitiativeOutputScalarFieldEnum]
+
+
+export const InitiativeValueScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  initiativeId: 'initiativeId',
+  teammateId: 'teammateId',
+  value: 'value',
+  note: 'note',
+  at: 'at'
+} as const
+
+export type InitiativeValueScalarFieldEnum = (typeof InitiativeValueScalarFieldEnum)[keyof typeof InitiativeValueScalarFieldEnum]
+
+
 export const SortOrder = {
   asc: 'asc',
   desc: 'desc'
@@ -1158,14 +2344,6 @@ export const QueryMode = {
 export type QueryMode = (typeof QueryMode)[keyof typeof QueryMode]
 
 
-export const NullsOrder = {
-  first: 'first',
-  last: 'last'
-} as const
-
-export type NullsOrder = (typeof NullsOrder)[keyof typeof NullsOrder]
-
-
 export const JsonNullValueFilter = {
   DbNull: DbNull,
   JsonNull: JsonNull,
@@ -1173,4 +2351,12 @@ export const JsonNullValueFilter = {
 } as const
 
 export type JsonNullValueFilter = (typeof JsonNullValueFilter)[keyof typeof JsonNullValueFilter]
+
+
+export const NullsOrder = {
+  first: 'first',
+  last: 'last'
+} as const
+
+export type NullsOrder = (typeof NullsOrder)[keyof typeof NullsOrder]
 

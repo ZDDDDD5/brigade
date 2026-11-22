@@ -23,18 +23,114 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model User {
-  id            String        @id
-  name          String
-  email         String        @unique
-  emailVerified Boolean       @default(false)
-  image         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  authSessions  AuthSession[]
-  authAccounts  AuthAccount[]
-  members       Member[]
-  invitations   Invitation[]
-  pushDevices   PushDevice[]
+  id                String           @id
+  name              String
+  email             String           @unique
+  emailVerified     Boolean          @default(false)
+  image             String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  authSessions      AuthSession[]
+  authAccounts      AuthAccount[]
+  members           Member[]
+  invitations       Invitation[]
+  pushDevices       PushDevice[]
+  desktopDevices    DesktopDevice[]
+  /// Where the person came from when they signed up (src/signup-source.ts): set once, never
+  /// changed. Utm values, the referrer's host, the first page and the derived channel; no URL.
+  attribution       Json?
+  /// What they answered to onboarding's questions (role, team size, first work, where they
+  /// heard of Brigade; @brigade/contracts' OnboardingAnswers), set once. `{}`: all skipped;
+  /// null: never asked (invited, or here before the questions).
+  onboardingAnswers Json?
+  /// A guest (src/guests.ts, docs/guests.md): made by Brigade.app without a sign-in, with a
+  /// placeholder address, until the person saves the account with their own email.
+  guest             Boolean          @default(false)
+  analyticsFirsts   AnalyticsFirst[]
+  adConversions     AdConversion[]
+}
+
+/// The product analytics events a person has sent once already (src/analytics.ts): the next
+/// of each carries `first: false`. People who existed before analytics have them all.
+model AnalyticsFirst {
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event  String
+  at     DateTime @default(now())
+
+  @@id([userId, event])
+}
+
+/// Where a visitor who downloaded Brigade.app from the site came from (src/download-source.ts):
+/// the app's guest sign-up from the same address within a few days takes it. One row a visitor,
+/// the latest download's; old rows are deleted as new ones come.
+model DownloadSource {
+  /// A keyed hash of the visitor's IP address, never the address itself.
+  visitor   String   @id
+  /// The visit's source, as src/signup-source.ts parsed it.
+  source    Json
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+/// A conversion of a person who came from a Google ad (src/google-ads.ts): their sign-up, then
+/// their first subscription. Kept with what it counts (in the same transaction), sent to Google
+/// Ads by the `ad-conversions` job from `sendAfter`; Google takes it (`requestId`, `sentAt`),
+/// then processes it later: `confirmedAt` once it says so, `failedAt` and `error` once it never
+/// will. A processing failure that may pass (a click too recent) sends it again later.
+model AdConversion {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// `sign_up` or `subscription`.
+  kind        String
+  /// When it happened, as reported to Google.
+  at          DateTime  @default(now())
+  /// The subscription's first price, in its currency's units (e.g. 99), when it has one.
+  value       Float?
+  currency    String?
+  /// Not sent before then: Google refuses a click it has not processed yet.
+  sendAfter   DateTime  @default(now())
+  attempts    Int       @default(0)
+  /// Google's id of the request that carried it, while its processing is not known.
+  requestId   String?
+  sentAt      DateTime?
+  confirmedAt DateTime?
+  failedAt    DateTime?
+  error       String?
+
+  @@unique([userId, kind])
+  @@index([confirmedAt, failedAt])
+}
+
+/// A workspace's paid plan (src/billing.ts): Cloud, which gives it the cloud computer. It
+/// only ever holds Stripe's current state for its subscription. A row with no
+/// stripeSubscriptionId and status "active" is a complimentary plan, added by hand.
+model BillingSubscription {
+  id                   String    @id @default(cuid())
+  workspaceId          String
+  workspace            Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// "cloud"
+  plan                 String
+  /// Which Cloud plan its Stripe price is (billing.ts PLANS): "cloud", or "starter" ($15, with a
+  /// monthly allowance of cloud computer hours). Follows the subscription's price.
+  tier                 String    @default("cloud")
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  /// Stripe's: active, trialing, past_due, canceled, unpaid, incomplete…
+  status               String    @default("incomplete")
+  periodStart          DateTime?
+  periodEnd            DateTime?
+  cancelAtPeriodEnd    Boolean   @default(false)
+  cancelAt             DateTime?
+  canceledAt           DateTime?
+  endedAt              DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([workspaceId])
+  @@index([stripeSubscriptionId])
 }
 
 /// A signed-in browser session (better-auth "session"). Not a thread.
@@ -86,17 +182,42 @@ model Verification {
   @@index([identifier])
 }
 
+/// better-auth's rate limit (src/auth.ts): requests to sign in and to mail a code, per visitor and path.
+model RateLimit {
+  id          String @id
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+}
+
 model Organization {
-  id          String       @id
-  name        String
-  slug        String       @unique
-  logo        String?
-  metadata    String?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime?    @updatedAt
-  members     Member[]
-  invitations Invitation[]
-  workspaces  Workspace[]
+  id              String           @id
+  name            String
+  slug            String           @unique
+  logo            String?
+  metadata        String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime?        @updatedAt
+  members         Member[]
+  invitations     Invitation[]
+  invitationSends InvitationSend[]
+  workspaces      Workspace[]
+  billingClosings BillingClosing[]
+}
+
+/// A deletion of the organization under way (src/billing.ts): while one is younger than 10
+/// minutes, no Checkout starts in it. One per request, so each removes only its own when it
+/// is refused or fails; the deletion itself removes them all.
+model BillingClosing {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Set when only this workspace is being deleted (src/workspace-delete.ts): the others of the
+  /// organization may still start a Checkout. No link: it outlives the workspace a moment.
+  workspaceId    String?
+  createdAt      DateTime
+
+  @@index([organizationId])
 }
 
 /// A user's role in an organization: owner, admin or member.
@@ -108,6 +229,10 @@ model Member {
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   role                  String                 @default("member")
   createdAt             DateTime               @default(now())
+  /// Set while they are being removed from the organization (src/member-remove.ts): they reach
+  /// nothing of it, and their role no longer changes. Cleared when the removal fails; one older
+  /// than its lease no longer holds.
+  removingAt            DateTime?
   computers             Computer[]
   accounts              Account[]
   sessions              Session[]
@@ -115,12 +240,46 @@ model Member {
   schedules             Schedule[]
   threadReads           ThreadRead[]
   threadPins            ThreadPin[]
+  documentPins          DocumentPin[]
+  listPins              ListPin[]
+  sidebarOrders         SidebarOrder[]
+  threadLaters          ThreadLater[]
   homeDismissals        HomeDismissal[]
   /// Which notifications reach their devices (src/notifications.ts).
   notify                NotifyPreset           @default(needed)
+  /// Their message box suggests what they may write next, guessed after each turn on their account.
+  suggestions           Boolean                @default(true)
+  /// Brigade merges the pull requests teammates open in their threads once they are ready: no
+  /// review under way or asked for, and checks passed (src/auto-merge.ts). Owners and admins only.
+  autoMerge             Boolean                @default(false)
+  /// The previews of the threads they start run on a machine of their own (docs/previews.md),
+  /// while they have the preview_machines feature. Off: on the cloud computer, as before.
+  previewMachines       Boolean                @default(false)
+  /// No longer read: Chief read each question their teammates ended on (#724), replaced by their
+  /// rules and daily pass (docs/chief-answers.md). Kept while an older API may still read it.
+  chiefAnswers          Boolean                @default(false)
+  /// No longer read (#724): the kinds of question Chief answered on its own for them.
+  chiefAuto             String[]               @default([])
+  /// No longer read (#724).
+  chiefAutoChangedAt    DateTime?
+  /// Chief's daily pass for them (docs/chief-answers.md): once a day, from CHIEF_PASS_HOUR in their
+  /// timezone, Chief goes through what waits on them and settles what their rules settle. Off: none.
+  chiefPass             Boolean                @default(false)
+  /// Their rules, in their words: every teammate working for them reads them, decides what they
+  /// settle and asks them only the rest. Null: none.
+  chiefRules            String?
+  /// Rules Chief proposed and they refused, the latest: never proposed again.
+  chiefRulesRefused     String[]               @default([])
+  /// Their timezone (IANA), as their browser said it: their pass runs in their morning.
+  timezone              String?
+  chiefDecisions        ChiefDecision[]
+  chiefPasses           ChiefPass[]
   pushNotices           PushNotice[]
   /// Playbooks that run on their accounts.
   playbookInstallations PlaybookInstallation[]
+  /// Their own looks for the dashboard (docs/themes.md), one set per workspace.
+  themes                Theme[]
+  themeChanges          ThemeChange[]
 
   @@unique([organizationId, userId])
   @@index([userId])
@@ -142,15 +301,47 @@ model Invitation {
   @@index([email])
 }
 
+/// One invitation mail sent, first or again (src/invitation-budget.ts): what the sending budget
+/// counts, per organization and per address. Kept a day, the longest window; a table of its own
+/// because better-auth's RateLimit cleanup prunes every row past its own short windows.
+model InvitationSend {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String
+  at             DateTime     @default(now())
+
+  @@index([organizationId, at])
+  @@index([organizationId, email, at])
+}
+
 // ---------------------------------------------------------------------------
 // Workspaces, computers and teammates
 // ---------------------------------------------------------------------------
+
+/// Where a workspace's hub runs on Cloudflare (Workspace.hubMode).
+enum HubMode {
+  api
+  object
+}
 
 model Workspace {
   id                    String                 @id @default(cuid())
   organizationId        String
   organization          Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   name                  String
+  /// Its logo in the bucket (workspaceLogoKey), shown instead of its letter: "<version>.<type>",
+  /// e.g. "k2x9f1.png". Unset: none.
+  logo                  String?
+  /// Its own Stripe customer (src/billing.ts), made on its first Checkout: its plan's
+  /// invoices and card, apart from any other workspace's.
+  stripeCustomerId      String?
+  /// Where its hub runs on Cloudflare (docs/workspace-hubs-plan.md): in the Api object with
+  /// every other workspace's, or in a Durable Object of its own. Changed with POST /ops/hubs.
+  hubMode               HubMode                @default(api)
+  /// Set while it is being deleted (src/deletion-fence.ts): no new thread, turn or cloud computer
+  /// starts. Cleared when the deletion is refused or fails; older than its lease, it holds no more.
+  deletingAt            DateTime?
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
   computers             Computer[]
@@ -158,6 +349,7 @@ model Workspace {
   teammates             Teammate[]
   sessions              Session[]
   sessionEvents         SessionEvent[]
+  tokenUsage            TokenUsage[]
   threadSeats           ThreadTeammate[]
   accounts              Account[]
   comments              Comment[]
@@ -181,6 +373,15 @@ model Workspace {
   tasks                 Task[]
   schedules             Schedule[]
   wakeups               Wakeup[]
+  chiefDecisions        ChiefDecision[]
+  chiefPasses           ChiefPass[]
+  goals                 Goal[]
+  replyWatches          ReplyWatch[]
+  heldCalls             HeldCall[]
+  runnerCommands        RunnerCommand[]
+  specParts             SpecPart[]
+  eventDays             WorkspaceEventDay[]
+  triggerDeliveries     TriggerDelivery[]
   projects              Project[]
   projectRepositories   ProjectRepository[]
   auditEntries          AuditEntry[]
@@ -191,6 +392,15 @@ model Workspace {
   previewVariables      PreviewVariable[]
   threadReads           ThreadRead[]
   threadPins            ThreadPin[]
+  documentPins          DocumentPin[]
+  libraryShares         LibraryShare[]
+  toolStates            ToolState[]
+  themes                Theme[]
+  themeChanges          ThemeChange[]
+  toolAccounts          ToolAccount[]
+  listPins              ListPin[]
+  sidebarOrders         SidebarOrder[]
+  threadLaters          ThreadLater[]
   homeDismissals        HomeDismissal[]
   pushNotices           PushNotice[]
   playbookInstallations PlaybookInstallation[]
@@ -198,7 +408,30 @@ model Workspace {
   playbookRuns          PlaybookRun[]
   playbookDryRuns       PlaybookDryRun[]
   threadFollows         ThreadFollow[]
+  billingSubscriptions  BillingSubscription[]
+  mailProjects          MailProject[]
+  mailAliases           MailAlias[]
+  mailMessages          MailMessage[]
+  mailDomains           MailDomain[]
+  contacts              Contact[]
+  contactHandles        ContactHandle[]
+  mailMutes             MailMute[]
 
+  listItems       ListItem[]
+  listItemThreads ListItemThread[]
+  listItemPulls   ListItemPull[]
+
+  /// Brigade's own skills an owner or admin turned off here, by name (`brigade-library`): the
+  /// others are on, as is a skill added later. Only those marked switchable (BUILTIN_SKILLS).
+  builtinSkillsOff String[]   @default([])
+  specPulls        SpecPull[]
+  vmRuns           VmRun[]
+
+  /// Its missions (docs/missions.md), named Initiative in code.
+  initiatives       Initiative[]
+  initiativeActions InitiativeAction[]
+  initiativeOutputs InitiativeOutput[]
+  initiativeValues  InitiativeValue[]
   @@index([organizationId])
 }
 
@@ -219,14 +452,14 @@ enum ComputerStatus {
 
 /// The workspace cloud VM, or a member's own machine.
 model Computer {
-  id             String         @id @default(cuid())
+  id             String                @id @default(cuid())
   organizationId String
   workspaceId    String
-  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace      Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   kind           ComputerKind
   /// Set for a member's own machine: only that member runs threads on it.
   memberId       String?
-  member         Member?        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  member         Member?               @relation(fields: [memberId], references: [id], onDelete: Cascade)
   name           String
   /// Opaque provider reference for a cloud computer. Only the providers package reads it.
   providerRef    Json?
@@ -234,12 +467,21 @@ model Computer {
   /// A member's machine: its OS machine ID and runner home, hashed by the runner. Linking
   /// again from the same place keeps this computer.
   machineId      String?
-  status         ComputerStatus @default(pending)
-  createdAt      DateTime       @default(now())
-  updatedAt      DateTime       @updatedAt
+  status         ComputerStatus        @default(pending)
+  /// A cloud computer's disk while its runner says it stays full once it freed what it could
+  /// (src/computer-disk.ts): how full, since when, and what takes room. Null otherwise.
+  disk           Json?
+  /// A cloud computer: the last minute its workspace's Starter hours were found used up while
+  /// commands waited for it (src/runner-commands.ts giveUp). Its commands are kept, not given
+  /// up, until a day after it.
+  hoursHeldAt    DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
   runner         Runner?
   sessions       Session[]
   accounts       Account[]
+  commands       RunnerCommand[]
+  replacements   ComputerReplacement[]
 
   @@index([workspaceId])
   @@index([workspaceId, memberId, machineId])
@@ -264,9 +506,14 @@ model Runner {
   @@index([workspaceId])
 }
 
+/// What runs a teammate (Teammate.harness), and a login's CLI (Account.provider: claude_code, codex
+/// or antigravity). pi: Pi, on the login of its model's vendor (loginOf), behind the pi_harness
+/// feature. antigravity: Google's Antigravity CLI on a Google account, behind antigravity_harness.
 enum Harness {
   claude_code
   codex
+  pi
+  antigravity
 }
 
 /// chief: the teammate every workspace has one of. It sets up the team and routes work.
@@ -282,6 +529,8 @@ model Teammate {
   workspaceId           String
   workspace             Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   name                  String
+  /// Free text shown as a badge beside its name, e.g. "Software engineer".
+  title                 String                 @default("")
   kind                  TeammateKind           @default(teammate)
   instructions          String                 @default("")
   harness               Harness                @default(claude_code)
@@ -305,15 +554,18 @@ model Teammate {
   documents             Document[]
   libraryFolderGrants   LibraryFolderGrant[]
   pullRequestsAuthored  PullRequest[]          @relation("PullRequestAuthor")
-  pullRequestsReviewing PullRequest[]          @relation("PullRequestReviewer")
   pullRequestReviews    PullRequestReview[]
   tasks                 Task[]
   tasksCreated          Task[]                 @relation("TaskCreatedByTeammate")
   schedules             Schedule[]
   schedulesCreated      Schedule[]             @relation("ScheduleCreatedByTeammate")
   wakeups               Wakeup[]
+  replyWatches          ReplyWatch[]
   playbookInstallations PlaybookInstallation[]
+  backups               TeammateBackup[]
 
+  /// The missions it owns (docs/missions.md).
+  initiatives           Initiative[]
   @@index([workspaceId])
 }
 
@@ -368,6 +620,48 @@ model ThreadPin {
   @@index([sessionId])
 }
 
+/// The order a member dragged a list of their sidebar to (its teammates or its projects), in a
+/// workspace: the ids, first to last. Those not in it follow, in the list's own order.
+model SidebarOrder {
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  /// "teammates" or "projects".
+  list           String
+  ids            String[]
+  updatedAt      DateTime  @updatedAt
+
+  @@id([memberId, workspaceId, list])
+  @@index([workspaceId])
+}
+
+/// A thread a member snoozed (Later in the code): out of their sidebar's list and of what waits
+/// on them, under the filter's Snoozed, until `until`. Each member's own, like a pin. Anything
+/// new in the thread after laterAt (a message, a turn, a ticket, a pull request) brings it back
+/// sooner (src/later.ts).
+model ThreadLater {
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  sessionId      String
+  session        Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  laterAt        DateTime  @default(now())
+  /// When it comes back. Those put away before Snooze, and by an API older than it, a week on.
+  until          DateTime  @default(dbgenerated("(now() + '7 days'::interval)"))
+  /// When it came back at its time: kept a week after, so the member's list brings it up
+  /// however old its last activity (src/later.ts). Null while it sleeps.
+  returnedAt     DateTime?
+
+  @@id([memberId, sessionId])
+  @@index([sessionId])
+  @@index([workspaceId])
+  @@index([until])
+}
+
 /// A loose end a member set aside on Home. Its key names the thing as it stood then (a thread's
 /// proposal by its event, a stalled thread by its last event, a routine by its failed run), so
 /// the same thing comes back once it changes.
@@ -412,6 +706,11 @@ model Session {
   othersMayPrompt      Boolean            @default(false)
   /// Set while a member has taken over the thread; the teammate does not act meanwhile.
   controlledByMemberId String?
+  /// The one member whose requests its teammate works on: who wrote or answered in it, or, for
+  /// work a teammate passed on (a child, a task, message_thread), who had asked for it there;
+  /// '*' once another member took part. A member's own App account answers only them
+  /// (src/connector-calls.ts, src/thread-spec.ts).
+  askedByMemberId      String?
   /// member: a member's message. trigger: an outside event. schedule: a schedule's instructions, at its time.
   /// child: a teammate started it from its parent thread (start_child).
   origin               SessionOrigin      @default(member)
@@ -441,8 +740,22 @@ model Session {
   schedule             Schedule?          @relation("ScheduleRuns", fields: [scheduleId], references: [id], onDelete: SetNull)
   /// Set while archived: out of the sidebar for everyone. A new message brings it back.
   archivedAt           DateTime?
+  /// When the work it was asked for was declared done (docs/board.md): by its teammate
+  /// (complete_thread, refused while anything is still open in it) or by a person (Mark done).
+  /// What reopens an archived thread clears it: a person's message, a ticket or a pull request.
+  doneAt               DateTime?
+  /// What was done, in a line, from whoever declared it.
+  doneSummary          String?
+  doneByType           ActorType?
+  doneById             String?
+  /// The choices card a person dismissed without picking (its tool.started seq): it and those
+  /// before it wait on nobody; choices offered after it do (src/choices-waiting.ts).
+  choicesDismissedSeq  Int?
   /// Highest contiguous event sequence number stored.
   lastSeq              Int                @default(0)
+  /// Its events up to this one are kept cold, in the bucket (src/cold-events.ts): the heavy ones
+  /// among them (streamed text, tool calls, the harness's copies) are no longer in SessionEvent.
+  coldSeq              Int                @default(0)
   /// While it moves to another computer: where to, how far it got and the message that goes with it (src/move.ts).
   move                 Json?
   /// When it last came to its computer from another, from which (by name), and its last event then (ThreadSpec.moved).
@@ -454,6 +767,7 @@ model Session {
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
   events               SessionEvent[]
+  tokenUsage           TokenUsage[]
   /// Every teammate in the thread, the starting one (teammateId) included.
   teammates            ThreadTeammate[]
   comments             Comment[]
@@ -463,38 +777,94 @@ model Session {
   attachments          ThreadAttachment[]
   /// Files teammates sent from this thread (e.g. attached to an email).
   sentAttachments      Attachment[]
-  /// Pull requests opened from this thread; their review loop runs here.
-  pullRequests         PullRequest[]
+  /// Pull requests opened from this thread; their reviews report here.
+  pullRequests         PullRequest[]      @relation("PullRequestThread")
+  /// The pull requests this thread reviews (src/reviews.ts).
+  reviewsOf            PullRequest[]      @relation("PullRequestReviewThread")
   /// When each member last looked at it.
   reads                ThreadRead[]
   /// The members who pinned it.
   pins                 ThreadPin[]
-  /// The task this thread works on. One thread per task for now.
+  /// The members who put it away for later.
+  laters               ThreadLater[]
+  /// The Tasks board's task it was (the board is gone: docs/hand-offs.md). Nothing reads it; it
+  /// goes in a later deploy, with Task.
   taskId               String?            @unique
   task                 Task?              @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  /// The thread a teammate started it from (start_thread): this one stands at the top, not as its
+  /// child, and that thread may still write in it (message_thread). Null for any other.
+  startedFromId        String?
+  startedFrom          Session?           @relation("StartedThreads", fields: [startedFromId], references: [id], onDelete: SetNull)
+  startedThreads       Session[]          @relation("StartedThreads")
   /// The project the thread works in: its brief, memory, folder and repositories come with each turn.
   projectId            String?
   project              Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
   /// Times a teammate set to be prompted here again.
   wakeups              Wakeup[]
+  replyWatches         ReplyWatch[]
+  /// Calls waiting on a person's decision, and commands on their way to its computer.
+  heldCalls            HeldCall[]
+  runnerCommands       RunnerCommand[]
   /// Schedules whose runs report here, as its children.
   reportingSchedules   Schedule[]         @relation("ScheduleParent")
   /// The playbook run it belongs to: its root thread and the root's children (src/playbooks.ts).
   playbookRunId        String?
   playbookRun          PlaybookRun?       @relation("PlaybookRunThreads", fields: [playbookRunId], references: [id], onDelete: SetNull)
+  /// In a playbook's run: the teammate setting this thread works as (a fix handed to its
+  /// developer), whose Apps alone it has. Null: the one its runs start with.
+  playbookTeammate     String?
   /// The run it is the root thread of.
   rootOfPlaybookRun    PlaybookRun?       @relation("PlaybookRunRoot")
   /// A run's thread stays out of the sidebar's Threads until a person first takes part in it
   /// (a message, a takeover, a pin): then this is set, and it stays there.
   surfacedAt           DateTime?
+  /// Started by a rule on a mailbox (an email trigger): out of the sidebar's Threads, like a
+  /// playbook's run, until a person takes part in it or it needs one (surfacedAt).
+  quiet                Boolean            @default(false)
+  /// Emails it received or sent through Brigade's own addresses (the Email App).
+  mailMessages         MailMessage[]
+  /// Sign-up addresses it asked for (email_new_address).
+  mailAliases          MailAlias[]
   /// The dry runs of a playbook started from this thread (its installation's chat).
   playbookDryRuns      PlaybookDryRun[]
   /// Threads it follows (follow_thread): their report wakes it, like a parent's child's.
   following            ThreadFollow[]     @relation("ThreadFollower")
   /// Threads that follow it.
   followers            ThreadFollow[]     @relation("ThreadFollowed")
+  folderBackups        FolderBackup[]
+  coldChunks           ColdEventChunk[]
+  eventVolume          ThreadEventVolume?
 
+  /// The list items it works on (docs/lists.md).
+  listItems ListItemThread[]
+
+  /// Chief's decisions on the questions its teammates ended on (docs/chief-answers.md).
+  chiefDecisions  ChiefDecision[] @relation("ChiefDecisionThread")
+  /// Set on Chief's thread deciding one of them, a child of the thread asking: shown there as the
+  /// decision, not among its sub-threads.
+  chiefDecisionId String?         @unique
+  chiefDecision   ChiefDecision?  @relation("ChiefDecisionChild", fields: [chiefDecisionId], references: [id], onDelete: SetNull)
+  /// Set on Chief's thread going through what waits on a person (docs/chief-answers.md): its pass.
+  /// Quiet, it shows in no list; Today links it.
+  chiefPassId     String?         @unique
+  chiefPass       ChiefPass?      @relation(fields: [chiefPassId], references: [id], onDelete: SetNull)
+  /// Its work goes on Chief's word from this event on (its seq): Chief answered in its person's
+  /// name, or it was handed work while its giver did (a sub-thread, a task, a message). Only a
+  /// person's message after it lifts it. Meanwhile its App writes ask a person, whatever its
+  /// teammate's access (src/chief-answers.ts).
+  chiefWordSeq    Int?
+
+  /// Its goals (docs/goals.md): at most one proposed, active or paused at a time.
+  goals Goal[]
+
+  /// The mission it belongs to (docs/missions.md), named Initiative in code: set on its main threads;
+  /// a sub-thread or a routine's run belongs to its parent's, or its routine's.
+  initiativeId      String?
+  initiative        Initiative?        @relation(fields: [initiativeId], references: [id], onDelete: SetNull)
+  initiativeActions InitiativeAction[]
+  initiativeOutputs InitiativeOutput[]
   @@index([workspaceId, createdAt])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([projectId, createdAt])
   @@index([teammateId])
   @@index([triggerId, conversationKey])
@@ -502,6 +872,9 @@ model Session {
   @@index([parentId, createdAt])
   @@index([reportDueAt])
   @@index([playbookRunId])
+  @@index([workspaceId, doneAt])
+  @@index([startedFromId])
+  @@index([initiativeId])
 }
 
 /// One AgentEvent with its sequence number. Append-only.
@@ -514,9 +887,8 @@ enum TaskPriority {
   urgent
 }
 
-/// Work to see finished, on the Tasks board. Its thread is its comments and
-/// progress; the column comes from the thread (none: backlog) and completedAt.
-/// Assigning a teammate starts the thread, so a task has a teammate once it has one.
+/// Work to see finished, on the Tasks board, which is gone (docs/hand-offs.md): nothing reads or
+/// writes it any more. It goes in a later deploy, once no API running reads it.
 model Task {
   id                  String       @id @default(cuid())
   organizationId      String
@@ -558,6 +930,7 @@ model Task {
   @@index([workspaceId, completedAt])
   @@index([workspaceId, archivedAt])
   @@index([workspaceId, trashedAt])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([teammateId])
   @@index([projectId])
   @@index([parentId])
@@ -603,15 +976,21 @@ model Schedule {
   playbookInstallationId String?
   playbookInstallation   PlaybookInstallation? @relation(fields: [playbookInstallationId], references: [id], onDelete: Cascade)
 
+  /// The mission whose routine it is (docs/missions.md).
+  initiativeId           String?
+  initiative             Initiative?           @relation(fields: [initiativeId], references: [id], onDelete: SetNull)
   @@index([nextRunAt])
   @@index([workspaceId])
   @@index([teammateId])
+  @@index([initiativeId])
 }
 
 /// wakeup: a teammate's own (set_wakeup). report: its children's reports, brought back to it (src/children.ts).
 enum WakeupKind {
   wakeup
   report
+  /// A reply in an email conversation the thread waits on (ReplyWatch); its note is the email.
+  reply
 }
 
 enum WakeupStatus {
@@ -620,6 +999,204 @@ enum WakeupStatus {
   cancelled
   /// Its computer stayed offline too long after it was due.
   missed
+}
+
+/// Where Chief's decision on a question stands (ChiefDecisionStatus in @brigade/contracts).
+enum ChiefDecisionStatus {
+  pending
+  suggested
+  answered
+  escalated
+  superseded
+  failed
+}
+
+/// What the person made of Chief's pick: theirs too, another, or a wrong answer.
+enum ChiefOutcome {
+  agreed
+  disagreed
+  overruled
+}
+
+/// Chief's decision on a question a teammate ended its reply on: buttons or a choices card, in a
+/// thread of a member who lets Chief answer for them (docs/chief-answers.md, src/chief-answers.ts).
+model ChiefDecision {
+  id             String              @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// The thread asking.
+  sessionId      String
+  session        Session             @relation("ChiefDecisionThread", fields: [sessionId], references: [id], onDelete: Cascade)
+  /// Whose name Chief answers in: the member who started the thread.
+  memberId       String
+  member         Member              @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  /// The teammate whose question it is: an answer wakes it.
+  teammateId     String
+  /// The question's card (its tool.started seq), what it asks (a choices card's question), and
+  /// the answers it offers ([{ label, message, description? }]).
+  askSeq         Int
+  question       String?
+  options        Json
+  /// Chief's decision thread (#724), its id chosen with the decision. Null for an answer of a
+  /// daily pass (passId).
+  childSessionId String?             @unique
+  child          Session?            @relation("ChiefDecisionChild")
+  /// The daily pass that answered it (docs/chief-answers.md).
+  passId         String?
+  pass           ChiefPass?          @relation(fields: [passId], references: [id], onDelete: SetNull)
+  status         ChiefDecisionStatus @default(pending)
+  /// answer, park or escalate (#724's chief_decide); answer for a pass's.
+  verdict        String?
+  /// #724's ChiefQuestionKind; null for a pass's.
+  kind           String?
+  /// The answer picked, from 0.
+  optionIndex    Int?
+  reason         String?
+  /// The person's rule it goes by, in their words.
+  basis          String?
+  /// The work put off, as added to the person's list.
+  parked         String?
+  decidedAt      DateTime?
+  /// An answer kept for the thread's computer, in order with the person's word (src/chief-order.ts).
+  sentAt         DateTime?
+  outcome        ChiefOutcome?
+  outcomeAt      DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@unique([sessionId, askSeq])
+  @@index([memberId, kind, outcomeAt])
+  @@index([status, createdAt])
+  @@index([passId])
+}
+
+/// Where a daily pass stands. running: Chief is at it. done: it reported. failed: it stopped
+/// before reporting, or could not start. idle: nothing waited on the person.
+enum ChiefPassStatus {
+  running
+  done
+  failed
+  idle
+}
+
+/// Chief's daily pass for a member in a workspace (docs/chief-answers.md, src/chief-pass.ts): what
+/// waited on them that morning, what Chief did in their name, and what it left them on Today.
+model ChiefPass {
+  id             String          @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member          @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  /// Their day it ran for (YYYY-MM-DD, in their timezone): one pass a day.
+  day            String
+  /// Its thread, the id chosen with the pass: started again after a restart, it is the same one.
+  sessionId      String?         @unique
+  thread         Session?
+  status         ChiefPassStatus @default(running)
+  /// What waited on them, numbered as Chief's brief lists it (ChiefPassItem[]).
+  items          Json            @default("[]")
+  /// What Chief did in their name, in order: [{ kind: 'retried', item }]. Its answers are ChiefDecisions.
+  actions        Json            @default("[]")
+  /// What it left them (ChiefPassReport): decisions, notes, rules to add.
+  report         Json?
+  createdAt      DateTime        @default(now())
+  finishedAt     DateTime?
+  decisions      ChiefDecision[]
+
+  @@unique([memberId, workspaceId, day])
+  @@index([status, createdAt])
+}
+
+enum GoalStatus {
+  /// The teammate proposed its contract (propose_goal): a person approves it, or not.
+  proposed
+  declined
+  /// Another proposal replaced it before anyone decided.
+  superseded
+  active
+  paused
+  /// The measurement confirmed it.
+  achieved
+  /// Over without being reached: endReason says why.
+  ended
+}
+
+/// A goal a teammate works toward until Brigade's measurement confirms it (docs/goals.md): its
+/// contract, approved by a person in one click, and where the loop stands.
+model Goal {
+  id                 String            @id @default(cuid())
+  organizationId     String
+  workspaceId        String
+  workspace          Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sessionId          String
+  session            Session           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// The teammate that proposed it, and works on it.
+  teammateId         String
+  status             GoalStatus        @default(proposed)
+  /// GoalContract: outcome, deadline, target, recipe, permissions with their ids, budget, stallTurns.
+  contract           Json
+  /// Ids of its permissions a person withdrew.
+  revoked            Json              @default("[]")
+  approvedByMemberId String?
+  approvedAt         DateTime?
+  endedAt            DateTime?
+  /// GoalEndReason, once ended without being reached.
+  endReason          String?
+  /// Who stopped, paused or judged it last, when a person did.
+  decidedByMemberId  String?
+  /// The thread's last turn.completed event the loop took (its seq): each turn's end counts once.
+  turnSeq            Int               @default(0)
+  /// The last turn's end whose measurement counted toward progress: each counts once.
+  countedSeq         Int               @default(0)
+  /// Turns ended since it was approved, and in a row without progress.
+  turns              Int               @default(0)
+  stalledTurns       Int               @default(0)
+  /// The best value measured so far: progress is a value better than it.
+  best               Float?
+  /// The next measurement on its own, between turns (recipes measured every so often).
+  nextMeasureAt      DateTime?
+  /// Its relaunches wait until then: the account's usage window is nearly spent.
+  heldUntil          DateTime?
+  holdReason         String?
+  /// When a measurement moving away from the target last woke the teammate.
+  driftWokeAt        DateTime?
+  /// Its summary, from goal_report once it is over: GoalReport.
+  report             Json?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  measurements       GoalMeasurement[]
+
+  @@index([sessionId, status])
+  @@index([status, nextMeasureAt])
+}
+
+/// One measurement of a goal by its recipe, never the teammate's word. A command's is pending until
+/// its computer answers (goal.measured).
+model GoalMeasurement {
+  id             String    @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  goalId         String
+  goal           Goal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  /// What asked for it: turn (a turn ended), periodic, start, done (the teammate declared it), person.
+  reason         String
+  /// pending, ok or failed.
+  status         String    @default("pending")
+  value          Float?
+  met            Boolean?
+  /// The end of a command's output, an App's error, or why it failed.
+  detail         String?
+  /// The turn's end it was for (turn.completed seq), when a turn ended.
+  turnSeq        Int?
+  at             DateTime  @default(now())
+  measuredAt     DateTime?
+  /// When the loop moved on from it (afterMeasure): one kept and not handled is taken again.
+  handledAt      DateTime?
+
+  @@index([goalId, at])
+  @@index([status, at])
 }
 
 /// A teammate asked to be prompted again in its thread at a time ("check CI in 10 minutes").
@@ -640,9 +1217,40 @@ model Wakeup {
   status         WakeupStatus @default(pending)
   firedAt        DateTime?
   createdAt      DateTime     @default(now())
+  /// What brought it, for a reply: the email's id (gmail:<message id>), so reading it again wakes nobody twice.
+  sourceId       String?
 
+  @@unique([sessionId, sourceId])
   @@index([status, wakeAt])
   @@index([sessionId, status])
+}
+
+/// An email a teammate sent from a thread: a reply in its conversation wakes that thread, until
+/// `until`. Another email in the conversation moves `until` on; cancelling sets it to now.
+model ReplyWatch {
+  id              String     @id @default(cuid())
+  organizationId  String
+  workspaceId     String
+  workspace       Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sessionId       String
+  session         Session    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// The teammate that sent it, the one woken.
+  teammateId      String
+  teammate        Teammate   @relation(fields: [teammateId], references: [id], onDelete: Cascade)
+  connectionId    String
+  connection      Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  /// The provider's conversation: a Gmail thread id.
+  conversationKey String
+  /// Who the last email went to and its subject, as sent, for the thread's panel.
+  to              String
+  subject         String
+  until           DateTime
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@unique([sessionId, connectionId, conversationKey])
+  @@index([connectionId, conversationKey])
+  @@index([workspaceId])
 }
 
 model ThreadTeammate {
@@ -678,6 +1286,111 @@ model SessionEvent {
   @@index([sessionId, type])
 }
 
+/// A run of a quiet thread's events kept in the bucket (src/cold-events.ts): every event from
+/// firstSeq to lastSeq, as JSON lines, gzipped, at coldEventsKey. The heavy ones went from
+/// SessionEvent in the transaction that recorded it; the others stay there too.
+model ColdEventChunk {
+  organizationId String
+  workspaceId    String
+  sessionId      String
+  session        Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  firstSeq       Int
+  lastSeq        Int
+  /// The run that wrote it, in its key (coldEventsKey): each run's copy has a key of its own.
+  attempt        String
+  /// Its events, and those of them no longer in SessionEvent.
+  events         Int
+  moved          Int
+  /// Its JSON lines, and the gzip the bucket holds.
+  bytes          Int
+  storedBytes    Int
+  createdAt      DateTime @default(now())
+
+  @@id([sessionId, firstSeq])
+  @@index([workspaceId, createdAt])
+}
+
+/// What a thread's events weigh as stored (their data's pg_column_size), counted as they come
+/// (src/event-volume.ts): the largest threads, without reading their events. A table of its own,
+/// as a BigInt in Session would go wherever a thread is sent as JSON, which cannot hold one.
+model ThreadEventVolume {
+  organizationId String
+  workspaceId    String
+  sessionId      String  @id
+  session        Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  bytes          BigInt  @default(0)
+  /// The largest event's.
+  largest        Int     @default(0)
+
+  @@index([workspaceId, bytes])
+}
+
+/// What a workspace's threads wrote to SessionEvent in a day (UTC), counted as events are
+/// stored (src/event-volume.ts): its growth, without reading the events again.
+model WorkspaceEventDay {
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  day            DateTime  @db.Date
+  events         Int       @default(0)
+  /// Of which streamed text (message.delta).
+  deltas         Int       @default(0)
+  /// Their data as stored (pg_column_size), and the largest one's.
+  bytes          BigInt    @default(0)
+  largest        Int       @default(0)
+
+  @@id([workspaceId, day])
+}
+
+/// What a harness spent for the workspace, in tokens: one row per stream of a teammate's turn
+/// (its usage.updated event, by seq) and per run outside a turn (memory, title, a project's
+/// brief, an image). Counts only, never what was said (src/usage.ts, Settings › Usage).
+/// Who and what it was for are copied in when it is stored: a thread deleted later keeps
+/// its tokens in the totals.
+model TokenUsage {
+  id               String    @id @default(cuid())
+  organizationId   String
+  workspaceId      String
+  workspace        Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sessionId        String?
+  session          Session?  @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  /// The thread's usage.updated event it was stored from; null for a run outside a turn.
+  seq              Int?
+  teammateId       String?
+  /// The account that spent it, and the member it belongs to.
+  accountId        String?
+  memberId         String?
+  projectId        String?
+  /// The routine whose run it was.
+  scheduleId       String?
+  provider         Harness
+  /// As the harness named it; null when it did not say.
+  model            String?
+  /// What asked for it (UsageSource): member, trigger, schedule, child, review, playbook,
+  /// or a run outside a turn: memory, tidy, title, brief, image.
+  source           String
+  /// All input, the cache's reads and writes included.
+  inputTokens      Int       @default(0)
+  cacheReadTokens  Int       @default(0)
+  cacheWriteTokens Int       @default(0)
+  outputTokens     Int       @default(0)
+  reasoningTokens  Int       @default(0)
+  at               DateTime
+  createdAt        DateTime  @default(now())
+  /// The model response it is, by the id its provider gave it: what a teammate's turn spent, read
+  /// from the harness's own log on the computer (usage.responses). Null for a usage.updated
+  /// event's row or a run's.
+  responseId       String?
+  /// A usage.updated event's row whose turn is counted by response rows instead (responseId) of
+  /// the stream's totals: kept to count the turn, its tokens no longer counted.
+  replaced         Boolean   @default(false)
+
+  @@unique([sessionId, seq])
+  @@unique([workspaceId, responseId])
+  @@index([workspaceId, at])
+  @@index([sessionId, teammateId, at])
+}
+
 // ---------------------------------------------------------------------------
 // Harness accounts
 // ---------------------------------------------------------------------------
@@ -699,29 +1412,30 @@ enum AccountSource {
 
 /// One harness login of one member on one computer. Never the credential.
 model Account {
-  id             String        @id @default(cuid())
+  id             String              @id @default(cuid())
   organizationId String
   workspaceId    String
-  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace      Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   memberId       String
-  member         Member        @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  member         Member              @relation(fields: [memberId], references: [id], onDelete: Cascade)
   computerId     String
-  computer       Computer      @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  computer       Computer            @relation(fields: [computerId], references: [id], onDelete: Cascade)
   provider       Harness
-  source         AccountSource @default(machine)
+  source         AccountSource       @default(machine)
   label          String
   /// Reported by the harness after sign-in. Never the credential.
   email          String?
   plan           String?
-  status         AccountStatus @default(unverified)
+  status         AccountStatus       @default(unverified)
   /// Out of usage until this time; another account of the member is used meanwhile.
   exhaustedUntil DateTime?
-  isDefault      Boolean       @default(false)
+  isDefault      Boolean             @default(false)
   lastUsage      Json?
   lastUsageAt    DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
   sessions       Session[]
+  loginBackup    AccountLoginBackup?
 
   @@index([memberId, provider])
 }
@@ -730,24 +1444,28 @@ model Account {
 // Engineering work
 // ---------------------------------------------------------------------------
 
-/// Where a pull request stands in Brigade's review loop. GitHub keeps its code and state.
-enum ReviewStatus {
-  /// Nobody asked for a review, or the loop was stopped.
+/// Where a merge a person asked for stands. GitHub keeps the pull request's code and state.
+/// In the database it keeps the review loop's type and column names (ReviewStatus,
+/// reviewStatus): renaming them would break the API running while the next one starts.
+enum MergeStatus {
+  /// No merge under way.
   none
-  /// The reviewing teammate's turn.
-  reviewing
-  /// The author teammate's turn: changes were requested, checks failed or the branch conflicts.
-  fixing
-  /// Approved. With autoMerge it merges once GitHub allows it.
-  approved
-  /// Changes requested, and no teammate wrote it to make them.
-  changes_requested
-  /// The loop stopped and a person has a ticket: rounds used up, or GitHub refuses the merge.
+  /// It stopped and a person has a ticket: the conflicts were not resolved, or GitHub refuses the merge.
   stuck
-  /// A person asked to merge it once its conflicts are resolved: the author teammate's turn.
+  /// A person, or Auto-merge, asked to merge it once its conflicts are resolved: the author teammate's turn.
   resolving
   /// A person asked to merge it: it merges once GitHub allows it, with mergeMethod.
   merging
+
+  @@map("ReviewStatus")
+}
+
+/// Whether a project's pull requests get a review by another teammate (src/reviews.ts).
+enum ReviewPolicy {
+  /// The teammate that opens one says whether it gets a review, and why.
+  teammate
+  /// Only when someone asks: on the pull request's page, or in its thread.
+  manual
 }
 
 /// A pull request Brigade knows about: opened by a teammate, or put through a review.
@@ -756,31 +1474,46 @@ model PullRequest {
   organizationId      String
   workspaceId         String
   workspace           Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  /// owner/name on GitHub, lowercase.
+  /// owner/name on GitHub, lowercase: the repository's name as last seen, kept in step when it is
+  /// renamed or transferred (src/pull-requests.ts, renameRepository).
   repository          String
+  /// The repository's GitHub id, which a rename keeps: how an event under its new name finds a
+  /// row kept under the old one. Unset on rows from before it was kept, until GitHub is read.
+  repositoryId        String?
   number              Int
   title               String
   headRef             String
   baseRef             String
-  /// The thread that opened it (or the review's own thread); its review loop runs there.
+  /// The thread that opened it (or its review's own thread, for one opened outside Brigade).
   sessionId           String?
-  session             Session?            @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  session             Session?            @relation("PullRequestThread", fields: [sessionId], references: [id], onDelete: SetNull)
   authorTeammateId    String?
   authorTeammate      Teammate?           @relation("PullRequestAuthor", fields: [authorTeammateId], references: [id], onDelete: SetNull)
-  reviewerTeammateId  String?
-  reviewerTeammate    Teammate?           @relation("PullRequestReviewer", fields: [reviewerTeammateId], references: [id], onDelete: SetNull)
-  reviewStatus        ReviewStatus        @default(none)
-  /// Merge once approved and GitHub allows it. Only an owner or admin arms it.
-  autoMerge           Boolean             @default(false)
+  /// Its latest review's thread: a child of the thread that opened it, or a thread of its own.
+  reviewSessionId     String?
+  reviewSession       Session?            @relation("PullRequestReviewThread", fields: [reviewSessionId], references: [id], onDelete: SetNull)
+  /// Why the teammate that opened it asked for no review, in its words: shown on it.
+  noReviewReason      String?
+  /// While a review of it is being started: one at a time (src/reviews.ts).
+  reviewClaimedAt     DateTime?
+  mergeStatus         MergeStatus         @default(none) @map("reviewStatus")
   /// How it merges when Brigade merges it; squash when unset.
   mergeMethod         String?
+  /// The member who last asked to merge it or for its review: its tickets and pushes go to them.
   requestedByMemberId String?
-  /// Review rounds in the current loop, from 1.
+  /// The author's turns at resolving its conflicts and getting it merged, from 1.
   round               Int                 @default(0)
-  /// The head commit the latest review looked at; while resolving conflicts, the one before the author's turn.
-  reviewedSha         String?
-  /// Why the loop is waiting or stopped, shown on the pull request.
+  /// The head when the author's turn to resolve the conflicts began: unchanged after it, nothing was pushed.
+  resolveFromSha      String?             @map("reviewedSha")
+  /// A head the author pushed to resolve its conflicts that left its own changes (the lines it
+  /// adds and removes) as its latest approval read them: that approval holds for this head too.
+  approvalCarriedTo   String?
+  /// Why a merge is waiting or stopped, shown on the pull request.
   note                String?
+  /// When Brigade set it merging on its own, for its member's Auto-merge (src/pull-requests.ts):
+  /// its conflicts go back to the author, as a person's merge's do; anything else that stops it
+  /// (failed checks, a rule GitHub enforces) gives up and leaves it to a person, with no ticket.
+  autoMergeAt         DateTime?
   /// As last seen on GitHub: open, closed or merged.
   state               String              @default("open")
   mergedAt            DateTime?
@@ -788,9 +1521,17 @@ model PullRequest {
   updatedAt           DateTime            @updatedAt
   reviews             PullRequestReview[]
 
+  /// The list items it works on, or finishes (docs/lists.md).
+  listItems ListItemPull[]
+  /// The library's specs and designs it ships, or is part of (src/decisions.ts).
+  specs     SpecPull[]
+
   @@unique([workspaceId, repository, number])
+  @@index([workspaceId, repositoryId])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([sessionId])
-  @@index([reviewStatus, autoMerge])
+  @@index([reviewSessionId])
+  @@index([mergeStatus])
 }
 
 enum ReviewVerdict {
@@ -815,11 +1556,13 @@ model PullRequestReview {
   comments       Json          @default("[]")
   /// The head commit it reviewed.
   sha            String
+  /// Its place among the pull request's reviews, from 1.
   round          Int
   url            String?
   createdAt      DateTime      @default(now())
 
   @@index([pullRequestId, createdAt])
+  @@index([sessionId])
 }
 
 /// A human comment on a diff or a thread.
@@ -858,6 +1601,10 @@ enum ConnectorKind {
   cloudflare
   /// Google Cloud, through Google's Cloud CLI MCP server and Brigade's own Google client.
   google_cloud
+  /// Google Drive, Docs and Sheets through Google's own MCP servers, behind a feature until GA.
+  google_drive_mcp
+  google_docs_mcp
+  google_sheets_mcp
   /// Neon, through Neon's MCP server and its own OAuth.
   neon
   /// Supabase, through Supabase's MCP server and its own OAuth.
@@ -876,11 +1623,30 @@ enum ConnectorKind {
   replicate
   /// OpenRouter, through OpenRouter's own MCP server and its OAuth.
   openrouter
+  /// PostHog, through PostHog's own MCP server and its OAuth.
+  posthog
+  /// DataForSEO, through DataForSEO's own MCP server and its OAuth.
+  dataforseo
+  /// Ahrefs, through Ahrefs' own MCP server and its OAuth.
+  ahrefs
+  /// RevenueCat, through RevenueCat's own MCP server and a secret API v2 key.
+  revenuecat
+  /// Meta Ads, on the Marketing API (Graph API) and Brigade's own Meta app.
+  meta_ads
+  /// Expo (EAS), through Expo's own MCP server and its OAuth.
+  expo
+  /// Vercel, through Vercel's own MCP server and its OAuth.
+  vercel
   /// An MCP server a member added by its URL. Its App keeps the server (App.mcp).
   mcp
   /// Search Console and Analytics (GA4), on Brigade's Google client like Gmail.
   google_search_console
   google_analytics
+  /// Google Ads, on Brigade's Google client (no developer token), behind the google_ads feature.
+  google_ads
+  /// Brigade's own addresses on its mail domain (mails.brigade.lol), received and sent through
+  /// Resend with Brigade's key: an agent's address, or a project's inbox. No credential.
+  email
 }
 
 /// Brigade registered as an OAuth client of an MCP server's authorization server
@@ -891,7 +1657,12 @@ model McpClient {
   redirectUri  String
   clientId     String
   /// Set only when the server gave the client a secret; Brigade asks for a public client.
+  /// No longer written: rows kept it here in plain text before clientSealed, and the job
+  /// mcp-client-seal clears it (src/connectors/mcp.ts sealMcpClients). A later deploy drops it.
   clientSecret String?
+  /// The secret, sealed with the vault's key (src/vault.ts sealShared), bound to the issuer
+  /// and redirect URI.
+  clientSealed String?
   createdAt    DateTime @default(now())
 
   @@unique([issuer, redirectUri])
@@ -947,6 +1718,14 @@ model Connection {
   /// An App keeps its removed accounts, for their call logs: it is never deleted on its own.
   app               App              @relation(fields: [appId], references: [id], onDelete: NoAction)
   reach             ConnectionReach  @default(workspace)
+  /// Gmail: its mail shows in the Inbox, for everyone in the workspace. Only while it is shared
+  /// (reach workspace), and only when its owner or an admin says so: a shared account may still
+  /// hold someone's personal mail.
+  inbox             Boolean          @default(false)
+  /// A mailbox (the Email App's address, a Gmail account): how the email its teammates send goes.
+  /// auto: on its own, a teammate leaving a person what needs their judgment (email_no_reply);
+  /// approve: each email waits for a person. Set by an owner or admin, or the account's owner.
+  sendPolicy        String           @default("auto")
   kind              ConnectorKind
   label             String
   /// The external account, e.g. the mailbox address. Never a credential.
@@ -955,6 +1734,9 @@ model Connection {
   externalUrl       String?
   /// The MCP server the account signed in to, when its App has one per data region (Mixpanel).
   mcpUrl            String?
+  /// What its owner picked after signing in, by App: Google Ads' customer accounts teammates
+  /// reach ({ customers: [{ id, loginCustomerId, name, … }] }). Never a credential.
+  settings          Json?
   status            ConnectionStatus @default(active)
   vaultSecretId     String?          @unique
   vaultSecret       VaultSecret?     @relation(fields: [vaultSecretId], references: [id], onDelete: SetNull)
@@ -963,9 +1745,15 @@ model Connection {
   updatedAt         DateTime         @updatedAt
   grants            Grant[]
   calls             ConnectionCall[]
+  toolAccounts      ToolAccount[]
+  replyWatches      ReplyWatch[]
   triggers          Trigger[]
   subscriptions     Subscription[]
   attachments       Attachment[]
+  /// The Email App: the address this account is (an agent's, or a project's inbox).
+  mailAddress       MailAddress?
+  /// Gmail: its mail as the Inbox lists it, kept as the inbox reader reads it.
+  mailMessages      MailMessage[]
 
   @@index([workspaceId])
   @@index([appId])
@@ -1116,11 +1904,15 @@ model Trigger {
   workspace              Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   connectionId           String
   connection             Connection            @relation(fields: [connectionId], references: [id], onDelete: Cascade)
-  teammateId             String
-  teammate               Teammate              @relation(fields: [teammateId], references: [id], onDelete: Cascade)
+  /// Null: nobody. A mailbox's rule that keeps the mail it takes in the Inbox for a person, and
+  /// starts no thread (route kept). Only mailbox rules (an exclusive event) may have none.
+  teammateId             String?
+  teammate               Teammate?             @relation(fields: [teammateId], references: [id], onDelete: Cascade)
   label                  String
   /// The catalog id, e.g. gmail.email_received.
   event                  String
+  /// What the teammate does with each event: the first lines of each thread it starts.
+  instructions           String?
   /// The trigger's options from the catalog, e.g. { "query": "to:support@acme.com" }.
   options                Json                  @default("{}")
   /// Custom apps only: the unguessable part of the trigger's URL.
@@ -1137,8 +1929,13 @@ model Trigger {
   /// Set when a playbook made it: changed only through the playbook, deleted with it.
   playbookInstallationId String?
   playbookInstallation   PlaybookInstallation? @relation(fields: [playbookInstallationId], references: [id], onDelete: Cascade)
+  /// Its place among its mailbox's rules: an email goes to the first rule that matches it.
+  position               Int                   @default(0)
+  /// Held while a save of it is checked with its vendor: saves of one trigger run one at a time.
+  savingUntil            DateTime?
   createdAt              DateTime              @default(now())
   sessions               Session[]
+  deliveries             TriggerDelivery[]
 
   @@index([workspaceId])
   @@index([connectionId])
@@ -1178,6 +1975,9 @@ model Subscription {
   expiresAt          DateTime?
   /// The last failure to subscribe or read, shown on the connection.
   error              String?
+  /// When its reader tries again: set before each read and cleared once it finished, so a read a
+  /// restart cut off, or one that failed, is tried again by the minute's tick.
+  retryAt            DateTime?
   createdAt          DateTime         @default(now())
   updatedAt          DateTime         @updatedAt
 
@@ -1204,6 +2004,8 @@ enum TicketType {
   sign_in
   cap
   usage_limit
+  /// A cloud computer's disk is still full after its runner freed what it could.
+  disk_full
 }
 
 enum TicketStatus {
@@ -1230,6 +2032,7 @@ model Ticket {
   createdAt          DateTime     @default(now())
 
   @@index([workspaceId, status])
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([sessionId])
 }
 
@@ -1277,6 +2080,17 @@ model Document {
   updatedById        String?
   /// The thread a teammate last changed it from.
   updatedInSessionId String?
+  /// A library file's bytes: the bucket object of its last save (LibraryObject), written once and
+  /// never changed. Null for a file not saved since objects per save came: its bytes are then at
+  /// the legacy key, `<organization>/<workspace>/library/<id>`, which every save overwrote. A save
+  /// by an API from before (a database trigger) sets it back to null, as its bytes go there.
+  objectKey          String?
+  /// Legacy key only (objectKey null): set when a save whose lease ended mid-write may have
+  /// overwritten its stored bytes. They are saved again from what its row says, as an object of
+  /// their own (repairBytes, src/library.ts), retried until they are.
+  bytesStaleAt       DateTime?
+  /// A memory file: when a tidy run last laid it out (core within budget, topics, archive).
+  memoryTidiedAt     DateTime?
   /// Set while a library file is in the trash. Its path is then ".trash/<id>/<path it had>",
   /// which no live file can have; the hourly sweep deletes it 30 days on.
   deletedAt          DateTime?
@@ -1286,15 +2100,190 @@ model Document {
   createdAt          DateTime                 @default(now())
   assets             DocumentAsset[]
   versions           DocumentVersion[]
+  memoryLines        MemoryLine[]
+  /// The members who pinned it.
+  pins               DocumentPin[]
+  /// Its public link, while it has one.
+  share              LibraryShare?
+  toolStates         ToolState[]
+  toolAccounts       ToolAccount[]
+  /// The members who pinned it, as a list, in their sidebar.
+  listPins           ListPin[]
+
+  /// Its checklist lines that work is attached to (docs/lists.md).
+  listItems ListItem[]
+  /// The pull requests that ship it or are part of it, when it is a spec or a design (src/decisions.ts).
+  specPulls SpecPull[]
 
   @@unique([workspaceId, kind, path])
   @@index([search], type: Gin)
+  @@index([path(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([workspaceId, deletedAt])
+  @@index([objectKey])
 }
 
-/// A saved state of a library file. Its bytes are in the bucket under
-/// <organization>/<workspace>/library-versions/<id>; the newest is also the file itself.
-/// Saves by the same author from the same thread within minutes update one version.
+/// A checklist line of a library Markdown file that work is attached to (docs/lists.md). The file
+/// holds the line itself, marked `<!-- item:<id> -->` at its end, and whether it is ticked; this
+/// row holds what the file cannot: the threads working on it, the pull requests that finish it,
+/// and who ticked it from Brigade.
+model ListItem {
+  /// The id in its marker: made when a line is first handed to a teammate, linked or added.
+  id                 String           @id
+  organizationId     String
+  workspaceId        String
+  workspace          Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  documentId         String
+  document           Document         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  /// The line as last seen, without its checkbox and marker: for threads while the file is out of reach.
+  text               String
+  /// Who ticked it from Brigade (a teammate's complete_item, a merged pull request), and when.
+  /// A person ticks it in the file; the file says whether it is ticked, never this.
+  doneByType         ActorType?
+  doneById           String?
+  doneAt             DateTime?
+  /// The item this line is what remains of (a merged pull request's `remains`, or add_item's
+  /// `remainsOf`), nested under it: that item is ticked once all its remaining lines are.
+  remainderOfId      String?
+  /// When this remaining line was dealt with for its item (seen ticked, or gone from the file);
+  /// while unset, settleRemainders looks at it again.
+  remainderSettledAt DateTime?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  threads            ListItemThread[]
+  pulls              ListItemPull[]
+
+  @@index([documentId])
+  @@index([remainderOfId])
+}
+
+/// A thread working on a list item. A thread can carry several items, an item several threads.
+model ListItemThread {
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  itemId         String
+  item           ListItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  sessionId      String
+  session        Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  createdAt      DateTime  @default(now())
+
+  @@id([itemId, sessionId])
+  @@index([sessionId])
+}
+
+/// A pull request that works on a list item: `closes` ticks the item once it is merged; else it is
+/// only part of the work, shown on the line, and `remains` says what is left once it is merged.
+model ListItemPull {
+  organizationId String
+  workspaceId    String
+  workspace      Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  itemId         String
+  item           ListItem    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  pullRequestId  String
+  pullRequest    PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  closes         Boolean     @default(false)
+  /// Only part of the work: what remains of the item once it is merged, added under it as a line
+  /// of its own on merge (`remainderId`, made first so that a retry adds it once).
+  remains        String?
+  remainderId    String?
+  /// When its merge was dealt with for this item (ticked, its remaining line added, or nothing to
+  /// do); while unset after a merge, the item is tried again (sweepListMerges).
+  settledAt      DateTime?
+  createdAt      DateTime    @default(now())
+
+  @@id([itemId, pullRequestId])
+  @@index([pullRequestId])
+}
+
+/// A library file being changed (withLibraryLock, src/library.ts): one change at a time. A lease,
+/// so that waiting holds no database connection and a holder that crashed frees it at `until`.
+model LibraryLock {
+  /// `<workspaceId>:<documentId>`.
+  key   String   @id
+  /// The holder, a random id of its own.
+  owner String
+  until DateTime
+}
+
+/// A list (docs/lists.md) a member pinned in their sidebar: under Pinned, among their pinned
+/// threads, with the threads working on its items under it. Each member's own, like a thread's pin.
+model ListPin {
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  documentId     String
+  document       Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pinnedAt       DateTime  @default(now())
+  /// Where it sits under Pinned, in the same order as ThreadPin.position.
+  position       Int       @default(0)
+
+  @@id([memberId, documentId])
+  @@index([documentId])
+}
+
+/// A library file a member pinned: it stays at the top of their Library. Each member's own,
+/// like a thread's pin. A file in the trash keeps its pin, which shows again once restored.
+model DocumentPin {
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  documentId     String
+  document       Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pinnedAt       DateTime  @default(now())
+
+  @@id([memberId, documentId])
+  @@index([documentId])
+}
+
+/// One line of a memory file, known by its text (memoryLineKey): when and where
+/// it was learned and, once it left the file, why. Lines that left (replaced,
+/// merged, outdated, removed by a person) are the memory's archive: search finds
+/// them and people can put them back. The file's text stays the source of truth.
+model MemoryLine {
+  id                String                   @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  documentId        String
+  document          Document                 @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  /// A SHA-256 of the line as compared (no bullet, any case, any spacing), so any length fits the index.
+  key               String
+  /// The line as last written, without its bullet.
+  text              String
+  /// The topic it is (or was last) under; null for the core.
+  topic             String?
+  /// Who wrote it: a teammate's memory run, or a person in the editor. Null when
+  /// it was in the file before memory kept dates (legacy).
+  createdByType     ActorType?
+  createdById       String?
+  /// The thread it was learned in.
+  sessionId         String?
+  createdAt         DateTime                 @default(now())
+  /// There before memory kept dates: learned before createdAt.
+  legacy            Boolean                  @default(false)
+  /// The last time a thread found it still true.
+  confirmedAt       DateTime?
+  /// Set while it is out of the file.
+  archivedAt        DateTime?
+  archivedReason    String?
+  archivedByType    ActorType?
+  archivedById      String?
+  archivedSessionId String?
+  /// Generated by PostgreSQL (see the memory_lines migration); never written.
+  search            Unsupported("tsvector")? @default(dbgenerated("to_tsvector('english'::regconfig, text)"))
+
+  @@unique([documentId, key])
+  @@index([documentId, archivedAt])
+  @@index([search], type: Gin)
+}
+
+/// A saved state of a library file: the object of the save it records (objectKey), the same one
+/// the file pointed to then. Versions from before objects per save have their bytes under
+/// <organization>/<workspace>/library-versions/<id>. Saves by the same author from the same thread
+/// within minutes update one version.
 model DocumentVersion {
   id             String    @id @default(cuid())
   organizationId String
@@ -1311,10 +2300,47 @@ model DocumentVersion {
   sessionId      String?
   /// Set when this version brought back an older one.
   restoredFromId String?
+  /// Its bytes: a LibraryObject's key. Null for a version from before: versionKey(id). An API from
+  /// before that changes the version (a database trigger) sets it back to null.
+  objectKey      String?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
   @@index([documentId, createdAt])
+  @@index([objectKey])
+}
+
+/// A workspace that has had library objects (LibraryObject): made before its first one, and kept
+/// for good, even once the workspace is deleted. The listing sweep (sweepOrphanLibraryObjects)
+/// goes over its folder, <organization>/<workspace>/library-objects/, through these rows, so bytes
+/// a write left after their object's row was swept are found whenever they land, in a live
+/// workspace or a deleted one. No relation.
+model LibraryObjectFolder {
+  workspaceId    String   @id
+  organizationId String
+  createdAt      DateTime @default(now())
+}
+
+/// An object in the bucket holding one save of a library file's bytes, at
+/// <organization>/<workspace>/library-objects/<document id>/<id>. Made before its bytes are
+/// written, so none is ever lost track of; written once, never changed. A file's row or a
+/// version points to it once the save commits, which claims it (claimObject, src/library-objects.ts);
+/// one no row points to (superseded, or its save failed or came too late) is found by the sweep,
+/// marked, and an hour on deleted from the bucket, then its row. A marked one can no longer be
+/// claimed. No relation: kept when its file or workspace goes, until the sweep deletes its bytes.
+model LibraryObject {
+  /// Its bucket key.
+  key            String    @id
+  organizationId String
+  workspaceId    String
+  documentId     String
+  createdAt      DateTime  @default(now())
+  /// When the sweep found no row pointing to it.
+  unreferencedAt DateTime?
+
+  @@index([createdAt])
+  @@index([unreferencedAt])
+  @@index([workspaceId])
 }
 
 /// A library folder someone made, or one with access rules. Folders also exist
@@ -1353,6 +2379,148 @@ model LibraryFolderGrant {
   @@index([teammateId])
 }
 
+/// A library file's public link (docs/public-links.md): anyone with its address reads the file
+/// as it is now, without signing in, at <web>/s/<token>. A design's link is its index.html's and
+/// shows the whole design. Turning the link off deletes the row: turned on again, the file gets
+/// a new address. A file in the trash keeps its link, which answers again once it is restored.
+model LibraryShare {
+  id                String    @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  documentId        String    @unique
+  document          Document  @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  /// The address's secret: random, unguessable (src/library-shares.ts).
+  token             String    @unique
+  /// The member who turned it on. No relation: kept once they leave.
+  createdByMemberId String?
+  createdAt         DateTime  @default(now())
+
+  @@index([workspaceId])
+}
+
+/// State a tool keeps (docs/tools.md): a key's JSON value, for everyone who opens the tool
+/// (`owner` "shared") or for one member (`owner` their member id). Keyed by the tool's
+/// `index.html` document, so it follows the tool when it moves; gone with it.
+model ToolState {
+  id                String    @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  toolId            String
+  tool              Document  @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  /// "shared", or the member whose own state it is. No relation: removed members' rows stay with the tool.
+  owner             String
+  key               String
+  value             Json
+  /// Goes up by one on each write: a tool writes over the version it read (src/tools.ts).
+  version           Int       @default(1)
+  /// Deleted: the row stays as a tombstone with its version, so an older write never lands.
+  deletedAt         DateTime?
+  /// No relation: kept once they leave.
+  updatedByMemberId String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@unique([toolId, owner, key])
+  @@index([workspaceId])
+}
+
+/// A member's own look for the dashboard (docs/themes.md), made by talking with a teammate:
+/// colours, a stylesheet and the files it uses. One member's, in one workspace: it changes only
+/// their windows there. Which one they wear is their latest ThemeChange's.
+model Theme {
+  id             String      @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member      @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  /// How the member and teammates name it (THEME_ID): unique among the member's themes here.
+  slug           String
+  name           String
+  /// The theme itself (@brigade/contracts' ThemeFile).
+  file           Json
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  files          ThemeAsset[]
+
+  @@unique([memberId, workspaceId, slug])
+  @@index([workspaceId])
+}
+
+/// An image or font a theme's stylesheet uses (`url("theme:<name>")`), in the bucket
+/// (themeFileKey). The dashboard loads it from the bucket's signed address, never through the API.
+model ThemeAsset {
+  id             String           @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  themeId        String
+  theme          Theme            @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  name           String
+  contentType    String
+  size           Int
+  /// pending while its bytes are on their way to the bucket; ready once checked.
+  status         AttachmentStatus @default(pending)
+  createdAt      DateTime         @default(now())
+
+  @@index([themeId, name])
+  @@index([workspaceId])
+}
+
+/// One of a member's look changes (docs/themes.md), with the look right after it: going back
+/// returns to one of these. Their latest is the look they wear. The last THEME_LIMITS.history
+/// are kept.
+model ThemeChange {
+  id             String    @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  /// Goes up by one with each of the member's changes in the workspace.
+  seq            Int
+  /// made, edited, wore, off, deleted or undid (LOOK_CHANGE_KINDS).
+  kind           String
+  /// The theme it was about.
+  name           String?
+  /// For undid: how many changes it went back on.
+  count          Int?
+  /// The teammate that made it; null for the member themselves.
+  byTeammateId   String?
+  byName         String?
+  /// The look right after: the worn theme's slug and file, or null for the dashboard's own.
+  wornSlug       String?
+  wornFile       Json?
+  createdAt      DateTime  @default(now())
+
+  @@unique([memberId, workspaceId, seq])
+  @@index([workspaceId])
+}
+
+/// An App account attached to a tool (docs/tools.md): the tool's page may call its operations,
+/// through the dashboard, for people allowed to use the account. `codeHash` is the tool's files
+/// when it was attached: once they change, its calls wait until a person allows it again.
+model ToolAccount {
+  id                 String     @id @default(cuid())
+  organizationId     String
+  workspaceId        String
+  workspace          Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  toolId             String
+  tool               Document   @relation(fields: [toolId], references: [id], onDelete: Cascade)
+  connectionId       String
+  connection         Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  access             GrantScope
+  codeHash           String
+  /// No relation: kept once they leave.
+  attachedByMemberId String?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  @@unique([toolId, connectionId])
+  @@index([workspaceId])
+}
+
 /// A file put in a document from the editor: an image, a video, a recording, a PDF. Its bytes
 /// are in the bucket under <organization>/<workspace>/assets/<id>; the document refers to it as
 /// `asset:<id>`. The hourly sweep removes the ones no document refers to any more.
@@ -1368,6 +2536,8 @@ model DocumentAsset {
   name               String
   contentType        String
   size               Int
+  /// Read back from the bucket once its upload finished; empty for files from before.
+  sha256             String           @default("")
   status             AttachmentStatus @default(ready)
   uploadedByMemberId String?
   createdAt          DateTime         @default(now())
@@ -1384,6 +2554,36 @@ enum ActorType {
   teammate
   runner
   system
+}
+
+/// A deleted thread's files folder in the bucket, emptied again once every signed upload
+/// URL issued before its deletion has expired (a runner's late image, runner-files.ts).
+/// Kept until a sweep empties it whole: the row is the promise that nothing is left.
+model BucketCleanup {
+  id        String   @id @default(cuid())
+  sessionId String   @unique
+  prefix    String
+  /// Not before this: a URL issued just before the deletion works until then.
+  notBefore DateTime
+  createdAt DateTime @default(now())
+
+  @@index([notBefore])
+}
+
+/// A deleted workspace's folder in the bucket (`<org>/<ws>/`), emptied by a sweep in batches
+/// (src/workspace-delete.ts), and again once every signed upload URL issued before its deletion
+/// has expired. Written with the deletion itself: the row is the promise that nothing is left,
+/// and goes only once a listing after that margin finds the folder empty.
+model WorkspaceCleanup {
+  id             String   @id @default(cuid())
+  organizationId String
+  workspaceId    String   @unique
+  prefix         String
+  /// When the workspace was deleted: the folder is empty for good once listed empty a margin after.
+  notBefore      DateTime
+  createdAt      DateTime @default(now())
+
+  @@index([notBefore])
 }
 
 /// Append-only record of an action. workspaceId is null for organization-level actions.
@@ -1428,6 +2628,39 @@ enum AttachmentStatus {
 
 /// A file's bytes (in the bucket, keyed by id) and where they came from. One
 /// file can be in several threads, e.g. an email two triggers matched.
+/// A file uploaded straight to the bucket (uploads.ts), held under `uploadKey` until it is used:
+/// saved to the library, read as a skill pack, kept as a skill's file or a logo. The sweep
+/// removes those never used, bytes first.
+model Upload {
+  id             String           @id @default(cuid())
+  organizationId String
+  /// No relation: a deleted workspace's uploads are found by the sweep and their bytes removed.
+  workspaceId    String
+  /// library, skill_pack, skill_file or logo (UPLOAD_PURPOSES).
+  purpose        String
+  /// The file's name, or its library path.
+  name           String
+  contentType    String
+  size           Int
+  /// The runner's, checked once the bytes are in; else the bytes' own, read then.
+  sha256         String           @default("")
+  /// pending until its bytes are checked, then ready; blocked once used, refused or abandoned.
+  status         AttachmentStatus @default(pending)
+  /// Who started it: a member, or a runner for a teammate of a thread on its computer.
+  memberId       String?
+  computerId     String?
+  sessionId      String?
+  teammateId     String?
+  /// Read at completion for a library file, for search.
+  text           String           @default("")
+  /// The completion that marked it ready: its checked bytes are at checkedUploadKey(id, checked).
+  checked        String           @default("")
+  createdAt      DateTime         @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([createdAt])
+}
+
 model Attachment {
   id                 String             @id @default(cuid())
   organizationId     String
@@ -1595,6 +2828,108 @@ model PreviewRecipe {
   @@index([workspaceId])
 }
 
+/// A thread's preview machine (docs/previews.md, the preview_machines feature): a VM of its own
+/// at the cloud provider, which the thread's preview runs on while the code stays on the cloud
+/// computer. No foreign key to its thread or workspace: deleting either leaves the row, and the
+/// sweep (src/preview-machines.ts) destroys the VM before it removes the row, so none outlives
+/// what it was made for.
+model PreviewMachine {
+  id             String               @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  /// The thread: one machine each.
+  sessionId      String               @unique
+  status         PreviewMachineStatus @default(creating)
+  /// Opaque provider reference (only @brigade/providers reads it); null until it is made.
+  providerRef    Json?
+  /// Counts the VMs made for it: names the next one's making, so a retry makes no second one.
+  generation     Int                  @default(0)
+  /// Whoever makes, starts, stops or destroys it holds it until then: one operation at a time.
+  claimedUntil   DateTime?
+  /// When the runner last said its preview is in use, and when the provider was last told.
+  usedAt         DateTime             @default(now())
+  keptAliveAt    DateTime?
+  /// When it last stopped: one stopped long enough is destroyed, before the provider drops its disk.
+  stoppedAt      DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  @@index([workspaceId, status])
+  @@index([status])
+}
+
+/// creating: being made. running: up, or being started again. stopping: its stop asked for, not
+/// confirmed yet (still counted as up; the sweep takes it up if its process was lost). stopped: its
+/// disk kept, costing nothing. destroying: being destroyed by the sweep, its row going next.
+enum PreviewMachineStatus {
+  creating
+  running
+  stopping
+  stopped
+  destroying
+}
+
+/// One run of a VM at the provider (docs/vm-costs.md): its start (a create or a resume) and the
+/// time it ran until it stopped. What a workspace's cloud computer and its threads' machines cost
+/// is summed from these. Written before the provider is asked to start the VM (pending), and
+/// confirmed once it answered or the provider's own figures say it ran (reconcileVmRuns).
+model VmRun {
+  id             String      @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  kind           VmKind
+  /// The cloud computer, for kind computer. No relation: kept as it was when its VM is replaced.
+  computerId     String?
+  /// The thread's PreviewMachine and its thread, for kind machine. No relation: a machine's row
+  /// goes with its VM, and a thread may be deleted; what they cost stays counted.
+  machineId      String?
+  sessionId      String?
+  /// The provider's id of the VM; null until the provider made it (a create).
+  sandboxId      String?
+  /// Brigade's size ('2x4', '4x8', '8x16'), priced in @brigade/providers (VM_PRICES).
+  size           String
+  start          VmStart
+  status         VmRunStatus @default(pending)
+  startedAt      DateTime    @default(now())
+  /// Null while it runs (or may run: pending).
+  stoppedAt      DateTime?
+  /// Who stopped it: brigade, the provider (its own stop, seen by its webhook or its list), or
+  /// destroyed with its disk.
+  stoppedBy      String?
+  /// When the provider last listed it running: a stop not seen came no earlier.
+  seenAt         DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([workspaceId, startedAt])
+  @@index([status])
+  @@index([sandboxId])
+}
+
+/// computer: the workspace's cloud computer. machine: a thread's own machine (preview_machines).
+enum VmKind {
+  computer
+  machine
+}
+
+/// create and resume each count as one start at the provider. found: running when Brigade first
+/// saw it without a start of its own (before runs were kept, or started outside Brigade).
+enum VmStart {
+  create
+  resume
+  found
+}
+
+/// pending: asked of the provider, not confirmed yet. open: running. closed: stopped. void: it
+/// never ran (a failed start), not counted.
+enum VmRunStatus {
+  pending
+  open
+  closed
+  void
+}
+
 enum PreviewVariableKind {
   setting
   secret
@@ -1652,6 +2987,8 @@ model Project {
   folder                 String?
   /// Connections its threads should use when several could do. A hint, not a grant.
   preferredConnectionIds String[]               @default([])
+  /// Whether its pull requests get a review by another teammate.
+  reviewPolicy           ReviewPolicy           @default(teammate)
   archivedAt             DateTime?
   createdAt              DateTime               @default(now())
   updatedAt              DateTime               @updatedAt
@@ -1662,7 +2999,10 @@ model Project {
   triggers               Trigger[]
   documents              Document[]
   playbookInstallations  PlaybookInstallation[]
+  /// Its name in its agents' addresses (riley.<slug>@), once one was used.
+  mailProject            MailProject?
 
+  initiatives            Initiative[]
   @@unique([workspaceId, name])
   @@index([workspaceId])
 }
@@ -1705,6 +3045,37 @@ model PushDevice {
   createdAt DateTime @default(now())
 
   @@index([userId])
+}
+
+/// Brigade.app on a computer, which shows the person's notifications itself: Electron has no
+/// push service. The sweep (src/notifications.ts) queues each push for it as a DesktopMessage,
+/// and the app fetches them with its token (src/routes/desktop-notifications.ts).
+model DesktopDevice {
+  id         String           @id @default(cuid())
+  userId     String
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// SHA-256 of the app's token. The token itself is never stored.
+  tokenHash  String           @unique
+  /// darwin, win32, linux.
+  platform   String?
+  /// Its last fetch: the app runs, so pushes queue for it.
+  lastSeenAt DateTime         @default(now())
+  createdAt  DateTime         @default(now())
+  messages   DesktopMessage[]
+
+  @@index([userId])
+}
+
+/// A push queued for a DesktopDevice until its next fetch, which takes it.
+model DesktopMessage {
+  id        String        @id @default(cuid())
+  deviceId  String
+  device    DesktopDevice @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  /// @brigade/contracts' PushMessage.
+  message   Json
+  createdAt DateTime      @default(now())
+
+  @@index([deviceId, createdAt])
 }
 
 /// One thing a member was or will be notified of, by key (needs:<threadId>,
@@ -1915,4 +3286,741 @@ model ThreadFollow {
 
   @@unique([sessionId, followerId])
   @@index([followerId])
+}
+
+// ---------------------------------------------------------------------------
+// Email: Brigade's own addresses on its mail domain (the Email App)
+// ---------------------------------------------------------------------------
+
+enum MailAddressKind {
+  /// An agent's: riley@, with a variant per project (riley.lovarank@) and per sign-up.
+  agent
+  /// A project's shared mailbox, such as the one support@ is forwarded to.
+  inbox
+}
+
+/// An address on Brigade's mail domain: its name is the part before the first dot, in one
+/// registry for all of Brigade. A name belongs to one agent or one project inbox, in one
+/// workspace, and is never given to anyone else, even once its owner is gone: no link to the
+/// workspace that could delete it, and none to the teammate or project either.
+model MailAddress {
+  id                String          @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  /// Lowercase letters, digits and hyphens. Unique across Brigade, for good.
+  name              String          @unique
+  kind              MailAddressKind
+  /// agent: whose address it is. One address per teammate, kept if it is turned off and on again.
+  teammateId        String?         @unique
+  /// inbox: the project it belongs to, whose threads alone use it.
+  projectId         String?
+  /// Its account in the Email App, which tools, grants, rules and the journal hang on. Null once
+  /// the App or the account was removed: the address then receives nothing.
+  connectionId      String?         @unique
+  connection        Connection?     @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  /// inbox: the address customers write to, forwarded here (support@lovarank.com). Replies go out
+  /// from it once its domain is verified.
+  publicAddress     String?         @unique
+  domainId          String?
+  domain            MailDomain?     @relation(fields: [domainId], references: [id], onDelete: SetNull)
+  /// inbox: the name on what it sends, e.g. "Lovarank support".
+  displayName       String?
+  /// When it stopped receiving (turned off, its agent or project gone). Its name stays reserved.
+  releasedAt        DateTime?
+  createdByMemberId String
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  aliases           MailAlias[]
+  messages          MailMessage[]
+
+  @@index([workspaceId])
+}
+
+/// A project's name in its agents' addresses (riley.<slug>@): set the first time one is used,
+/// then kept when the project is renamed or deleted, and never given to another project.
+model MailProject {
+  id             String    @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  slug           String
+  /// Null once the project is deleted: mail to its variants goes nowhere.
+  projectId      String?   @unique
+  project        Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now())
+
+  @@unique([workspaceId, slug])
+}
+
+/// An address made for one sign-up (riley.lovarank.k3f9@): until waitUntil its mail goes to the
+/// thread that asked for it, then to its box. Never deleted, so it never points elsewhere.
+model MailAlias {
+  id             String        @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// The whole part before the @, e.g. riley.lovarank.k3f9.
+  local          String        @unique
+  addressId      String
+  address        MailAddress   @relation(fields: [addressId], references: [id], onDelete: Cascade)
+  /// The variant it belongs to (the thread's project). Null: the address without a project.
+  projectId      String?
+  sessionId      String?
+  session        Session?      @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  teammateId     String?
+  /// What it is for, in the teammate's words ("Notion sign-up").
+  purpose        String        @default("")
+  waitUntil      DateTime
+  createdAt      DateTime      @default(now())
+  messages       MailMessage[]
+
+  @@index([sessionId])
+}
+
+enum MailDirection {
+  in
+  out
+}
+
+enum MailStatus {
+  /// in: kept from the webhook, not read and delivered yet.
+  pending
+  /// in: delivered where it goes (see route).
+  done
+  /// in: could not be read or delivered after several tries.
+  failed
+  /// out: handed to Resend, which sends it at sendAt (the window to cancel it).
+  scheduled
+  sent
+  delivered
+  bounced
+  cancelled
+}
+
+enum MailSender {
+  /// A member of the workspace whose address passed DKIM or DMARC.
+  member
+  /// Someone this workspace's mailboxes exchanged mail with before.
+  contact
+  unknown
+  /// One of Brigade's own addresses, e.g. an agent writing to a project inbox.
+  brigade
+}
+
+/// One email in a mailbox the workspace reads: one of Brigade's own addresses (an agent's, a
+/// project's inbox), received or sent, or a shared Gmail account's, received (the Inbox's mail,
+/// kept as Gmail's inbox reader reads it). Received mail left in its box is kept 30 days; mail
+/// a thread took lives and goes with it.
+model MailMessage {
+  id                 String        @id @default(cuid())
+  organizationId     String
+  workspaceId        String
+  workspace          Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Brigade's own address it came to or went from. Null for Gmail's mail.
+  addressId          String?
+  address            MailAddress?  @relation(fields: [addressId], references: [id], onDelete: Cascade)
+  /// Gmail's mail: its account. It goes with the account.
+  connectionId       String?
+  connection         Connection?   @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  /// Gmail's mail: Gmail's message id, so a mail read again is kept once.
+  sourceId           String?
+  /// The variant: the project of riley.<slug>@. Null: riley@ itself, or a project inbox.
+  projectId          String?
+  /// Address and variant ("<addressId>:<projectId or ->"): one copy per box of a mail sent to
+  /// several of Brigade's addresses. Gmail's: "gmail:<connectionId>".
+  box                String
+  /// Received on a sign-up address.
+  aliasId            String?
+  alias              MailAlias?    @relation(fields: [aliasId], references: [id], onDelete: SetNull)
+  direction          MailDirection
+  status             MailStatus
+  /// Resend's id for the email, received or sent.
+  resendId           String?
+  /// The RFC 5322 Message-ID, for threading. A sent email's comes once Resend reports it.
+  messageId          String?
+  inReplyTo          String?
+  references         String[]      @default([])
+  /// Brigade's id for its conversation: an email answering one of the box's takes its id.
+  conversationId     String
+  fromAddress        String
+  fromName           String        @default("")
+  to                 String[]      @default([])
+  cc                 String[]      @default([])
+  replyTo            String[]      @default([])
+  subject            String        @default("")
+  /// The plain text, up to 100 000 characters.
+  text               String        @default("")
+  /// The few headers Brigade reads (auto-submitted, precedence, list-id…), lower-cased.
+  headers            Json          @default("{}")
+  /// SPF, DKIM and DMARC as the receiving server computed them.
+  authentication     Json?
+  /// Sent by a machine (an out-of-office, a notification).
+  automatic          Boolean       @default(false)
+  /// in, left in its box (nobody took it): why it is kept out of the Inbox's To do, in Other.
+  /// sign_up (to a sign-up address whose thread no longer waits), automatic (sent by a machine or
+  /// to a list), muted (a sender a person muted). Null: a person's mail, To do. A person moving it
+  /// back to To do clears it.
+  noise              String?
+  sender             MailSender?
+  memberId           String?
+  contactId          String?
+  contact            Contact?      @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  /// Resend's attachments: [{ id, filename, contentType, size, inline }].
+  attachments        Json          @default("[]")
+  /// in: where it went. awaited (a thread waiting on it), conversation (its conversation's
+  /// thread), member (a member's request), rule, kept (a rule with no teammate kept it for a
+  /// person), box, duplicate, loop, cap, own_copy (a reply a
+  /// person sent from Gmail), read (a thread read or answered it from the box), unknown_address.
+  /// Null until delivered.
+  route              String?
+  routeNote          String?
+  /// The thread that took it (in) or sent it (out). Deleted with it.
+  sessionId          String?
+  session            Session?      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  triggerId          String?
+  /// out: the teammate that wrote it, and the member who approved or changed it.
+  teammateId         String?
+  approvedByMemberId String?
+  /// out: when Resend sends it; it can be cancelled until then.
+  sendAt             DateTime?
+  /// The Inbox: a person marked it done (nothing more to do with it), or Brigade did once its
+  /// thread's turn ended after replying (src/mail/outcomes.ts), with no doneByMemberId then.
+  doneAt             DateTime?
+  /// Who marked it done, or not done again: Brigade no longer closes it on its own.
+  doneByMemberId     String?
+  /// The Inbox: the person who handed it to a teammate (its thread is sessionId, route handed).
+  handedByMemberId   String?
+  /// When it was handed over: the newest hand-over holds its conversation.
+  handedAt           DateTime?
+  /// in: what its thread did with it without replying, said with email_no_reply: no_reply (it
+  /// chose not to answer: a person sees it To do) or handled (it did what it asked, no reply
+  /// needed). A reply sent after it says the rest; a person asking for a reply clears it.
+  outcome            String?
+  /// The thread's reason, in a line, shown in the Inbox.
+  outcomeNote        String?
+  outcomeAt          DateTime?
+  /// in: Brigade asked its thread what it did with it, once: a turn ended without a reply or an
+  /// outcome (src/mail/outcomes.ts).
+  outcomeAskedAt     DateTime?
+  /// out: a person wrote and sent it from the Inbox (Reply myself), not the teammate.
+  sentByMemberId     String?
+  /// Received mail's HTML, apart: read only when the Inbox shows one mail.
+  htmlBody           MailHtml?
+  error              String?
+  attempts           Int           @default(0)
+  receivedAt         DateTime      @default(now())
+  /// Left in its box: deleted then.
+  expiresAt          DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@unique([resendId, box])
+  @@unique([box, sourceId])
+  /// The Inbox: a workspace's received mail, newest first.
+  @@index([workspaceId, direction, receivedAt])
+  @@index([workspaceId, conversationId])
+  @@index([workspaceId, messageId])
+  @@index([box, receivedAt])
+  @@index([status, updatedAt])
+  @@index([sessionId])
+  @@index([expiresAt])
+}
+
+/// A received mail's HTML as it came (up to 1 000 000 characters, else none), for the Inbox's
+/// HTML view in a sandboxed frame. Apart from MailMessage so that lists never load it; teammates
+/// read the text.
+model MailHtml {
+  mailId         String      @id
+  mail           MailMessage @relation(fields: [mailId], references: [id], onDelete: Cascade)
+  organizationId String
+  workspaceId    String
+  html           String
+  createdAt      DateTime    @default(now())
+
+  @@index([workspaceId])
+}
+
+/// A domain of the workspace's own (lovarank.com) that its project inboxes send as, once its DNS
+/// records are in place. One workspace per domain across Brigade.
+model MailDomain {
+  id                String        @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  workspace         Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name              String        @unique
+  resendDomainId    String?
+  /// pending, verified or failed, as Resend last said.
+  status            String        @default("pending")
+  /// How its mail reaches Brigade: forward (its mail stays with its provider, Google's say, and each
+  /// address is forwarded to its Brigade mailbox) or direct (its MX points to Brigade's receiving).
+  receiving         String        @default("forward")
+  /// The DNS records to add: [{ record, type, name, value, priority?, status }].
+  records           Json          @default("[]")
+  createdByMemberId String
+  checkedAt         DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  addresses         MailAddress[]
+}
+
+/// Someone a workspace's mailboxes exchanged mail with, with each way to reach them.
+model Contact {
+  id             String          @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace       @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name           String          @default("")
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  handles        ContactHandle[]
+  messages       MailMessage[]
+}
+
+/// One way to reach a contact: an email address today, a chat account later.
+/// A sender a person muted in the Inbox: its mail nobody takes goes to Other, not To do.
+model MailMute {
+  id                String    @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// address (one sender) or domain (everyone at it, never a public mail provider's).
+  kind              String
+  /// Lower-cased: the bare address, or the domain.
+  value             String
+  createdByMemberId String?
+  createdAt         DateTime  @default(now())
+
+  @@unique([workspaceId, kind, value])
+}
+
+model ContactHandle {
+  id             String    @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contactId      String
+  contact        Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  /// email.
+  kind           String
+  /// Lower-cased.
+  value          String
+  lastSeenAt     DateTime  @default(now())
+
+  @@unique([workspaceId, kind, value])
+}
+
+/// A problem with Brigade itself that its operators are alerted to (src/ops/): one row per
+/// problem, by key, kept once resolved so it is not alerted again right away.
+model OpsAlert {
+  /// What it is about, e.g. api-errors or computer:<id>.
+  key              String    @id
+  /// critical or warning.
+  severity         String
+  title            String
+  detail           String    @default("")
+  firstAt          DateTime  @default(now())
+  lastAt           DateTime  @default(now())
+  /// When operators were last told about it, and how bad it was then.
+  notifiedAt       DateTime?
+  notifiedSeverity String?
+  /// Null while it lasts.
+  resolvedAt       DateTime?
+}
+
+enum HeldCallStatus {
+  /// Its ticket is open.
+  waiting
+  /// A person decided; the call is made next (the minute's tick makes one a restart cut off).
+  decided
+  /// Being made. One left here by a restart is never made again: its thread is told.
+  running
+  done
+  /// Its ticket closed without a decision for it.
+  expired
+}
+
+/// A call a teammate made that waits for a person's decision in a ticket (src/held-calls.ts): an
+/// App's write, a credential, a trigger. Kept so the decision is acted on whenever it comes, after
+/// any restart of the API or the runner, exactly once; an identical call meanwhile joins its ticket.
+model HeldCall {
+  id             String         @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sessionId      String
+  session        Session        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  teammateId     String
+  ticketId       String         @unique
+  /// connector, credential or trigger.
+  kind           String
+  /// SHA-256 of the kind, the teammate, the tool and its arguments. A partial unique index keeps
+  /// one waiting call per thread and fingerprint (migration 20261027090000_durable_work).
+  fingerprint    String
+  /// The call as the runner sent it, without its callId. A secret to save is sealed in the vault.
+  request        Json
+  status         HeldCallStatus @default(waiting)
+  /// The person's decision, once made.
+  decision       Json?
+  /// ok and error, and how the thread heard it (live, or a wake-up).
+  result         Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([sessionId])
+}
+
+enum RunnerCommandStatus {
+  /// Not acknowledged by the runner yet: sent again when it says hello, and each few minutes.
+  pending
+  /// The runner acknowledged it, or took it without acknowledging (one before OUTBOX_PROTOCOL).
+  acked
+  /// Not through in 24 hours: a ticket says so.
+  failed
+  /// Moot by the time it could go (an interrupt, a browser window): dropped.
+  expired
+}
+
+/// A command for a computer's runner (src/runner-commands.ts): sent at once as before, kept until
+/// the runner acknowledges it, and sent again when it reconnects, so neither a restart of the API,
+/// a computer that takes long to start, nor a connection that died unnoticed loses it.
+model RunnerCommand {
+  /// The command's commandId.
+  id             String              @id
+  organizationId String
+  workspaceId    String
+  workspace      Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  computerId     String
+  computer       Computer            @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  sessionId      String?
+  session        Session?            @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type           String
+  message        Json
+  status         RunnerCommandStatus @default(pending)
+  /// Times it was sent.
+  attempts       Int                 @default(0)
+  sentAt         DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+}
+
+/// A large part of a thread's spec (its connectors, skills, project, design systems), by the
+/// SHA-256 of its JSON (src/spec-parts.ts): commands name it rather than carry it, and the runner
+/// fetches it once. The same catalog in many commands is one row.
+model SpecPart {
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sha256      String
+  /// The JSON, as hashed.
+  content     String
+  createdAt   DateTime  @default(now())
+  /// Last named by a spec: parts no spec named for a while are deleted.
+  usedAt      DateTime  @default(now())
+
+  @@id([workspaceId, sha256])
+  @@index([usedAt])
+}
+
+/// One event a trigger took (src/triggers.ts): one row per trigger and event id, claimed before
+/// its thread starts, so a vendor's retry, a second reader or a retry after a crash starts no
+/// second thread.
+model TriggerDelivery {
+  id             String    @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  triggerId      String
+  trigger        Trigger   @relation(fields: [triggerId], references: [id], onDelete: Cascade)
+  eventId        String
+  /// starting while its thread is being started; then the outcome (started, queued, held, paused,
+  /// loop, capped…), or failed when it may be tried again.
+  status         String
+  threadId       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([triggerId, eventId])
+}
+
+enum InboundEventStatus {
+  pending
+  done
+  failed
+}
+
+/// A vendor's webhook as it came (src/inbound.ts): kept, answered 2xx, then processed from here
+/// on the minute's tick with retries, so a restart or a failure loses no event, and a vendor's
+/// retry of one is processed once (source and external id).
+model InboundEvent {
+  id         String             @id @default(cuid())
+  /// github, stripe:<subscription id>, hook:<trigger id>.
+  source     String
+  /// The vendor's id for it (GitHub's delivery, Stripe's event), or a hash of a custom app's body.
+  externalId String
+  type       String
+  payload    Json
+  status     InboundEventStatus @default(pending)
+  attempts   Int                @default(0)
+  /// When it is tried (again).
+  nextAt     DateTime           @default(now())
+  error      String?
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  @@unique([source, externalId])
+}
+
+/// A thread folder's backup on its cloud computer (the runner's folders.ts): one per thread and
+/// teammate, replaced by each newer one, so a lost disk costs minutes of work. Its bytes are in
+/// the bucket under the thread's files folder (encrypted by the runner with the workspace's backup
+/// key), deleted with the thread, late uploads too (BucketCleanup).
+model FolderBackup {
+  id             String   @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  sessionId      String
+  session        Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  teammateId     String
+  /// The computer that made it.
+  computerId     String
+  size           BigInt
+  /// What the teammate ran in the background then: a list of BackgroundWork.
+  background     Json
+  takenAt        DateTime @default(now())
+
+  @@unique([sessionId, teammateId])
+  @@index([workspaceId])
+}
+
+/// A teammate's backup from its cloud computer: kind `tasks` (its crontab and systemd user
+/// services) or `browser` (the parts of its Chrome profile that keep its sign-ins). Its bytes are
+/// in the bucket, encrypted by the runner with the workspace's backup key.
+model TeammateBackup {
+  id             String   @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  teammateId     String
+  teammate       Teammate @relation(fields: [teammateId], references: [id], onDelete: Cascade)
+  kind           String
+  computerId     String
+  size           BigInt
+  takenAt        DateTime @default(now())
+
+  @@unique([teammateId, kind])
+  @@index([workspaceId])
+}
+
+/// An account's login files on its cloud computer (a Claude token, Codex's auth.json), encrypted
+/// with the vault's key, kept as they change so a computer that replaces this one is signed in.
+model AccountLoginBackup {
+  accountId      String   @id
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  organizationId String
+  workspaceId    String
+  ciphertext     Bytes
+  iv             Bytes
+  authTag        Bytes
+  keyVersion     Int
+  /// SHA-256 of the files as the runner read them: an unchanged login is not written again.
+  sha256         String
+  updatedAt      DateTime @updatedAt
+
+  @@index([workspaceId])
+}
+
+/// A cloud computer moved onto a new VM (src/cloud-replace.ts), step by step so an API restart
+/// picks it up where it was: backing_up (the old one backs up, then stops), creating (a new VM,
+/// its runner installed), restoring (the new runner puts the backups back), done or failed.
+/// The old VM stays with the provider, never destroyed by Brigade: its data may still be read.
+model ComputerReplacement {
+  id             String    @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  computerId     String
+  computer       Computer  @relation(fields: [computerId], references: [id], onDelete: Cascade)
+  /// The member who asked for it.
+  memberId       String
+  phase          String    @default("backing_up")
+  /// The VM it replaced, as the provider knows it.
+  oldProviderRef Json?
+  /// How the old computer's last backup went, if it could make one.
+  backup         String?
+  /// What did not come back on the new computer: a list of { teammateId?, text }.
+  problems       Json?
+  error          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  finishedAt     DateTime?
+
+  @@index([computerId, phase])
+}
+
+/// A feature hidden until it is ready (packages/contracts/src/features.ts, docs/feature-flags.md),
+/// opened to some people. Without a row, a feature is its declared default for everyone.
+model FeatureFlag {
+  /// A key of FEATURES, e.g. gmail.
+  key          String   @id
+  /// On for every person.
+  everyone     Boolean  @default(false)
+  /// Sign-in addresses, lowercase, or whole domains as @example.com.
+  emails       String[] @default([])
+  /// Workspaces whose every member has it.
+  workspaceIds String[] @default([])
+  /// Why, or who asked: for the people who read the table.
+  note         String   @default("")
+  updatedAt    DateTime @default(now()) @updatedAt
+}
+
+/// A spec or design of the library that a pull request ships (`ships`) or is one step of
+/// (github_create_pull_request's `specs`). On merge, Brigade names the pull request on it and, when
+/// it ships it, sets its status to shipped (src/decisions.ts, settleSpecsOnMerge). A Markdown spec's
+/// row is its file's; a design's is its design.json's.
+model SpecPull {
+  organizationId String
+  workspaceId    String
+  workspace      Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  documentId     String
+  document       Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  pullRequestId  String
+  pullRequest    PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  ships          Boolean     @default(false)
+  /// When its merge was dealt with (the file changed, or nothing to change); while unset after a
+  /// merge, it is tried again (sweepSpecMerges).
+  settledAt      DateTime?
+  createdAt      DateTime    @default(now())
+
+  @@id([documentId, pullRequestId])
+  @@index([pullRequestId])
+}
+
+/// A mission (docs/missions.md): ongoing work a member delegates to a teammate, its owner. Named
+/// Initiative in code so it can't be taken for the Tasks board's old missions (Task.parentId).
+/// Its threads and routines point to it; its plan is its InitiativeAction rows, what went out its
+/// InitiativeOutput rows, and its number, when it follows one, a goal's measurements in one of its
+/// threads or the values its teammate declares (InitiativeValue).
+model Initiative {
+  id                  String             @id @default(cuid())
+  organizationId      String
+  workspaceId         String
+  workspace           Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  /// Its owner, the teammate it is delegated to.
+  teammateId          String
+  teammate            Teammate           @relation(fields: [teammateId], references: [id], onDelete: Cascade)
+  projectId           String?
+  project             Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title               String
+  /// What it is for, in a line.
+  objective           String
+  /// The number it follows, when it follows one: its name, its unit, and where it aims.
+  metricLabel         String?
+  metricUnit          String?
+  metricTarget        Float?
+  /// Who made it: a member, or a teammate from a thread.
+  createdByMemberId   String?
+  createdByTeammateId String?
+  archivedAt          DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  sessions            Session[]
+  schedules           Schedule[]
+  actions             InitiativeAction[]
+  outputs             InitiativeOutput[]
+  values              InitiativeValue[]
+
+  @@index([workspaceId, archivedAt])
+}
+
+enum InitiativeActionStatus {
+  /// It runs at its time: it needs no approval, or a person approved its draft.
+  planned
+  /// Its draft waits for a person, before approveBy (its ticket, ticketId).
+  awaiting_approval
+  declined
+  /// Nobody approved its draft before approveBy: it does not go.
+  expired
+  /// Prompted into its thread at its time, as a wake-up (sourceId action:<id>:run).
+  fired
+  cancelled
+}
+
+/// A dated action a mission's teammate planned (plan_action): at dueAt Brigade prompts its thread
+/// with its instructions, as a wake-up. One with a draft needs a person's approval before approveBy.
+model InitiativeAction {
+  id                String                 @id @default(cuid())
+  organizationId    String
+  workspaceId       String
+  workspace         Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  initiativeId      String
+  initiative        Initiative             @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  /// The thread it runs in: the mission's thread it was planned from (a sub-thread's or a run's parent).
+  sessionId         String
+  session           Session                @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  /// The teammate that planned it, prompted at its time.
+  teammateId        String
+  title             String
+  instructions      String
+  draft             String?
+  dueAt             DateTime
+  approveBy         DateTime?
+  status            InitiativeActionStatus @default(planned)
+  /// Its approval ticket, while it has a draft.
+  ticketId          String?
+  decidedByMemberId String?
+  decidedAt         DateTime?
+  firedAt           DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+  outputs           InitiativeOutput[]
+
+  @@index([status, dueAt])
+  @@index([status, approveBy])
+  @@index([initiativeId, dueAt])
+}
+
+/// What went out for a mission (record_output): a post, a comment, a reply, with its link, then its
+/// numbers. Brigade sees neither where it went out nor its numbers: they are its teammate's word.
+model InitiativeOutput {
+  id             String            @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  initiativeId   String
+  initiative     Initiative        @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  sessionId      String?
+  session        Session?          @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  teammateId     String?
+  actionId       String?
+  action         InitiativeAction? @relation(fields: [actionId], references: [id], onDelete: SetNull)
+  /// post, comment, reply, article, email or other (OutputKind).
+  kind           String
+  /// Where it went out: linkedin, x, reddit r/selfhosted.
+  channel        String
+  url            String?
+  summary        String
+  /// When it went out.
+  at             DateTime
+  /// Its numbers as last read: { views: 1200, likes: 31 }.
+  metrics        Json              @default("{}")
+  metricsAt      DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([initiativeId, at])
+}
+
+/// A value of a mission's number its teammate declared (record_number), read by hand where Brigade
+/// has no App (LinkedIn analytics). A goal's measurements, when one of its threads has a goal, are
+/// Brigade's own and read from GoalMeasurement instead.
+model InitiativeValue {
+  id             String     @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  initiativeId   String
+  initiative     Initiative @relation(fields: [initiativeId], references: [id], onDelete: Cascade)
+  teammateId     String?
+  value          Float
+  note           String?
+  at             DateTime   @default(now())
+
+  @@index([initiativeId, at])
 }

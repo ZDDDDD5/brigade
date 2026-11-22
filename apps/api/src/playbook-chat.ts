@@ -15,6 +15,7 @@ import {
 import { HTTPException } from 'hono/http-exception'
 import type { Scope, ScopedDb } from './db.js'
 import { latestDryRun, startDryRun } from './playbook-dry-runs.js'
+import { installationToUpdate, upgradePlaybook } from './playbook-updates.js'
 import {
   accountChoices,
   answerSettings,
@@ -24,8 +25,10 @@ import {
   isAdminRole,
   requireInstallation,
   roleStatuses,
+  teammateChoices,
   templates,
   templateView,
+  upgradeSetup,
   withDefaults,
 } from './playbooks.js'
 
@@ -81,9 +84,12 @@ const roleWords = (a: PlaybookAppStatus) =>
     ? a.name
     : `${a.name} (${a.kinds.map((k) => (k === MCP_KIND ? 'an MCP server added by its URL' : k)).join(' or ')})`
 
-/** What to tell the teammate about the Apps: each missing one asked for at the access declared. */
-const appsNote = (apps: PlaybookAppStatus[]) => {
-  const needed = apps.filter((a) => a.status !== 'ready' && !a.optional)
+/**
+ * What to tell the teammate about the Apps: each missing one asked for at the access declared,
+ * for the teammate that holds it. One whose teammate is not picked yet waits for that answer.
+ */
+const appsNote = (apps: PlaybookAppStatus[], asker: { id: string }) => {
+  const needed = apps.filter((a) => a.status !== 'ready' && !a.optional && a.holder)
   // An account the teammate has but its setting has not picked yet: the question picks it.
   const unpicked = needed.filter((a) => a.picks && !a.chosen && a.accounts.length > 0)
   const lacking = needed.filter((a) => !unpicked.includes(a))
@@ -96,10 +102,16 @@ const appsNote = (apps: PlaybookAppStatus[]) => {
     pickNote +
     ' Apps it still needs: ' +
     lacking
-      .map((a) => `${roleWords(a)} (${a.status === 'missing' ? 'no account' : 'read-only'})`)
+      .map(
+        (a) =>
+          `${roleWords(a)} (${a.status === 'missing' ? 'no account' : 'read-only'}` +
+          `${a.holder!.id === asker.id ? '' : `, for ${a.holder!.name}`})`,
+      )
       .join(', ') +
     '. For each, open one ticket with an access ask of kind connection and app { kind, scope }, with ' +
-    'the scope the playbook declares for it (read or read_write) and no more: the person connects the ' +
+    'app.teammate set to the teammate it is for when that is not you, ' +
+    'the scope the playbook declares for it (read or read_write) and no more, and its account when you ' +
+    'know which (the address its mail goes to, say): the person connects the ' +
     'App there, sign-in included, and grants it. A role any of several Apps can hold: first ask which ' +
     'one they use, then ask for that kind (an MCP server: kind mcp with its url).'
   )
@@ -160,15 +172,20 @@ export async function handlePlaybookCall(
 
     if (op.name === 'configure_playbook') {
       let installation
-      if (op.installationId) installation = await ownInstallation(db, session, op.installationId)
-      else {
+      if (op.installationId) {
+        installation = await ownInstallation(db, session, op.installationId)
+        // Not active yet: on the template's latest version.
+        const template = templates().get(installation.playbookKey)
+        if (template) installation = await upgradeSetup(db, installer, installation, template)
+      } else {
         if (!op.playbookKey)
           return {
             error: 'Give the playbookKey to start installing, or the installationId to go on',
           }
         const template = templates().get(op.playbookKey)
         if (!template) return { error: `No playbook ${op.playbookKey}; show_playbook lists them` }
-        // One being installed by this member already: go on with it rather than start a second.
+        // One being installed by this member already: go on with it rather than start a second,
+        // on the template's latest version.
         installation =
           (await db.playbookInstallation.findFirst({
             where: {
@@ -178,7 +195,11 @@ export async function handlePlaybookCall(
             },
             orderBy: { createdAt: 'desc' },
           })) ?? null
-        if (!installation) {
+        if (installation) installation = await upgradeSetup(db, installer, installation, template)
+        else {
+          // With teammate settings, the teammate named answers the one its runs start with, and
+          // until one does, the one installing it holds the place.
+          const first = template.manifest.teammate
           const ref = op.teammate
           const runner = ref
             ? ((await db.teammate.findFirst({ where: { id: ref, archivedAt: null } })) ??
@@ -191,11 +212,16 @@ export async function handlePlaybookCall(
             template,
             teammateId: runner.id,
             projectId: session.projectId,
-            settings: {},
+            settings: first && ref ? { [first]: runner.id } : {},
           })
         }
       }
-      const missing = await answerSettings(db, installer, installation.id, op.settings)
+      const first = (installation.manifest as PlaybookManifest).teammate
+      const missing = await answerSettings(db, installer, installation.id, {
+        // The teammate named answers the setting its runs start with.
+        ...(first && op.teammate && op.installationId ? { [first]: op.teammate } : {}),
+        ...op.settings,
+      })
       const view = await getInstallation(db, installation.id)
       const current = await requireInstallation(db, installation.id)
       const manifest = current.manifest as PlaybookManifest
@@ -208,6 +234,9 @@ export async function handlePlaybookCall(
             .map(async (s) => [s.key, await accountChoices(db, manifest, s)] as const),
         ),
       )
+      const crew = manifest.settings.some((s) => s.type === 'teammate' && !(s.key in answered))
+        ? await teammateChoices(db)
+        : []
       const question = (s: PlaybookManifest['settings'][number]) => ({
         key: s.key,
         type: s.type,
@@ -224,12 +253,50 @@ export async function handlePlaybookCall(
               })),
             }
           : {}),
+        ...(s.type === 'teammate' ? { teammates: crew.map((t) => t.name) } : {}),
       })
       const questions = manifest.settings.filter((s) => missing.includes(s.key)).map(question)
+      // A question with a set of answers (its options, the accounts it can pick) is picked, not typed.
+      const picks = questions[0]
+        ? (questions[0].options?.length ?? 0) +
+          (questions[0].accounts?.length ?? 0) +
+          (questions[0].teammates?.length ?? 0)
+        : 0
+      // A teammate other than the one its runs start with: the same one, or another that never
+      // reads what starts the runs (a customer's mail). The person chooses; say what each means.
+      const asked = manifest.settings.find((s) => s.key === questions[0]?.key)
+      const runApps = playbookRoles(manifest.apps)
+        .filter((r) => !r.teammate)
+        .map((r) => r.name)
+      const ownApps = playbookRoles(manifest.apps)
+        .filter((r) => r.teammate === asked?.key)
+        .map((r) => r.name)
+      const runAsk = manifest.settings.find((s) => s.key === manifest.teammate)?.ask
+      const teammateNote =
+        asked?.type !== 'teammate'
+          ? ''
+          : asked.key === manifest.teammate
+            ? 'Its runs start with that teammate, which has its ' +
+              `${runApps.join(', ')} alone. Do not pick yourself unless the person asks for you. `
+            : `That teammate has its ${ownApps.join(', ')}, in the threads handed to it. Offer the same ` +
+              `teammate as for "${runAsk}" (simpler: one teammate holds every App) or another one ` +
+              `(safer: the teammate reading ${runApps.join(', ')} never holds ${ownApps.join(', ')}), ` +
+              'and let the person choose. '
       // Optional ones with no answer and no default (an analytics tool): asked once, at the end.
       const optional = manifest.settings
         .filter((s) => s.optional && s.default === undefined && !(s.key in answered))
         .map(question)
+      // Optional Apps its teammate cannot use yet (Stripe with no account): offered with them, as
+      // appsNote speaks of required ones alone. One whose account setting can pick an account it
+      // has already is that setting's question.
+      // Each for the teammate that holds it; one whose teammate is not picked yet waits.
+      const optionalApps = apps.filter(
+        (a) =>
+          a.optional &&
+          a.holder &&
+          a.status !== 'ready' &&
+          !(a.picks && !a.chosen && a.accounts.length > 0),
+      )
       return {
         installationId: view.id,
         playbook: view.name,
@@ -242,7 +309,18 @@ export async function handlePlaybookCall(
         next:
           (questions.length
             ? `Ask the person next: "${questions[0]!.ask}" (${questions[0]!.type}), one question at a time, ` +
-              'then call configure_playbook with installationId and the answer, by its key. An account setting takes ' +
+              'then call configure_playbook with installationId and the answer, by its key. ' +
+              teammateNote +
+              (picks >= 2 && picks <= 6
+                ? 'Its answers are known: end your reply with a choices block, one option per ' +
+                  (questions[0]!.accounts?.length
+                    ? 'account (labelled as its row shows it, the App in its description)'
+                    : questions[0]!.teammates?.length
+                      ? 'teammate (by name)'
+                      : 'option') +
+                  ', so the person picks one rather than typing it. '
+                : '') +
+              'An account setting takes ' +
               'the account as its row shows it (the Gmail address), or its id from accounts when two share a name ' +
               '(say which App each is). Do not guess an answer you were not given.'
             : 'Every setting it needs has an answer: its triggers, schedules and skills are made, and nothing ' +
@@ -250,11 +328,27 @@ export async function handlePlaybookCall(
               (optional.length
                 ? `It also has optional settings (${optional.map((o) => `"${o.ask}"`).join(', ')}): ask them ` +
                   'once, in one message, and leave out an account setting whose accounts list is empty; an ' +
-                  'answer goes to configure_playbook like the others, and without one it does without. Then ' +
-                  'offer'
-                : 'Offer') +
+                  'answer goes to configure_playbook like the others, and without one it does without. '
+                : '') +
+              (optionalApps.length
+                ? `It can also use optional Apps: ${optionalApps
+                    .map(
+                      (a) =>
+                        `${roleWords(a)} (${a.status === 'missing' ? 'no account' : 'read-only'}` +
+                        `${a.holder!.id === teammate.id ? '' : `, for ${a.holder!.name}`})`,
+                    )
+                    .join(', ')}. Offer them once, in ${optional.length ? 'that same' : 'one'} ` +
+                  'message, each with a few words on what it adds to this playbook (say, Stripe: read a ' +
+                  "customer's plan and payments when answering), and that they may skip them. For each " +
+                  'one they want, open one ticket with an access ask of kind connection and app { kind, ' +
+                  'scope }, with app.teammate set to the teammate it is for when that is not you, the ' +
+                  'scope the playbook declares for it (read or read_write) and no more ' +
+                  '(a role: first ask which App they use); open none they did not ask for. Once it is ' +
+                  'granted, configure_playbook again asks its account setting, if it has one. '
+                : '') +
+              (optional.length || optionalApps.length ? 'Then offer' : 'Offer') +
               ' a dry run on real past events, where nothing is sent (start_dry_run).') +
-          appsNote(apps),
+          appsNote(apps, teammate),
       }
     }
 
@@ -264,7 +358,7 @@ export async function handlePlaybookCall(
       const lacking = missingApps(apps)
       if (lacking.length)
         return {
-          error: `It needs ${lacking.map(roleWords).join(', ')} first.${appsNote(apps)}`,
+          error: `It needs ${lacking.map(roleWords).join(', ')} first.${appsNote(apps, teammate)}`,
         }
       const view = await startDryRun(db, scope, session, teammate, op.installationId, op.last)
       return {
@@ -299,6 +393,78 @@ export async function handlePlaybookCall(
             : 'Its report shows under your reply, one card per event. Say in a few lines what it found, ' +
               'what would have gone wrong, and the cost; propose recipe changes with propose_skill if any; ' +
               'then offer to activate it (activate_playbook).',
+      }
+    }
+
+    if (op.name === 'update_playbook') {
+      const starter = await db.member.findFirst({
+        where: { id: session.startedByMemberId },
+        select: { role: true },
+      })
+      const who = { memberId: session.startedByMemberId, role: starter?.role ?? 'member' }
+      const installation = await installationToUpdate(db, who, op)
+      const view = await getInstallation(db, installation.id, who)
+      if (!view.update)
+        return {
+          installationId: view.id,
+          playbook: view.name,
+          version: view.version,
+          error: `${view.name} is already on its latest version, ${view.version}.`,
+        }
+      if (!op.apply)
+        return {
+          installationId: view.id,
+          playbook: view.name,
+          status: view.status,
+          from: view.version,
+          to: view.update.version,
+          changes: view.update.changes,
+          autonomy: view.update.autonomy,
+          keptSkills: view.update.keptSkills,
+          newSettings: view.update.newSettings,
+          ...(view.update.blocked ? { blocked: view.update.blocked } : {}),
+          next:
+            `Tell the person in a few lines what moving from ${view.version} to ${view.update.version} changes ` +
+            '(the changes, and that autonomy never grows: the autonomy lines), and ' +
+            (view.update.keptSkills.length
+              ? `that their edited ${view.update.keptSkills.join(', ')} stay as they are unless they want the new ` +
+                'version (then pass replaceSkills). '
+              : '') +
+            (view.update.newSettings.some((s) => !s.optional)
+              ? 'ask the new required settings one at a time (newSettings), then call update_playbook with ' +
+                'installationId, apply: true and their answers by key. '
+              : 'ask whether to update; when they agree, call update_playbook with installationId and apply: true. ') +
+            'Its runs, numbers and history are kept, and it stays active or paused as it is.',
+        }
+      const result = await upgradePlaybook(db, { ...scope, ...who }, installation.id, {
+        settings: op.settings,
+        ...(op.replaceSkills ? { replaceSkills: op.replaceSkills } : {}),
+      })
+      if (!result.updated)
+        return {
+          installationId: installation.id,
+          updated: false,
+          missing: result.missing,
+          next:
+            `Not updated yet: ask the person "${result.missing[0]?.ask}" (${result.missing[0]?.type}), one ` +
+            'question at a time, then call update_playbook again with apply: true and every answer so far. ' +
+            'A teammate setting takes a teammate by name; an account setting the account as its row shows it.',
+        }
+      return {
+        installationId: installation.id,
+        updated: true,
+        from: result.from,
+        to: result.to,
+        keptSkills: result.keptSkills,
+        status: result.playbook.status,
+        apps: result.playbook.apps.filter((a) => a.status !== 'ready' && !a.optional),
+        next:
+          `Updated to ${result.to}. Say so in a line` +
+          (result.keptSkills.length
+            ? `, and that their edited ${result.keptSkills.join(', ')} were kept`
+            : '') +
+          '. If apps lists an App that is not ready, ask for it with an access ticket at the access the ' +
+          'playbook declares, for the teammate that holds it.',
       }
     }
 

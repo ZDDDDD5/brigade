@@ -6,7 +6,7 @@
 import AppKit
 import Foundation
 
-let version = "1"
+let version = "3"
 
 /// Who is using the computer: one teammate turn at a time, which the person can stop.
 @MainActor
@@ -19,6 +19,8 @@ final class Sessions {
 
   private var active: Active?
   private var stopped: Set<String> = []
+  /// Turns the runner ended (the person interrupted the teammate): their command stops.
+  private var cancelled: Set<String> = []
   private lazy var indicator = Indicator { [weak self] in self?.stop() }
 
   /// Before each action: refuses a stopped turn, or another turn while one is acting.
@@ -37,6 +39,26 @@ final class Sessions {
     }
     active = Active(id: id, label: label, last: Date())
     indicator.show("\(label) is using your computer")
+  }
+
+  /// While a command runs (`run`): keeps its turn the one using the computer, and the pill up.
+  /// False once the person pressed Stop or the runner cancelled the turn: the command stops.
+  func hold(_ id: String) -> Bool {
+    guard let current = active, current.id == id, !stopped.contains(id), !cancelled.contains(id) else {
+      return false
+    }
+    active?.last = Date()
+    indicator.show("\(current.label) is using your computer")
+    return true
+  }
+
+  /// The runner ended this turn: its command stops, and the pill goes.
+  func cancel(_ id: String) {
+    cancelled.insert(id)
+    if active?.id == id {
+      active = nil
+      indicator.hide()
+    }
   }
 
   func stop() {
@@ -90,6 +112,13 @@ func makeHandler(_ sessions: Sessions) -> Handler {
       try await MainActor.run { try sessions.stop(params["session"] as? [String: Any]) }
       return ["ok": true]
     }
+    if method == "cancel" {
+      guard let id = (params["session"] as? [String: Any])?["id"] as? String else {
+        throw HelperError("invalid_request", "session.id is required")
+      }
+      await MainActor.run { sessions.cancel(id) }
+      return ["ok": true]
+    }
     try await MainActor.run { try sessions.begin(params["session"] as? [String: Any]) }
     switch method {
     case "screenshot":
@@ -126,6 +155,23 @@ func makeHandler(_ sessions: Sessions) -> Handler {
       return ["ok": true]
     case "key":
       guard let key = params["key"] as? String else { throw HelperError("invalid_argument", "key is required") }
+      // For a named app: sent only if it is in front at this moment, checked and sent in one go on
+      // the main actor, so no other request comes between. It goes to what has the keyboard, the
+      // app's Open and Save panels too, which run in a process of their own and which a key
+      // posted to the app's process never reached.
+      if let app = params["app"] as? String, !app.isEmpty {
+        return try await MainActor.run {
+          let target = try Apps.find(app)
+          let front = NSWorkspace.shared.frontmostApplication
+          guard front?.processIdentifier == target.processIdentifier else {
+            throw HelperError(
+              "not_front",
+              "\(target.localizedName ?? app) is not in front (\(front?.localizedName ?? "another app") is), so nothing was sent")
+          }
+          try Input.key(key)
+          return ["ok": true, "to": target.localizedName ?? app] as [String: Any]
+        }
+      }
       try Input.key(key)
       return ["ok": true]
     case "apps":
@@ -143,6 +189,19 @@ func makeHandler(_ sessions: Sessions) -> Handler {
           maxNodes: Int(number(params["maxNodes"]) ?? 400),
           menus: params["menus"] as? Bool ?? false)
       }
+    case "run":
+      guard let command = params["command"] as? String, !command.isEmpty else {
+        throw HelperError("invalid_argument", "command is required")
+      }
+      // What the command is run here for; without it, it would fail further on with less to go by.
+      try Permissions.requireAccessibility()
+      let id = (params["session"] as? [String: Any])?["id"] as? String ?? ""
+      return try await Run.run(
+        command: command,
+        cwd: params["cwd"] as? String,
+        env: params["env"] as? [String: String] ?? [:],
+        timeout: number(params["timeout"]),
+        hold: { await MainActor.run { sessions.hold(id) } })
     default:
       throw HelperError("unknown_method", "unknown method \(method)")
     }
@@ -174,6 +233,16 @@ func writeToken(in directory: URL) throws -> String {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
+// Writing a reply to a runner that went away is an error to ignore, not a reason to quit.
+signal(SIGPIPE, SIG_IGN)
+// Quit with SIGTERM (Brigade.app restarts this app after an update): a command running goes first.
+signal(SIGTERM, SIG_IGN)
+let terminate = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+terminate.setEventHandler {
+  Run.shutdown()
+  exit(0)
+}
+terminate.resume()
 MainActor.assumeIsolated {
   do {
     let directory = try prepareDirectory()

@@ -1,17 +1,26 @@
 'use client'
 import { ChevronRight } from 'lucide-react'
 import Link from 'next/link'
+import { useState } from 'react'
 import { isAdmin, timeAgo } from '@/components/dashboard'
+import {
+  EditableEmailPreview,
+  isEmailSend,
+  ToolInputPreview,
+  type EditedEmail,
+} from '@/components/email-cards'
 import { StatusBadge, type StatusTone } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { credentialManagersOnly, pullHref, type Me, type Ticket } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 
 const typeLabel: Record<Ticket['type'], string> = {
   approval: 'approval',
   cap: 'reached cap',
   sign_in: 'expired login',
   usage_limit: 'out of usage',
+  disk_full: 'disk full',
   question: 'question',
   request: 'ticket',
 }
@@ -24,6 +33,33 @@ const statusTone = (status: string): StatusTone =>
       : status === 'open'
         ? 'warning'
         : 'neutral'
+
+/** A ticket decided, in the words of the button that was clicked. */
+export function resolvedLabel(t: Ticket, approved: boolean) {
+  if (t.payload.skillAction) return approved ? 'Skill added' : 'Declined'
+  if (t.payload.triggerAction) return approved ? 'Trigger added' : 'Declined'
+  if (t.payload.playbookActivation) return approved ? 'Activated' : 'Declined'
+  if (t.payload.missionAction) return approved ? 'Approved' : 'Declined'
+  if (t.payload.source === 'harness') return 'Declined'
+  if (
+    t.type === 'sign_in' ||
+    t.type === 'usage_limit' ||
+    t.type === 'disk_full' ||
+    t.payload.pullRequest
+  )
+    return 'Dismissed'
+  return approved ? 'Allowed' : 'Denied'
+}
+
+/** Its badge's tone once decided here: what was allowed, denied, or set aside. */
+function decidedTone(t: Ticket, approved: boolean): StatusTone {
+  const label = resolvedLabel(t, approved)
+  return label === 'Dismissed' || label === 'Declined'
+    ? 'neutral'
+    : approved
+      ? 'success'
+      : 'destructive'
+}
 
 /** A collapsed block of raw detail (the pending message or a tool call's input). */
 function Detail({ summary, children }: { summary: React.ReactNode; children: React.ReactNode }) {
@@ -53,11 +89,25 @@ export function TicketRow({
 }: {
   ticket: Ticket
   me: Me
-  onResolve: (id: string, approved: boolean, always?: boolean) => Promise<void>
+  /** edited: an email's draft as the person changed it before approving it. */
+  onResolve: (
+    id: string,
+    approved: boolean,
+    always?: boolean,
+    edited?: EditedEmail,
+  ) => Promise<void>
 }) {
   const admin = isAdmin(me)
   const starter = t.session?.startedByMemberId === me.memberId
-  const open = t.status === 'open'
+  // Decided here: shown at once, as the list will have it once reloaded; one that did not go
+  // gives the buttons back (its caller says why).
+  const [decided, setDecided] = useState<{ approved: boolean }>()
+  const decide = (approved: boolean, always?: boolean, edited?: EditedEmail) => {
+    if (decided) return
+    setDecided({ approved })
+    onResolve(t.id, approved, always, edited).catch(() => setDecided(undefined))
+  }
+  const open = t.status === 'open' && !decided
   const concerns = t.payload.memberId ? t.payload.memberId === me.memberId : starter
 
   const owner = t.payload.credentialOwnerId === me.memberId
@@ -66,10 +116,10 @@ export function TicketRow({
     // A playbook a member installed: once active it runs on its own, so an owner or admin decides.
     actions = admin ? (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           Activate
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Decline
         </Button>
       </>
@@ -83,14 +133,14 @@ export function TicketRow({
     actions =
       admin || promotion.ownerMemberId === me.memberId ? (
         <>
-          <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+          <Button size="sm" onClick={() => decide(true)}>
             Let it act on its own
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+          <Button size="sm" variant="ghost" onClick={() => decide(false)}>
             Keep asking first
           </Button>
           <Link
-            href={`/app/routines/playbooks/${promotion.installationId}`}
+            href={`/app/playbooks/${promotion.installationId}`}
             className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
             Open the playbook
@@ -105,15 +155,29 @@ export function TicketRow({
     // A teammate's skill: it shapes what every teammate does, so an admin decides.
     actions = admin ? (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           {t.payload.skillAction === 'update' ? 'Apply the change' : 'Add the skill'}
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Decline
         </Button>
       </>
     ) : (
       <span className="text-sm text-muted-foreground">Waiting for an admin</span>
+    )
+  } else if (open && t.type === 'approval' && t.payload.triggerAction) {
+    // A teammate's trigger: outside events start work on someone's accounts, an admin's call.
+    actions = admin ? (
+      <>
+        <Button size="sm" onClick={() => decide(true)}>
+          Add the trigger
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
+          Decline
+        </Button>
+      </>
+    ) : (
+      <span className="text-sm text-muted-foreground">Waiting for an owner or admin</span>
     )
   } else if (open && t.type === 'approval' && t.payload.credentialAction) {
     // A credential's ticket: sharing or changing it is for its creator or an admin.
@@ -124,7 +188,7 @@ export function TicketRow({
       t.payload.always && (t.payload.credentialAction === 'create' ? mayDecide : admin || owner)
     actions = mayDecide ? (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           {t.payload.credentialAction === 'create'
             ? 'Save'
             : t.payload.credentialAction === 'update'
@@ -135,13 +199,13 @@ export function TicketRow({
           <Button
             size="sm"
             variant="outline"
-            title="Let this teammate use it from now on, in any thread, without asking"
-            onClick={() => void onResolve(t.id, true, true)}
+            tooltip="Let this teammate use it from now on, in any thread, without asking"
+            onClick={() => decide(true, true)}
           >
             {t.payload.credentialAction === 'create' ? 'Save, use without asking' : 'Always allow'}
           </Button>
         )}
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Deny
         </Button>
       </>
@@ -152,13 +216,25 @@ export function TicketRow({
           : 'For the member who started the thread'}
       </span>
     )
+  } else if (open && t.type === 'approval' && t.payload.missionAction && (admin || starter)) {
+    // A mission's draft (docs/missions.md): approved, it goes at its time; past its deadline, never.
+    actions = (
+      <>
+        <Button size="sm" onClick={() => decide(true)}>
+          Approve
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
+          Decline
+        </Button>
+      </>
+    )
   } else if (open && t.type === 'approval' && (admin || starter)) {
     actions = (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           Allow
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Deny
         </Button>
       </>
@@ -166,10 +242,10 @@ export function TicketRow({
   } else if (open && t.type === 'cap') {
     actions = admin ? (
       <>
-        <Button size="sm" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" onClick={() => decide(true)}>
           Allow once
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(false)}>
           Deny
         </Button>
       </>
@@ -189,7 +265,7 @@ export function TicketRow({
               <Link href={`/app/threads/${t.session.id}`}>Answer in the thread</Link>
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, false)}>
+          <Button size="sm" variant="ghost" onClick={() => decide(false)}>
             Decline
           </Button>
         </>
@@ -201,7 +277,9 @@ export function TicketRow({
       <>
         {t.type === 'sign_in' && (
           <Button asChild size="sm">
-            <Link href="/app/accounts">Sign in</Link>
+            <Link href="/app/accounts" onClick={(e) => clickSettings(e, '/app/accounts')}>
+              Sign in
+            </Link>
           </Button>
         )}
         {t.payload.pullRequest && (
@@ -211,7 +289,7 @@ export function TicketRow({
             </Link>
           </Button>
         )}
-        <Button size="sm" variant="ghost" onClick={() => void onResolve(t.id, true)}>
+        <Button size="sm" variant="ghost" onClick={() => decide(true)}>
           Dismiss
         </Button>
       </>
@@ -244,7 +322,15 @@ export function TicketRow({
           </div>
         </div>
         {/* Answered: its status at the top, as on the cards in a thread. */}
-        {!actions && <StatusBadge status={t.status} tone={statusTone(t.status)} />}
+        {decided ? (
+          <StatusBadge
+            status={decided.approved ? 'approved' : 'denied'}
+            tone={decidedTone(t, decided.approved)}
+            label={resolvedLabel(t, decided.approved)}
+          />
+        ) : (
+          !actions && <StatusBadge status={t.status} tone={statusTone(t.status)} />
+        )}
       </div>
       {t.payload.reason && (
         <p className="mt-1.5 text-sm text-muted-foreground">{t.payload.reason}</p>
@@ -266,7 +352,36 @@ export function TicketRow({
           )}
         </Detail>
       )}
+      {t.payload.missionAction && (
+        <div className="mt-1.5 flex flex-col gap-1.5">
+          <p className="text-sm text-muted-foreground">
+            For the mission {t.payload.missionAction.mission}: goes out{' '}
+            {new Date(t.payload.missionAction.dueAt).toLocaleString(undefined, {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}{' '}
+            if approved before{' '}
+            {new Date(t.payload.missionAction.approveBy).toLocaleString(undefined, {
+              weekday: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+            .
+          </p>
+          {t.payload.draft && (
+            <p className="rounded-lg bg-secondary px-3 py-2 text-sm whitespace-pre-wrap">
+              {t.payload.draft}
+            </p>
+          )}
+        </div>
+      )}
       {t.payload.skillAction && t.payload.skill && <SkillProposalDetail ticket={t} />}
+      {t.payload.triggerAction && t.payload.instructions !== undefined && (
+        <TriggerProposalDetail ticket={t} />
+      )}
       {t.type === 'cap' && t.payload.pending && (
         <Detail summary="The message waiting to run">{t.payload.pending.text}</Detail>
       )}
@@ -282,17 +397,25 @@ export function TicketRow({
         </p>
       )}
       {t.payload.input !== undefined && (
-        <Detail
-          summary={
-            t.payload.source === 'harness'
+        <div className="mt-2 flex flex-col gap-1.5">
+          <p className="text-sm text-muted-foreground wrap-anywhere">
+            {t.payload.source === 'harness'
               ? `${t.payload.toolName} (built-in tool)`
-              : `${t.payload.operation} on ${t.payload.connection}: ${t.payload.target}`
-          }
-        >
-          {typeof t.payload.input === 'string'
-            ? t.payload.input
-            : JSON.stringify(t.payload.input, null, 2)}
-        </Detail>
+              : `${t.payload.operation} on ${t.payload.connection}: ${t.payload.target}`}
+          </p>
+          {/* An email as it would go, which its approver may change; any other call's arguments one per line. */}
+          {open &&
+          t.type === 'approval' &&
+          isEmailSend(t.payload.operation ?? '') &&
+          (admin || starter) ? (
+            <EditableEmailPreview
+              input={t.payload.input}
+              onAllow={(edited) => decide(true, false, edited)}
+            />
+          ) : (
+            <ToolInputPreview input={t.payload.input} />
+          )}
+        </div>
       )}
       {/* Last, once all there is to read before deciding has been shown. */}
       {actions && <div className="mt-3 flex flex-wrap items-center gap-2">{actions}</div>}
@@ -304,7 +427,8 @@ export function TicketRow({
 function SkillProposalDetail({ ticket: t }: { ticket: Ticket }) {
   const skill = t.payload.skill!
   const previous = t.payload.previous
-  const files = skill.files.map((f) => f.path)
+  // Its files: inline from older runners, by reference (`refs`) since direct uploads.
+  const files = [...skill.files, ...(t.payload.refs ?? [])].map((f) => f.path)
   return (
     <>
       <p className="mt-1.5 text-sm">
@@ -327,5 +451,21 @@ function SkillProposalDetail({ ticket: t }: { ticket: Ticket }) {
         </Detail>
       )}
     </>
+  )
+}
+
+/** What a teammate's trigger listens to, and what it would do with each event. */
+function TriggerProposalDetail({ ticket: t }: { ticket: Ticket }) {
+  const p = t.payload
+  const options = Object.entries(p.options ?? {})
+  return (
+    <div className="mt-2 flex flex-col gap-1.5 text-sm">
+      <p className="text-muted-foreground wrap-anywhere">
+        {p.eventLabel} on {p.app}
+        {options.map(([name, value]) => ` · ${name} ${value}`).join('')}
+        {p.verification === 'none' && ' · unsigned: anyone with its URL can start a thread'}
+      </p>
+      <Detail summary="Its instructions for each event">{p.instructions}</Detail>
+    </div>
   )
 }

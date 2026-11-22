@@ -1,5 +1,5 @@
 'use client'
-import { cronProblem, nextRuns } from '@brigade/contracts'
+import { cronProblem, nextRuns, type RunOutcome } from '@brigade/contracts'
 import cronstrue from 'cronstrue'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { TeammateAvatar, useDashboard } from '@/components/dashboard'
@@ -24,6 +24,17 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { api, teammateModelLabel, type Schedule } from '@/lib/api'
+
+/** How a routine's run ended, as a dot. */
+export const OUTCOME: Record<RunOutcome, { label: string; dot: string }> = {
+  running: { label: 'Running', dot: 'bg-primary animate-pulse' },
+  report: { label: 'Reported', dot: 'bg-success' },
+  nothing: { label: 'Nothing to do', dot: 'bg-success' },
+  ended: { label: 'Ended', dot: 'bg-success' },
+  needs_person: { label: 'Needs a person', dot: 'bg-warning' },
+  failed: { label: 'Failed', dot: 'bg-destructive-text' },
+  cancelled: { label: 'Cancelled', dot: 'bg-muted-foreground/40' },
+}
 
 /** The browser's timezone: a new schedule's default. */
 export const localTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -110,7 +121,7 @@ function Field({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex min-w-0 flex-col gap-1.5">
       <Label htmlFor={htmlFor}>{label}</Label>
       {children}
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
@@ -125,6 +136,7 @@ export function ScheduleDialog({
   schedule,
   onSaved,
   projectId: initialProject,
+  cron: initialCron,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -133,6 +145,8 @@ export function ScheduleDialog({
   onSaved: (schedule: Schedule) => void
   /** A new schedule's project, e.g. from a project page. */
   projectId?: string
+  /** A new schedule's time, e.g. from a slot clicked in the calendar. */
+  cron?: string
 }) {
   const { teammates, projects } = useDashboard()
   const [projectId, setProjectId] = useState('none')
@@ -150,11 +164,11 @@ export function ScheduleDialog({
     setTeammateId(schedule?.teammateId)
     setTitle(schedule?.title ?? '')
     setInstructions(schedule?.instructions ?? '')
-    setWhen(fromCron(schedule?.cron ?? '0 9 * * 1-5'))
+    setWhen(fromCron(schedule?.cron ?? initialCron ?? '0 9 * * 1-5'))
     setTimezone(schedule?.timezone ?? localTimezone())
     setProjectId(schedule ? (schedule.projectId ?? 'none') : (initialProject ?? 'none'))
     setError(undefined)
-  }, [open, schedule, initialProject])
+  }, [open, schedule, initialProject, initialCron])
 
   const teammate = teammateId ?? teammates[0]?.id
   const reports = schedule?.parentSession
@@ -193,15 +207,15 @@ export function ScheduleDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl">
-        <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4">
+      <DialogContent className="max-h-[90dvh] grid-cols-1 overflow-y-auto sm:max-w-xl">
+        <form onSubmit={(e) => void submit(e)} className="flex min-w-0 flex-col gap-4">
           <DialogHeader>
             <DialogTitle>{schedule ? 'Edit schedule' : 'New schedule'}</DialogTitle>
             <DialogDescription>
               Each run starts a fresh thread with these instructions, on your AI accounts.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Title" htmlFor="schedule-title">
               <Input
                 id="schedule-title"
@@ -268,7 +282,7 @@ export function ScheduleDialog({
             />
           </Field>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="When" htmlFor="schedule-preset">
               <Select value={when.preset} onValueChange={(v) => set({ preset: v as Preset })}>
                 <SelectTrigger id="schedule-preset" className="w-full">
@@ -320,7 +334,7 @@ export function ScheduleDialog({
             )}
           </div>
           {when.preset === 'weekly' && (
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="On" htmlFor="schedule-day">
                 <Select value={when.day} onValueChange={(day) => set({ day })}>
                   <SelectTrigger id="schedule-day" className="w-full">

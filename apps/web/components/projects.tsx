@@ -1,5 +1,6 @@
 'use client'
 import {
+  LOGO_UPLOAD,
   PROJECT_LOGO_MAX,
   projectLogoPath,
   siteUrl,
@@ -38,7 +39,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { api, type ProjectRef } from '@/lib/api'
+import { Hint } from '@/components/ui/tooltip'
+import { api, blobOfDataUrl, uploadFile, type ProjectRef } from '@/lib/api'
 import { API_URL } from '@/lib/config'
 import { cn } from '@/lib/utils'
 
@@ -58,8 +60,7 @@ export function ProjectIcon({
       <span
         aria-hidden
         className={cn(
-          // White behind it: most logos are drawn for a light page.
-          'flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-sm border bg-white',
+          'flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-sm',
           className,
         )}
       >
@@ -121,7 +122,11 @@ export function ProjectSelect({
   const shown = projects.filter((p) => !p.archivedAt || p.id === value)
   return (
     <Select value={value || 'all'} onValueChange={(v) => onChange(v === 'all' ? '' : v)}>
-      <SelectTrigger id={id} className={cn('w-full sm:w-56', className)}>
+      <SelectTrigger
+        id={id}
+        aria-label={id ? undefined : 'Project'}
+        className={cn('w-full sm:w-56', className)}
+      >
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -189,6 +194,12 @@ export async function shrinkLogo(dataUrl: string): Promise<string | null> {
   canvas.getContext('2d')?.drawImage(image, 0, 0, canvas.width, canvas.height)
   const png = canvas.toDataURL('image/png')
   return png.length * 0.75 <= PROJECT_LOGO_MAX ? png : null
+}
+
+/** Upload a logo (a data URL, as shrinkLogo gives) to the bucket: what a project or the workspace takes as its logo. */
+export async function uploadLogo(dataUrl: string): Promise<string> {
+  const upload = await uploadFile('logo', blobOfDataUrl(dataUrl), { name: 'logo' })
+  return `${LOGO_UPLOAD}${upload.id}`
 }
 
 type Step = 'waiting' | 'active' | 'done' | 'missed'
@@ -370,7 +381,7 @@ export function NewProjectDialog({
           name: name.trim(),
           brief: brief.trim(),
           ...(looksLikeSite(url) && { url: siteUrl(url) }),
-          ...(logo && { logo }),
+          ...(logo && { logo: await uploadLogo(logo) }),
         },
       })
       await reloadProjects()
@@ -536,19 +547,20 @@ export function NewProjectDialog({
 export function ProjectLogoPreview({ logo, onRemove }: { logo: string; onRemove: () => void }) {
   return (
     <span className="group relative flex-none">
-      <span className="flex size-9 items-center justify-center overflow-hidden rounded-md border bg-white">
+      <span className="flex size-9 items-center justify-center overflow-hidden rounded-md">
         {/* eslint-disable-next-line @next/next/no-img-element -- a data URL or a stored logo */}
         <img src={logo} alt="Logo" className="size-full object-contain" />
       </span>
-      <button
-        type="button"
-        onClick={onRemove}
-        title="Use the letter instead"
-        aria-label="Remove the logo"
-        className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full border bg-background text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
-      >
-        <X className="size-3" aria-hidden />
-      </button>
+      <Hint label="Use the letter instead">
+        <button
+          type="button"
+          onClick={onRemove}
+          aria-label="Remove the logo"
+          className="absolute -top-1.5 -right-1.5 flex size-4 items-center justify-center rounded-full border bg-background text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
+        >
+          <X className="size-3" aria-hidden />
+        </button>
+      </Hint>
     </span>
   )
 }
@@ -584,23 +596,24 @@ export function ThreadProjectMenu({
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-md px-1 hover:bg-accent hover:text-foreground"
-            title={error ?? 'Move to a project'}
-          >
-            {project ? (
-              <>
-                <ProjectIcon project={project} className="size-4 text-[0.625rem]" />
-                <span className="font-medium text-foreground">{project.name}</span>
-              </>
-            ) : (
-              'No project'
-            )}
-            <ChevronDown className="size-3.5 opacity-60" aria-hidden />
-          </button>
-        </DropdownMenuTrigger>
+        <Hint label={error ?? 'Move to a project'}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-md px-1 hover:bg-accent hover:text-foreground"
+            >
+              {project ? (
+                <>
+                  <ProjectIcon project={project} className="size-4 text-[0.625rem]" />
+                  <span className="font-medium text-foreground">{project.name}</span>
+                </>
+              ) : (
+                'No project'
+              )}
+              <ChevronDown className="size-3.5 opacity-60" aria-hidden />
+            </button>
+          </DropdownMenuTrigger>
+        </Hint>
         <DropdownMenuContent align="start" className="w-56">
           <DropdownMenuLabel className="text-xs text-muted-foreground">Move to</DropdownMenuLabel>
           {pickable.map((p) => (

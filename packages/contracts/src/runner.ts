@@ -3,8 +3,22 @@ import { z } from 'zod'
 import { ThreadAttachmentRef } from './attachments.js'
 import { CredentialUse, TeammateCredentialSave } from './credentials.js'
 import { TeammateDesignSystem, ThreadDesignSystem } from './design.js'
-import { QuestionAnswer, ReplyTo, SequencedEvent, TicketAnswer } from './events.js'
-import { LibraryAccess, LibraryPath, MemoryEdit } from './library.js'
+import { QuestionAnswer, ReplyTo, SequencedEvent, TicketAnswer, TokenCounts } from './events.js'
+import {
+  FILE_VIEW_MAX,
+  LibraryAccess,
+  LibraryPath,
+  MemoryEdit,
+  MemoryFileRef,
+  NO_MEMORY_EDIT,
+  CODE_FIND_MAX,
+  CODE_CHANGES_MAX,
+  CODE_LIST_MAX,
+  CodeChange,
+  CodeEntry,
+  SourceMatch,
+} from './library.js'
+import { MemoryLayout } from './memory.js'
 import {
   PROJECT_LOGO_CANDIDATES_MAX,
   PROJECT_SITE_TEXT_MAX,
@@ -14,20 +28,61 @@ import {
 import {
   PREVIEW_PORTS_MAX,
   PreviewAction,
+  PreviewMachineAction,
   PreviewOperation,
   PreviewPort,
   PreviewStartOutcome,
+  SshPublicKey,
 } from './previews.js'
 import { ThreadPlaybook } from './playbooks.js'
 import { ScheduleOperation } from './schedules.js'
 import { SkillProposal, ThreadSkill } from './skills.js'
-import { TaskOperation } from './tasks.js'
+import { TaskOperation } from './legacy-tasks.js'
 import { TeammateKind } from './chief.js'
+import { UsageRunKind } from './usage.js'
 
 /** Longest clipboard text carried between a person's browser and a desktop. */
 export const CLIPBOARD_MAX = 1_000_000
 
-export const HarnessId = z.enum(['claude_code', 'codex'])
+/**
+ * A login's provider: the vendor CLI it signs in with (Claude Code, Codex, or Antigravity's `agy`
+ * for a Google account, behind the antigravity_harness feature).
+ */
+export const HarnessId = z.enum(['claude_code', 'codex', 'antigravity'])
+
+/**
+ * What runs a teammate's turns. Claude Code, Codex and Antigravity (Google's `agy acp`, behind the
+ * antigravity_harness feature) are each their own login's CLI. Pi (behind the pi_harness feature)
+ * runs inside the runner on one of the Claude or Codex logins, the one its model is from (loginOf
+ * in models.ts). A new harness goes here, with its login in loginOf.
+ */
+export const TeammateHarness = z.enum(['claude_code', 'codex', 'pi', 'antigravity'])
+export type TeammateHarness = z.infer<typeof TeammateHarness>
+
+/** Most responses in one usage.responses. */
+export const LOGGED_RESPONSES_MAX = 500
+
+/**
+ * One model response of a teammate's turn in a thread, from the harness's own session log: named
+ * by the id its provider gave it, with what it spent. Input counts the cache's reads and writes.
+ */
+export const LoggedResponse = z.object({
+  id: z.string().min(1).max(200),
+  sessionId: z.string().min(1).max(64),
+  teammateId: z.string().min(1).max(64),
+  /** The account it ran on; unset for the computer's own login (a member's machine). */
+  accountId: z.string().min(1).max(64).optional(),
+  provider: HarnessId,
+  model: z.string().max(200).optional(),
+  /** When the response came. */
+  at: z.iso.datetime(),
+  inputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  reasoningTokens: z.number().int().nonnegative(),
+})
+export type LoggedResponse = z.infer<typeof LoggedResponse>
 export type HarnessId = z.infer<typeof HarnessId>
 
 /**
@@ -47,6 +102,17 @@ export const AccountRef = z.object({
 export type AccountRef = z.infer<typeof AccountRef>
 
 /** A connection the teammate is granted, as tools. Never its credential. */
+/**
+ * Set on a catalog the API could not list now (an MCP server down or signed out): empty for this
+ * turn, and not to be kept, so the next turn asks again.
+ */
+export const CATALOG_INCOMPLETE_HEADER = 'x-brigade-catalog-incomplete'
+/**
+ * Set beside CATALOG_INCOMPLETE_HEADER when the server refused the account (an expired key): its
+ * owner must reconnect it, where an incomplete catalog alone means the server did not answer.
+ */
+export const CATALOG_SIGNED_OUT_HEADER = 'x-brigade-catalog-signed-out'
+
 export const ConnectorGrant = z.object({
   connectionId: z.string(),
   /** gmail, google_calendar, google_drive, google_docs, google_sheets, google_search_console, google_analytics, stripe, github, or an MCP App's kind such as cloudflare (MCP_PROTOCOL). */
@@ -54,6 +120,21 @@ export const ConnectorGrant = z.object({
   label: z.string(),
   externalAccount: z.string().nullable(),
   scope: z.enum(['read', 'read_write']),
+  /**
+   * Why the teammate cannot use this account now, told in its instructions so that it asks for a
+   * reconnect, or says the App is down, rather than work around tools it cannot find. signed_out:
+   * the provider refused it (the API sets it from the account's state, the runner from its
+   * catalog, CATALOG_SIGNED_OUT_HEADER). unreachable: its MCP server did not list its tools now
+   * (the runner, from CATALOG_INCOMPLETE_HEADER). Ignored by older runners.
+   */
+  unavailable: z.enum(['signed_out', 'unreachable']).optional(),
+  /**
+   * CATALOG_PROTOCOL: `operations` is left empty and the runner fetches them, the App's catalog
+   * for this scope (GET /runner/catalogs/<connectionId>?scope=<scope>&version=<version>), then
+   * keeps them while `version` is the same. An MCP App's tools come from its server: what it
+   * lists can change without any version here, so its version also turns over each hour.
+   */
+  catalog: z.object({ version: z.string().min(1).max(200) }).optional(),
   operations: z.array(
     z.object({
       name: z.string(),
@@ -65,6 +146,11 @@ export const ConnectorGrant = z.object({
        * (e.g. an email's attachments). The runner uploads them and passes their ids.
        */
       filesField: z.string().optional(),
+      /**
+       * Every such field, when there are several (an MCP tool's paths of files it gets links to,
+       * the API's file-links.ts): the runner uploads each one's. Without it, filesField alone.
+       */
+      filesFields: z.array(z.string()).optional(),
     }),
   ),
 })
@@ -84,6 +170,15 @@ export const GitAccess = z.object({
 })
 export type GitAccess = z.infer<typeof GitAccess>
 
+/**
+ * The parts of a thread's spec that can be large and change seldom, sent by reference from
+ * SPEC_PARTS_PROTOCOL on: a connector's operations carry their input schemas, a skill its
+ * instructions, a project its memory. Commands stay small whatever a workspace has granted.
+ */
+export const SPEC_PARTS = ['connectors', 'skills', 'project', 'designSystems'] as const
+export type SpecPart = (typeof SPEC_PARTS)[number]
+const PartHash = z.string().regex(/^[0-9a-f]{64}$/)
+
 /** What a runner needs to start or continue a thread. Never a secret, except git's proxy token. */
 export const ThreadSpec = z.object({
   sessionId: z.string(),
@@ -91,12 +186,18 @@ export const ThreadSpec = z.object({
     id: z.string(),
     name: z.string(),
     instructions: z.string(),
-    harness: HarnessId,
+    harness: TeammateHarness,
     model: z.string().nullable(),
     kind: TeammateKind.default('teammate'),
   }),
   /** The thread's effort for every teammate in it; null: the harness's default. */
   effort: Effort.nullable().default(null),
+  /**
+   * After each turn, the harness guesses what the person may write next (message.suggested).
+   * Set on Claude Code, in a thread a member started who keeps suggestions on: the guess
+   * counts toward their account's usage.
+   */
+  suggestions: z.boolean().default(false),
   /** allow-reads: ask before writes and commands. allow-all: never ask. */
   permissionMode: z.enum(['allow-reads', 'allow-edits', 'allow-all']),
   /** The account to run on, then the starter's other accounts with usage left, in order. */
@@ -136,16 +237,111 @@ export const ThreadSpec = z.object({
   playbook: ThreadPlaybook.nullish(),
   /** Set in a child thread: the thread it was started from, which its report goes to. */
   parent: z.object({ id: z.string(), title: z.string() }).nullish(),
+  /**
+   * The person of the thread has Chief's daily pass on, and Chief acts on their rules (the
+   * chief_acts feature, docs/chief-answers.md): Chief may answer their teammates' questions in their
+   * name. Teammates are told what such an answer is. Unset: nothing of it, as before.
+   */
+  chiefAnswers: z.boolean().default(false),
+  /**
+   * The rules of the person the thread works for (docs/chief-answers.md), in their words, when
+   * Chief acts on them (chief_acts): the teammate decides what they settle, and asks them only the
+   * rest. Unset: none, as before; while rules are calibrated, only Chief's pass reads them.
+   */
+  rules: z.object({ person: z.string(), text: z.string() }).nullish(),
+  /**
+   * Whether the person's rules act (chief_acts): what Chief tells them of their rules and pass.
+   * Unset: they do not, and the pass only recommends.
+   */
+  rulesAct: z.boolean().nullish(),
+  /**
+   * CHIEF_PASS_PROTOCOL: Chief's thread going through what waits on its person, by its pass's id.
+   * acts: it may answer and retry in their name (chief_acts); else, and when unset, it only
+   * recommends.
+   */
+  pass: z.object({ id: z.string(), acts: z.boolean().optional() }).nullish(),
+  /**
+   * What started the thread: a person, a trigger's event, a schedule's run or another thread.
+   * Schedules, triggers and wake-ups are set up only where a person started it, and a merge wakes
+   * only a thread a person or a trigger started. Older APIs leave it out: read as a person's.
+   */
+  origin: z.enum(['member', 'trigger', 'schedule', 'child']).nullish(),
+  /**
+   * The thread has a machine of its own beside the cloud computer (the preview_machines feature,
+   * which its starter turned on): its preview runs there, and its teammates run heavy commands
+   * there (run_on_machine). Older APIs leave it out: none, as before.
+   */
+  machine: z.boolean().default(false),
+  /**
+   * The thread's starter has Tools (the tools feature, docs/tools.md): its teammates may make
+   * them. Older APIs leave it out: none.
+   */
+  tools: z.boolean().default(false),
+  /**
+   * The mission the thread works for (docs/missions.md), when its starter has the missions feature:
+   * its teammates plan actions and record what went out there. Older APIs leave it out: none.
+   */
+  /**
+   * Its starter has Missions (the missions feature): in a thread a person started, at the top, its
+   * teammate may make one of the work delegated there (create_mission). Older APIs leave it out.
+   */
+  missions: z.boolean().default(false),
+  /**
+   * Its starter has Themes (the themes feature, docs/themes.md): in a thread a person started, its
+   * teammates may restyle the starter's dashboard (theme_read, theme_set…). Older APIs leave it out.
+   */
+  themes: z.boolean().default(false),
+  /**
+   * The App kinds closed to its starter (a feature they lack, src/features.ts in the API): list_apps
+   * leaves them out, and the runner refuses an access ticket that asks for one, which nobody could
+   * grant. Older APIs leave it out: none closed.
+   */
+  closedApps: z.array(z.string()).default([]),
+  /**
+   * The harnesses teammates may run on for its starter: Claude Code and Codex, and those their
+   * features open (pi_harness, antigravity_harness). The instructions name them, so a teammate
+   * never takes its own harness for the only one. Older APIs leave it out: Claude Code and Codex.
+   */
+  harnesses: z.array(TeammateHarness).default([]),
+  mission: z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      objective: z.string(),
+      /** Its owner, the teammate it is delegated to. */
+      teammate: z.object({ id: z.string(), name: z.string() }),
+      /** Its number, when it follows one. */
+      number: z.object({ label: z.string(), unit: z.string().nullable() }).nullable(),
+    })
+    .nullish(),
   /** Set when the teammate is granted a GitHub connection: its repositories through git. */
   git: GitAccess.optional(),
   /** Every file given to the thread so far: each is put in the teammate's working folder before its turn. */
   attachments: z.array(ThreadAttachmentRef).default([]),
-  /** The task this thread works on, if it is one. */
-  task: z.object({ id: z.string(), title: z.string(), description: z.string() }).nullish(),
+  /**
+   * The list items it works on (docs/lists.md): lines of library files, by id, with the library
+   * paths of the files under each (documentFilePath).
+   */
+  items: z
+    .array(
+      z.object({
+        id: z.string(),
+        path: z.string(),
+        text: z.string(),
+        done: z.boolean(),
+        files: z.array(z.string()).optional(),
+      }),
+    )
+    .nullish(),
   /** The workspace's design systems, for designs the teammate makes. */
   designSystems: z.array(ThreadDesignSystem).default([]),
   /** The workspace's skills that apply to this thread (enabled, and for its teammate and project). */
   skills: z.array(ThreadSkill).default([]),
+  /**
+   * Brigade's own skills an admin turned off for the workspace (BUILTIN_SKILLS, `switchable`): the
+   * runner leaves them out, and the instructions that point to them. Older APIs leave it out: all on.
+   */
+  builtinSkillsOff: z.array(z.string()).default([]),
   /** The project the thread works in: its brief, memory, folder and repositories. */
   project: ThreadProject.nullish(),
   /** The workspace's projects (not archived), so a mention of one can be followed. */
@@ -168,8 +364,60 @@ export const ThreadSpec = z.object({
       seq: z.number().int().nonnegative(),
     })
     .nullish(),
+  /**
+   * SPEC_PARTS_PROTOCOL: these parts are left empty above and named by the SHA-256 of their JSON
+   * instead; the runner fetches each (GET /runner/spec-parts/<sha256>) and fills it in before
+   * anything reads the spec.
+   */
+  parts: z.partialRecord(z.enum(SPEC_PARTS), PartHash).optional(),
 })
 export type ThreadSpec = z.infer<typeof ThreadSpec>
+
+/** Work a teammate had running in the background in a thread (a shell, a Monitor, an agent). */
+export const BackgroundWork = z.object({
+  kind: z.enum(['agent', 'command']),
+  description: z.string().max(500),
+})
+export type BackgroundWork = z.infer<typeof BackgroundWork>
+
+/**
+ * A thread folder's backup is in the bucket (POST /runner/folders/<thread>/<teammate>/backup/done):
+ * its size, what ran in the background then, and the thread's arrival the folder holds (the
+ * ThreadSpec.moved it took in; none if it never moved), so a folder not yet taken in never
+ * replaces the backup it should come from.
+ */
+export const FolderBackupDone = z.object({
+  size: z.number().int().positive(),
+  background: z.array(BackgroundWork).max(50).default([]),
+  arrived: z.string().max(40).optional(),
+})
+export type FolderBackupDone = z.infer<typeof FolderBackupDone>
+
+/** A teammate's backups (POST /runner/teammates/<teammate>/backups/<kind>): its crontab and user services, its browser. */
+export const TEAMMATE_BACKUP_KINDS = ['tasks', 'browser'] as const
+export type TeammateBackupKind = (typeof TEAMMATE_BACKUP_KINDS)[number]
+
+/** The files of an account's login, as backed up in the vault (POST /runner/accounts/<id>/login). */
+export const ACCOUNT_LOGIN_FILES = [
+  '.oauth-token',
+  '.credentials.json',
+  'auth.json',
+  // Antigravity's Google login (antigravity.ts), kept beside the account's folder by the runner.
+  'antigravity-oauth-token',
+] as const
+export const AccountLogin = z.object({
+  files: z
+    .array(
+      z.object({
+        name: z.enum(ACCOUNT_LOGIN_FILES),
+        /** base64 */
+        content: z.string().max(100_000),
+      }),
+    )
+    .max(ACCOUNT_LOGIN_FILES.length),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+})
+export type AccountLogin = z.infer<typeof AccountLogin>
 
 // Runner -> API
 export const RunnerToApi = z.discriminatedUnion('type', [
@@ -210,14 +458,89 @@ export const RunnerToApi = z.discriminatedUnion('type', [
     type: z.literal('events.waiting'),
     threads: z.array(z.object({ sessionId: z.string(), since: z.iso.datetime() })).max(1000),
   }),
+  /**
+   * A goal's command measurement is done (GOAL_PROTOCOL, goal.measure): its exit code (null when it
+   * could not run or timed out) and the end of what it printed. Sent once; the API gives up on one
+   * that never comes.
+   */
+  z.object({
+    type: z.literal('goal.measured'),
+    measureId: z.string(),
+    sessionId: z.string(),
+    exitCode: z.number().int().nullable(),
+    output: z.string().max(8_000),
+    error: z.string().max(2_000).optional(),
+  }),
   /** Still here, every 30 s: the API forgets a runner it stops hearing from (HEARTBEAT_PROTOCOL). */
   z.object({ type: z.literal('heartbeat') }),
+  /**
+   * Still here, every 30 s, instead of heartbeat (KEEPALIVE_PROTOCOL): sent exactly as KEEPALIVE,
+   * a workspace's hub object answers it with the same without waking (setWebSocketAutoResponse),
+   * and knows when it last did.
+   */
+  z.object({ type: z.literal('keepalive') }),
+  /**
+   * A cloud computer's disk after the runner freed what it could (DISK_PROTOCOL): still
+   * full, and how full (0 to 1). Said when that changes and every 10 minutes. While full, the
+   * largest entries of teammates' homes, largest first: what an operator would free by hand.
+   * An older runner leaves them out.
+   */
+  z.object({
+    type: z.literal('disk'),
+    full: z.boolean(),
+    used: z.number().min(0).max(1),
+    largest: z
+      .array(z.object({ path: z.string().max(1000), bytes: z.number().int().nonnegative() }))
+      .max(20)
+      .optional(),
+  }),
+  /**
+   * Abuse seen on a cloud computer (the runner's abuse.ts, docs/abuse.md), said when there is
+   * some, every 2 minutes at most: what the egress limits stopped since the last report, in
+   * packets; miners found among teammates' processes, and whether they were killed; teammates
+   * whose processes keep most of the CPU for long. For Brigade's operators (the abuse: alert).
+   */
+  z.object({
+    type: z.literal('abuse'),
+    blocked: z.object({
+      smtp: z.number().int().nonnegative(),
+      metadata: z.number().int().nonnegative(),
+      scan: z.number().int().nonnegative(),
+      mining: z.number().int().nonnegative(),
+    }),
+    miners: z
+      .array(
+        z.object({
+          user: z.string().max(64),
+          pid: z.number().int().nonnegative(),
+          command: z.string().max(300),
+          /** Its program's name, killed; or only an argument, told and left running. */
+          evidence: z.enum(['name', 'arguments']).optional(),
+          killed: z.boolean(),
+        }),
+      )
+      .max(50),
+    cpu: z
+      .array(
+        z.object({
+          user: z.string().max(64),
+          share: z.number().nonnegative(),
+          minutes: z.number().nonnegative(),
+        }),
+      )
+      .max(50),
+  }),
   /**
    * The runner restarts into an update and hands its turns over to the next one (protocol 29):
    * until that one connects, the API holds the computer's commands, and it stays online.
    */
   z.object({ type: z.literal('runner.restarting') }),
   z.object({ type: z.literal('command.failed'), commandId: z.string(), error: z.string() }),
+  /**
+   * The commands it took, by commandId (OUTBOX_PROTOCOL): the API stops sending them again. Also
+   * sent for one it had seen already, which it ignored.
+   */
+  z.object({ type: z.literal('command.ack'), commandIds: z.array(z.string()).min(1).max(500) }),
   z.object({ type: z.literal('terminal.output'), terminalId: z.string(), data: z.string() }),
   z.object({
     type: z.literal('terminal.exit'),
@@ -255,6 +578,52 @@ export const RunnerToApi = z.discriminatedUnion('type', [
     /** An image's bytes, base64, when asked for one. */
     data: z.string().optional(),
     truncated: z.boolean().optional(),
+    /** A whole text file's SHA-256 (CODE_EDIT_PROTOCOL), for a save to name. */
+    hash: z.string().optional(),
+  }),
+  /** A file written for thread.file.write, or why not: `conflict` when it changed since `base`. */
+  z.object({
+    type: z.literal('thread.file.written'),
+    requestId: z.string(),
+    ok: z.boolean(),
+    error: z.string().optional(),
+    conflict: z.boolean().optional(),
+    hash: z.string().optional(),
+  }),
+  /** Where thread.source.find found the text, best first. */
+  z.object({
+    type: z.literal('thread.source.result'),
+    requestId: z.string(),
+    ok: z.boolean(),
+    error: z.string().optional(),
+    matches: z.array(SourceMatch).max(20).optional(),
+  }),
+  /** What thread.code found, or why not. */
+  z.object({
+    type: z.literal('thread.code.result'),
+    requestId: z.string(),
+    ok: z.boolean(),
+    error: z.string().optional(),
+    /** list: the folder's entries, folders first; `more` when cut at CODE_LIST_MAX. */
+    entries: z.array(CodeEntry).max(CODE_LIST_MAX).optional(),
+    more: z.boolean().optional(),
+    /** find: files whose path holds the query, best first. */
+    files: z.array(z.string()).max(CODE_FIND_MAX).optional(),
+    /** grep: lines holding the query. */
+    matches: z.array(SourceMatch).max(CODE_FIND_MAX).optional(),
+    /** hashes: each path's SHA-256, null when it is gone or no longer a text file to edit. */
+    hashes: z.record(z.string(), z.string().nullable()).optional(),
+    /**
+     * changes: files that differ from where their repository's branch left its default
+     * branch (`base`), else from its last commit; `more` when cut at CODE_CHANGES_MAX.
+     */
+    changes: z.array(CodeChange).max(CODE_CHANGES_MAX).optional(),
+    /** changes: the last commits of the folder's repositories (and their bases), to see when one is made. */
+    head: z.string().optional(),
+    /** changes, revert: the default branch they compare to, or were put back as ("main"); unset: their last commits. */
+    base: z.string().optional(),
+    /** original: the file as changes compares it to; null when it is in none. */
+    original: z.string().nullable().optional(),
   }),
   /** A thread handed over after thread.release: its folders archived and gone from here, or why not. */
   z.object({
@@ -262,6 +631,24 @@ export const RunnerToApi = z.discriminatedUnion('type', [
     requestId: z.string(),
     ok: z.boolean(),
     error: z.string().optional(),
+  }),
+  /** A computer.backup is done (BACKUP_PROTOCOL): `error` says what could not be backed up. */
+  z.object({
+    type: z.literal('computer.backup.result'),
+    requestId: z.string(),
+    ok: z.boolean(),
+    error: z.string().max(4000).optional(),
+  }),
+  /**
+   * The welcome's restore is done (BACKUP_PROTOCOL): what could not come back, by teammate
+   * (each is told at its next turn too).
+   */
+  z.object({
+    type: z.literal('computer.restored'),
+    id: z.string(),
+    problems: z
+      .array(z.object({ teammateId: z.string().optional(), text: z.string().max(1000) }))
+      .max(200),
   }),
   /** The desktop's clipboard text after a desktop.clipboard command, or why it failed. */
   z.object({
@@ -318,13 +705,22 @@ export const RunnerToApi = z.discriminatedUnion('type', [
         query: z.string().trim().min(1).max(500),
         limit: z.number().int().min(1).max(20).default(8),
       }),
-      z.object({
-        name: z.literal('save'),
-        path: LibraryPath,
-        /** The file's bytes, base64. */
-        content: z.string(),
-        contentType: z.string().max(200).optional(),
-      }),
+      z
+        .object({
+          name: z.literal('save'),
+          path: LibraryPath,
+          /** The file, uploaded for the library first (POST /runner/uploads, then its complete). */
+          upload: z.object({ id: z.string().min(1).max(64) }).optional(),
+          /**
+           * The file's bytes, base64: runners before DIRECT_UPLOAD_PROTOCOL only. Remove once
+           * MIN_PROTOCOL_VERSION reaches it.
+           */
+          content: z.string().optional(),
+          contentType: z.string().max(200).optional(),
+        })
+        .refine((op) => (op.upload === undefined) !== (op.content === undefined), {
+          message: 'an upload or the content, one of them',
+        }),
       /** Move or rename a file, or a folder with everything in it. */
       z.object({ name: z.literal('move'), path: LibraryPath, to: LibraryPath }),
       /** Put a file, or a folder with everything in it, in the trash. */
@@ -335,11 +731,16 @@ export const RunnerToApi = z.discriminatedUnion('type', [
       z.object({ name: z.literal('design_edits'), path: LibraryPath }),
       /** Propose a skill, or a change to one: it waits for a person's approval in a ticket. */
       z.object({ name: z.literal('skill_proposal'), proposal: SkillProposal }),
+      /**
+       * A tool's state (docs/tools.md): its shared keys, and those of the person the thread works
+       * for. Read only.
+       */
+      z.object({ name: z.literal('tool_state'), path: LibraryPath }),
     ]),
   }),
   /**
-   * A teammate creates a task from its thread, or marks the thread's task
-   * done. The API checks the thread and teammate. Answered like a connector call.
+   * A task tool of a runner before protocol 52 (the Tasks board is gone): the API answers it with
+   * what replaced it (src/legacy-tasks.ts). Answered like a connector call.
    */
   z.object({
     type: z.literal('task.call'),
@@ -386,6 +787,26 @@ export const RunnerToApi = z.discriminatedUnion('type', [
     teammateId: z.string().optional(),
     operation: PreviewOperation,
   }),
+  /**
+   * The thread's preview machine (preview_machines, docs/previews.md), on a cloud computer.
+   * up: made or started, the runner's key let in, answered like a connector call with
+   * PreviewMachineUp ({ machine: null } runs the preview on the computer as before). sleep:
+   * stopped, its disk kept. touch: still in use. An API before it answers that it could not read
+   * the call, and the runner runs the preview on the computer.
+   */
+  z.object({
+    type: z.literal('preview.machine'),
+    callId: z.string(),
+    sessionId: z.string(),
+    action: PreviewMachineAction,
+    /**
+     * touch: a command runs there (machine-runs.ts), which the runner follows and whose files it
+     * brings back: its computer stays up meanwhile, as with a thread running. Older APIs ignore it.
+     */
+    busy: z.boolean().optional(),
+    /** up: the runner's key, let into the machine. */
+    publicKey: SshPublicKey.optional(),
+  }),
   /** What came of preview.start, or why it could not. */
   z.object({
     type: z.literal('preview.start.result'),
@@ -401,6 +822,11 @@ export const RunnerToApi = z.discriminatedUnion('type', [
     ok: z.boolean(),
     error: z.string().optional(),
     text: z.string().optional(),
+    /**
+     * Where a person opens it on a member's machine (http://<thread>.localhost:<port>); unset
+     * from runners before it, whose previews open at localhost.
+     */
+    origin: z.string().max(200).optional(),
   }),
   /** The brief, name and logo project.describe asked for, or why not. */
   z.object({
@@ -422,13 +848,26 @@ export const RunnerToApi = z.discriminatedUnion('type', [
     type: z.literal('memory.update'),
     sessionId: z.string(),
     summary: z.string().trim().min(1).max(4000),
-    workspace: MemoryEdit.default({ add: [], remove: [] }),
+    workspace: MemoryEdit.default(NO_MEMORY_EDIT),
     /** For the thread's project's memory; unset when it has none. */
     project: MemoryEdit.optional(),
     teammates: z
       .array(z.object({ teammateId: z.string(), edit: MemoryEdit }))
       .max(10)
       .default([]),
+  }),
+  /**
+   * A memory file laid out again by a tidy run, on the account of a thread that
+   * went quiet: its core within budget, the rest in topics, repeats merged, what
+   * is outdated archived. `lastTidied` is when the file was last tidied as the
+   * run saw it: the API drops the layout if it was tidied again since.
+   */
+  z.object({
+    type: z.literal('memory.tidy'),
+    sessionId: z.string(),
+    file: MemoryFileRef,
+    lastTidied: z.string().nullable(),
+    layout: MemoryLayout,
   }),
   /**
    * A teammate's reply mentioned others in the thread: they answer next, in
@@ -452,6 +891,29 @@ export const RunnerToApi = z.discriminatedUnion('type', [
     from: z.string(),
     title: z.string().trim().min(1).max(120),
   }),
+  /**
+   * What a harness run outside a teammate's turn spent (UsageRunKind): a thread's memory, its
+   * title, a project's brief, an image. On the account it ran on; the thread it was for, if any.
+   */
+  z.object({
+    type: z.literal('usage.run'),
+    kind: UsageRunKind,
+    accountId: z.string(),
+    sessionId: z.string().optional(),
+    teammateId: z.string().optional(),
+    at: z.iso.datetime(),
+    ...TokenCounts.shape,
+  }),
+  /**
+   * What a teammate's turns spent, response by response, as the harness's own session log on the
+   * computer records it (apps/runner/src/usage-logs.ts). Sent again, a response counts once.
+   * Answered with connector.result, after which the runner moves past them.
+   */
+  z.object({
+    type: z.literal('usage.responses'),
+    callId: z.string(),
+    responses: z.array(LoggedResponse).max(LOGGED_RESPONSES_MAX),
+  }),
 ])
 export type RunnerToApi = z.infer<typeof RunnerToApi>
 
@@ -474,6 +936,11 @@ export const ThreadPrompt = z.object({
   messageId: z.string().max(64).optional(),
   /** Give it to the first teammate during its running turn, if it is running one; else queue it. */
   steer: z.boolean().optional(),
+  /**
+   * Answered on the side already (message.side), and sent again by a person who wants it run
+   * after all: it gets no side reply again.
+   */
+  settled: z.boolean().optional(),
   /** The earlier message it replies to: quoted to the teammate, shown above it. */
   replyTo: ReplyTo.optional(),
   /**
@@ -487,12 +954,49 @@ export type ThreadPrompt = z.infer<typeof ThreadPrompt>
 /** A raw event's source for a thread.note: settles what was asked before it, as a reply does. */
 export const THREAD_NOTE_SOURCE = 'note'
 
+/**
+ * A raw event's source for a turn that waits for a free slot on its computer, the runner
+ * running as many turns as it may at once: its value is a TurnWaiting. Its turn.started ends the wait.
+ */
+export const TURN_WAITING_SOURCE = 'turn.waiting'
+export type TurnWaiting = { teammateId: string; running: number }
+
+/**
+ * A raw event's source for a turn that waits for its computer to have memory for it (the
+ * runner's memoryRoom), said as soon as it waits: its value is a TurnWaitingMemory. Its
+ * turn.started ends the wait. A dashboard that does not know it shows nothing of it.
+ */
+export const TURN_MEMORY_SOURCE = 'turn.memory'
+export type TurnWaitingMemory = { teammateId: string }
+
+/**
+ * A raw event's source for a turn that gets its thread's files ready before it starts: the
+ * folder it brings from the computer the thread left, the files attached to the thread. Its
+ * value is a TurnPreparing; its turn.started ends it, or, when no turn follows (a thread taken
+ * back after a restart that waits on a person), another with done.
+ */
+export const TURN_PREPARING_SOURCE = 'turn.preparing'
+export type TurnPreparing = { teammateId: string; done?: boolean }
+
+/**
+ * A raw event's source for the teammates whose turns wait to answer after another teammate's
+ * (a handoff, a message to several), in the order they answer: its value is a TurnNext, sent
+ * each time that list changes, empty once the last of them started. A dashboard that does not
+ * know it shows nothing of it.
+ */
+export const TURN_NEXT_SOURCE = 'turn.next'
+export type TurnNext = { teammateIds: string[] }
+
 export const ApiToRunner = z.discriminatedUnion('type', [
+  /** The answer to a keepalive (RunnerToApi), from a hub object that did not wake for it. */
+  z.object({ type: z.literal('keepalive') }),
   /** bundle: the SHA-256 of the runner bundle the API serves; a runner with another one updates. */
   z.object({
     type: z.literal('welcome'),
     runnerId: z.string(),
     computerId: z.string(),
+    /** Its workspace: the runner names it when it connects (KEEPALIVE_PROTOCOL), to reach its hub. */
+    workspaceId: z.string().optional(),
     bundle: z.string().optional(),
     /** Threads the API has as running here. One with no turn here was lost to a restart. */
     runningThreads: z.array(z.string()).optional(),
@@ -506,9 +1010,45 @@ export const ApiToRunner = z.discriminatedUnion('type', [
     resume: z.array(ThreadSpec).optional(),
     /** Protocol 16: of the queued messages, those to queue again when lost, in order. The others are cancelled. */
     requeue: z.array(ThreadPrompt).optional(),
+    /**
+     * BACKUP_PROTOCOL: this computer replaces another. Before any turn or browser starts, the
+     * runner puts back what Brigade backed up there: account logins, then each teammate's crontab,
+     * user services and browser profile. Answered with computer.restored; sent again on each
+     * hello until then, and done once per id.
+     */
+    restore: z
+      .object({
+        id: z.string(),
+        /** The teammates whose backups to put back. */
+        teammateIds: z.array(z.string()).max(500),
+        /** The accounts of this computer whose logins to put back. */
+        accountIds: z.array(z.string()).max(500),
+        /**
+         * The thread folders backed up on this computer: those of a teammate with a crontab or
+         * user services come back before those start, as they may run in them.
+         */
+        folders: z
+          .array(z.object({ sessionId: z.string(), teammateId: z.string() }))
+          .max(10_000)
+          .default([]),
+      })
+      .optional(),
   }),
   /** The library or memory changed: fetch the manifest again. */
   z.object({ type: z.literal('library.changed') }),
+  /**
+   * Measure a goal (GOAL_PROTOCOL, docs/goals.md): run its contract's command in the thread's working
+   * folder of `teammateId`, as that teammate, at most `timeoutSeconds`; answered with goal.measured.
+   * Not a turn: the teammate does not see it.
+   */
+  z.object({
+    type: z.literal('goal.measure'),
+    measureId: z.string(),
+    sessionId: z.string(),
+    teammateId: z.string(),
+    command: z.string().min(1).max(2_000),
+    timeoutSeconds: z.number().int().min(10).max(1_800),
+  }),
   /**
    * Something happened in the thread outside a turn (NOTE_PROTOCOL), shown as a raw
    * event from THREAD_NOTE_SOURCE, e.g. its pull
@@ -532,6 +1072,18 @@ export const ApiToRunner = z.discriminatedUnion('type', [
     teammateIds: z.array(z.string()).min(1).max(20),
   }),
   /**
+   * Back up everything that lives only on this cloud computer's disk now (BACKUP_PROTOCOL): thread
+   * folders changed since their last backup, teammates' crontabs, user services and browser
+   * profiles (browsers closed first), account logins. Before an idle stop and a replacement;
+   * answered with computer.backup.result.
+   */
+  z.object({ type: z.literal('computer.backup'), requestId: z.string() }),
+  /**
+   * The thread was deleted (DELETE_PROTOCOL): its preview stops, and on a cloud
+   * computer the folders and containers its teammates had there go.
+   */
+  z.object({ type: z.literal('thread.deleted'), sessionId: z.string() }),
+  /**
    * A repository got a push on GitHub: bring the teammates' caches of it up to
    * date, if this computer has any. Each token is fetch-only, for a few minutes.
    */
@@ -553,6 +1105,53 @@ export const ApiToRunner = z.discriminatedUnion('type', [
     teammateIds: z.array(z.string()).min(1).max(10),
     path: z.string().min(1).max(1000),
     image: z.boolean().optional(),
+  }),
+  /**
+   * A person saves a text file of a teammate's working folder for the thread
+   * (CODE_EDIT_PROTOCOL): relative to it, or an absolute path inside it, never the
+   * library mirror. With `base`, only while the file's SHA-256 is still that.
+   */
+  z.object({
+    type: z.literal('thread.file.write'),
+    requestId: z.string(),
+    sessionId: z.string(),
+    teammateId: z.string(),
+    path: z.string().min(1).max(1000),
+    text: z.string().max(FILE_VIEW_MAX),
+    base: z.string().optional(),
+  }),
+  /**
+   * Find where an element of the thread's preview is written (CODE_EDIT_PROTOCOL):
+   * its text, searched in the preview's folder of the teammate's working folder.
+   */
+  z.object({
+    type: z.literal('thread.source.find'),
+    requestId: z.string(),
+    sessionId: z.string(),
+    teammateId: z.string(),
+    cwd: z.string().max(500),
+    text: z.string().min(1).max(500),
+    components: z.array(z.string().max(100)).max(8).optional(),
+  }),
+  /**
+   * The code panel's view of a teammate's working folder for the thread
+   * (CODE_TREE_PROTOCOL): a folder's entries (list, `path` relative to it, '' for
+   * itself), files by name (find), lines by text (grep), or open files' hashes, to
+   * see when one changed (hashes). From CODE_CHANGES_PROTOCOL on, the files that
+   * differ from the last commit of their repository (changes), a file as in that
+   * commit (original), and files put back as they are in it (revert); newer runners
+   * compare to where the branch left its default branch instead, and say so (base). Never
+   * outside the working folder.
+   */
+  z.object({
+    type: z.literal('thread.code'),
+    requestId: z.string(),
+    sessionId: z.string(),
+    teammateId: z.string(),
+    op: z.enum(['list', 'find', 'grep', 'hashes', 'changes', 'original', 'revert']),
+    path: z.string().max(1000).optional(),
+    query: z.string().max(200).optional(),
+    paths: z.array(z.string().max(1000)).max(CODE_CHANGES_MAX).optional(),
   }),
   /**
    * A person restarts or stops a thread's preview; touch: someone has it open,
@@ -613,6 +1212,21 @@ export const ApiToRunner = z.discriminatedUnion('type', [
     reason: z.string().optional(),
     memberId: z.string(),
   }),
+  /**
+   * A held call decided once no tool waited on it (the API's src/held-calls.ts): its approval, whose
+   * id is its ticket's, shows decided. It starts no turn: the thread hears the result apart.
+   */
+  z.object({
+    type: z.literal('thread.settle'),
+    commandId: z.string(),
+    sessionId: z.string(),
+    teammateId: z.string(),
+    approvalId: z.string(),
+    approved: z.boolean(),
+    memberId: z.string().nullable(),
+    /** The thread's latest arrival here (ThreadSpec.moved): taken in first, as a spec's is. */
+    moved: ThreadSpec.shape.moved,
+  }),
   /** A person's answer to the harness's question. */
   z.object({
     type: z.literal('thread.answer'),
@@ -629,6 +1243,15 @@ export const ApiToRunner = z.discriminatedUnion('type', [
     thread: ThreadSpec,
     requestId: z.string(),
     answer: TicketAnswer,
+    memberId: z.string(),
+  }),
+  /** A person asks the teammate whose turn failed to try it again (RETRY_PROTOCOL). */
+  z.object({
+    type: z.literal('thread.retry'),
+    commandId: z.string(),
+    thread: ThreadSpec,
+    /** The error the turn stopped on, as the thread shows it: the teammate is told it. */
+    error: z.string().max(10_000).optional(),
     memberId: z.string(),
   }),
   z.object({
@@ -650,14 +1273,17 @@ export const ApiToRunner = z.discriminatedUnion('type', [
   }),
   /**
    * A queued message: cancel it, change its text, or steer it into the
-   * teammate's running turn (it stays queued if that cannot be done).
+   * teammate's running turn (it stays queued if that cannot be done). From
+   * SIDE_REPLY_PROTOCOL, for a message answered on the side: keep, to leave it for after
+   * the turn rather than have it given to it; queue, to have one its side reply settled
+   * run after all (steer gives it to the running turn).
    */
   z.object({
     type: z.literal('thread.queued'),
     commandId: z.string(),
     sessionId: z.string(),
     messageId: z.string(),
-    action: z.enum(['cancel', 'edit', 'steer']),
+    action: z.enum(['cancel', 'edit', 'steer', 'keep', 'queue']),
     /** The new text, for edit. */
     text: z.string().max(100_000).optional(),
     memberId: z.string(),

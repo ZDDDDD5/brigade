@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { useApi, type RunLog, type RunLogEntry, type Thread } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { Hint } from '@/components/ui/tooltip'
 
 const SOURCES: { value: RunLogEntry['source']; label: string }[] = [
   { value: 'event', label: 'Thread' },
@@ -24,6 +25,7 @@ const ticketKind: Record<string, string> = {
   cap: 'reached-cap',
   sign_in: 'expired-login',
   usage_limit: 'out-of-usage',
+  disk_full: 'disk-full',
   question: 'question',
   request: 'ticket',
 }
@@ -280,8 +282,10 @@ export default function RunLogPage() {
         return {
           actor: who(d.memberId) ?? 'a member',
           what:
-            (d.answer as { action: string }).action === 'declined'
-              ? 'Declined the ticket'
+            (d.answer as { action: string; note?: string }).action === 'declined'
+              ? (d.answer as { note?: string }).note
+                ? 'Replied with something else'
+                : 'Declined the ticket'
               : 'Answered the ticket',
           detail: d.answer,
         }
@@ -289,13 +293,17 @@ export default function RunLogPage() {
         return {
           actor: who(d.memberId) ?? 'a member',
           what:
-            (d.answer as { action: string }).action === 'declined'
-              ? 'Declined the question'
+            (d.answer as { action: string; note?: string }).action === 'declined'
+              ? (d.answer as { note?: string }).note
+                ? 'Replied with something else'
+                : 'Declined the question'
               : 'Answered',
           detail: d.answer,
         }
       case 'turn.completed':
         return { actor: teammate, what: `Turn finished (${String(d.finishReason)})` }
+      case 'message.suggested':
+        return { actor: teammate, what: `Suggested a next message: ${clip(String(d.text))}` }
       case 'usage.updated':
         return { actor: teammate, what: 'Usage updated', detail: d }
       case 'error':
@@ -366,12 +374,11 @@ export default function RunLogPage() {
                 const { actor, what, detail } = describe(e)
                 return (
                   <TableRow key={`${e.source}${e.seq ?? ''}${i}`} className="hover:bg-transparent">
-                    <TableCell
-                      className="w-0 py-2.5 pl-4 align-top font-mono text-xs text-muted-foreground"
-                      title={new Date(e.at).toLocaleString()}
-                    >
-                      {new Date(e.at).toLocaleTimeString()}
-                    </TableCell>
+                    <Hint label={new Date(e.at).toLocaleString()}>
+                      <TableCell className="w-0 py-2.5 pl-4 align-top font-mono text-xs text-muted-foreground">
+                        {new Date(e.at).toLocaleTimeString()}
+                      </TableCell>
+                    </Hint>
                     <TableCell className="w-0 py-2.5 align-top text-muted-foreground">
                       {actor}
                     </TableCell>

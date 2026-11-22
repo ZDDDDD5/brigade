@@ -1,15 +1,16 @@
 // What happened to library files: the versions each save leaves, and the
-// trash. A version's bytes are kept in the bucket beside the file's own; a
-// trashed file keeps its row and bytes, under a path no live file can have,
-// until a restore or the sweep 30 days on.
-import { TRASH_DAYS, VERSIONS_KEPT, type LibraryActor } from '@brigade/contracts'
+// trash. A version points to the object of the save it records, the one the file
+// pointed to then (library-objects.ts); a trashed file keeps its row and bytes,
+// under a path no live file can have, until a restore or the sweep 30 days on.
+import { LIBRARY_READ_MAX, TRASH_DAYS, VERSIONS_KEPT, type LibraryActor } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
-import { sweepAssets } from './assets.js'
+import { moveFilesOfTrashed, sweepAssets } from './assets.js'
 import { audit, type Actor } from './audit.js'
-import { deleteObject, documentKey, getObject, putObject, versionKey } from './bucket.js'
+import { copyObject, deleteObject, documentKey, getObject, versionKey } from './bucket.js'
 import { notifyCollab } from './collab.js'
 import { prisma, scoped, type Scope, type ScopedDb } from './db.js'
-import { notifyLibraryChanged } from './hub.js'
+import { hubs } from './hub.js'
+import { claimObject, newLibraryObject, versionBytesKey } from './library-objects.js'
 
 /** Saves by one author from one thread this close together make one version. */
 const FOLD_MS = 10 * 60_000
@@ -21,17 +22,24 @@ export const trashPath = (id: string, path: string) => `.trash/${id}/${path}`
 /** Where a trashed file was. */
 export const originalPath = (path: string) => path.replace(TRASH, '')
 
-type Saved = { id: string; path: string; contentType: string; size: number; sha256: string }
+type Saved = {
+  id: string
+  path: string
+  contentType: string
+  size: number
+  sha256: string
+  objectKey: string | null
+}
 
 /**
  * Record a save of a library file: a new version, or the latest one updated
- * when the same author saved it moments ago from the same place.
+ * when the same author saved it moments ago from the same place. It points to
+ * the object the save wrote, which the file points to: no bytes are written.
  */
 export async function recordVersion(
   db: ScopedDb,
   scope: Scope,
-  row: Saved,
-  bytes: Uint8Array,
+  row: Saved & { objectKey: string },
   actor: Actor,
   options: { sessionId?: string | null; restoredFromId?: string } = {},
 ) {
@@ -43,6 +51,8 @@ export async function recordVersion(
   if (latest?.sha256 === row.sha256 && !options.restoredFromId) return latest
   const fold =
     latest &&
+    // One from before objects per save keeps its own bytes: a new version instead.
+    latest.objectKey &&
     !options.restoredFromId &&
     !latest.restoredFromId &&
     latest.actorType === actor.type &&
@@ -54,43 +64,52 @@ export async function recordVersion(
     contentType: row.contentType,
     size: row.size,
     sha256: row.sha256,
+    objectKey: row.objectKey,
   }
-  if (fold) {
-    await putObject(versionKey(scope, latest.id), bytes, row.contentType)
-    return db.documentVersion.update({ where: { id: latest.id }, data: fields })
-  }
-  const version = await db.documentVersion.create({
-    data: {
-      documentId: row.id,
-      ...fields,
-      actorType: actor.type,
-      actorId: actor.id,
-      sessionId,
-      restoredFromId: options.restoredFromId ?? null,
-    } as never,
+  // The object it folded away from, if no one else points to it, goes with the sweep.
+  const version = await prisma.$transaction(async (tx) => {
+    await claimObject(tx, row.objectKey)
+    if (fold) return tx.documentVersion.update({ where: { id: latest.id }, data: fields })
+    return tx.documentVersion.create({
+      data: {
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
+        documentId: row.id,
+        ...fields,
+        actorType: actor.type,
+        actorId: actor.id,
+        sessionId,
+        restoredFromId: options.restoredFromId ?? null,
+      },
+    })
   })
-  await putObject(versionKey(scope, version.id), bytes, row.contentType).catch(async (error) => {
-    await db.documentVersion.delete({ where: { id: version.id } })
-    throw error
-  })
-  await pruneVersions(db, scope, row.id)
+  if (!fold) await pruneVersions(db, scope, row.id)
   return version
 }
 
-/** Keep the newest versions only. */
+/**
+ * Keep the newest versions only. Their objects go with the sweep, once nothing points to them;
+ * a version from before keeps its bytes at its own key: deleted first, then its row.
+ */
 async function pruneVersions(db: ScopedDb, scope: Scope, documentId: string) {
   const old = await db.documentVersion.findMany({
     where: { documentId },
     orderBy: { createdAt: 'desc' },
     skip: VERSIONS_KEPT,
-    select: { id: true },
+    select: { id: true, objectKey: true },
   })
-  if (old.length === 0) return
-  await db.documentVersion.deleteMany({ where: { id: { in: old.map((v) => v.id) } } })
-  for (const v of old)
-    await deleteObject(versionKey(scope, v.id)).catch((error) =>
-      console.warn(`library: version ${v.id} not deleted from the bucket: ${String(error)}`),
-    )
+  const gone: string[] = []
+  for (const v of old) {
+    if (!v.objectKey)
+      try {
+        await deleteObject(versionKey(scope, v.id))
+      } catch (error) {
+        console.warn(`library: version ${v.id} not deleted from the bucket: ${String(error)}`)
+        continue
+      }
+    gone.push(v.id)
+  }
+  if (gone.length) await db.documentVersion.deleteMany({ where: { id: { in: gone } } })
 }
 
 /**
@@ -110,27 +129,42 @@ export async function ensureFirstVersion(
 ) {
   if (await db.documentVersion.findFirst({ where: { documentId: row.id }, select: { id: true } }))
     return
-  const bytes = await getObject(documentKey(scope, row.id))
-  if (!bytes) return
-  const version = await db.documentVersion.create({
-    data: {
-      documentId: row.id,
-      path: row.path,
-      contentType: row.contentType,
-      size: row.size,
-      sha256: row.sha256,
-      actorType: row.updatedByType ?? 'system',
-      actorId: row.updatedById ?? 'brigade',
-      sessionId: row.updatedInSessionId,
-      createdAt: row.updatedAt,
-    } as never,
+  // Its object, or a copy of the legacy key's bytes in an object of their own (inside the
+  // bucket: the API never holds the file).
+  let key = row.objectKey
+  if (!key) {
+    key = await newLibraryObject(scope, row.id)
+    if (!(await copyObject(documentKey(scope, row.id), key, row.contentType))) return
+  }
+  await prisma.$transaction(async (tx) => {
+    await claimObject(tx, key)
+    await tx.documentVersion.create({
+      data: {
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
+        documentId: row.id,
+        path: row.path,
+        contentType: row.contentType,
+        size: row.size,
+        sha256: row.sha256,
+        objectKey: key,
+        actorType: row.updatedByType ?? 'system',
+        actorId: row.updatedById ?? 'brigade',
+        sessionId: row.updatedInSessionId,
+        createdAt: row.updatedAt,
+      },
+    })
   })
-  await putObject(versionKey(scope, version.id), bytes, row.contentType)
 }
 
-/** A version's bytes. */
-export async function readVersion(scope: Scope, versionId: string) {
-  const bytes = await getObject(versionKey(scope, versionId))
+/** A version's bytes, read whole: refused past LIBRARY_READ_MAX, as readLibraryFile. */
+export async function readVersion(
+  scope: Scope,
+  version: { id: string; documentId: string; objectKey: string | null; size: number },
+) {
+  if (version.size > LIBRARY_READ_MAX)
+    throw new HTTPException(413, { message: 'The version is too large to read here' })
+  const bytes = await getObject(versionBytesKey(scope, version))
   if (!bytes) throw new HTTPException(404, { message: 'That version is missing from storage' })
   return bytes
 }
@@ -206,6 +240,10 @@ export async function trashLibraryFile(
       deletedById: actor.id,
     },
   })
+  // Its files that a live document refers to too go on with that one (docs/lists.md).
+  await moveFilesOfTrashed(scope, id).catch((error) =>
+    console.warn(`library: files of ${id} not moved: ${String(error)}`),
+  )
   if (options.quiet) return
   await audit({
     ...scope,
@@ -214,7 +252,7 @@ export async function trashLibraryFile(
     target: { type: 'document', id },
     data: { path: row.path },
   })
-  notifyLibraryChanged(scope.workspaceId)
+  void hubs.get(scope.workspaceId).notifyLibraryChanged()
   notifyCollab(id, 'delete')
 }
 
@@ -250,26 +288,31 @@ export async function restoreLibraryFile(db: ScopedDb, scope: Scope, actor: Acto
     target: { type: 'document', id },
     data: { path },
   })
-  notifyLibraryChanged(scope.workspaceId)
+  void hubs.get(scope.workspaceId).notifyLibraryChanged()
   return restored
 }
 
-/** Delete a trashed file for good: its row, bytes, versions and the files in it. */
+/**
+ * Delete a trashed file for good: its row, bytes, versions and the files in it. Bytes at legacy
+ * keys go first, so a failure leaves it in the trash for the sweep to try again; its objects go
+ * with their sweep, once nothing points to them.
+ */
 export async function purgeLibraryFile(db: ScopedDb, scope: Scope, actor: Actor, id: string) {
   const row = await trashedFile(db, id)
   const [assets, versions] = await Promise.all([
     db.documentAsset.findMany({ where: { documentId: id }, select: { id: true } }),
-    db.documentVersion.findMany({ where: { documentId: id }, select: { id: true } }),
+    db.documentVersion.findMany({
+      where: { documentId: id, objectKey: null },
+      select: { id: true },
+    }),
   ])
+  for (const key of [documentKey(scope, id), ...versions.map((v) => versionKey(scope, v.id))])
+    await deleteObject(key)
   await db.document.delete({ where: { id } })
   // Its files go too, now, unless another document refers to them.
   if (assets.length > 0)
     void sweepAssets(assets.map((a) => a.id)).catch((error) =>
       console.warn(`library: files of ${id} not swept: ${String(error)}`),
-    )
-  for (const key of [documentKey(scope, id), ...versions.map((v) => versionKey(scope, v.id))])
-    await deleteObject(key).catch((error) =>
-      console.warn(`library: could not delete ${key} from the bucket: ${String(error)}`),
     )
   await audit({
     ...scope,

@@ -1,9 +1,12 @@
 'use client'
-// A thread in the sidebar, with its menu (thread-menu.tsx): ⋮ on hover in place of the time,
-// or a right-click on the row. Rename, or a double-click on the title, edits the title in the
+// A thread in the sidebar, with its menu (thread-menu.tsx): ⋮ on hover in place of its status
+// dot, or a right-click on the row. A title too long for the row fades out (FadeText). The dot shows only while the thread has a state; how old it
+// is and what the dot means show on hover, in the row's tooltip. Rename, or a double-click on the title, edits the title in the
 // row itself. Under Pinned, a row can be dragged to another place (`drag`). A thread whose
 // preview is up shows its icon, which opens the preview on hover (and in the menu on phones).
-import { EllipsisVertical, Laptop, MonitorPlay } from 'lucide-react'
+// One with a pending wake-up shows an alarm, its time on hover (WakeupIcon).
+// One with child threads has a caret after its title, which folds them under it (SubThreads).
+import { EllipsisVertical, Laptop, Globe, Play } from 'lucide-react'
 import Link from 'next/link'
 import { useState, type ComponentProps, type ReactNode } from 'react'
 import {
@@ -12,39 +15,57 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { SidebarMenuAction, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
+import { Hint } from '@/components/ui/tooltip'
+import { FadeText } from '@/components/fade-text'
 import { StreamedTitle } from '@/components/streamed-title'
+import { WakeupIcon } from '@/components/wakeup-icon'
 import { renameThread, useThreadMenu } from '@/components/thread-menu'
+import { preloadOnPoint } from '@/components/thread-conversation'
 import { useThreadPanel } from '@/components/thread-panel'
 import { type ThreadSummary } from '@/lib/api'
+import { usePendingThread } from '@/lib/pending-threads'
+import { clickInPlace } from '@/lib/thread-address'
 import { cn } from '@/lib/utils'
 
 export function ThreadRow({
   thread,
   href,
   active,
-  icon,
+  dot,
+  working = false,
+  hint,
   trailing,
   memberId,
   admin,
   onChanged,
   onDeleted,
   drag,
+  caret,
 }: {
   thread: ThreadSummary
   href: string
   active: boolean
-  icon: ReactNode
-  /** At the row's end: its time or what it asks. Hidden while the menu is in reach. */
-  trailing: ReactNode
+  /** Before the time, only while the thread has something to say: none when it is idle and read. */
+  dot?: ReactNode
+  /** A teammate works in it: a band passes over its title, beside its dot. */
+  working?: boolean
+  /** After the title in its tooltip: what the dot means, and how old the thread is. */
+  hint?: string
+  /** Before the dot, when a row needs more than its title (its date). Hidden with the dot. */
+  trailing?: ReactNode
   memberId: string | null
   admin: boolean
   onChanged: () => void
   onDeleted: (id: string) => void
   /** Under Pinned: the row's drag handlers and the drop line's class. */
   drag?: ComponentProps<'li'>
+  /** It has child threads: a caret after its title folds them under it. */
+  caret?: { open: boolean; count: number; onToggle: () => void }
 }) {
   const [renaming, setRenaming] = useState(false)
   const { openPreview } = useThreadPanel()
+  // Just sent, not started yet (lib/pending-threads.ts): no menu, as there is nothing to act on.
+  const starting = !!usePendingThread(thread.id)
   const { title, open, setOpen, busy, onMenuKey, content, mayRename } = useThreadMenu({
     thread,
     memberId,
@@ -63,7 +84,6 @@ export function ThreadRow({
     return (
       <SidebarMenuItem>
         <div className="flex h-8 items-center gap-2 rounded-md px-2 ring-1 ring-sidebar-ring">
-          {icon}
           <input
             autoFocus
             defaultValue={thread.title}
@@ -85,46 +105,82 @@ export function ThreadRow({
     )
 
   return (
-    <SidebarMenuItem {...drag}>
+    <SidebarMenuItem data-look="sidebar-thread" {...drag}>
       <SidebarMenuButton
         asChild
         isActive={active}
         className={cn(
           busy && 'opacity-60',
+          // The dot takes ⋮'s place: no room kept for ⋮ beside it.
+          'group-has-data-[sidebar=menu-action]/menu-item:pr-2',
           // On hover the title makes room for the preview's button beside ⋮.
           thread.previewRunning && 'md:group-hover/menu-item:pr-14!',
         )}
       >
         <Link
           href={href}
-          title={title}
+          data-nav-stop="link"
+          title={hint ? `${title} · ${hint}` : title}
+          {...preloadOnPoint(thread.id, active)}
+          onClick={(e) => clickInPlace(e, href)}
           onContextMenu={(e) => {
             e.preventDefault()
-            setOpen(true)
+            if (!starting) setOpen(true)
           }}
           // The first click opened the thread; the second edits its title, as Rename does.
           onDoubleClick={(e) => {
-            if (!mayRename) return
+            if (!mayRename || starting) return
             e.preventDefault()
             setRenaming(true)
           }}
         >
-          {icon}
-          <span className="flex-1 truncate">
-            <StreamedTitle threadId={thread.id} text={title} />
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <FadeText textClassName={cn(working && 'text-shimmer-dim')}>
+              <StreamedTitle threadId={thread.id} text={title} />
+            </FadeText>
+            {/* Right after the title: folds its child threads under it, without opening it. From
+                the keyboard, a button below it does the same (SubThreads). */}
+            {caret && (
+              <span
+                aria-hidden
+                // Folds in place: on a phone, the sidebar stays open (ui/sidebar.tsx).
+                data-keeps-sidebar
+                // Enter on the row does the same (sidebar-keys.tsx).
+                data-nav-caret
+                title={
+                  caret.open
+                    ? 'Hide sub-threads'
+                    : `Show ${caret.count} sub-thread${caret.count === 1 ? '' : 's'}`
+                }
+                className="text-muted-foreground hover:text-sidebar-foreground -m-1 flex shrink-0 p-1"
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  caret.onToggle()
+                }}
+              >
+                <Play
+                  className={cn(
+                    'size-2 fill-current transition-transform',
+                    caret.open && 'rotate-90',
+                  )}
+                />
+              </span>
+            )}
           </span>
           <span
             className={cn(
-              'ml-auto flex shrink-0 items-center gap-1.5 text-xs',
-              // On a phone ⋮ is always there: the time goes beside it.
+              'flex shrink-0 items-center gap-1.5 text-xs',
+              // On a phone ⋮ is always there: the dot goes beside it.
               'max-md:mr-5 md:group-hover/menu-item:opacity-0',
               open && 'opacity-0',
             )}
           >
+            {trailing}
             {/* Its preview is up: people can try what it builds. */}
             {thread.previewRunning && (
               <span title="Preview running" className="flex">
-                <MonitorPlay aria-hidden className="size-3 opacity-50" />
+                <Globe aria-hidden className="size-3 opacity-50" />
                 <span className="sr-only">Preview running</span>
               </span>
             )}
@@ -135,45 +191,52 @@ export function ThreadRow({
                 <span className="sr-only">Runs on {thread.computer.name}</span>
               </span>
             )}
-            {trailing}
+            {/* A teammate will check on something here, on its own: its next wake-up. */}
+            {thread.wakeAt && <WakeupIcon at={thread.wakeAt} />}
+            {/* Kept empty when there is no dot, so every row's end lines up under ⋮. */}
+            {dot ?? <span aria-hidden className="size-4" />}
           </span>
         </Link>
       </SidebarMenuButton>
       {/* Its preview, in reach on hover beside ⋮ where the icon was; on a phone, in ⋮. */}
       {thread.previewRunning && (
-        <SidebarMenuAction
-          aria-label={`${title}: open preview`}
-          title="Open preview"
-          onClick={() => openPreview(thread.id)}
-          className="right-7 group-hover/menu-item:opacity-100 focus-visible:opacity-100 max-md:hidden md:opacity-0"
-        >
-          <MonitorPlay />
-        </SidebarMenuAction>
-      )}
-      <DropdownMenu open={open} onOpenChange={setOpen}>
-        {/* Only on the hovered row, or while its menu is open: not left behind on a row that
-            keeps the focus after a click or a shortcut. Always there on a phone. */}
-        <SidebarMenuAction asChild>
-          <DropdownMenuTrigger
-            aria-label={`${title}: more`}
-            title="More"
-            className="data-[state=open]:bg-sidebar-accent group-hover/menu-item:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 md:opacity-0"
+        <Hint label="Open preview">
+          <SidebarMenuAction
+            aria-label={`${title}: open preview`}
+            onClick={() => openPreview(thread.id)}
+            className="right-7 group-hover/menu-item:opacity-100 focus-visible:opacity-100 max-md:hidden md:opacity-0"
           >
-            <EllipsisVertical />
-          </DropdownMenuTrigger>
-        </SidebarMenuAction>
-        <DropdownMenuContent
-          align="start"
-          side="right"
-          className="min-w-44"
-          onKeyDown={onMenuKey}
-          // Not back to ⋮: focused, it would stay shown once the pointer has left the row.
-          // Rename puts the focus in its field instead.
-          onCloseAutoFocus={(e) => e.preventDefault()}
-        >
-          {content}
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <Globe />
+          </SidebarMenuAction>
+        </Hint>
+      )}
+      {!starting && (
+        <DropdownMenu open={open} onOpenChange={setOpen}>
+          {/* Only on the hovered row, or while its menu is open: not left behind on a row that
+              keeps the focus after a click or a shortcut. Always there on a phone. */}
+          <Hint label="More">
+            <SidebarMenuAction asChild>
+              <DropdownMenuTrigger
+                aria-label={`${title}: more`}
+                className="data-[state=open]:bg-sidebar-accent group-hover/menu-item:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 md:opacity-0"
+              >
+                <EllipsisVertical />
+              </DropdownMenuTrigger>
+            </SidebarMenuAction>
+          </Hint>
+          <DropdownMenuContent
+            align="start"
+            side="right"
+            className="min-w-44"
+            onKeyDown={onMenuKey}
+            // Not back to ⋮: focused, it would stay shown once the pointer has left the row.
+            // Rename puts the focus in its field instead.
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
+            {content}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
     </SidebarMenuItem>
   )
 }

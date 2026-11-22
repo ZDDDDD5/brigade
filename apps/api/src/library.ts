@@ -2,26 +2,43 @@
 // Library files: bytes in the bucket, metadata and text in `Document`. Memory
 // files and thread summaries: Markdown text in `Document` only. One search,
 // PostgreSQL full text over all of them.
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
 import {
+  documentFilePath,
   LIBRARY_FILE_MAX,
+  LIBRARY_READ_MAX,
   LIBRARY_VIEWS_PROTOCOL,
   libraryAccessFor,
   MEMORY_MAX,
   type LibraryFile,
   type LibraryManifest,
+  changeMemoryFile,
+  memoryLineKey,
+  tidyTakesTooMuch,
+  type ArchivedMemoryLine,
   type MemoryEdit,
+  type MemoryLayout,
+  type MemoryLineInfo,
+  type MemoryLineMeta,
   type SearchHit,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { audit, type Actor } from './audit.js'
-import { documentKey, getObject, putObject } from './bucket.js'
+import { assetKey, copyObject, getObject, putObject } from './bucket.js'
 import { notifyCollab } from './collab.js'
 import { prisma, Prisma, scoped, type Scope, type ScopedDb } from './db.js'
-import { notifyLibraryChanged } from './hub.js'
+import { hubs } from './hub.js'
 import { folderRules, teammateLibraryAccess } from './library-folders.js'
-import { actorNames, ensureFirstVersion, recordVersion } from './library-history.js'
+import { actorNames, ensureFirstVersion, readVersion, recordVersion } from './library-history.js'
+import { claimObject, fileKey, newDocumentId, newLibraryObject } from './library-objects.js'
+import {
+  applyMemoryEdit,
+  applyMemoryLayout,
+  planLineSync,
+  type LineContext,
+  type LineUpdate,
+} from './memory-edit.js'
 import { DOCX, officeText, PPTX, XLSX } from './previews.js'
 
 /** Text kept for search per file; PostgreSQL's tsvector has a 1 MB limit. */
@@ -119,30 +136,41 @@ export async function extractText(bytes: Uint8Array, contentType: string) {
 
 const sha256 = (data: Uint8Array | string) => createHash('sha256').update(data).digest('hex')
 
-type DocumentRow = {
-  id: string
-  path: string
-  contentType: string
-  size: number
-  indexed: boolean
-  updatedAt: Date
-  createdAt: Date
-  createdByType: string | null
-  createdById: string | null
-  updatedByType: string | null
-  updatedById: string | null
-  updatedInSessionId: string | null
-}
+/**
+ * The columns a listed library file is made from: never its `text`, which a list
+ * does not show and which would make every listing carry every file's contents.
+ */
+export const LIBRARY_FILE_COLUMNS = {
+  id: true,
+  path: true,
+  contentType: true,
+  size: true,
+  indexed: true,
+  updatedAt: true,
+  createdAt: true,
+  createdByType: true,
+  createdById: true,
+  updatedByType: true,
+  updatedById: true,
+  updatedInSessionId: true,
+} as const satisfies Prisma.DocumentSelect
+
+type DocumentRow = Prisma.DocumentGetPayload<{ select: typeof LIBRARY_FILE_COLUMNS }>
 
 /** Library files as the dashboard lists them, with who made and changed each. */
 export async function libraryFiles(db: ScopedDb, rows: DocumentRow[]): Promise<LibraryFile[]> {
-  const who = await actorNames(
-    db,
-    rows.flatMap((r) => [
-      { type: r.createdByType ?? '', id: r.createdById ?? '' },
-      { type: r.updatedByType ?? '', id: r.updatedById ?? '' },
-    ]),
-  )
+  const [who, shares] = await Promise.all([
+    actorNames(
+      db,
+      rows.flatMap((r) => [
+        { type: r.createdByType ?? '', id: r.createdById ?? '' },
+        { type: r.updatedByType ?? '', id: r.updatedById ?? '' },
+      ]),
+    ),
+    // A workspace's public links are few: all of them, rather than a list of every file's id.
+    rows.length ? db.libraryShare.findMany({ select: { documentId: true } }) : [],
+  ])
+  const shared = new Set(shares.map((s) => s.documentId))
   return rows.map((row) => ({
     id: row.id,
     path: row.path,
@@ -154,6 +182,7 @@ export async function libraryFiles(db: ScopedDb, rows: DocumentRow[]): Promise<L
     createdAt: row.createdAt.toISOString(),
     createdBy: who(row.createdByType, row.createdById),
     updatedBy: who(row.updatedByType, row.updatedById, row.updatedInSessionId),
+    shared: shared.has(row.id),
   }))
 }
 
@@ -167,10 +196,18 @@ export const isEditable = (row: { contentType: string; size: number }) =>
 export const isMarkdown = (row: { kind?: string; contentType: string; size: number }) =>
   row.kind !== 'thread_summary' && row.contentType === 'text/markdown' && row.size <= EDITABLE_BYTES
 
-/** A document's whole text: a library file's bytes (its `text` is cut for search), or memory. */
-export async function documentText(scope: Scope, row: { id: string; kind: string; text: string }) {
+/**
+ * A document's whole text: a library file's bytes (its `text` is cut for search), or memory. A
+ * library file the API may not read whole is refused.
+ */
+export async function documentText(
+  scope: Scope,
+  row: { id: string; kind: string; text: string; objectKey: string | null; size: number },
+) {
   if (row.kind !== 'library') return row.text
-  return new TextDecoder().decode(await readLibraryFile(scope, row.id))
+  if (row.size > LIBRARY_READ_MAX)
+    throw new HTTPException(413, { message: 'The file is too large to open as text' })
+  return new TextDecoder().decode(await readLibraryFile(scope, row))
 }
 
 /**
@@ -181,7 +218,11 @@ export async function saveLibraryFile(
   db: ScopedDb,
   scope: Scope,
   actor: Actor,
-  input: { path: string; bytes: Uint8Array; contentType?: string | null },
+  input: { path: string; contentType?: string | null } & (
+    | { bytes: Uint8Array }
+    /** An upload, checked (uploads.ts): its bytes are copied inside the bucket, never read here. */
+    | { upload: { key: string; size: number; sha256: string; text: string } }
+  ),
   /** Recorded with the change, e.g. the thread a teammate saved it from (`sessionId`). */
   context: Record<string, string> = {},
   options: {
@@ -189,15 +230,204 @@ export async function saveLibraryFile(
     fromCollab?: boolean
     /** Set when the save brings back an older version. */
     restoredFromId?: string
+    /**
+     * The stored text it builds on: when the file changed since, nothing is written (StaleMemory),
+     * checked again as it commits.
+     */
+    baseSha?: string
+    /** Its caller holds the file's lock already (withLibraryLock): the lease it writes under. */
+    lease?: LibraryLease
+    /** Only a new file: one there already, made meanwhile, stays as it is (and is returned). */
+    createOnly?: boolean
   } = {},
+): Promise<Awaited<ReturnType<typeof writeLibraryFile>>> {
+  // A Markdown file is changed one save at a time: a list's lines are read, changed and written
+  // back (src/lists.ts), and a save landing in between would be lost.
+  if (!options.lease && contentTypeFor(input.path, input.contentType) === 'text/markdown') {
+    const existing = await db.document.findFirst({
+      where: { kind: 'library', path: input.path, deletedAt: null },
+      select: { id: true },
+    })
+    if (existing) {
+      const saved = await withLibraryLock(scope, existing.id, (lease) =>
+        writeLibraryFile(db, scope, actor, input, context, { ...options, lease }),
+      )
+      // A list's line of what remains of an item, ticked in this save: that item may be done.
+      const { settleRemaindersIn } = await import('./lists.js')
+      await settleRemaindersIn(db, scope, existing.id)
+      return saved
+    }
+  }
+  return writeLibraryFile(db, scope, actor, input, context, options)
+}
+
+/** How long a library file's lock is held at most: a crashed holder frees it after that. */
+const LEASE_MS = 30_000
+/** What a holder keeps in hand of its lease before it stops writing: clocks and a slow write. */
+const LEASE_MARGIN_MS = 10_000
+
+/**
+ * A held lock of a library file. `check` throws once too little of it is left to start a write;
+ * `fence` runs a database write only while the lease is still this holder's, atomically (it locks
+ * the lease's row, so no one can take the lease meanwhile), else throws LeaseLost.
+ */
+export type LibraryLease = {
+  check: () => void
+  fence: <T>(write: (tx: Prisma.TransactionClient) => Promise<T>) => Promise<T>
+}
+
+/** The lease ended before a holder's write: someone else may have saved since. */
+export class LeaseLost extends HTTPException {
+  constructor() {
+    super(409, { message: 'The file took too long to change; try again' })
+  }
+}
+
+/**
+ * Run `work` holding a library file's lock, which every save of a Markdown file takes: what it
+ * reads of the file stays what it writes over. The lock is a lease in the database: waiting for
+ * it holds no connection (the pool is small), and a holder that crashed frees it once its lease
+ * ends. A holder past its lease writes nothing more (`lease.check`, before each write).
+ */
+export async function withLibraryLock<T>(
+  scope: Scope,
+  documentId: string,
+  work: (lease: LibraryLease) => Promise<T>,
+  options: { leaseMs?: number; waitMs?: number } = {},
+): Promise<T> {
+  const key = `${scope.workspaceId}:${documentId}`
+  const owner = randomUUID()
+  const leaseMs = options.leaseMs ?? LEASE_MS
+  const giveUp = Date.now() + (options.waitMs ?? 20_000)
+  let started = 0
+  for (let pause = 20; ; pause = Math.min(pause * 2, 400)) {
+    started = Date.now()
+    const taken = await prisma.$queryRaw<{ owner: string }[]>`
+      INSERT INTO "LibraryLock" ("key", "owner", "until")
+      VALUES (${key}, ${owner}, timezone('UTC', now()) + make_interval(secs => ${leaseMs / 1000}))
+      ON CONFLICT ("key") DO UPDATE SET "owner" = EXCLUDED."owner", "until" = EXCLUDED."until"
+      WHERE "LibraryLock"."until" < timezone('UTC', now())
+      RETURNING "owner"`
+    if (taken[0]?.owner === owner) break
+    if (Date.now() > giveUp)
+      throw new HTTPException(409, { message: 'The file is being changed; try again' })
+    await new Promise((resolve) => setTimeout(resolve, pause))
+  }
+  const margin = Math.min(LEASE_MARGIN_MS, leaseMs / 3)
+  const lease: LibraryLease = {
+    check: () => {
+      if (Date.now() - started > leaseMs - margin) throw new LeaseLost()
+    },
+    fence: (write) =>
+      prisma.$transaction(async (tx) => {
+        const held = await tx.$queryRaw<unknown[]>`
+          SELECT 1 FROM "LibraryLock"
+          WHERE "key" = ${key} AND "owner" = ${owner} AND "until" > timezone('UTC', now())
+          FOR UPDATE`
+        if (!held.length) throw new LeaseLost()
+        return write(tx)
+      }),
+  }
+  try {
+    return await work(lease)
+  } finally {
+    await prisma.libraryLock
+      .deleteMany({ where: { key, owner } })
+      .catch((error) => console.warn(`library: lock ${key} not released: ${String(error)}`))
+  }
+}
+
+/**
+ * A file's bytes as its row says they are (its sha): its object's, its full text when the row
+ * holds all of it, else the saved version with that sha. Null when none is there yet.
+ */
+export async function committedBytes(
+  scope: Scope,
+  row: { id: string; text: string; sha256: string; objectKey: string | null },
 ) {
-  if (input.bytes.byteLength > LIBRARY_FILE_MAX)
-    throw new HTTPException(413, { message: 'Files in the library can be up to 25 MB' })
+  if (row.objectKey) {
+    // Written once by the save that pointed the row to it: never other bytes.
+    const bytes = await getObject(fileKey(scope, row)).catch(() => null)
+    if (bytes && sha256(bytes) === row.sha256) return bytes
+  }
+  const text = new TextEncoder().encode(row.text)
+  if (sha256(text) === row.sha256) return text
+  const version = await prisma.documentVersion.findFirst({
+    where: { documentId: row.id, sha256: row.sha256 },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true, documentId: true, objectKey: true, size: true },
+  })
+  const bytes = version ? await readVersion(scope, version).catch(() => null) : null
+  return bytes && sha256(bytes) === row.sha256 ? bytes : null
+}
+
+/**
+ * A file at the legacy key that a save past its lease may have overwritten (`bytesStaleAt`, from
+ * before objects per save): its bytes saved again from what its row says, as an object of its own
+ * the row then points to. Nothing is written over. False when they could not be yet: the sweep
+ * tries again (repairStaleBytes).
+ */
+export async function repairBytes(scope: Scope, documentId: string) {
+  return withLibraryLock(scope, documentId, async (lease) => {
+    const row = await prisma.document.findFirst({ where: { id: documentId } })
+    if (!row?.bytesStaleAt) return true
+    if (!row.objectKey) {
+      const bytes = await committedBytes(scope, row)
+      if (!bytes) return false
+      const key = await newLibraryObject(scope, documentId)
+      lease.check()
+      await putObject(key, bytes, row.contentType)
+      return lease.fence(async (tx) => {
+        await claimObject(tx, key)
+        const moved = await tx.document.updateMany({
+          where: { id: documentId, sha256: row.sha256, objectKey: null },
+          data: { objectKey: key, bytesStaleAt: null },
+        })
+        return moved.count > 0
+      })
+    }
+    // Saved since, to an object of its own: the legacy key is no longer read.
+    await prisma.document.updateMany({
+      where: { id: documentId, bytesStaleAt: row.bytesStaleAt },
+      data: { bytesStaleAt: null },
+    })
+    return true
+  })
+}
+
+/** Files whose legacy bytes a late save may have overwritten, saved again (jobs.ts). */
+export async function repairStaleBytes() {
+  const rows = await prisma.document.findMany({
+    where: { bytesStaleAt: { not: null } },
+    select: { id: true, organizationId: true, workspaceId: true },
+    take: 50,
+  })
+  for (const row of rows) {
+    const scope = { organizationId: row.organizationId, workspaceId: row.workspaceId }
+    await repairBytes(scope, row.id).catch((error) =>
+      console.warn(`library: ${row.id}'s bytes not put back yet: ${String(error)}`),
+    )
+  }
+}
+
+async function writeLibraryFile(
+  db: ScopedDb,
+  scope: Scope,
+  actor: Actor,
+  input: Parameters<typeof saveLibraryFile>[3],
+  context: Record<string, string>,
+  options: Parameters<typeof saveLibraryFile>[5] & {},
+) {
+  const size = 'bytes' in input ? input.bytes.byteLength : input.upload.size
+  if (size > LIBRARY_FILE_MAX)
+    throw new HTTPException(413, { message: 'Files in the library can be up to 500 MB' })
   const contentType = contentTypeFor(input.path, input.contentType)
-  const hash = sha256(input.bytes)
+  const hash = 'bytes' in input ? sha256(input.bytes) : input.upload.sha256
   const existing = await db.document.findFirst({
     where: { kind: 'library', path: input.path, deletedAt: null },
   })
+  if (options.createOnly && existing) return existing
+  if (options.baseSha && existing && existing.sha256 !== options.baseSha) throw new StaleMemory()
   // The same bytes again: nothing changed, nothing to record.
   if (
     existing &&
@@ -206,40 +436,63 @@ export async function saveLibraryFile(
     !options.restoredFromId
   )
     return existing
-  const text = await extractText(input.bytes, contentType)
+  const text = 'bytes' in input ? await extractText(input.bytes, contentType) : input.upload.text
   const sessionId = context.sessionId ?? null
+  // A new file's id comes first: its bytes go in before its row.
+  const id = existing?.id ?? newDocumentId()
+  // A file from before versions keeps what it was as its first.
+  if (existing) await ensureFirstVersion(db, scope, existing)
+  // Its bytes in an object of this save's own, written or copied from the upload inside the
+  // bucket. Never read until the row points to it: if this save fails or comes too late, it
+  // lands where nobody looks, and the sweep deletes it.
+  const key = await newLibraryObject(scope, id)
+  options.lease?.check()
+  if ('bytes' in input) await putObject(key, input.bytes, contentType)
+  else if (!(await copyObject(input.upload.key, key, contentType)))
+    throw new HTTPException(409, { message: 'The upload is gone; upload it again' })
   const fields = {
     contentType,
-    size: input.bytes.byteLength,
+    size,
     sha256: hash,
     text,
     indexed: text.trim().length > 0,
+    objectKey: key,
     updatedByType: actor.type,
     updatedById: actor.id,
     updatedInSessionId: sessionId,
   }
-  let row
-  if (existing) {
-    // A file from before versions keeps what it was as its first.
-    await ensureFirstVersion(db, scope, existing)
-    await putObject(documentKey(scope, existing.id), input.bytes, contentType)
-    row = await db.document.update({ where: { id: existing.id }, data: fields })
-  } else {
-    row = await db.document.create({
+  // The save's one commit: the row points to its object. Under a lease, only while the lease is
+  // still this save's (a save past it changes nothing, and its object is never read).
+  const commit = async (tx: Prisma.TransactionClient) => {
+    await claimObject(tx, key)
+    if (existing && options.baseSha) {
+      // Built on the text it read: written only if nobody saved it since, whichever way they
+      // saved it (a JSON file's saves take no lock). Else nothing is, and the caller reads again.
+      const { count } = await tx.document.updateMany({
+        where: { id, sha256: options.baseSha, deletedAt: null },
+        data: { ...fields, bytesStaleAt: null },
+      })
+      if (!count) throw new StaleMemory()
+      return tx.document.findUniqueOrThrow({ where: { id } })
+    }
+    if (existing)
+      // Bytes a late save may have overwritten at the legacy key: no longer read.
+      return tx.document.update({ where: { id }, data: { ...fields, bytesStaleAt: null } })
+    return tx.document.create({
       data: {
+        id,
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
         kind: 'library',
         path: input.path,
         ...fields,
         createdByType: actor.type,
         createdById: actor.id,
-      } as never,
-    })
-    await putObject(documentKey(scope, row.id), input.bytes, contentType).catch(async (error) => {
-      await db.document.delete({ where: { id: row!.id } })
-      throw error
+      },
     })
   }
-  await recordVersion(db, scope, row, input.bytes, actor, {
+  const row = options.lease ? await options.lease.fence(commit) : await prisma.$transaction(commit)
+  await recordVersion(db, scope, { ...row, objectKey: key }, actor, {
     sessionId,
     ...(options.restoredFromId ? { restoredFromId: options.restoredFromId } : {}),
   }).catch((error) => console.warn(`library: no version kept of ${row.id}: ${String(error)}`))
@@ -250,7 +503,7 @@ export async function saveLibraryFile(
     target: { type: 'document', id: row.id },
     data: { path: row.path, size: row.size, ...context },
   })
-  notifyLibraryChanged(scope.workspaceId)
+  void hubs.get(scope.workspaceId).notifyLibraryChanged()
   if (existing && !options.fromCollab && isMarkdown(row)) notifyCollab(row.id)
   return row
 }
@@ -261,8 +514,57 @@ export async function libraryFile(db: ScopedDb, id: string) {
   return row
 }
 
-export async function readLibraryFile(scope: Scope, id: string) {
-  const bytes = await getObject(documentKey(scope, id))
+/**
+ * The files put in the library's documents that a teammate's mirror holds, each beside its
+ * document (documentFilePath): those ready and read back, whose SHA-256 the runner checks the
+ * bytes against (files from before that was kept have none, and stay out). `ids`: just those.
+ */
+export async function mirroredAssets(db: ScopedDb, ids?: string[]) {
+  if (ids && ids.length === 0) return []
+  const rows = await db.documentAsset.findMany({
+    where: {
+      ...(ids ? { id: { in: [...new Set(ids)] } } : {}),
+      status: 'ready',
+      sha256: { not: '' },
+      document: { is: { kind: 'library', deletedAt: null } },
+    },
+    select: {
+      id: true,
+      name: true,
+      sha256: true,
+      size: true,
+      document: { select: { path: true } },
+    },
+    orderBy: { id: 'asc' },
+  })
+  return rows.map((row) => ({
+    id: row.id,
+    path: documentFilePath(row.document!.path, row),
+    sha256: row.sha256,
+    size: row.size,
+  }))
+}
+
+/** Where the bytes of a file a runner mirrors are, and their SHA-256: a library file's, or a document's file's. */
+export async function mirroredFile(db: ScopedDb, scope: Scope, id: string) {
+  const row = await db.document.findFirst({ where: { id, kind: 'library', deletedAt: null } })
+  if (row) return { key: fileKey(scope, row), sha256: row.sha256 }
+  const [asset] = await mirroredAssets(db, [id])
+  if (asset) return { key: assetKey(scope, id), sha256: asset.sha256 }
+  throw new HTTPException(404, { message: 'File not found' })
+}
+
+/**
+ * A library file's bytes: those its row points to, read whole. Refused past LIBRARY_READ_MAX,
+ * which the API's memory would not hold: such a file is streamed or served from the bucket.
+ */
+export async function readLibraryFile(
+  scope: Scope,
+  row: { id: string; objectKey: string | null; size: number },
+) {
+  if (row.size > LIBRARY_READ_MAX)
+    throw new HTTPException(413, { message: 'The file is too large to read here' })
+  const bytes = await getObject(fileKey(scope, row))
   if (!bytes) throw new HTTPException(404, { message: 'The file is missing from storage' })
   return bytes
 }
@@ -289,7 +591,7 @@ export async function moveLibraryFile(
     target: { type: 'document', id },
     data: { from: row.path, to: path },
   })
-  notifyLibraryChanged(scope.workspaceId)
+  void hubs.get(scope.workspaceId).notifyLibraryChanged()
   return moved
 }
 
@@ -381,7 +683,7 @@ export async function saveDocumentText(
     projectId?: string | null
   },
   text: string,
-  options: { fromCollab?: boolean } = {},
+  options: { fromCollab?: boolean; baseSha?: string } = {},
 ) {
   if (row.kind === 'library')
     return saveLibraryFile(
@@ -390,7 +692,10 @@ export async function saveDocumentText(
       actor,
       { path: row.path, bytes: new TextEncoder().encode(text), contentType: row.contentType },
       {},
-      options,
+      {
+        fromCollab: options.fromCollab,
+        ...(options.baseSha ? { baseSha: options.baseSha } : {}),
+      },
     )
   if (text.length > MEMORY_MAX)
     throw new HTTPException(413, {
@@ -399,24 +704,124 @@ export async function saveDocumentText(
   return writeMemory(db, scope, actor, memoryTarget(row), text, options)
 }
 
+/**
+ * A person's save built on a document's text that changed since: a memory file a thread or a
+ * tidy run wrote to, a library file a teammate or a list's change wrote to.
+ */
+export class StaleMemory extends Error {
+  constructor() {
+    super('The memory changed since this edit started')
+  }
+}
+
+type MemoryChange = {
+  text: string
+  context: Pick<LineContext, 'reasons' | 'confirm' | 'sources'>
+  /** A tidy run laid it out. */
+  tidied?: boolean
+}
+
+const noLineContext = (): MemoryChange['context'] => ({
+  reasons: new Map(),
+  confirm: new Set(),
+  sources: new Map(),
+})
+
+/**
+ * Change a memory file and bring its lines' rows along (dates, sources, the
+ * archive), one change at a time per file, so threads ending together, tidy
+ * runs and people editing never overwrite each other. `change` gets the
+ * current file and returns its new text, or null to leave it as it is.
+ */
+async function changeMemory(
+  scope: Scope,
+  target: MemoryTarget & { name?: string },
+  actor: Actor,
+  sessionId: string | null,
+  change: (
+    current: { text: string; sha256: string; memoryTidiedAt: Date | null } | null,
+  ) => MemoryChange | null,
+) {
+  // Only the workspace: a dashboard's scope also names its user and member, which no row has.
+  const inWorkspace = { organizationId: scope.organizationId, workspaceId: scope.workspaceId }
+  return prisma.$transaction(
+    async (tx) => {
+      const path = memoryPath(target)
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${scope.workspaceId}:${path}`}))`
+      const current = await tx.document.findFirst({
+        where: { ...inWorkspace, kind: target.kind, path },
+      })
+      const next = change(current)
+      if (!next) return null
+      const changed = current?.text !== next.text
+      const fields = {
+        text: next.text,
+        size: Buffer.byteLength(next.text),
+        sha256: sha256(next.text),
+        indexed: true,
+        ...(next.tidied ? { memoryTidiedAt: new Date() } : {}),
+      }
+      const row = !current
+        ? await tx.document.create({
+            data: {
+              ...inWorkspace,
+              kind: target.kind,
+              path,
+              contentType: 'text/markdown',
+              ...memoryLinks(target),
+              ...fields,
+            },
+          })
+        : changed || next.tidied
+          ? await tx.document.update({ where: { id: current.id }, data: fields })
+          : current
+      const rows = await tx.memoryLine.findMany({ where: { documentId: row.id } })
+      const plan = planLineSync(current?.text ?? '', next.text, rows, {
+        ...next.context,
+        actor,
+        sessionId,
+        now: new Date(),
+      })
+      if (plan.create.length)
+        await tx.memoryLine.createMany({
+          data: plan.create.map((line) => ({ ...inWorkspace, documentId: row.id, ...line })),
+        })
+      // Rows that change the same way (a topic, a confirmation) change together.
+      const groups = new Map<string, { data: LineUpdate; ids: string[] }>()
+      for (const { id, data } of plan.update) {
+        const key = JSON.stringify(data)
+        const group = groups.get(key)
+        if (group) group.ids.push(id)
+        else groups.set(key, { data, ids: [id] })
+      }
+      for (const { data, ids } of groups.values())
+        await tx.memoryLine.updateMany({ where: { id: { in: ids } }, data })
+      if (plan.delete.length) await tx.memoryLine.deleteMany({ where: { id: { in: plan.delete } } })
+      return { row, changed }
+    },
+    { timeout: 30_000 },
+  )
+}
+
 /** Replace a memory file's text (a person correcting it). */
 export async function writeMemory(
-  db: ScopedDb,
+  _db: ScopedDb,
   scope: Scope,
   actor: Actor,
   target: MemoryTarget,
   text: string,
-  /** Set when the collab server saves what people edited: its room already has it. */
-  options: { fromCollab?: boolean } = {},
+  /**
+   * fromCollab: the collab server saves what people edited, and its room already has it.
+   * baseSha: the text the edit was made on; if a thread or a tidy run changed it since,
+   * nothing is written (StaleMemory) and the room reconciles first.
+   */
+  options: { fromCollab?: boolean; baseSha?: string } = {},
 ) {
-  const row = await upsertText(
-    db,
-    scope,
-    target.kind,
-    memoryPath(target),
-    text,
-    memoryLinks(target),
-  )
+  const { row } = (await changeMemory(scope, target, actor, null, (current) => {
+    // Checked under the file's lock: a thread's edit cannot land between the check and the write.
+    if (options.baseSha && current && current.sha256 !== options.baseSha) throw new StaleMemory()
+    return { text, context: noLineContext() }
+  }))!
   await audit({
     ...scope,
     actor,
@@ -424,47 +829,22 @@ export async function writeMemory(
     target: { type: 'document', id: row.id },
     data: { kind: target.kind, ...memoryLinks(target) },
   })
-  notifyLibraryChanged(scope.workspaceId)
+  void hubs.get(scope.workspaceId).notifyLibraryChanged()
   if (!options.fromCollab) notifyCollab(row.id)
   return row
 }
 
-const normalize = (line: string) =>
-  line
-    .replace(/^\s*[-*+]\s+/, '')
-    .trim()
-    .toLowerCase()
-
-/**
- * Remove the lines a thread found wrong and add what it learned, keeping
- * everything else, people's edits included. Applied here so that two threads
- * ending together never overwrite each other.
- */
-export function applyMemoryEdit(text: string, edit: MemoryEdit) {
-  const remove = new Set(edit.remove.map(normalize))
-  const lines = text.split('\n').filter((l) => !l.trim() || !remove.has(normalize(l)))
-  const removed = text.split('\n').length - lines.length
-  const present = new Set(lines.map(normalize))
-  let out = lines.join('\n').replace(/\n*$/, '\n')
-  const lastLine = lines.findLast((l) => l.trim()) ?? ''
-  let added = 0
-  for (const line of edit.add) {
-    const key = normalize(line)
-    if (present.has(key)) continue
-    const bullet = `- ${line.replace(/^\s*[-*+]\s+/, '').replace(/\s*\n\s*/g, ' ')}\n`
-    // A list after a paragraph needs a blank line before it.
-    const gap = added === 0 && !/^\s*[-*+]\s/.test(lastLine) && !out.endsWith('\n\n') ? '\n' : ''
-    if (out.length + gap.length + bullet.length > MEMORY_MAX) break
-    out += gap + bullet
-    present.add(key)
-    added++
-  }
-  return { text: out, added, removed }
-}
+const editIsEmpty = (edit: MemoryEdit) =>
+  !edit.add.length &&
+  !edit.remove.length &&
+  !edit.lines.length &&
+  !edit.replace.length &&
+  !edit.archive.length &&
+  !edit.confirm.length
 
 /** Apply a thread's edit to a memory file, creating it on first use. */
 export async function editMemory(
-  db: ScopedDb,
+  _db: ScopedDb,
   scope: Scope,
   actor: Actor,
   /** name: the teammate's or the project's, for a new file's heading. */
@@ -472,50 +852,228 @@ export async function editMemory(
   edit: MemoryEdit,
   sessionId: string,
 ) {
-  if (edit.add.length === 0 && edit.remove.length === 0) return
-  // One edit at a time per file, so concurrent threads both land.
-  const row = await prisma.$transaction(async (tx) => {
-    const path = memoryPath(target)
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${scope.workspaceId}:${path}`}))`
-    const current = await tx.document.findFirst({
-      where: { ...scope, kind: target.kind, path },
-    })
-    const result = applyMemoryEdit(current?.text ?? memoryHeader(target, target.name), edit)
-    if (result.added === 0 && result.removed === 0) return
-    const fields = {
-      text: result.text,
-      size: Buffer.byteLength(result.text),
-      sha256: sha256(result.text),
-      indexed: true,
+  if (editIsEmpty(edit)) return
+  let result: ReturnType<typeof applyMemoryEdit> | undefined
+  const done = await changeMemory(scope, target, actor, sessionId, (current) => {
+    const text = current?.text ?? memoryHeader(target, target.name)
+    result = applyMemoryEdit(text, edit)
+    const changes = result.added.length + result.replaced.length + result.removed.length
+    return {
+      // Only confirmations: the file stays exactly as people wrote it.
+      text: changes ? result.text : text,
+      context: { ...noLineContext(), reasons: result.reasons, confirm: result.confirm },
     }
-    const row = current
-      ? await tx.document.update({ where: { id: current.id }, data: fields })
-      : await tx.document.create({
-          data: {
-            ...scope,
-            kind: target.kind,
-            path,
-            contentType: 'text/markdown',
-            ...memoryLinks(target),
-            ...fields,
-          },
-        })
-    await tx.auditEntry.create({
+  })
+  if (!done || !result) return
+  const path = memoryPath(target)
+  if (result.dropped > 0)
+    console.warn(`memory ${path}: full, ${result.dropped} new lines left out (thread ${sessionId})`)
+  if (done.changed || result.dropped > 0)
+    await audit({
+      ...scope,
+      actor,
+      action: 'memory.updated',
+      target: { type: 'document', id: done.row.id },
       data: {
-        ...scope,
-        actorType: actor.type,
-        actorId: actor.id,
-        action: 'memory.updated',
-        targetType: 'document',
-        targetId: row.id,
-        data: { kind: target.kind, sessionId, added: result.added, removed: result.removed },
+        kind: target.kind,
+        sessionId,
+        added: result.added.length,
+        replaced: result.replaced.length,
+        removed: result.removed.length,
+        confirmed: edit.confirm.length,
+        ...(result.dropped ? { dropped: result.dropped } : {}),
       },
     })
-    return row
-  })
   // Merged into what people may be editing, line by line as the thread asked.
-  if (row) notifyCollab(row.id)
-  return row
+  if (done.changed) notifyCollab(done.row.id)
+  return done.row
+}
+
+/**
+ * Lay a memory file out again as a tidy run asked: core within budget, topics,
+ * repeats merged, outdated lines archived. Dropped when the file was tidied
+ * again since the run read it.
+ */
+export async function tidyMemory(
+  scope: Scope,
+  actor: Actor,
+  target: MemoryTarget & { name?: string },
+  layout: MemoryLayout,
+  input: { sessionId: string; lastTidied: string | null },
+) {
+  let result: ReturnType<typeof applyMemoryLayout> | undefined
+  const done = await changeMemory(scope, target, actor, input.sessionId, (current) => {
+    if (!current) return null
+    if ((current.memoryTidiedAt?.toISOString() ?? null) !== input.lastTidied) return null
+    result = applyMemoryLayout(current.text, layout)
+    // Whatever the runner checked: a layout that takes most of the file away is not applied.
+    if (tidyTakesTooMuch(current.text, result.text)) {
+      console.warn(`memory ${memoryPath(target)}: a tidy run would take too much away; not applied`)
+      return null
+    }
+    return {
+      text: result.text,
+      tidied: true,
+      context: { ...noLineContext(), reasons: result.reasons, sources: result.sources },
+    }
+  })
+  if (!done || !result) return null
+  await audit({
+    ...scope,
+    actor,
+    action: 'memory.tidied',
+    target: { type: 'document', id: done.row.id },
+    data: {
+      kind: target.kind,
+      sessionId: input.sessionId,
+      archived: result.archived.length,
+      merged: result.merged.length,
+      moved: result.moved.length,
+    },
+  })
+  if (done.changed) {
+    notifyCollab(done.row.id)
+    void hubs.get(scope.workspaceId).notifyLibraryChanged()
+  }
+  return done.row
+}
+
+/** When a line was learned or last confirmed. */
+const lineDate = (row: { createdAt: Date; confirmedAt: Date | null }) =>
+  row.confirmedAt && row.confirmedAt > row.createdAt ? row.confirmedAt : row.createdAt
+
+/** Each memory file's live lines (date and source, by key), and how many lines it archived. */
+export async function memoryLineInfo(db: ScopedDb, documentIds: string[]) {
+  const out = new Map<string, { lines: Record<string, MemoryLineInfo>; archived: number }>()
+  if (!documentIds.length) return out
+  const rows = await db.memoryLine.findMany({
+    where: { documentId: { in: documentIds } },
+    select: {
+      documentId: true,
+      text: true,
+      createdAt: true,
+      confirmedAt: true,
+      legacy: true,
+      createdByType: true,
+      createdById: true,
+      sessionId: true,
+      archivedAt: true,
+    },
+  })
+  const name = await actorNames(
+    db,
+    rows.flatMap((r) =>
+      r.createdByType === 'member' && r.createdById && !r.archivedAt
+        ? [{ type: 'member', id: r.createdById }]
+        : [],
+    ),
+  )
+  const sessionIds = [
+    ...new Set(rows.flatMap((r) => (r.sessionId && !r.archivedAt ? [r.sessionId] : []))),
+  ]
+  const titles = new Map(
+    (sessionIds.length
+      ? await db.session.findMany({
+          where: { id: { in: sessionIds } },
+          select: { id: true, title: true },
+        })
+      : []
+    ).map((s) => [s.id, s.title]),
+  )
+  for (const id of documentIds) out.set(id, { lines: {}, archived: 0 })
+  for (const row of rows) {
+    const file = out.get(row.documentId)!
+    if (row.archivedAt) {
+      file.archived++
+      continue
+    }
+    file.lines[memoryLineKey(row.text)] = {
+      at: lineDate(row).toISOString(),
+      legacy: row.legacy,
+      by: row.createdByType === 'member' ? (name('member', row.createdById)?.name ?? null) : null,
+      sessionId: row.sessionId,
+      threadTitle: row.sessionId ? (titles.get(row.sessionId) ?? null) : null,
+    }
+  }
+  return out
+}
+
+/** A memory file's archived lines, newest first; `query` filters by their text. */
+export async function archivedMemoryLines(
+  db: ScopedDb,
+  documentId: string,
+  query: string,
+): Promise<ArchivedMemoryLine[]> {
+  const rows = await db.memoryLine.findMany({
+    where: {
+      documentId,
+      archivedAt: { not: null },
+      ...(query ? { text: { contains: query, mode: 'insensitive' as const } } : {}),
+    },
+    orderBy: { archivedAt: 'desc' },
+    take: 200,
+  })
+  const name = await actorNames(
+    db,
+    rows.flatMap((r) =>
+      r.archivedByType && r.archivedById ? [{ type: r.archivedByType, id: r.archivedById }] : [],
+    ),
+  )
+  const sessionIds = [...new Set(rows.flatMap((r) => (r.sessionId ? [r.sessionId] : [])))]
+  const titles = new Map(
+    (sessionIds.length
+      ? await db.session.findMany({
+          where: { id: { in: sessionIds } },
+          select: { id: true, title: true },
+        })
+      : []
+    ).map((s) => [s.id, s.title]),
+  )
+  return rows.map((r) => ({
+    id: r.id,
+    text: r.text,
+    topic: r.topic,
+    reason: r.archivedReason ?? 'Removed',
+    archivedAt: r.archivedAt!.toISOString(),
+    archivedBy: name(r.archivedByType, r.archivedById)?.name ?? null,
+    createdAt: r.createdAt.toISOString(),
+    sessionId: r.sessionId,
+    threadTitle: r.sessionId ? (titles.get(r.sessionId) ?? null) : null,
+  }))
+}
+
+/** Put an archived line back in its memory file, under the topic it was in. */
+export async function restoreMemoryLine(db: ScopedDb, scope: Scope, actor: Actor, lineId: string) {
+  const line = await db.memoryLine.findFirst({
+    where: { id: lineId, archivedAt: { not: null } },
+    include: { document: true },
+  })
+  if (!line) throw new HTTPException(404, { message: 'This line is not in the archive' })
+  const target = memoryTarget(line.document)
+  let full = false
+  const done = await changeMemory(scope, target, actor, null, (current) => {
+    const result = changeMemoryFile(
+      current?.text ?? '',
+      { add: [{ text: line.text, topic: line.topic }] },
+      MEMORY_MAX,
+    )
+    full = result.dropped > 0
+    return result.added.length ? { text: result.text, context: noLineContext() } : null
+  })
+  if (full)
+    throw new HTTPException(413, {
+      message: `This memory is full (${MEMORY_MAX.toLocaleString('en')} characters): remove a line first`,
+    })
+  if (!done) return
+  await audit({
+    ...scope,
+    actor,
+    action: 'memory.restored',
+    target: { type: 'document', id: done.row.id },
+    data: { kind: target.kind, line: line.text },
+  })
+  notifyCollab(done.row.id)
+  void hubs.get(scope.workspaceId).notifyLibraryChanged()
 }
 
 /** The thread's summary: replaced each time the thread goes quiet. */
@@ -620,10 +1178,60 @@ export async function search(
       ${summaries}
     ORDER BY ts_rank(d.search, q.query) DESC, d."updatedAt" DESC
     LIMIT ${limit}`
+  // Lines removed from memory (replaced, merged, outdated): a few, after the files, to tell what was decided before.
+  const ownArchive = input.teammate
+    ? Prisma.sql`AND (d.kind <> 'teammate_memory' OR d."teammateId" = ${input.teammate.id})`
+    : Prisma.empty
+  const archived = await prisma.$queryRaw<
+    {
+      documentId: string
+      kind: string
+      path: string
+      teammateName: string | null
+      projectName: string | null
+      reason: string | null
+      archivedAt: Date
+      sessionId: string | null
+      snippet: string
+    }[]
+  >`
+    WITH q AS (
+      SELECT websearch_to_tsquery('english', ${input.query}) || websearch_to_tsquery('simple', ${input.query}) AS query
+    )
+    SELECT l."documentId", d.kind, d.path, t.name AS "teammateName", p.name AS "projectName",
+      l."archivedReason" AS reason, l."archivedAt", l."sessionId",
+      ts_headline('english', l.text, q.query, 'StartSel=«, StopSel=», HighlightAll=true') AS snippet
+    FROM "MemoryLine" l
+    CROSS JOIN q
+    JOIN "Document" d ON d.id = l."documentId"
+    LEFT JOIN "Teammate" t ON t.id = d."teammateId"
+    LEFT JOIN "Project" p ON p.id = d."projectId"
+    WHERE l."organizationId" = ${scope.organizationId}
+      AND l."workspaceId" = ${scope.workspaceId}
+      AND l."archivedAt" IS NOT NULL
+      AND l.search @@ q.query
+      ${ownArchive}
+    ORDER BY ts_rank(l.search, q.query) DESC, l."archivedAt" DESC
+    LIMIT ${Math.min(3, Math.ceil(input.limit / 4))}`
+  const day = (d: Date) => d.toISOString().slice(0, 10)
+  const archivedHits: SearchHit[] = archived.map((r) => ({
+    kind: 'archived_memory',
+    path: r.path,
+    documentId: r.documentId,
+    sessionId: r.sessionId,
+    title: `Archived from ${
+      r.kind === 'workspace_memory'
+        ? 'workspace memory'
+        : r.kind === 'teammate_memory'
+          ? `${r.teammateName ?? 'a teammate'}'s memory`
+          : `${r.projectName ?? 'a project'}'s memory`
+    } on ${day(r.archivedAt)}: ${r.reason ?? 'removed'}`,
+    snippet: r.snippet,
+  }))
   return rows
     .filter((r) => r.kind !== 'library' || !access || access.of(r.path) !== 'none')
-    .slice(0, input.limit)
-    .map((r) => ({
+    .slice(0, input.limit - archivedHits.length)
+    .map((r): SearchHit => ({
       kind: r.kind,
       path: r.path,
       documentId: r.id,
@@ -640,26 +1248,37 @@ export async function search(
                 : `Thread: ${r.title ?? r.sessionId}`,
       snippet: r.snippet,
     }))
+    .concat(archivedHits)
 }
 
 /**
- * What a computer mirrors: the library files, who may read which, and the
- * memory each teammate loads. A runner too old to keep a mirror per teammate
- * gets only the files every teammate may read.
+ * What a computer mirrors: the library files with the files put in its documents (each beside
+ * its document, where a library file of the same path wins), who may read which, and the memory
+ * each teammate loads. A runner too old to keep a mirror per teammate gets only the files every
+ * teammate may read.
  */
 export async function manifest(
   db: ScopedDb,
   runner: { protocolVersion: number | null },
 ): Promise<LibraryManifest> {
-  const [files, memory, teammates, folders] = await Promise.all([
+  const [documents, assets, memory, teammates, folders] = await Promise.all([
     db.document.findMany({
       where: { kind: 'library', deletedAt: null },
       select: { id: true, path: true, sha256: true, size: true },
       orderBy: { path: 'asc' },
     }),
+    mirroredAssets(db),
     db.document.findMany({
-      where: { kind: { in: ['workspace_memory', 'teammate_memory'] } },
-      select: { kind: true, teammateId: true, text: true },
+      where: { kind: { in: ['workspace_memory', 'teammate_memory', 'project_memory'] } },
+      select: {
+        id: true,
+        kind: true,
+        path: true,
+        teammateId: true,
+        projectId: true,
+        text: true,
+        memoryTidiedAt: true,
+      },
     }),
     db.teammate.findMany({
       where: { archivedAt: null },
@@ -673,6 +1292,8 @@ export async function manifest(
   }
   const shared = (path: string) =>
     access.teammates.every((t) => libraryAccessFor(path, t, folders) !== 'none')
+  const taken = new Set(documents.map((f) => f.path))
+  const files = [...documents, ...assets.filter((a) => !taken.has(a.path))]
   return {
     files:
       (runner.protocolVersion ?? 0) >= LIBRARY_VIEWS_PROTOCOL
@@ -685,7 +1306,50 @@ export async function manifest(
           .filter((m) => m.kind === 'teammate_memory' && m.teammateId)
           .map((m) => [m.teammateId!, m.text]),
       ),
+      projects: Object.fromEntries(
+        memory
+          .filter((m) => m.kind === 'project_memory' && m.projectId)
+          .map((m) => [m.projectId!, m.text]),
+      ),
+      lines: await memoryLineMeta(db, memory),
+      tidied: Object.fromEntries(
+        memory.flatMap((m) => (m.memoryTidiedAt ? [[m.path, m.memoryTidiedAt.toISOString()]] : [])),
+      ),
     },
     access,
   }
+}
+
+/** Each memory file's live lines, by path and key: when learned or confirmed, and who wrote it when a person did. */
+async function memoryLineMeta(db: ScopedDb, files: { id: string; path: string }[]) {
+  const rows = await db.memoryLine.findMany({
+    where: { documentId: { in: files.map((f) => f.id) }, archivedAt: null },
+    select: {
+      documentId: true,
+      text: true,
+      createdAt: true,
+      confirmedAt: true,
+      legacy: true,
+      createdByType: true,
+      createdById: true,
+    },
+  })
+  const name = await actorNames(
+    db,
+    rows.flatMap((r) =>
+      r.createdByType === 'member' && r.createdById ? [{ type: 'member', id: r.createdById }] : [],
+    ),
+  )
+  const paths = new Map(files.map((f) => [f.id, f.path]))
+  const out: Record<string, Record<string, MemoryLineMeta>> = {}
+  for (const row of rows) {
+    const path = paths.get(row.documentId)!
+    const by = row.createdByType === 'member' ? name('member', row.createdById)?.name : undefined
+    ;(out[path] ??= {})[memoryLineKey(row.text)] = {
+      at: lineDate(row).toISOString(),
+      ...(by ? { by } : {}),
+      ...(row.legacy ? { legacy: true } : {}),
+    }
+  }
+  return out
 }

@@ -11,7 +11,7 @@ import {
   ATTACHMENTS_TOTAL_MAX,
   isVideoType,
   safeFileName,
-  uploadMax,
+  UPLOAD_FILE_MAX,
   type AttachmentInfo,
   type AttachmentSource,
   type ThreadAttachmentRef,
@@ -21,40 +21,26 @@ import { audit, type Actor } from './audit.js'
 import {
   attachmentKey,
   deleteObject,
-  getObject,
+  directUploads,
   objectSize,
   presignPut,
   putObject,
+  putObjectStream,
   streamObject,
+  uploadTarget,
 } from './bucket.js'
-import type { ConnectorContext, ExternalFile } from './connectors/types.js'
-import { prisma, Prisma, type Scope, type ScopedDb } from './db.js'
+import type { SentFile } from './connectors/types.js'
+import type { ConnectorContext, ExternalFile, OpenedFile } from './connectors/types.js'
+import { prisma, Prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { contentTypeFor, extractText } from './library.js'
+import { detectType, inspectObject } from './object-check.js'
 
 /** Programs and installers: never taken from outside (an email, a chat), where they are a common lure. */
-const PROGRAM =
+export const PROGRAM =
   /\.(exe|scr|com|pif|bat|cmd|msi|msp|ps1|psm1|vbs|vbe|jse|wsf|wsh|hta|cpl|jar|app|dmg|pkg|deb|rpm|apk|lnk|reg|iso|img|vhd|vhdx)$/i
 
 /** Small inline images in an email are signatures and logos, not something it is about. */
 const INLINE_IMAGE_MIN = 20 * 1024
-
-/** Leading bytes of the types the dashboard shows inline: a file that claims one must be one. */
-const MAGIC: Record<string, (b: Uint8Array) => boolean> = {
-  'application/pdf': (b) => ascii(b, 0, 5) === '%PDF-',
-  'image/png': (b) => b[0] === 0x89 && ascii(b, 1, 4) === 'PNG',
-  'image/jpeg': (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
-  'image/gif': (b) => ascii(b, 0, 4) === 'GIF8',
-  'image/webp': (b) => ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP',
-}
-const ascii = (b: Uint8Array, from: number, to: number) =>
-  String.fromCharCode(...b.subarray(from, to))
-
-/** The file's type from its name, checked against its bytes for types shown inline. */
-function detectType(name: string, bytes: Uint8Array, given?: string | null) {
-  const type = contentTypeFor(name, given)
-  const check = MAGIC[type]
-  return check && !check(bytes) ? 'application/octet-stream' : type
-}
 
 const sha256 = (data: Uint8Array) => createHash('sha256').update(data).digest('hex')
 
@@ -142,6 +128,119 @@ export async function storeAttachment(
   return row
 }
 
+/** Leading bytes kept of a streamed file, for its type. */
+const HEAD_BYTES = 64
+/** A streamed file this small is also kept whole a moment, for its text (search). */
+const TEXT_MAX = 1024 * 1024
+
+/**
+ * Keep a file's bytes as they arrive, never held whole (but a small file's, for its text): to
+ * the bucket as they come, its hash and size read on the way. Not yet in any thread.
+ */
+export async function storeStream(
+  db: ScopedDb,
+  scope: Scope,
+  input: Origin & { name: string; contentType?: string | null; file: OpenedFile },
+) {
+  const { body, size } = input.file
+  if (size > ATTACHMENT_MAX) throw new HTTPException(413, { message: 'larger than 25 MB' })
+  const name = safeFileName(input.name)
+  const given = contentTypeFor(name, input.contentType)
+  // Pending until its bytes are in: no thread takes it before.
+  const row = await db.attachment.create({
+    data: {
+      name,
+      contentType: given,
+      size,
+      status: 'pending',
+      source: input.source,
+      uploadedByMemberId: input.uploadedByMemberId ?? null,
+      connectionId: input.connectionId ?? null,
+      externalRef: input.externalRef ?? null,
+      sessionId: input.sessionId ?? null,
+    } as never,
+  })
+  const key = attachmentKey(scope, row.id)
+  const hash = createHash('sha256')
+  let read = 0
+  const head = new Uint8Array(HEAD_BYTES)
+  const whole: Uint8Array[] | null = size <= TEXT_MAX ? [] : null
+  const tap = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, out) {
+      hash.update(chunk)
+      if (read < HEAD_BYTES) head.set(chunk.subarray(0, HEAD_BYTES - read), read)
+      read += chunk.byteLength
+      whole?.push(chunk)
+      out.enqueue(chunk)
+    },
+  })
+  try {
+    await putObjectStream(key, body.pipeThrough(tap), size, given)
+    if (read !== size) throw new Error(`${read} bytes came, not ${size}`)
+    const contentType = detectType(name, head.subarray(0, read), input.contentType)
+    const text = whole ? await extractText(concat(whole, size), contentType) : ''
+    return await db.attachment.update({
+      where: { id: row.id },
+      data: { contentType, sha256: hash.digest('hex'), text, status: 'ready' },
+    })
+  } catch (error) {
+    // Its row stays (pending) until its bytes are gone: the sweep tries again otherwise.
+    await removeCopy(db, scope, row.id)
+    throw error
+  }
+}
+
+/** How long a taker waits for another's copy of the same file under way. */
+const COPY_WAIT_MS = 20_000
+/** A copy under way this long stopped halfway (its process went): made again. */
+const COPY_STALE_MS = 10 * 60_000
+
+/** A file's bytes, then its row: the row stays while its bytes could not go, for a later try. */
+async function removeCopy(db: ScopedDb, scope: Scope, id: string) {
+  try {
+    await deleteObject(attachmentKey(scope, id))
+  } catch (error) {
+    console.warn(`attachment ${id}: bytes not deleted: ${String(error)}`)
+    return false
+  }
+  await db.attachment.deleteMany({ where: { id } })
+  return true
+}
+
+/**
+ * A file already taken in under its key, once its copy is done: one under way elsewhere is waited
+ * for a while (then a retryable 409), one that stopped halfway removed (null: take it again).
+ */
+async function settledCopy<T extends { id: string; status: string; createdAt: Date }>(
+  db: ScopedDb,
+  scope: Scope,
+  row: T,
+): Promise<T | null> {
+  const until = Date.now() + COPY_WAIT_MS
+  let current: T | null = row
+  while (current?.status === 'pending') {
+    if (Date.now() - current.createdAt.getTime() > COPY_STALE_MS) {
+      if (await removeCopy(db, scope, current.id)) return null
+      throw new HTTPException(409, { message: 'it is being copied: try again shortly' })
+    }
+    if (Date.now() > until)
+      throw new HTTPException(409, { message: 'it is being copied: try again shortly' })
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    current = (await db.attachment.findFirst({ where: { id: current.id } })) as T | null
+  }
+  return current
+}
+
+const concat = (chunks: Uint8Array[], size: number) => {
+  const all = new Uint8Array(size)
+  let at = 0
+  for (const chunk of chunks) {
+    all.set(chunk, at)
+    at += chunk.byteLength
+  }
+  return all
+}
+
 /** A file Brigade does not keep, so the teammate is told it exists and why it is missing. */
 function blockedAttachment(
   db: ScopedDb,
@@ -165,6 +264,8 @@ function blockedAttachment(
 const PENDING_MS = 60 * 60_000
 /** An upload never sent with a message is removed after this long. */
 const UNSENT_MS = 24 * 3600_000
+/** A file taken from a connection that no thread has: kept as long as its mail stays in its box. */
+const CONNECTOR_UNUSED_MS = 30 * 24 * 3600_000
 
 /**
  * A member starts an upload straight to the bucket: a pending file, and a URL
@@ -178,8 +279,8 @@ export async function startUpload(
   const name = safeFileName(input.name)
   // The type the bucket stores and the browser sends; checked against the bytes on completion.
   const contentType = contentTypeFor(name, input.contentType)
-  if (input.size > uploadMax(contentType))
-    throw new HTTPException(413, { message: 'Files can be up to 25 MB, videos up to 500 MB' })
+  if (input.size > UPLOAD_FILE_MAX)
+    throw new HTTPException(413, { message: 'Files can be up to 500 MB' })
   const row = await db.attachment.create({
     data: {
       name,
@@ -195,12 +296,55 @@ export async function startUpload(
 }
 
 /**
- * The browser finished its upload: the bytes are read back from the bucket
- * and checked like any other file, then it is ready to send.
+ * A runner starts the upload of a file a teammate sends with a connector call (an email's
+ * attachment, a Drive upload) or a child's report: a pending file of its thread, and where
+ * to PUT exactly its size. Checked against the runner's SHA-256 by finishUpload.
  */
-export async function finishUpload(db: ScopedDb, scope: Scope, id: string, memberId: string) {
+export async function startTeammateUpload(
+  db: ScopedDb,
+  scope: Scope,
+  input: { name: string; size: number; contentType?: string; sessionId: string },
+) {
+  if (input.size > ATTACHMENT_MAX)
+    throw new HTTPException(413, { message: 'Files can be up to 25 MB' })
+  const name = safeFileName(input.name)
+  const contentType = contentTypeFor(name, input.contentType)
+  const row = await db.attachment.create({
+    data: {
+      name,
+      contentType,
+      size: input.size,
+      status: 'pending',
+      source: 'teammate',
+      sessionId: input.sessionId,
+    } as never,
+  })
+  const upload = await uploadTarget(attachmentKey(scope, row.id), input.size, contentType)
+  return { row, ...upload }
+}
+
+/** Who finishes an upload: the member who started it, or a runner for a teammate's thread. */
+export type Uploader = { memberId: string } | { sessionId: string }
+
+/**
+ * The upload finished: the bytes are read back from the bucket as they stream (never held
+ * whole, but a PDF's for its text) and checked like any other file, then it is ready to send.
+ * A teammate's file must also have the SHA-256 its runner gave.
+ */
+export async function finishUpload(
+  db: ScopedDb,
+  scope: Scope,
+  id: string,
+  by: Uploader,
+  expected: { sha256?: string } = {},
+) {
   const row = await db.attachment.findFirst({
-    where: { id, source: 'upload', uploadedByMemberId: memberId },
+    where: {
+      id,
+      ...('memberId' in by
+        ? { source: 'upload', uploadedByMemberId: by.memberId }
+        : { source: 'teammate', sessionId: by.sessionId }),
+    },
   })
   if (!row) throw new HTTPException(404, { message: 'Upload not found' })
   if (row.status === 'ready') return row
@@ -208,81 +352,94 @@ export async function finishUpload(db: ScopedDb, scope: Scope, id: string, membe
     throw new HTTPException(409, { message: 'This upload cannot be completed' })
   const key = attachmentKey(scope, id)
   const mismatch = async () => {
-    await deleteAttachment(db, scope, { type: 'member', id: memberId }, id)
+    if ('memberId' in by) await deleteAttachment(db, scope, { type: 'member', id: by.memberId }, id)
+    else await removeCopy(db, scope, id)
     return new HTTPException(400, {
       message: 'The upload does not match the file; upload it again',
     })
   }
-  // A large video is never held whole: its size and hash are read as it streams by.
-  if (row.size > ATTACHMENT_MAX) {
-    const size = await objectSize(key)
-    if (size === null)
-      throw new HTTPException(409, { message: 'The file has not reached storage; upload it again' })
-    if (size !== row.size || size > uploadMax(row.contentType)) throw await mismatch()
-    const hashed = await streamSha256(key)
-    if (!hashed || hashed.size !== row.size) throw await mismatch()
-    // No type is checked against video bytes (none shows inline from a sniff), and video has no text.
-    return db.attachment.update({
-      where: { id },
-      data: { sha256: hashed.sha256, text: '', status: 'ready' },
-    })
-  }
-  const bytes = await getObject(key)
-  if (!bytes)
+  const size = await objectSize(key)
+  if (size === null)
     throw new HTTPException(409, { message: 'The file has not reached storage; upload it again' })
-  if (bytes.byteLength !== row.size) throw await mismatch()
+  if (size !== row.size || size > UPLOAD_FILE_MAX) throw await mismatch()
+  // A video has no text, and no type is checked against its bytes (none shows inline from a sniff).
+  const video = isVideoType(row.contentType)
+  const inspected = await inspectObject(key, {
+    name: row.name,
+    contentType: row.contentType,
+    text: !video,
+    max: row.size,
+  })
+  if (!inspected || inspected.size !== row.size) throw await mismatch()
+  if (expected.sha256 && inspected.sha256 !== expected.sha256) throw await mismatch()
   // The type the bytes bear out is the one recorded; the API serves files with it, not the bucket's.
-  const fields = await inspect(row.name, bytes, row.contentType)
-  return db.attachment.update({ where: { id }, data: { ...fields, status: 'ready' } })
+  return db.attachment.update({
+    where: { id },
+    data: {
+      sha256: inspected.sha256,
+      text: inspected.text,
+      ...(video ? {} : { contentType: inspected.contentType }),
+      status: 'ready',
+    },
+  })
 }
 
-/** The object's SHA-256 and size, read chunk by chunk. */
-async function streamSha256(key: string) {
-  const stream = await streamObject(key)
-  if (!stream) return null
-  const hash = createHash('sha256')
-  let size = 0
-  for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
-    hash.update(chunk)
-    size += chunk.byteLength
-  }
-  return { sha256: hash.digest('hex'), size }
-}
-
-/** A file the API does not read whole: its bytes go straight from the bucket. */
-export const servedFromBucket = (row: { size: number }) => row.size > ATTACHMENT_MAX
+/**
+ * A file the API does not read whole: its bytes go straight from the bucket. Audio and video
+ * too, whatever their size: a player asks for many ranges, which the bucket answers itself.
+ */
+export const servedFromBucket = (row: { size: number; contentType: string }) =>
+  row.size > ATTACHMENT_MAX || (directUploads && /^(audio|video)\//.test(row.contentType))
 
 /**
  * Remove abandoned uploads, across workspaces: pending ones whose browser went
- * away, and uploads never sent with a message.
+ * away, and uploads never sent with a message. And files taken from a connection
+ * that no thread has: one whose copy stopped halfway, and after their mail's time
+ * in its box, one copied for a person to open (the Inbox).
  */
 export async function sweepUploads() {
   const now = Date.now()
   const rows = await prisma.attachment.findMany({
     where: {
-      source: 'upload',
       threads: { none: {} },
       OR: [
-        { status: 'pending', createdAt: { lt: new Date(now - PENDING_MS) } },
-        { createdAt: { lt: new Date(now - UNSENT_MS) } },
+        {
+          source: { in: ['upload', 'connector', 'teammate'] },
+          status: 'pending',
+          createdAt: { lt: new Date(now - PENDING_MS) },
+        },
+        { source: 'upload', createdAt: { lt: new Date(now - UNSENT_MS) } },
+        { source: 'connector', createdAt: { lt: new Date(now - CONNECTOR_UNUSED_MS) } },
       ],
     },
     take: 500,
   })
   for (const row of rows) {
     const scope = { organizationId: row.organizationId, workspaceId: row.workspaceId }
-    await prisma.attachment.delete({ where: { id: row.id } })
-    await deleteObject(attachmentKey(scope, row.id)).catch((error) =>
-      console.warn(`attachment ${row.id}: bytes not deleted: ${String(error)}`),
-    )
+    // Its bytes first: a row goes only once they are gone, so a failed delete is tried again.
+    await removeCopy(scoped(scope), scope, row.id)
   }
   if (rows.length > 0) console.log(`attachments: removed ${rows.length} unsent upload(s)`)
 }
 
-export async function readAttachment(scope: Scope, id: string) {
-  const bytes = await getObject(attachmentKey(scope, id))
-  if (!bytes) throw new HTTPException(404, { message: 'The file is missing from storage' })
-  return bytes
+/**
+ * A file sent with a call (an email's attachment, a Drive upload): its bytes stream from the
+ * bucket each time it is opened, never held whole by the API (src/stream-parts.ts).
+ */
+export function sentAttachment(
+  scope: Scope,
+  row: { id: string; name: string; contentType: string; size: number },
+): SentFile {
+  return {
+    name: row.name,
+    contentType: row.contentType,
+    size: row.size,
+    open: async () => {
+      const body = await streamObject(attachmentKey(scope, row.id))
+      if (!body) throw new HTTPException(404, { message: 'The file is missing from storage' })
+      return body
+    },
+  }
 }
 
 /** Delete a file and its bytes. Its threads lose it too. */
@@ -343,15 +500,6 @@ export async function attachToThread(
   })
   if (rows.length !== ids.length)
     throw new HTTPException(400, { message: 'An attached file was not found or was already sent' })
-  const total = rows.reduce(
-    (sum, r) => sum + (r.status === 'ready' && !isVideoType(r.contentType) ? r.size : 0),
-    0,
-  )
-  if (check && total > ATTACHMENTS_TOTAL_MAX)
-    throw new HTTPException(413, {
-      message: 'One message can carry up to 50 MB of files, besides videos',
-    })
-
   const refs: ThreadAttachmentRef[] = []
   const created: string[] = []
   for (const id of ids) {
@@ -430,9 +578,11 @@ export async function ingestExternal(
   )
   for (const [i, file] of wanted.entries()) {
     const origin = { source: 'connector' as const, connectionId, externalRef: file.key }
-    const existing = await db.attachment.findFirst({
+    const found = await db.attachment.findFirst({
       where: { connectionId, externalRef: file.key },
     })
+    // Taken in before, or being taken in now (another delivery, a teammate's call): that copy.
+    const existing = found && (await settledCopy(db, scope, found))
     if (existing) {
       ids.push(existing.id)
       continue
@@ -457,21 +607,39 @@ export async function ingestExternal(
     else {
       let fetched = false
       try {
-        const bytes = await file.download(ctx)
-        fetched = true
-        row = await storeAttachment(db, scope, {
-          ...origin,
-          name: file.name,
-          bytes,
-          contentType: file.contentType,
-        })
+        if (file.open) {
+          // Its bytes go on to the bucket as they arrive.
+          const opened = await file.open(ctx)
+          fetched = true
+          if (total + opened.size > ATTACHMENTS_TOTAL_MAX) {
+            await opened.body.cancel()
+            throw new HTTPException(413, { message: 'more than 50 MB of files at once' })
+          }
+          if (opened.size > ATTACHMENT_MAX) await opened.body.cancel()
+          row = await storeStream(db, scope, {
+            ...origin,
+            name: file.name,
+            contentType: file.contentType,
+            file: opened,
+          })
+        } else {
+          const bytes = await file.download(ctx)
+          fetched = true
+          row = await storeAttachment(db, scope, {
+            ...origin,
+            name: file.name,
+            bytes,
+            contentType: file.contentType,
+          })
+        }
         total += row.size
       } catch (error) {
         // Fetched meanwhile by another delivery of the same event.
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-          const again = await db.attachment.findFirst({
+          const found = await db.attachment.findFirst({
             where: { connectionId, externalRef: file.key },
           })
+          const again = found && (await settledCopy(db, scope, found))
           if (again) {
             ids.push(again.id)
             continue

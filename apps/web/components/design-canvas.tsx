@@ -5,8 +5,12 @@
 // is under the pointer, what an element is and how tall the page is, by
 // postMessage only. In Select a clear layer over each board takes the pointer,
 // so the page gets no clicks and the canvas asks the page what is under it; in
-// Play the pages work. Outlines and titles are drawn above the world, in screen
-// pixels, so they stay sharp at any zoom.
+// Play the pages work. In Select, dragging a selected element moves it (the view turns
+// the move into a style of the element); in Comment a click picks an element to say
+// what should change there. Outlines and titles are drawn above the world, in screen
+// pixels, so they stay sharp at any zoom. Only a few boards are live at once
+// (those filling most of the view, once it holds still); the others, and boards
+// too small on screen to use, show a picture taken of their page.
 import { BOARD_HEIGHT_MAX, screenHeight, type PlacedBoard } from '@brigade/contracts'
 import {
   memo,
@@ -20,6 +24,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type Ref,
 } from 'react'
+import { blobOfDataUrl } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 export type Rect = { x: number; y: number; width: number; height: number }
@@ -71,6 +76,12 @@ export type PageMessage =
   | { type: 'inspected'; element: Inspected }
   | { type: 'typed'; h: number; bid: number; text: string | null }
 
+/** The canvas's modes: see DesignCanvasInner's `mode`. */
+export type CanvasMode = 'select' | 'comment' | 'hand' | 'play'
+
+/** How far an element was dragged, in its page's pixels. */
+export type DragPhase = 'start' | 'move' | 'end' | 'cancel'
+
 export type CanvasHandle = {
   /** Send a message to a board's page. */
   post: (board: string, message: Record<string, unknown>) => void
@@ -104,9 +115,25 @@ type FromPage =
   | { type: 'scrolled'; dx: number; dy: number }
   | { type: 'captured'; id: string; images?: Captured[]; error?: string }
 
+/** Messages that change what a page shows. */
+const CHANGES = new Set(['brigade:style', 'brigade:text', 'brigade:attrs', 'brigade:vars'])
+
 /** Space above a group of boards for its name. */
 const GROUP_TITLE = 72
 const GROUP_GAP = 200
+/**
+ * Boards that show their live page at once: each is a whole document in a frame, laid out,
+ * painted and run, and each zoom paints them all again. The others show a picture of their page.
+ * A phone ends the tab past a few.
+ */
+const LIVE_MAX = 6
+const LIVE_MAX_TOUCH = 2
+/** Narrower than this on screen, a board that has a picture shows it rather than its page. */
+const PICTURE_BELOW = 400
+/** How wide a board's picture is taken, at most. */
+const PICTURE_WIDTH = 800
+/** How long the view holds still before boards change between page and picture. */
+const SETTLE_MS = 200
 const ZOOM_MIN = 0.02
 /** The widest a board grows to fit its page: the widest a design may set. */
 const BOARD_WIDTH_MAX = 4000
@@ -124,29 +151,67 @@ function DesignCanvasInner({
   groups,
   mode,
   selection,
+  pins,
   onSelect,
   onMessage,
   onKeyDown,
   onDoubleClick,
+  onDrag,
   handle,
   className,
 }: {
   groups: CanvasGroup[]
-  mode: 'select' | 'play'
+  /**
+   * Select: pick elements, drag selected ones to move them; Comment: pick elements to comment
+   * on; Hand: drag anywhere to move the view; Play: the pages work.
+   */
+  mode: CanvasMode
   selection: Selected[]
+  /** Comments waiting in the thread's composer: a numbered pin on each element. */
+  pins?: { key: string; board: string; rect: Rect; n: number }[]
   onSelect: (selection: Selected[]) => void
   onMessage: (board: CanvasBoard, message: PageMessage) => void
   /** Keys the canvas does not take itself (Escape, undo). */
   onKeyDown?: (e: ReactKeyboardEvent) => void
   onDoubleClick?: (selected: Selected) => void
+  /**
+   * The selection dragged in Select: once it starts, as it moves and when it ends, by how far
+   * from where it started, in the pages' pixels. Cancelled by Escape or a lost pointer.
+   */
+  onDrag?: (phase: DragPhase, delta: { x: number; y: number }) => void
   handle?: Ref<CanvasHandle>
   className?: string
 }) {
   const box = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
+  const [touch, setTouch] = useState(false)
+  useEffect(() => setTouch(window.matchMedia('(pointer: coarse)').matches), [])
   const [view, setView] = useState({ x: 40, y: 40, zoom: 0.25 })
   const viewRef = useRef(view)
   viewRef.current = view
+  // The view once it holds still: which boards are live follows it, not each step of a gesture.
+  const [settled, setSettled] = useState(view)
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(view), SETTLE_MS)
+    return () => clearTimeout(timer)
+  }, [view])
+  /** Boards whose page said it is ready, since their frame last loaded. */
+  const [ready, setReady] = useState<Record<string, boolean>>({})
+  const readyRef = useRef(ready)
+  readyRef.current = ready
+  const waiting = useRef(new Map<string, (() => void)[]>())
+  /** Each board's picture (a blob: URL), and the page version it shows. */
+  const [pictures, setPictures] = useState<Record<string, { url: string; sha: string }>>({})
+  const picturesRef = useRef(pictures)
+  picturesRef.current = pictures
+  /** Boards whose page changed since their picture was taken. */
+  const stale = useRef(new Set<string>())
+  const shas = useRef(new Map<string, string>())
+  /** Boards kept live whatever the view: one being captured for an export. */
+  const [pinned, setPinned] = useState<string[]>([])
+  /** A board tapped while it showed its picture: live, however small, while it is in view. */
+  const [opened, setOpened] = useState<string | null>(null)
+  const [checks, recheck] = useState(0)
   const [heights, setHeights] = useState<Record<string, number>>({})
   // Boards whose page is wider than they are: drawn as wide as the page, not cut at their edge.
   const [widths, setWidths] = useState<Record<string, number>>({})
@@ -156,12 +221,16 @@ function DesignCanvasInner({
   const [hover, setHover] = useState<{ board: string; element: PageElement } | null>(null)
   const [rects, setRects] = useState<Record<string, Rect | null>>({})
   const [retyping, setRetyping] = useState<Selected | null>(null)
+  /** The selection being dragged: the pointer is down and has moved. */
+  const [dragging, setDragging] = useState(false)
   const [panning, setPanning] = useState<'space' | 'drag' | null>(null)
   const frames = useRef(new Map<string, HTMLIFrameElement>())
   const seqs = useRef({
     next: 1,
     hover: new Map<string, number>(),
     select: new Map<number, boolean>(),
+    /** Select hits sent as the pointer went down: the selection may be dragged once it comes. */
+    dragAfter: new Set<number>(),
   })
   const captures = useRef(new Map<string, (m: Extract<FromPage, { type: 'captured' }>) => void>())
   const fitted = useRef(false)
@@ -206,14 +275,22 @@ function DesignCanvasInner({
   useLayoutEffect(() => {
     const element = box.current
     if (!element) return
-    const observer = new ResizeObserver(([entry]) =>
-      setSize({ width: entry!.contentRect.width, height: entry!.contentRect.height }),
-    )
+    const observer = new ResizeObserver(([entry]) => {
+      const { width, height } = entry!.contentRect
+      // Hidden (kept beside a thread while another shows): the boards stay as they were.
+      if (width === 0 && height === 0) return
+      setSize({ width, height })
+    })
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
 
   const post = useCallback((board: string, message: Record<string, unknown>) => {
+    // A change to the page: its picture is taken again.
+    if (CHANGES.has(String(message.type)) && picturesRef.current[board]) {
+      stale.current.add(board)
+      recheck((n) => n + 1)
+    }
     // The page's origin is opaque: '*' is the only target; what is sent is not secret.
     frames.current.get(board)?.contentWindow?.postMessage(message, '*')
   }, [])
@@ -341,6 +418,8 @@ function DesignCanvasInner({
     }
     const onGesture = (e: Event) => {
       e.preventDefault()
+      // Fingers on a screen: the touch handler below pinches, with the pointers.
+      if (touching.current) return
       const g = e as Event & { scale: number; clientX: number; clientY: number }
       const r = element.getBoundingClientRect()
       zoomAt(g.clientX - r.left, g.clientY - r.top, g.scale / last)
@@ -355,6 +434,101 @@ function DesignCanvasInner({
       element.removeEventListener('gesturechange', onGesture)
     }
   }, [wheel, zoomAt])
+
+  // Fingers, on a board or not: one drags the view, two pinch it. A finger that barely moves is
+  // a tap, left to the board (it selects); once it moves, the view takes it and the tap is off.
+  const touching = useRef(false)
+  useEffect(() => {
+    const element = box.current
+    if (!element) return
+    const points = new Map<number, { x: number; y: number }>()
+    let base: { view: typeof view; mid: { x: number; y: number }; dist: number } | null = null
+    let moved = false
+    const local = (e: PointerEvent) => {
+      const r = element.getBoundingClientRect()
+      return { x: e.clientX - r.left, y: e.clientY - r.top }
+    }
+    const measure = () => {
+      const [a, b] = [...points.values()]
+      if (!a) return null
+      if (!b) return { mid: a, dist: 0 }
+      return {
+        mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        dist: Math.hypot(a.x - b.x, a.y - b.y),
+      }
+    }
+    // From the fingers as they are now: what follows moves the view from here.
+    const rebase = () => {
+      const m = measure()
+      base = m && { view: viewRef.current, ...m }
+    }
+    const down = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') return
+      // A page in Play takes its own touches; a frame's events never reach here anyway.
+      points.set(e.pointerId, local(e))
+      touching.current = true
+      if (points.size === 1) moved = false
+      if (points.size > 1) {
+        moved = true
+        for (const id of points.keys()) element.setPointerCapture?.(id)
+      }
+      rebase()
+    }
+    const move = (e: PointerEvent) => {
+      if (!points.has(e.pointerId) || !base) return
+      points.set(e.pointerId, local(e))
+      const m = measure()
+      if (!m) return
+      if (!moved) {
+        if (Math.hypot(m.mid.x - base.mid.x, m.mid.y - base.mid.y) < 8) return
+        moved = true
+        element.setPointerCapture?.(e.pointerId)
+      }
+      e.preventDefault()
+      fitted.current = true
+      const v = base.view
+      const zoom =
+        base.dist > 0 && m.dist > 0
+          ? clamp((v.zoom * m.dist) / base.dist, ZOOM_MIN, ZOOM_MAX)
+          : v.zoom
+      // The point of the world under the fingers stays under them.
+      const k = zoom / v.zoom
+      setView({
+        zoom,
+        x: m.mid.x - (base.mid.x - v.x) * k,
+        y: m.mid.y - (base.mid.y - v.y) * k,
+      })
+    }
+    const up = (e: PointerEvent) => {
+      if (!points.delete(e.pointerId)) return
+      if (points.size === 0) {
+        touching.current = false
+        base = null
+        // A tap on the canvas itself clears the selection, as a click does.
+        const own = e.target === element || (e.target as HTMLElement).dataset?.world !== undefined
+        if (!moved && own && selectionRef.current.length) onSelectRef.current([])
+      } else rebase()
+    }
+    // After a drag, the click the lifted finger makes is not a tap.
+    const click = (e: MouseEvent) => {
+      if (!moved || touching.current) return
+      moved = false
+      e.stopPropagation()
+      e.preventDefault()
+    }
+    element.addEventListener('pointerdown', down, true)
+    element.addEventListener('pointermove', move, { capture: true, passive: false })
+    element.addEventListener('pointerup', up, true)
+    element.addEventListener('pointercancel', up, true)
+    element.addEventListener('click', click, true)
+    return () => {
+      element.removeEventListener('pointerdown', down, true)
+      element.removeEventListener('pointermove', move, true)
+      element.removeEventListener('pointerup', up, true)
+      element.removeEventListener('pointercancel', up, true)
+      element.removeEventListener('click', click, true)
+    }
+  }, [])
 
   // Space + drag pans, wherever the pointer is.
   useEffect(() => {
@@ -455,6 +629,10 @@ function DesignCanvasInner({
   onSelectRef.current = onSelect
   const selectionRef = useRef(selection)
   selectionRef.current = selection
+  const rectsRef = useRef(rects)
+  rectsRef.current = rects
+  const onDragRef = useRef(onDrag)
+  onDragRef.current = onDrag
 
   useEffect(() => {
     const onWindowMessage = (e: MessageEvent) => {
@@ -471,13 +649,18 @@ function DesignCanvasInner({
         if (select !== undefined) {
           seqs.current.select.delete(m.seq)
           const element = m.element
-          if (!element) return
+          if (!element) {
+            seqs.current.dragAfter.delete(m.seq)
+            return
+          }
           const picked = {
             board: key,
             h: Number(element.h),
             bid: typeof element.bid === 'number' ? element.bid : null,
           }
           setRects((all) => ({ ...all, [selectedKey(picked)]: element.rect }))
+          if (seqs.current.dragAfter.delete(m.seq) && press.current?.seq === m.seq)
+            press.current.ready = true
           const current = selectionRef.current
           onSelectRef.current(
             select
@@ -515,9 +698,14 @@ function DesignCanvasInner({
         captures.current.get(String(m.id))?.(m)
         captures.current.delete(String(m.id))
       } else if (m.type === 'typed') {
+        stale.current.add(key)
         setRetyping(null)
         onMessageRef.current(board, m)
       } else if (m.type === 'ready') {
+        shas.current.set(key, String(m.sha))
+        setReady((all) => (all[key] ? all : { ...all, [key]: true }))
+        for (const resolve of waiting.current.get(key) ?? []) resolve()
+        waiting.current.delete(key)
         post(key, { type: 'brigade:canvas', play: modeRef.current === 'play' })
         onMessageRef.current(board, m)
       } else if (m.type === 'inspected') {
@@ -526,7 +714,7 @@ function DesignCanvasInner({
     }
     window.addEventListener('message', onWindowMessage)
     return () => window.removeEventListener('message', onWindowMessage)
-  }, [boardOf, post, wheel, panBy])
+  }, [boardOf, onWidth, post, wheel, panBy])
 
   const modeRef = useRef(mode)
   modeRef.current = mode
@@ -549,6 +737,53 @@ function DesignCanvasInner({
 
   // -- The view's handle ------------------------------------------------------
 
+  const captureBoard = useCallback(
+    (board: string, options: { slides?: boolean; ratio?: number; maxHeight?: number }) => {
+      const id = Math.random().toString(36).slice(2)
+      return new Promise<Captured[]>((resolve, reject) => {
+        if (!frames.current.has(board)) return reject(new Error('Show the board first'))
+        const timer = setTimeout(() => {
+          captures.current.delete(id)
+          reject(new Error('The page did not answer. Reload it and try again.'))
+        }, 60_000)
+        captures.current.set(id, (m) => {
+          clearTimeout(timer)
+          if (m.error || !m.images) reject(new Error(m.error ?? 'Nothing was captured'))
+          else resolve(m.images)
+        })
+        post(board, { type: 'brigade:capture', id, ...options })
+      })
+    },
+    [post],
+  )
+
+  /** Keeps a board live, its page loaded and ready, while `work` runs. */
+  const pinnedWhile = useCallback(async <T,>(board: string, work: () => Promise<T>): Promise<T> => {
+    setPinned((all) => [...all, board])
+    try {
+      if (!readyRef.current[board])
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error('The page did not load. Reload it and try again.')),
+            60_000,
+          )
+          waiting.current.set(board, [
+            ...(waiting.current.get(board) ?? []),
+            () => {
+              clearTimeout(timer)
+              resolve()
+            },
+          ])
+        })
+      return await work()
+    } finally {
+      setPinned((all) => {
+        const i = all.indexOf(board)
+        return i < 0 ? all : [...all.slice(0, i), ...all.slice(i + 1)]
+      })
+    }
+  }, [])
+
   useImperativeHandle(
     handle,
     () => ({
@@ -561,28 +796,17 @@ function DesignCanvasInner({
         const keys = layoutRef.current.boards
           .filter((b) => b.folder === folder && (!file || b.file === file))
           .map((b) => b.key)
-        for (const key of keys) sizing.current.delete(key)
+        for (const key of keys) {
+          sizing.current.delete(key)
+          stale.current.add(key)
+        }
+        recheck((n) => n + 1)
         setReloads((all) => ({
           ...all,
           ...Object.fromEntries(keys.map((k) => [k, (all[k] ?? 0) + 1])),
         }))
       },
-      capture: (board, options = {}) => {
-        const id = Math.random().toString(36).slice(2)
-        return new Promise<Captured[]>((resolve, reject) => {
-          if (!frames.current.has(board)) return reject(new Error('Show the board first'))
-          const timer = setTimeout(() => {
-            captures.current.delete(id)
-            reject(new Error('The page did not answer. Reload it and try again.'))
-          }, 60_000)
-          captures.current.set(id, (m) => {
-            clearTimeout(timer)
-            if (m.error || !m.images) reject(new Error(m.error ?? 'Nothing was captured'))
-            else resolve(m.images)
-          })
-          post(board, { type: 'brigade:capture', id, ...options })
-        })
-      },
+      capture: (board, options = {}) => pinnedWhile(board, () => captureBoard(board, options)),
       retype: (selected) => {
         setRetyping(selected)
         frames.current.get(selected.board)?.focus()
@@ -592,7 +816,7 @@ function DesignCanvasInner({
         fitTo(what === 'selection' ? (selectionBounds() ?? allBounds()) : allBounds()),
       boards: () => layoutRef.current.boards,
     }),
-    [post, fitTo, selectionBounds, allBounds],
+    [post, fitTo, selectionBounds, allBounds, captureBoard, pinnedWhile],
   )
 
   // -- Pointer over a board in Select -----------------------------------------
@@ -605,6 +829,8 @@ function DesignCanvasInner({
   }
   const hoverFrame = useRef(0)
   function onOverlayMove(e: React.MouseEvent, board: string) {
+    if (modeRef.current === 'hand' || press.current?.dragging) return
+    if (!frames.current.has(board)) return
     const point = pagePoint(e)
     cancelAnimationFrame(hoverFrame.current)
     hoverFrame.current = requestAnimationFrame(() => {
@@ -613,7 +839,122 @@ function DesignCanvasInner({
       post(board, { type: 'brigade:hit', seq, ...point })
     })
   }
+  // -- Dragging the selection in Select --------------------------------------
+
+  /**
+   * The pointer down on a board in Select. On a selected element, a drag moves the selection
+   * (a click without one selects what is under it, as before); elsewhere it selects what is
+   * under it at once, and a drag then moves that once the page has said what it is.
+   */
+  const press = useRef<{
+    board: string
+    x: number
+    y: number
+    seq: number | null
+    /** The selection to move is the one shown. */
+    ready: boolean
+    dragging: boolean
+    /** It selected on the way down, or dragged: the click that follows is not another one. */
+    done: boolean
+  } | null>(null)
+
+  function onOverlayDown(e: React.PointerEvent, board: string) {
+    press.current = null
+    if (e.pointerType === 'touch' || e.button !== 0 || e.shiftKey || e.altKey) return
+    if (modeRef.current !== 'select' || !frames.current.has(board)) return
+    const point = pagePoint(e)
+    const inside = selectionRef.current.some((s) => {
+      const r = s.board === board ? rectsRef.current[selectedKey(s)] : null
+      return (
+        !!r &&
+        point.x >= r.x &&
+        point.x <= r.x + r.width &&
+        point.y >= r.y &&
+        point.y <= r.y + r.height
+      )
+    })
+    let seq: number | null = null
+    if (!inside) {
+      seq = seqs.current.next++
+      seqs.current.select.set(seq, false)
+      seqs.current.dragAfter.add(seq)
+      post(board, { type: 'brigade:hit', seq, ...point })
+    }
+    press.current = {
+      board,
+      x: e.clientX,
+      y: e.clientY,
+      seq,
+      ready: inside,
+      dragging: false,
+      done: !inside,
+    }
+    // Moves outside the board, or the canvas, still come here.
+    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
+    box.current?.focus({ preventScroll: true })
+  }
+
+  const cancelDrag = useCallback(() => {
+    const p = press.current
+    if (!p?.dragging) return false
+    p.dragging = false
+    p.ready = false
+    setDragging(false)
+    onDragRef.current?.('cancel', { x: 0, y: 0 })
+    return true
+  }, [])
+
+  useEffect(() => {
+    const delta = (e: PointerEvent, p: { x: number; y: number }) => ({
+      x: (e.clientX - p.x) / viewRef.current.zoom,
+      y: (e.clientY - p.y) / viewRef.current.zoom,
+    })
+    const move = (e: PointerEvent) => {
+      const p = press.current
+      if (!p?.ready || e.buttons === 0) return
+      if (!p.dragging) {
+        if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < 4) return
+        p.dragging = true
+        p.done = true
+        setDragging(true)
+        setHover(null)
+        onDragRef.current?.('start', { x: 0, y: 0 })
+      }
+      onDragRef.current?.('move', delta(e, p))
+    }
+    const up = (e: PointerEvent) => {
+      const p = press.current
+      if (!p) return
+      p.ready = false
+      if (!p.dragging) return
+      p.dragging = false
+      setDragging(false)
+      onDragRef.current?.(e.type === 'pointercancel' ? 'cancel' : 'end', delta(e, p))
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+    return () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+    }
+  }, [])
+
   function onOverlayClick(e: React.MouseEvent, board: string) {
+    if (modeRef.current === 'hand') return
+    // Selected as the pointer went down, or dragged: done.
+    const p = press.current
+    press.current = null
+    if (p?.board === board && p.done) return
+    // A board showing its picture: brought close, where its page loads.
+    if (!frames.current.has(board)) {
+      const b = boardOf(board)
+      if (b) fitTo({ x: b.x, y: b.y, width: b.width, height: b.frame })
+      fitted.current = true
+      setOpened(board)
+      return
+    }
     const seq = seqs.current.next++
     seqs.current.select.set(seq, e.shiftKey)
     post(board, { type: 'brigade:hit', seq, ...pagePoint(e) })
@@ -622,6 +963,11 @@ function DesignCanvasInner({
 
   function onKey(e: ReactKeyboardEvent) {
     if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable]')) return
+    // Escape while dragging puts the selection back where it was.
+    if (e.key === 'Escape' && cancelDrag()) {
+      e.preventDefault()
+      return
+    }
     const mod = e.metaKey || e.ctrlKey
     if (e.shiftKey && e.code === 'Digit1') {
       e.preventDefault()
@@ -647,17 +993,127 @@ function DesignCanvasInner({
     left: view.x + x * view.zoom,
     top: view.y + y * view.zoom,
   })
-  const near = (b: { x: number; y: number; width: number; frame: number }) => {
-    const s = screen(b.x, b.y)
-    const w = b.width * view.zoom
-    const h = b.frame * view.zoom
-    return (
-      s.left < size.width * 2 &&
-      s.left + w > -size.width &&
-      s.top < size.height * 2 &&
-      s.top + h > -size.height
+  // Live: the boards that fill most of the view, up to a few; a board kept small on screen shows its
+  // picture once it has one; a selected one, or one being retyped or captured, stays live.
+  const keep = [...selection.map((x) => x.board), ...(retyping ? [retyping.board] : []), ...pinned]
+  const keepKey = keep.join(',')
+  const live = useMemo(() => {
+    const v = settled
+    const margin = touch ? 0 : 0.25
+    const mx = size.width * margin
+    const my = size.height * margin
+    const kept = new Set(keepKey ? keepKey.split(',') : [])
+    // On a phone a board fitted to the view is narrower than PICTURE_BELOW, and still worth its page.
+    const small = Math.min(PICTURE_BELOW, size.width / 2)
+    const ranked = layout.boards.flatMap((b) => {
+      const left = v.x + b.x * v.zoom
+      const top = v.y + b.y * v.zoom
+      const w = b.width * v.zoom
+      const h = b.frame * v.zoom
+      const across = Math.min(size.width + mx, left + w) - Math.max(-mx, left)
+      const down = Math.min(size.height + my, top + h) - Math.max(-my, top)
+      const inView = across > 0 && down > 0
+      if (kept.has(b.key)) return [{ key: b.key, rank: Infinity }]
+      // A tapped board stays live while it is in view.
+      if (b.key === opened && inView) return [{ key: b.key, rank: Infinity }]
+      if (!inView) return []
+      // Too small to use: its picture, unless that is out of date.
+      if (w < small && pictures[b.key] && !stale.current.has(b.key)) return []
+      return [{ key: b.key, rank: across * down }]
+    })
+    return new Set(
+      ranked
+        .sort((x, y) => y.rank - x.rank)
+        .slice(0, Math.max(kept.size + 1, touch ? LIVE_MAX_TOUCH : LIVE_MAX))
+        .map((r) => r.key),
     )
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- checks: a picture went out of date
+  }, [settled, touch, size.width, size.height, layout.boards, pictures, keepKey, opened, checks])
+
+  // A tapped board that left the view goes back to its picture when small.
+  useEffect(() => {
+    if (opened && !live.has(opened)) setOpened(null)
+  }, [opened, live])
+
+  // A live board whose page is ready and has no picture of this version: its picture is taken,
+  // one board at a time, once the view holds still.
+  const taking = useRef(false)
+  useEffect(() => {
+    if (taking.current) return
+    const key = [...live].find(
+      (k) =>
+        ready[k] &&
+        k !== retyping?.board &&
+        (!pictures[k] || stale.current.has(k) || pictures[k].sha !== shas.current.get(k)),
+    )
+    if (!key) return
+    const timer = setTimeout(async () => {
+      const board = boardOf(key)
+      if (!board || !frames.current.has(key)) return
+      taking.current = true
+      stale.current.delete(key)
+      const sha = shas.current.get(key) ?? ''
+      try {
+        const [image] = await pinnedWhile(key, () =>
+          captureBoard(key, {
+            ratio: Math.min(1, PICTURE_WIDTH / board.width),
+            maxHeight: board.frame,
+          }),
+        )
+        if (image) {
+          const url = URL.createObjectURL(blobOfDataUrl(image.data))
+          const before = picturesRef.current[key]
+          if (before) URL.revokeObjectURL(before.url)
+          setPictures((all) => ({ ...all, [key]: { url, sha } }))
+        }
+      } catch {
+        // No picture: the board stays live while it is in view.
+      } finally {
+        taking.current = false
+        recheck((n) => n + 1)
+      }
+    }, 600)
+    return () => clearTimeout(timer)
+  })
+  useEffect(
+    () => () => {
+      for (const p of Object.values(picturesRef.current)) URL.revokeObjectURL(p.url)
+    },
+    [],
+  )
+
+  const onFrame = useCallback((key: string, frame: HTMLIFrameElement | null) => {
+    if (frame) frames.current.set(key, frame)
+    else {
+      frames.current.delete(key)
+      setReady((all) => (all[key] ? { ...all, [key]: false } : all))
+    }
+  }, [])
+  const overlay = useRef({ onOverlayMove, onOverlayClick, onOverlayDown })
+  overlay.current = { onOverlayMove, onOverlayClick, onOverlayDown }
+  const onBoardMove = useCallback(
+    (e: React.MouseEvent, key: string) => overlay.current.onOverlayMove(e, key),
+    [],
+  )
+  const onBoardDown = useCallback(
+    (e: React.PointerEvent, key: string) => overlay.current.onOverlayDown(e, key),
+    [],
+  )
+  const onBoardClick = useCallback(
+    (e: React.MouseEvent, key: string) => overlay.current.onOverlayClick(e, key),
+    [],
+  )
+  const onBoardLeave = useCallback(
+    (key: string) => setHover((h) => (h?.board === key ? null : h)),
+    [],
+  )
+  const onDoubleClickRef = useRef(onDoubleClick)
+  onDoubleClickRef.current = onDoubleClick
+  const onBoardDoubleClick = useCallback((key: string) => {
+    if (modeRef.current !== 'select') return
+    const last = selectionRef.current.at(-1)
+    if (last?.board === key) onDoubleClickRef.current?.(last)
+  }, [])
   const outline = (board: string, r: Rect | null | undefined) => {
     const b = layout.boards.find((x) => x.key === board)
     if (!b || !r) return null
@@ -677,19 +1133,31 @@ function DesignCanvasInner({
       aria-label="Design canvas"
       onKeyDown={onKey}
       onPointerDown={(e) => {
+        // Fingers: the touch handler, whatever they are on.
+        if (e.pointerType === 'touch') return
         // Drag on the canvas itself, or with the middle button anywhere: pan.
         const own =
           e.target === e.currentTarget || (e.target as HTMLElement).dataset.world !== undefined
-        if (panning === 'space' || e.button === 1 || (own && e.button === 0)) {
+        const hand = mode === 'hand' && e.button === 0
+        if (panning === 'space' || hand || e.button === 1 || (own && e.button === 0)) {
           e.preventDefault()
-          if (own && e.button === 0 && panning !== 'space' && selection.length) onSelect([])
+          if (own && e.button === 0 && !hand && panning !== 'space' && selection.length)
+            onSelect([])
+          // preventDefault keeps focus where it was: the canvas takes it, for its keys (V, H, ⇧1).
+          box.current?.focus({ preventScroll: true })
           setPanning((p) => p ?? 'drag')
           startDrag(e)
         }
       }}
       className={cn(
         'relative min-h-0 flex-1 overflow-hidden bg-muted/40 outline-none select-none',
-        panning ? 'cursor-grabbing' : 'cursor-default',
+        panning
+          ? 'cursor-grabbing'
+          : dragging
+            ? 'cursor-move'
+            : mode === 'hand'
+              ? 'cursor-grab'
+              : 'cursor-default',
         className,
       )}
       style={{ touchAction: 'none' }}
@@ -704,20 +1172,18 @@ function DesignCanvasInner({
             key={b.key}
             board={b}
             height={b.frame}
-            mounted={near(b)}
+            live={live.has(b.key)}
+            ready={Boolean(ready[b.key])}
+            picture={pictures[b.key]?.url}
             reload={reloads[b.key] ?? 0}
-            select={mode === 'select' && !panning && !(retyping && retyping.board === b.key)}
-            onFrame={(frame) => {
-              if (frame) frames.current.set(b.key, frame)
-              else frames.current.delete(b.key)
-            }}
-            onMove={onOverlayMove}
-            onLeave={() => setHover((h) => (h?.board === b.key ? null : h))}
-            onClick={onOverlayClick}
-            onDoubleClick={() => {
-              const last = selection.at(-1)
-              if (last?.board === b.key) onDoubleClick?.(last)
-            }}
+            // In Hand too: the layer keeps the pages from taking the drag.
+            select={mode !== 'play' && !panning && !(retyping && retyping.board === b.key)}
+            onFrame={onFrame}
+            onMove={onBoardMove}
+            onDown={onBoardDown}
+            onLeave={onBoardLeave}
+            onClick={onBoardClick}
+            onDoubleClick={onBoardDoubleClick}
           />
         ))}
       </div>
@@ -753,7 +1219,8 @@ function DesignCanvasInner({
             </div>
           )
         })}
-        {mode === 'select' &&
+        {(mode === 'select' || mode === 'comment') &&
+          !dragging &&
           hover &&
           !selection.some((s) => s.board === hover.board && s.h === hover.element.h) && (
             <Outline box={outline(hover.board, hover.element.rect)} kind="hover" />
@@ -764,6 +1231,9 @@ function DesignCanvasInner({
             box={outline(s.board, rects[selectedKey(s)])}
             kind="selected"
           />
+        ))}
+        {pins?.map((p) => (
+          <Pin key={p.key} box={outline(p.board, p.rect)} n={p.n} />
         ))}
       </div>
 
@@ -796,53 +1266,73 @@ function Outline({
   )
 }
 
-/** One board: its page in a frame, with the clear layer that takes the pointer in Select. */
+/** A comment waiting in the composer, by its number there, at its element's top-left corner. */
+function Pin({
+  box,
+  n,
+}: {
+  box: { left: number; top: number; width: number; height: number } | null
+  n: number
+}) {
+  if (!box) return null
+  return (
+    <div
+      className="absolute flex size-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-primary text-[0.6875rem] font-semibold text-primary-foreground tabular-nums shadow-sm ring-2 ring-background"
+      style={{ left: box.left, top: box.top }}
+    >
+      {n}
+    </div>
+  )
+}
+
+/**
+ * One board: its page in a frame while it is live, else the picture of it; the picture stays over
+ * the frame until the page is ready. The clear layer over it takes the pointer in Select.
+ */
 const BoardView = memo(function BoardView({
   board,
   height,
-  mounted,
+  live,
+  ready,
+  picture,
   reload,
   select,
   onFrame,
   onMove,
+  onDown,
   onLeave,
   onClick,
   onDoubleClick,
 }: {
   board: CanvasBoard
   height: number
-  mounted: boolean
+  live: boolean
+  ready: boolean
+  picture: string | undefined
   reload: number
   select: boolean
-  onFrame: (frame: HTMLIFrameElement | null) => void
+  onFrame: (key: string, frame: HTMLIFrameElement | null) => void
   onMove: (e: React.MouseEvent, board: string) => void
-  onLeave: () => void
+  onDown: (e: React.PointerEvent, board: string) => void
+  onLeave: (board: string) => void
   onClick: (e: React.MouseEvent, board: string) => void
-  onDoubleClick: () => void
+  onDoubleClick: (board: string) => void
 }) {
-  // Once shown, a board keeps its page while it stays near the view.
-  const [shown, setShown] = useState(mounted)
-  if (mounted && !shown) setShown(true)
-  const onFrameRef = useRef(onFrame)
-  onFrameRef.current = onFrame
-  useEffect(() => {
-    if (!mounted && shown) {
-      const timer = setTimeout(() => setShown(false), 5000)
-      return () => clearTimeout(timer)
-    }
-  }, [mounted, shown])
-  useEffect(() => () => onFrameRef.current(null), [])
-
+  const key = board.key
+  const frameRef = useCallback(
+    (frame: HTMLIFrameElement | null) => onFrame(key, frame),
+    [onFrame, key],
+  )
   return (
     <div
-      data-board={board.key}
+      data-board={key}
       className="absolute bg-white shadow-sm ring-1 ring-black/10"
       style={{ left: board.x, top: board.y, width: board.width, height }}
     >
-      {shown && (
+      {live && (
         <iframe
           key={`${board.src}#${reload}`}
-          ref={(frame) => onFrameRef.current(frame)}
+          ref={frameRef}
           title={board.title ?? board.file}
           src={board.src}
           // Its own site already; the sandbox keeps it from the top window and from forms that navigate it.
@@ -851,14 +1341,25 @@ const BoardView = memo(function BoardView({
           className="block size-full border-0"
         />
       )}
+      {picture && !(live && ready) && (
+        // eslint-disable-next-line @next/next/no-img-element -- a blob: URL made here
+        <img
+          src={picture}
+          alt=""
+          draggable={false}
+          className="pointer-events-none absolute inset-0 size-full object-cover object-top"
+        />
+      )}
       {select && (
         <div
-          data-board={board.key}
-          className="absolute inset-0 cursor-default"
-          onMouseMove={(e) => onMove(e, board.key)}
-          onMouseLeave={onLeave}
-          onClick={(e) => onClick(e, board.key)}
-          onDoubleClick={onDoubleClick}
+          data-board={key}
+          // The canvas's cursor: an arrow in Select, a hand in Hand.
+          className="absolute inset-0"
+          onMouseMove={(e) => onMove(e, key)}
+          onPointerDown={(e) => onDown(e, key)}
+          onMouseLeave={() => onLeave(key)}
+          onClick={(e) => onClick(e, key)}
+          onDoubleClick={() => onDoubleClick(key)}
         />
       )}
     </div>

@@ -1,0 +1,361 @@
+// The demo's walkthroughs, played on their own in the landing page's frame
+// (demo.brigade.lol/app?tour=<story>, the landing page's picker chooses): a cursor marked "You"
+// (the visitor, as Ada, the workspace's owner) uses the real dashboard. It asks a teammate for
+// a job, then approves what waits for it (a merge, an email) until the job is done; the
+// teammate's side is scripted in lib/demo/scripts.ts.
+// It acts through the page's own elements, with events no person made: the first one a person
+// makes (a click, a tap, a key; not a scroll) stops it, and the dashboard is theirs.
+import { demoEditor } from './editor-handle'
+
+export const TOUR_PARAM = 'tour'
+
+/** The message the cursor sends, and the one that makes it a routine: scripts.ts answers both. */
+export const TOUR_ASK =
+  'A customer says the export button on Reports does nothing. Fix it and tell the customers who asked.'
+export const TOUR_ROUTINE = 'Great. Do the same for every bug report that comes in.'
+
+/** The line the `list` walkthrough adds to Acme's launch checklist, then hands to Riley. */
+export const LIST_LINE = 'Add a changelog page linked from the footer'
+/** That list, as its title shows in Lists and on a thread's Working on card. */
+export const LIST_TITLE = 'Launch checklist'
+
+/** Each walkthrough: whom the cursor asks, what, the buttons it presses in turn, and the words
+ * in the teammate's last reply that say it's done. */
+export const STORIES = {
+  bug: {
+    teammate: 'Riley',
+    ask: TOUR_ASK,
+    presses: ['Merge #153', 'Allow'],
+    done: 'Sent to the 3 customers',
+  },
+  feature: {
+    teammate: 'Riley',
+    ask: 'Jo at Northwind asked for CSV export on Invoices. Ship it, record a short demo and send it to Jo.',
+    presses: ['Merge #154', 'Allow'],
+    done: 'CSV export is live',
+  },
+  call: {
+    teammate: 'Sam',
+    ask: 'Prep me for tomorrow’s call with Northwind.',
+    presses: ['Allow'],
+    done: 'Agenda for tomorrow',
+  },
+  payment: {
+    teammate: 'Sam',
+    ask: 'Globex’s payment failed in Stripe. Sort it out.',
+    presses: ['Allow'],
+    done: 'Your card expired',
+  },
+  // Not asked in Home: the cursor adds `ask` to the launch checklist and hands it to the teammate
+  // (playList), then merges its pull request, which ticks the line.
+  list: {
+    teammate: 'Riley',
+    ask: LIST_LINE,
+    presses: ['Merge #155'],
+    done: `is ticked on ${LIST_TITLE}`,
+    list: LIST_TITLE,
+  },
+} as const
+export type Story = keyof typeof STORIES
+export const storyOf = (value: string | null): Story =>
+  value && value in STORIES ? (value as Story) : 'bug'
+
+export class Stopped extends Error {}
+
+/** What a tour step needs: where the cursor is drawn, and whether to go on. */
+export type Stage = {
+  signal: AbortSignal
+  cursor: HTMLElement
+}
+
+const sleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal.aborted) return reject(new Stopped())
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer)
+      reject(new Stopped())
+    })
+  })
+
+const visible = (el: Element) => {
+  const r = el.getBoundingClientRect()
+  return r.width > 0 && r.height > 0
+}
+
+/** Waits for what `find` returns, as the page loads or a teammate's run gets there. */
+export async function waitFor<T>(
+  find: () => T | null | undefined,
+  signal: AbortSignal,
+  timeout = 45_000,
+): Promise<T> {
+  const end = Date.now() + timeout
+  for (;;) {
+    const found = find()
+    if (found) return found
+    if (Date.now() > end) throw new Stopped()
+    await sleep(120, signal)
+  }
+}
+
+/** The last visible element matching `selector` whose text has `text`. */
+export function byText(selector: string, text: string | RegExp) {
+  const all = [...document.querySelectorAll<HTMLElement>(selector)].filter(
+    (el) =>
+      visible(el) &&
+      (typeof text === 'string' ? el.textContent?.includes(text) : text.test(el.textContent ?? '')),
+  )
+  return all.at(-1)
+}
+
+/** The last visible element matching `selector`. */
+export function last(selector: string) {
+  return [...document.querySelectorAll<HTMLElement>(selector)].filter(visible).at(-1)
+}
+
+const center = (el: Element) => {
+  const r = el.getBoundingClientRect()
+  return { x: r.left + Math.min(r.width / 2, 60), y: r.top + r.height / 2 }
+}
+
+/**
+ * Scrolls the element into view within the app only: its nearest scrolling box, else the
+ * app's own page. Not `scrollIntoView`, which also scrolls every page around the frame the
+ * tour plays in, so the landing would move by itself.
+ */
+function reveal(el: HTMLElement) {
+  let box = el.parentElement
+  while (box) {
+    const { overflowY } = getComputedStyle(box)
+    if (/(auto|scroll|overlay)/.test(overflowY) && box.scrollHeight > box.clientHeight) break
+    box = box.parentElement
+  }
+  const r = el.getBoundingClientRect()
+  const top = box ? box.getBoundingClientRect().top : 0
+  const bottom = box ? box.getBoundingClientRect().bottom : window.innerHeight
+  const by = r.top < top ? r.top - top : r.bottom > bottom ? r.bottom - bottom : 0
+  if (!by) return
+  ;(box ?? window).scrollBy({ top: by, behavior: 'smooth' })
+}
+
+/**
+ * While the walkthrough plays, nothing in the app moves the page around its frame: focus never
+ * scrolls (a focus in a frame scrolls every page around it to the element), and scrolling an
+ * element into view scrolls only within the app. The visitor may be reading further down the
+ * landing meanwhile. Returns what puts both back.
+ */
+export function keepFrameStill() {
+  const focus = HTMLElement.prototype.focus
+  const intoView = Element.prototype.scrollIntoView
+  HTMLElement.prototype.focus = function (options?: FocusOptions) {
+    focus.call(this, { ...options, preventScroll: true })
+  }
+  Element.prototype.scrollIntoView = function () {
+    if (this instanceof HTMLElement) reveal(this)
+  }
+  return () => {
+    HTMLElement.prototype.focus = focus
+    Element.prototype.scrollIntoView = intoView
+  }
+}
+
+/** Glides the cursor to the element, scrolling it into view first. */
+export async function moveTo(stage: Stage, el: HTMLElement) {
+  reveal(el)
+  await sleep(250, stage.signal)
+  const { x, y } = center(el)
+  stage.cursor.style.transform = `translate(${x}px, ${y}px)`
+  await sleep(750, stage.signal)
+}
+
+/** A press as a mouse makes it: what menus listen for (pointerdown) and what buttons do (click). */
+export async function press(
+  stage: Stage,
+  target: HTMLElement | (() => HTMLElement | null | undefined),
+) {
+  const find = typeof target === 'function' ? target : () => target
+  await moveTo(stage, await waitFor(find, stage.signal))
+  // Found again once there: what the page drew again meanwhile (a line's chips) is pressed.
+  const el = await waitFor(find, stage.signal)
+  const { x, y } = center(el)
+  const at = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 }
+  stage.cursor.dataset.pressed = ''
+  el.dispatchEvent(
+    new PointerEvent('pointerdown', { ...at, buttons: 1, pointerType: 'mouse', isPrimary: true }),
+  )
+  el.dispatchEvent(new MouseEvent('mousedown', { ...at, buttons: 1 }))
+  await sleep(120, stage.signal)
+  el.dispatchEvent(new PointerEvent('pointerup', { ...at, pointerType: 'mouse', isPrimary: true }))
+  el.dispatchEvent(new MouseEvent('mouseup', at))
+  // An editor may draw what was pressed again on mousedown (a line's chips): the click goes to
+  // what is there now.
+  const now = el.isConnected ? el : find()
+  ;(now ?? el).click()
+  delete stage.cursor.dataset.pressed
+  await sleep(350, stage.signal)
+}
+
+/** Types into the message box as a person would, a letter at a time. */
+export async function type(stage: Stage, editor: HTMLElement, text: string) {
+  await press(stage, editor)
+  editor.focus({ preventScroll: true })
+  // A word at a time: the box drops letters typed faster than it renders them.
+  for (const word of text.split(/(?<= )/)) {
+    document.execCommand('insertText', false, word)
+    await sleep(70 + word.length * 14, stage.signal)
+  }
+  await sleep(500, stage.signal)
+}
+
+/** Enter in the message box, or its send button on a touch screen: it sends. */
+export async function send(stage: Stage, editor: HTMLElement) {
+  // A phone or tablet: its return key adds a line (components/composer.tsx), and the button
+  // sends, so the tour presses it as a person there would.
+  if (window.matchMedia('(pointer: coarse)').matches) {
+    const scope = editor.closest('form') ?? document
+    const button = [...scope.querySelectorAll<HTMLElement>('button[aria-label="Send"]')]
+      .filter(visible)
+      .at(-1)
+    if (button) {
+      await press(stage, button)
+      return
+    }
+  }
+  for (const kind of ['keydown', 'keyup'] as const)
+    editor.dispatchEvent(
+      new KeyboardEvent(kind, {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true,
+        cancelable: true,
+      }),
+    )
+  await sleep(300, stage.signal)
+}
+
+const EDITOR = '[contenteditable="true"]'
+
+/** The document's editor, as it registers itself in the demo (lib/demo/editor-handle.ts). */
+const docEditor = (signal: AbortSignal) => waitFor(demoEditor, signal)
+
+/** The text of a line of a document, where the cursor points. */
+const lineText = (line: HTMLElement) =>
+  line.querySelector<HTMLElement>('.bn-inline-content') ?? line
+
+/** A line of the list on the page, by its text. */
+const listLine = (text: string) =>
+  [
+    ...document.querySelectorAll<HTMLElement>(
+      '.bn-block-content[data-content-type="checkListItem"]',
+    ),
+  ]
+    .filter(visible)
+    .find((el) => el.textContent?.includes(text))
+
+/** The link to the list: the sidebar's row, a row of Lists, or the thread's Working on card. */
+const listLink = (title: string) => byText('a[href^="/app/lists/"]', title)
+
+/**
+ * The `list` walkthrough (docs/demo.md): in Lists, the cursor adds a line to the launch checklist
+ * and hands it to Riley; the line shows Riley's thread, then the pull request; the cursor merges
+ * it from the thread, and back in the list the line is ticked, under Recently done too.
+ */
+async function playList(stage: Stage, story: (typeof STORIES)['list']) {
+  const { signal } = stage
+  // Lists, then the launch checklist.
+  const lists = await waitFor(() => last('a[href="/app/lists"]'), signal)
+  stage.cursor.hidden = false
+  await sleep(900, signal)
+  await press(stage, lists)
+  await press(stage, await waitFor(() => listLink(story.list), signal))
+
+  // A line at its end, typed a word at a time. Through the editor itself: with the page's
+  // selection, Safari typed into the line above.
+  await waitFor(() => listLine('Open Graph'), signal)
+  await sleep(600, signal)
+  const end = (await docEditor(signal)).caretAtLastLine()
+  if (end) await moveTo(stage, lineText(end))
+  stage.cursor.dataset.pressed = ''
+  await sleep(150, signal)
+  delete stage.cursor.dataset.pressed
+  ;(await docEditor(signal)).newLineAtEnd()
+  await sleep(400, signal)
+  for (const word of story.ask.split(/(?<= )/)) {
+    ;(await docEditor(signal)).insertText(word)
+    await sleep(70 + word.length * 14, signal)
+  }
+  await waitFor(() => listLine(story.ask), signal)
+  await sleep(500, signal)
+
+  // Handed to Riley. Its toolbar shows once the editor has the selection: selected again if not.
+  let handTo: HTMLElement | undefined
+  for (let tries = 0; !handTo && tries < 3; tries++) {
+    await moveTo(stage, lineText(await waitFor(() => listLine(story.ask), signal)))
+    ;(await docEditor(signal)).selectLine(story.ask)
+    handTo = await waitFor(() => byText('button', /^Hand to /), signal, 3000).catch((e) => {
+      if (signal.aborted) throw e
+      return undefined
+    })
+  }
+  if (!handTo) throw new Stopped()
+  await press(stage, handTo)
+  const picker = await waitFor(() => last('#hand-off-teammate'), signal)
+  await sleep(500, signal)
+  await press(stage, picker)
+  await press(stage, await waitFor(() => byText('[role="option"]', story.teammate), signal))
+  await press(
+    stage,
+    await waitFor(() => byText('[role="dialog"] button', `Hand to ${story.teammate}`), signal),
+  )
+
+  // Its thread: Riley works there, so the walkthrough stays to watch, until the pull request
+  // waits on a person. Merged, Riley says the line is ticked; then the list shows it.
+  await waitFor(() => location.pathname.startsWith('/app/threads/'), signal)
+  const merge = story.presses[0]
+  const button = await waitFor(() => byText('button', merge), signal, 60_000)
+  await sleep(1500, signal)
+  await press(stage, () => (button.isConnected ? button : byText('button', merge)))
+  await waitFor(() => byText('p', story.done), signal, 30_000)
+  await sleep(1200, signal)
+  await press(stage, await waitFor(() => listLink(story.list), signal))
+  await waitFor(() => listLine(story.ask)?.dataset.checked === 'true', signal, 15_000)
+  await sleep(1200, signal)
+  await press(stage, await waitFor(() => byText('[role="radio"]', 'Done'), signal))
+  await waitFor(() => last('section[aria-label="Recently done"]'), signal)
+  await sleep(2500, signal)
+}
+
+/** A walkthrough. Resolves once the cursor is done; throws Stopped when a person takes over. */
+export async function play(stage: Stage, story: Story = 'bug') {
+  if (story === 'list') return playList(stage, STORIES.list)
+  const { signal } = stage
+  const { teammate, ask, presses, done } = STORIES[story]
+  // Home: the message box, and who it goes to.
+  const picker = await waitFor(() => last('button[aria-label$="Change teammate"]'), signal)
+  await waitFor(() => last(EDITOR), signal)
+  stage.cursor.hidden = false
+  await sleep(900, signal)
+
+  await press(stage, picker)
+  const who = await waitFor(() => byText('[role="menuitem"]', teammate), signal)
+  await press(stage, who)
+  const box = await waitFor(() => last(EDITOR), signal)
+  await type(stage, box, ask)
+  await send(stage, box)
+
+  // The thread: the teammate works, and each thing that waits for a person gets a yes.
+  await waitFor(() => location.pathname.startsWith('/app/threads/'), signal)
+  for (const label of presses) {
+    const button = await waitFor(
+      () => byText('button', label === 'Allow' ? /^Allow$/ : label),
+      signal,
+      60_000,
+    )
+    await sleep(1500, signal)
+    await press(stage, button)
+  }
+  await waitFor(() => byText('p', done), signal, 30_000)
+  await sleep(1500, signal)
+}

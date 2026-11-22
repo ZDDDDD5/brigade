@@ -19,11 +19,16 @@ copy of the repo; the findings below come from there.
 
 Cloudflare shipped first, more simply than the phases below:
 
-- **One Durable Object for the whole API.** Every request goes to a single `Api` object
-  (`apps/api/src/worker.ts`, in the Worker `brigade-api`), which runs the Hono app as the
-  one Node process does. The hub, the timers (`src/jobs.ts`) and a Prisma client with its
-  pool all live in that object. A Cron Trigger pings it each minute so the jobs keep
-  running. Phase 3 (a hub per workspace) is needed only once one object is not enough.
+- **One Durable Object for the API, and one per workspace's hub.** Requests go to a single
+  `Api` object (`apps/api/src/worker.ts`, in the Worker `brigade-api`), which runs the Hono
+  app as the one Node process does, with the timers (`src/jobs.ts`) and a Prisma client with
+  its pool. A Cron Trigger pings it each minute so the jobs keep running. A workspace's hub
+  (its runners' and dashboards' sockets) is the Api object's too, until its `hubMode` is
+  `object`: then it is a Durable Object of its own, `WorkspaceHubObject`, and the front
+  routes the workspace's sockets there. The jobs can go through Cloudflare Queues instead of
+  the Api object's timers, and reads through brigade-api's own isolates: all of it is in
+  [workspace-hubs-plan.md](workspace-hubs-plan.md), with how to turn each on. State that has
+  to survive a deploy, which restarts every object, lives in Postgres, not in memory.
 - **A small Worker in front.** `brigade-api-front` (`src/front.ts`, `wrangler.front.jsonc`)
   has the API's domains and forwards each request to the object, through a binding to
   `brigade-api`'s Durable Object. A new connection can land on a machine that has not
@@ -47,9 +52,20 @@ Cloudflare shipped first, more simply than the phases below:
       place the front Worker there again until the object exists.
   - pg-cloudflare is patched (`patches/`) to send each query in one write. Before, each
     query waited about 70 ms for Nagle's algorithm and delayed ACKs.
-  - Hyperdrive is not used. The object keeps its connections open, so Hyperdrive's fast
-    connection setup would not help, and its cache would serve reads older than the
-    latest writes.
+  - @prisma/client is patched (`patches/`) to decode its schema's parameterization graph
+    once per isolate, shared by every client. Unpatched, each `new PrismaClient` held
+    about 17 MB of it, and the Worker makes a client for each queue batch, cron run and
+    stateless read, a hub for each wake. On Nov 4 2026, 10 queue batches running at once
+    in one isolate went past its 128 MB (`exceededMemory`). Checked by
+    `apps/api/test/prisma-client-memory.test.ts`; keep the patch when upgrading Prisma.
+  - The Api object does not use Hyperdrive. It keeps its connections open, so Hyperdrive's
+    fast connection setup would not help, and its cache would serve reads older than the
+    latest writes. What connects again often (hub objects that wake, the cron, the jobs'
+    consumer, stateless reads) goes through Hyperdrive with its cache off, once bound as
+    `DB_HYPERDRIVE`.
+  - brigade-api is placed in `aws:eu-central-1` again, for its own isolates: the cron, the
+    jobs' consumer and stateless reads. Hub objects are made from there, or from the Api
+    object, next to the database too.
 - **Platform seams.** `src/platform/node.ts` and `src/platform/workers.ts` hold what
   differs. wrangler's `alias` swaps in three Workers versions: that module, Prisma's
   `runtime = "cloudflare"` client, and jsdom, replaced by linkedom
@@ -63,7 +79,7 @@ Cloudflare shipped first, more simply than the phases below:
   - Files go to the R2 bucket `brigade`.
 - **Deploy** happens on each push to `main`. Workers Builds, Cloudflare's GitHub
   integration, runs one build per Worker (`brigade-api`, `brigade-api-front`,
-  `brigade-web`, `brigade-collab`):
+  `brigade-web`, `brigade-collab`, `brigade-web-demo`, `brigade-preview-gateway`):
   - Each runs from the repository root, with Node from `.nvmrc` and `PNPM_VERSION`
     `10.34.6`. It installs, then runs `pnpm run cf:build:<worker>` and
     `pnpm run cf:deploy:<worker>`. Both call `scripts/deploy/workers.sh`.
@@ -71,10 +87,23 @@ Cloudflare shipped first, more simply than the phases below:
     in it the build's Worker name.
   - Watch paths limit each build to the files it is built from.
   - The API's deploy migrates the database first, with the `DATABASE_URL` build secret.
+  - The previews gateway's (`brigade-preview-gateway`, brigade.surf) applies its D1
+    migrations first. It builds only when `apps/preview-gateway` (its tests aside), the
+    root package files, `patches` or `scripts/deploy` change. It and the API deploy side
+    by side, in no set order, so each works with the other's previous version: an API
+    that sends no thread gets a 400 from a gateway with routes per thread and hands out
+    the provider's address, as when the gateway is down; a gateway from before ignores
+    the thread and the access token, and answers 404 to `DELETE /routes` (docs/previews.md).
   - A deploy keeps the secrets a Worker has, and no file in the repository holds them:
     - `brigade-api` reads all its settings from secrets.
-      `pnpm --filter @brigade/api exec wrangler secret list` names them.
+      `pnpm --filter @brigade/api exec wrangler secret list` names them. Billing's
+      (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`) are in [billing.md](billing.md).
     - `brigade-collab` has `COLLAB_SECRET`, the same as the API's.
+    - Product analytics ([analytics.md](analytics.md)): `POSTHOG_KEY` (and optionally
+      `POSTHOG_INTERNAL_EMAIL_DOMAINS`) are secrets of `brigade-api`; the website's
+      `NEXT_PUBLIC_POSTHOG_KEY` is a build variable of `brigade-web` (Settings > Build), as
+      `NEXT_PUBLIC_TURNSTILE_SITE_KEY` is, since Next inlines it at build time. Without them,
+      nothing is sent.
     - To change one, run `pnpm --filter @brigade/api exec wrangler secret put <NAME>`
       (`@brigade/collab` for collab), or use the Worker's Settings in the dashboard. The
       Worker restarts with it at once.
@@ -92,7 +121,11 @@ Cloudflare shipped first, more simply than the phases below:
   - The runner bundle comes out the same for the same code, so runners update only when
     the runner changed.
 
-## What runs on the VPS (2026-10-14)
+## What ran on the VPS (2026-10-14 to 2026-10-20)
+
+Removed on 2026-10-20: the server no longer runs Brigade and nothing deploys there
+(`.github/workflows/vps.yml` is gone). `deploy/vps` stays, to build the images by hand.
+What follows describes it as it was.
 
 A second deployment, on a Hetzner ARM server (2 vCPUs, 4 GB), with the same settings as
 Cloudflare's except its URLs and its database: a Neon database of its own, in Frankfurt
@@ -116,8 +149,8 @@ where each file's key is its own id and only a database row deletes it.
   `collab`, behind the server's Traefik (Coolify's proxy). Traefik routes by the
   services' labels and gets the certificates from Let's Encrypt. Secrets are only in
   `api.env` and `collab.env` there, readable by root alone.
-- **Deploy** happens on each push to `main` that touches what the images are built from
-  (`.github/workflows/vps.yml`):
+- **Deploy** happened on each push to `main` that touched what the images are built from
+  (`.github/workflows/vps.yml`, now removed):
   - The workflow builds the images on an ARM runner and pushes them to GitHub's
     registry, tagged with the commit.
   - Over SSH, it runs `deploy/vps/deploy.sh` on the server: pull, migrate, restart.
@@ -134,18 +167,18 @@ where each file's key is its own id and only a database row deletes it.
 
 ## Where each part runs
 
-| Part                                                              | VPS                                                | Cloudflare                                                          |
-| ----------------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------- |
-| `apps/web`                                                        | Next `output: 'standalone'` in Node                | OpenNext (`@opennextjs/cloudflare`) Worker                          |
-| `apps/api`                                                        | `src/index.ts` on Node, one process                | `src/worker.ts` Worker, with a `HubDO` Durable Object per workspace |
-| WebSocket hub                                                     | `WorkspaceHub` objects in a Map in the API process | `WorkspaceHub` inside `HubDO`, using the Hibernation API            |
-| Jobs (schedules, merges, inboxes, idle stop, sweeps)              | `setInterval`                                      | `scheduled()` Cron Triggers                                         |
-| Collab                                                            | `apps/collab` Node server, rooms saved in Postgres | `apps/collab` Worker as today (`DocRoom` Durable Object)            |
-| PostgreSQL                                                        | `postgres:17` container, or Neon                   | Neon through Hyperdrive                                             |
-| Library files                                                     | MinIO or Garage (S3 API) on its own host           | R2 (S3 API through aws4fetch, the same code)                        |
-| Runner bundle                                                     | file in the API image                              | R2 object, with its SHA-256 stored in the object's metadata         |
-| Work that takes longer than one request (provisioning a computer) | runs in the background in the process              | a Cloudflare Workflow                                               |
-| TLS and hosts                                                     | Caddy                                              | Custom Domains                                                      |
+| Part                                                              | VPS                                                | Cloudflare                                                              |
+| ----------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------------- |
+| `apps/web`                                                        | Next `output: 'standalone'` in Node                | OpenNext (`@opennextjs/cloudflare`) Worker                              |
+| `apps/api`                                                        | `src/index.ts` on Node, one process                | `src/worker.ts` Worker, with one `Api` Durable Object for the whole API |
+| WebSocket hub                                                     | the hub in the API process                         | the hub inside the `Api` object                                         |
+| Jobs (schedules, merges, inboxes, idle stop, sweeps)              | `setInterval`                                      | `scheduled()` Cron Triggers                                             |
+| Collab                                                            | `apps/collab` Node server, rooms saved in Postgres | `apps/collab` Worker as today (`DocRoom` Durable Object)                |
+| PostgreSQL                                                        | `postgres:17` container, or Neon                   | Neon through Hyperdrive                                                 |
+| Library files                                                     | MinIO or Garage (S3 API) on its own host           | R2 (S3 API through aws4fetch, the same code)                            |
+| Runner bundle                                                     | file in the API image                              | R2 object, with its SHA-256 stored in the object's metadata             |
+| Work that takes longer than one request (provisioning a computer) | runs in the background in the process              | a Cloudflare Workflow                                                   |
+| TLS and hosts                                                     | Caddy                                              | Custom Domains                                                          |
 
 ## Hosts
 
@@ -199,7 +232,6 @@ conditions are `workerd`, `worker` and `browser`).
 | `connectSocket(url, headers)`: outbound WebSocket | the `ws` client                  | `fetch` with `Upgrade: websocket`, `binaryType = 'arraybuffer'`                       |
 | `background(promise)`                             | `void p.catch(log)`              | `waitUntil` from `cloudflare:workers`; 30 s cap                                       |
 | `jobs`                                            | `setInterval` per job            | `scheduled()`; crons `* * * * *` and `0 * * * *`                                      |
-| `hub(workspaceId)`                                | the `WorkspaceHub` in the Map    | DO RPC to `HubDO.getByName(workspaceId)`                                              |
 | `RunnerBundleStore`                               | the file at `RUNNER_BUNDLE_PATH` | R2, with the SHA-256 in metadata                                                      |
 | `markdownDom`: Markdown conversion for collab     | `ServerBlockNoteEditor` (jsdom)  | to be decided; see Unknowns, item 1                                                   |
 | `longTask(name, input)`                           | run in the background            | a Workflow                                                                            |
@@ -219,8 +251,8 @@ A client shared across requests hung on every second request.
    AGENTS.md), or `COPY` it in the Dockerfile.
 2. `prisma generate` fails without `DATABASE_URL`, because `apps/api/prisma.config.ts:14`
    calls `env('DATABASE_URL')`. Allow it to be missing for `generate`.
-3. `patches/` only matters to `apps/runner`. The pruned api, web and collab trees have no
-   patched dependencies.
+3. `patches/` matters to `apps/runner` and `apps/api` (pg-cloudflare, @prisma/client): a
+   pruned api tree must keep its patches.
 
 ### File storage
 
@@ -291,7 +323,9 @@ base, sha)`) so that `prisma migrate dev` doesn't see it as drift.
 None of this changes behaviour on Node.
 
 1. **`background()`** replaces work fired after a response with `void`:
-   - `routes/github-webhook.ts:146` and `:149`
+   - ~~`routes/github-webhook.ts:146` and `:149`~~ Done: GitHub's deliveries are kept and processed
+     from `InboundEvent` (`inbound.ts`); the `void` left starts their processing early, and the
+     minute's tick does it if the process stops.
    - `collab.ts:62`
    - `library-history.ts:267`
    - `pull-requests.ts:932`
@@ -315,27 +349,41 @@ None of this changes behaviour on Node.
    The runner update offer (`hub.ts:176`) stays on Node only. On Workers, every deploy
    reconnects runners, and their hello already carries the bundle version.
 
-3. **State shared between requests moves out of memory:**
+3. **State shared between requests moves out of memory**, into Postgres:
    - `cloud.ts:17` `lastActive` → `Computer.lastActiveAt`, written at most once a minute.
-   - The `retryAt` values in `gmail.ts:94` and `google-calendar.ts:147` → database
-     columns.
+   - ~~The `retryAt` values in `gmail.ts:94` and `google-calendar.ts:147` → database
+     columns.~~ Done: `Subscription.retryAt`, set before each read.
    - `connectors/google-calendar.ts:69` `own` → a table. Without it, a teammate's own
      calendar edits trigger it again.
    - `cloud.ts:154`, `:190`, `:223` and `:259`: the in-flight and "already tried" markers
      → columns.
-4. **Locks become `pg_advisory_xact_lock` or conditional updates:** `subscriptions/common.ts:36`,
+   - ~~The runner queue `queued` (`hub.ts:152`)~~ Done: commands with a `commandId` are
+     `RunnerCommand` rows until the runner acknowledges them (`runner-commands.ts`, protocol 43),
+     sent again on hello. What stays in memory is a person's live work, which an API restart ends
+     anyway, as it ends the dashboard's socket: a sign-in (`logins.ts` `byLoginId`; a runner's
+     hello now also ends sign-ins this process never knew, so no account stays signing in), a
+     terminal (`terminals`), and the few commands without an id (`account.login.start`,
+     `terminal.open`).
+4. ~~**Approvals that can be resumed.**~~ Done: a call waiting on a ticket is a `HeldCall` row
+   (`held-calls.ts`) for connector writes, credentials and triggers; `decideTicket` makes it
+   whenever the decision comes, its result goes to the tool or, failing that, to the thread
+   through a wake-up, and an identical call joins the open ticket. Webhooks likewise:
+   Stripe's, custom apps' and GitHub's events are `InboundEvent` rows processed with retries,
+   GitHub's failed deliveries are asked for again, and triggers claim each event in
+   `TriggerDelivery` (unique) instead of looking for an audit entry.
+5. **Locks become `pg_advisory_xact_lock` or conditional updates:** `subscriptions/common.ts:36`,
    `designs.ts:490` and `collab.ts:83`. Awaiting another request's promise doesn't work
    across isolates.
-5. **The desktop proxy** (`desktop-proxy.ts:17` `views`): the view id becomes a sealed
+6. **The desktop proxy** (`desktop-proxy.ts:17` `views`): the view id becomes a sealed
    AES-GCM token holding `{ origin, cookie, exp }`, so the upgrade request doesn't need the
    Map. The relay uses `connectSocket()`.
-6. **Large bodies stream** instead of being held in memory (a Worker has 128 MB, shared
+7. **Large bodies stream** instead of being held in memory (a Worker has 128 MB, shared
    between its requests):
    - the designs zip (`designs.ts:372`, up to 100 MB plus its output);
    - previews (`previews.ts:13`);
    - runner backups (`runner-backups.ts:60`, plus a copy in `bucket.ts:151`);
    - `runner-attachments.ts:56`.
-7. **Small fixes:**
+8. **Small fixes:**
    - **mammoth:** pass both `buffer` and `arrayBuffer` (`previews.ts:188` and `:205`).
      Workers load mammoth's browser build, which reads only `arrayBuffer`.
    - **`config.ts:21` and `:64`:** these defaults use `import.meta.url`, which is
@@ -344,63 +392,21 @@ None of this changes behaviour on Node.
      `cloud.ts:237`.
    - **boat SDK:** pass `fetchApi: fetch` (`@boatdev/sdk` imports `node:http2`).
 
-## Phase 3: one hub per workspace (about 2 weeks, ships on the VPS)
-
-Every runner socket and every browser socket belongs to exactly one workspace. So the hub
-splits by workspace with almost no changes to how it behaves.
-
-1. **A `WorkspaceHub` class** holds the logic now in hub.ts, without module-level state.
-   It runs on a small host interface:
-   - `sockets(tag)`, where each socket has `send`, `close` and an attachment;
-   - `kv`;
-   - `timer(key, ms, fn)`;
-   - `waitUntil`.
-
-   On Node, the host is a Map of hubs with sockets in memory. Lines 624–1057
-   (`storeEvents`, `statusAfter`, the `note*` helpers, `queuedMessagesOn`) only use Prisma
-   and move over unchanged.
-
-2. **Socket tags:** `runner:<computerId>`, `member:<id>` and `tab:<uuid>`. A browser's
-   scope, open threads and terminals go in its socket's attachment (up to 16 KB). The
-   runner's connection, including a "hello done" flag, goes in the runner's attachment.
-3. **One `request(computerId, msg, timeoutMs)`** replaces the four request/response maps:
-   `clipboards`, `fileReads`, and preview `starts` and `logReads`.
-4. **Logins, the queue and terminals:** `logins.ts:18` `byLoginId`, `queued`
-   (`hub.ts:152`) and `terminals` (`hub.ts:1141`) move into the hub's `kv`.
-5. **Approvals that can be resumed.** Today an open promise waits for the approval, for
-   hours if need be (`connector-calls.ts:35`, awaited at `:178` and `credentials.ts:266`).
-   Instead, the pending call is stored, and `decideTicket` finishes it through the hub. An
-   open promise would also stop a Durable Object from hibernating.
-6. **Call sites:**
-   - `isOnline`, `runnerProtocol`, `sendToRunner`, `readThreadFile` and `desktopClipboard`
-     get a `workspaceId` parameter.
-   - 17 call sites that use a result gain an `await`.
-   - 32 that don't become `background()`.
-   - `computers.ts:37` moves to a batch call.
-   - `sendToMember` (`hub.ts:228`) is scoped to the workspace.
-7. **Authentication stays outside the hub.** `hashToken` and `authenticateRunner` move out
-   of hub.ts.
-
-## Phase 4: the API on Workers (1–2 weeks)
+## Phase 3: the API on Workers (1–2 weeks)
 
 1. **Prisma: two generator blocks**, one with `runtime = "cloudflare"`, behind `#prisma`.
 2. **`src/worker.ts`:**
    - `fetch` wraps each request in its own Prisma client, connected to
      `env.HYPERDRIVE.connectionString`. A direct connection would cost 300–500 ms per
      request.
-   - `/api/ws` and `/runner/ws` authenticate in the Worker, then forward to
-     `env.HUB.getByName(workspaceId)` with the scope in an internal header.
+   - Every request, `/api/ws` and `/runner/ws` included, goes to the one `Api` object.
    - `scheduled()` runs the jobs.
-3. **`HubDO`** hosts `WorkspaceHub`:
-   - It uses `acceptWebSocket`, `webSocketMessage`, `webSocketClose`, `getWebSockets(tag)`
-     and `ctx.storage`.
-   - It opens a database client per event and closes it, because an open pg pool keeps a
-     Durable Object from hibernating.
-   - Each socket's messages stay in order: input gates open during Postgres I/O.
+3. **One `Api` Durable Object** hosts the whole API and its hub. It is not split per
+   workspace.
 4. **Workflows** for provisioning and starting computers (`longTask`).
 5. **wrangler.jsonc** for the API:
    - `nodejs_compat` and a recent compatibility date;
-   - Hyperdrive, R2 and `HUB` bindings, and the Workflow;
+   - Hyperdrive, R2 and the `API` Durable Object bindings, and the Workflow;
    - a service binding to collab (a fetch to another Worker on the same zone through a
      route fails);
    - the two crons;
@@ -411,7 +417,7 @@ splits by workspace with almost no changes to how it behaves.
    - A deploy restarts every Durable Object, and runners and tabs reconnect.
    - Desktop sessions get a 20-minute grace period during runtime updates.
 
-## Phase 5: the dashboard and collab on Cloudflare (2–3 days)
+## Phase 4: the dashboard and collab on Cloudflare (2–3 days)
 
 1. **`apps/web` with `@opennextjs/cloudflare`.** It supports Next 16, and the dashboard
    uses nothing it lacks:
@@ -435,7 +441,7 @@ splits by workspace with almost no changes to how it behaves.
 4. **CI:** a job per target. VPS: build the images, push them to GHCR, then over SSH run
    `docker compose pull && up -d`. Cloudflare: `wrangler deploy` for api, collab and web.
 
-## Unknowns: test these before Phase 4
+## Unknowns: test these before Phase 3
 
 1. **Markdown conversion on Workers.** `@blocknote/server-util` pulls in jsdom, which
    crashes on workerd: it reads files when imported and uses `node:vm`. It's used only for
@@ -460,19 +466,18 @@ splits by workspace with almost no changes to how it behaves.
   in `wrangler dev` and checks `/health`, a sign-in and a hub connection.
 - Tests keep running on Node.
 - A new timer goes in `jobs`. Work after a response goes through `background()`. State
-  that has to outlive a request goes in Postgres or the hub's `kv`, never in a module-level
-  Map.
+  that has to outlive a request goes in Postgres, never in a module-level Map: a deploy
+  restarts the one `Api` object.
 
 ## Effort
 
-| Phase                                 | Effort        | Ships                                                              |
-| ------------------------------------- | ------------- | ------------------------------------------------------------------ |
-| 1. VPS                                | 3–4 days      | VPS in production                                                  |
-| 2. Portable groundwork                | about 1 week  | VPS, with jobs safe to run twice and state that survives a restart |
-| 3. One hub per workspace              | about 2 weeks | VPS, behaving the same                                             |
-| 4. API on Workers                     | 1–2 weeks     | Cloudflare (API)                                                   |
-| 5. Dashboard and collab on Cloudflare | 2–3 days      | Cloudflare (everything)                                            |
+| Phase                                 | Effort       | Ships                                                              |
+| ------------------------------------- | ------------ | ------------------------------------------------------------------ |
+| 1. VPS                                | 3–4 days     | VPS in production                                                  |
+| 2. Portable groundwork                | about 1 week | VPS, with jobs safe to run twice and state that survives a restart |
+| 3. API on Workers                     | 1–2 weeks    | Cloudflare (API)                                                   |
+| 4. Dashboard and collab on Cloudflare | 2–3 days     | Cloudflare (everything)                                            |
 
-That's 5–7 weeks in all, and the Markdown DOM question is the main risk. Phases 2 and 3
-are worth doing even if Cloudflare never ships: they're also what running more than one
-API process on the VPS would need.
+That's 3–5 weeks in all, and the Markdown DOM question is the main risk. Phase 2 is worth
+doing even if Cloudflare never ships: it keeps work from being lost when the one API
+process or object restarts.

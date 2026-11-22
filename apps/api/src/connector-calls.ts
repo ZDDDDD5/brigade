@@ -8,8 +8,10 @@ import type {
   ThreadAttachmentRef,
 } from '@brigade/contracts'
 import { usableIn } from './apps.js'
-import { keepConnectorFile, readAttachment } from './attachments.js'
+import { keepConnectorFile, sentAttachment } from './attachments.js'
 import { audit } from './audit.js'
+import { attachmentKey, directUploads, presignGet } from './bucket.js'
+import { FILE_LINK_SECONDS } from './file-links.js'
 import { connectors } from './connectors/index.js'
 import {
   GitHubInstallationGone,
@@ -18,6 +20,12 @@ import {
   type GitHubCredential,
 } from './connectors/github-app.js'
 import { refreshGoogle, type GoogleCredential } from './connectors/google-oauth.js'
+import {
+  describeMetaToken,
+  tokenRefused,
+  withMetaToken,
+  type MetaCredential,
+} from './connectors/meta-oauth.js'
 import { refreshMcp, type McpCredential } from './connectors/mcp.js'
 import { serverOf } from './mcp-servers.js'
 import { isMcp, mcpOperation } from './mcp-tools.js'
@@ -37,22 +45,41 @@ import {
 } from './playbook-autonomy.js'
 import { playbookAccepts, playbookAccount, playbookActionOf, threadPlaybook } from './playbooks.js'
 import { notePullRequestCall } from './pull-requests.js'
+import { reviewOnCreate } from './reviews.js'
 import { scoped, type Scope, type ScopedDb } from './db.js'
-import { actingTeammate } from './thread-spec.js'
+import { onChiefsWord, UNDOABLE_WRITES } from './chief-answers.js'
+import { timeWhenSent } from './mail/gmail-outbound.js'
+import { goalCovers } from './goals.js'
+import {
+  decideHeld,
+  holdCall,
+  onDecided,
+  type Decision,
+  type Live,
+  type Resume,
+} from './held-calls.js'
+import { actingTeammate, askedBy } from './thread-spec.js'
 import { openSecret, replaceSecret } from './vault.js'
 
-/** always: a credential's ticket, also allowed for good (see credentials.ts). */
-export type Decision = { approved: boolean; memberId: string; reason?: string; always?: boolean }
-const waiting = new Map<string, (decision: Decision) => void>()
+export type { Decision }
 
 type Call = Extract<RunnerToApi, { type: 'connector.call' }>
 type Runner = { computerId: string; organizationId: string; workspaceId: string }
 
+/** The operation that sends a mailbox's email, by its kind: its mailbox's sendPolicy applies. */
+const MAIL_SENDS: Partial<Record<string, string>> = { email: 'email_send', gmail: 'gmail_send' }
+
+/**
+ * A runner's connector call. One that asks a person is held with its ticket (src/held-calls.ts)
+ * and made once they decide, with `resume`: then nothing is asked again, and a denial stands.
+ */
 export async function handleConnectorCall(
   runner: Runner,
   call: Call,
   reply: (message: ApiToRunner) => void,
+  options: { live?: Live; resume?: Resume } = {},
 ) {
+  const { resume } = options
   const scope: Scope = { organizationId: runner.organizationId, workspaceId: runner.workspaceId }
   const db = scoped(scope)
   const result = (r: {
@@ -101,7 +128,7 @@ export async function handleConnectorCall(
     return result({ ok: false, error: 'Unknown connection or operation' })
 
   // In a playbook's thread: its Apps alone, and the action of its manifest the call is.
-  const playbook = await threadPlaybook(db, session.playbookRunId)
+  const playbook = await threadPlaybook(db, session.playbookRunId, session.playbookTeammate)
   const playbookActionKey = playbook
     ? playbookActionOf(playbook.actions, connection.kind, call.operation)
     : null
@@ -125,13 +152,46 @@ export async function handleConnectorCall(
       } as never,
     })
 
-  const input = operation.input.safeParse(call.input)
+  let input = operation.input.safeParse(call.input)
   if (!input.success)
     return result({
       ok: false,
       error: `Invalid input: ${input.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')}`,
     })
-  const target = operation.target(input.data)
+  let target = operation.target(input.data)
+  // Brigade's own connectors act on Brigade's data, for this thread; so does Gmail's sending,
+  // which Brigade holds for its window to cancel it (src/mail/gmail-outbound.ts).
+  const brigade = connectors[connection.kind]?.auth === 'brigade'
+  const own =
+    brigade || connection.kind === 'gmail'
+      ? {
+          scope,
+          connectionId: connection.id,
+          teammateId: teammate.id,
+          thread: {
+            id: session.id,
+            projectId: session.projectId,
+            teammateId: teammate.id,
+            startedByMemberId: session.startedByMemberId,
+            origin: session.origin,
+            status: session.status,
+          },
+        }
+      : {}
+  const callContext = (extra: Partial<ConnectorContext> = {}) =>
+    ({
+      // Signed like the call itself: a check that reads the App (Meta Ads reads which ad
+      // account an object belongs to) would otherwise go out with no credential and be
+      // refused (Meta: 401, OAuthException 190). Opened only when a check fetches.
+      fetch: brigade
+        ? (url: string, init?: RequestInit) => fetch(url, init)
+        : async (url: string, init?: RequestInit) =>
+            (await authorisedFetch(db, scope, connection))(url, init),
+      callId: call.callId,
+      settings: connection.settings,
+      ...own,
+      ...extra,
+    }) as ConnectorContext
 
   // Grant and scope.
   const grant = await db.grant.findFirst({
@@ -151,6 +211,17 @@ export async function handleConnectorCall(
       ok: false,
       error: `${connection.label} belongs to another member and is used only in their threads`,
     })
+  }
+  // A member's own account answers only their requests: not in a thread another member asks in.
+  if (connection.reach === 'mine') {
+    const asker = await askedBy(db, session.id)
+    if (asker && asker !== connection.createdByMemberId) {
+      await record({ result: 'denied', target, error: 'asked by another member' })
+      return result({
+        ok: false,
+        error: `${connection.label} is a member's own account: it is used only in threads where they alone ask, and another member takes part in this one. Ask them to use it in a thread of their own, or use an account the whole workspace shares.`,
+      })
+    }
   }
   if (playbook) {
     const role = playbookAccepts(playbook, connection.kind)
@@ -189,6 +260,16 @@ export async function handleConnectorCall(
       ok: false,
       error: `${teammate.name} has read-only access to ${connection.label}`,
     })
+  }
+  // What stops the call before anyone is asked (an email's recipients, a secret in it).
+  if (operation.check) {
+    const problem = await operation
+      .check(callContext(), input.data)
+      .catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
+    if (problem) {
+      await record({ result: 'denied', target, error: problem.slice(0, 1000) })
+      return result({ ok: false, error: problem })
+    }
   }
 
   // A playbook's dry run: the write is recorded with what it would have sent, and answered
@@ -245,9 +326,46 @@ export async function handleConnectorCall(
       return result({ ok: false, error: verdict.reason })
     }
     const cap = await writeCapReached(db, teammate, connection.id)
-    let asks = verdict ? verdict.level === 'ask' : policy === 'ask'
+    // A mailbox whose email waits for a person: every send asks, a playbook's too.
+    const approves =
+      MAIL_SENDS[connection.kind] === call.operation && connection.sendPolicy === 'approve'
+    // On Chief's word (it answered in the person's name since they last wrote): a write that
+    // leaves Brigade waits for the person, whatever the teammate's access (src/chief-answers.ts).
+    const chiefsWord = !playbook && !UNDOABLE_WRITES.has(call.operation) && onChiefsWord(session)
+    let asks = verdict
+      ? verdict.level === 'ask' || approves
+      : approves ||
+        chiefsWord ||
+        policy === 'ask' ||
+        (operation.asks
+          ? await operation.asks(
+              callContext(),
+              input.data,
+              teammate.permissionPolicy as PermissionPolicy,
+            )
+          : false)
     let overCap: string | undefined
-    if (verdict?.level === 'auto' && !cap) {
+    // A goal's contract allows this write in advance (src/goals.ts, docs/goals.md): within its
+    // permission's cap and conditions it goes without asking; past them it asks as it would have.
+    // Never over a mailbox that waits for a person, Chief's word or the teammate's daily cap.
+    if (!playbook && asks && !approves && !chiefsWord && !cap && !resume) {
+      const goal = await goalCovers(
+        scope,
+        { id: session.id, parentId: session.parentId },
+        {
+          connectionId: connection.id,
+          operation: call.operation,
+          args: input.data,
+          teammateId: teammate.id,
+        },
+        () => authorisedFetch(db, scope, connection),
+      )
+      if (goal?.covered) {
+        asks = false
+        if (goal.checkedSha) checkedSha = goal.checkedSha
+      } else if (goal) overCap = goal.reason
+    }
+    if (verdict?.level === 'auto' && !cap && !resume && !approves) {
       // On its own: it first takes its share of its action's caps, atomically; past one, it asks.
       const spec = playbook?.actions.find((a) => a.key === playbookActionKey)
       const taken = spec
@@ -267,17 +385,36 @@ export async function handleConnectorCall(
         checkedSha = verdict.checkedSha
       }
     }
-    if (cap || asks) {
+    if (resume) {
+      decision = resume.decision
+    } else if (cap || asks) {
       const action = `${call.operation.replace(/_/g, ' ')} (${target})`
       const where = connection.externalAccount ?? connection.label
       const reason = cap
         ? `${teammate.name} reached its cap of ${cap.limit} write calls today on ${where}. Approving allows this one call.`
-        : verdict?.level === 'ask'
-          ? verdict.reason
-          : overCap
-      const ticket = await db.ticket.create({
-        data: {
-          sessionId: session.id,
+        : approves
+          ? `Every email from ${where} waits for a person's approval (its mailbox's setting).`
+          : chiefsWord
+            ? `${teammate.name} acts on Chief's answer in your name: what leaves Brigade waits for you.`
+            : verdict?.level === 'ask'
+              ? verdict.reason
+              : overCap
+      // Held with its ticket: made once a person decides, whenever that is (src/held-calls.ts).
+      // An identical call meanwhile joins this ticket.
+      await holdCall(db, {
+        kind: 'connector',
+        sessionId: session.id,
+        teammateId: teammate.id,
+        callId: call.callId,
+        same: { connectionId: connection.id, operation: call.operation, input: input.data },
+        request: () => ({
+          sessionId: call.sessionId,
+          ...(call.teammateId ? { teammateId: call.teammateId } : {}),
+          connectionId: call.connectionId,
+          operation: call.operation,
+          input: call.input,
+        }),
+        ticket: {
           type: cap ? 'cap' : 'approval',
           title: cap
             ? `${teammate.name} reached its write cap on ${where}: ${action}`
@@ -300,25 +437,55 @@ export async function handleConnectorCall(
                 }
               : {}),
           },
-        } as never,
+        },
+        pending: { target, ...(reason ? { reason } : {}) },
+        reply,
+        ...(options.live ? { live: options.live } : {}),
+        ...(cap
+          ? {
+              opened: (ticketId: string) =>
+                audit({
+                  ...scope,
+                  actor: { type: 'system', id: 'brigade' },
+                  action: 'cap.reached',
+                  target: { type: 'thread', id: session.id },
+                  data: { ...cap, connectionId: connection.id, ticketId },
+                }),
+            }
+          : {}),
       })
-      if (cap)
-        await audit({
-          ...scope,
-          actor: { type: 'system', id: 'brigade' },
-          action: 'cap.reached',
-          target: { type: 'thread', id: session.id },
-          data: { ...cap, connectionId: connection.id, ticketId: ticket.id },
-        })
-      reply({
-        type: 'connector.pending',
-        callId: call.callId,
-        ticketId: ticket.id,
-        target,
-        ...(reason ? { reason } : {}),
-      })
-      const decided = await awaitDecision(ticket.id)
-      decision = { ...decided, ticketId: ticket.id }
+      return
+    }
+    if (decision) {
+      const decided = decision
+      const ticket = { id: decision.ticketId }
+      // The person changed the draft before approving: what goes is theirs, checked again.
+      if (decided.approved && decided.input && operation.editable) {
+        const changes = operation.edited ? operation.edited(decided.input) : decided.input
+        const edited = operation.input.safeParse({ ...(input.data as object), ...changes })
+        const problem = edited.success
+          ? operation.check
+            ? await operation
+                .check(callContext(), edited.data)
+                .catch((error: unknown) => (error instanceof Error ? error.message : String(error)))
+            : null
+          : edited.error.issues.map((i) => `${i.path.join('.')} ${i.message}`).join('; ')
+        if (!edited.success || problem) {
+          await record({
+            result: 'denied',
+            target,
+            ticketId: ticket.id,
+            error: `edited: ${problem}`,
+          })
+          return result({
+            ok: false,
+            error: `The approved changes cannot go: ${problem}`,
+            decision,
+          })
+        }
+        input = edited
+        target = operation.target(edited.data)
+      }
       if (!decided.approved) {
         await record({
           result: 'denied',
@@ -338,27 +505,47 @@ export async function handleConnectorCall(
   // Files the call brings into the thread, put in the teammate's folder before it sees the result.
   const kept: ThreadAttachmentRef[] = []
   try {
-    const fetch = await authorisedFetch(db, scope, connection)
+    const fetch = brigade
+      ? (url: string, init?: RequestInit) => globalThis.fetch(url, init)
+      : await authorisedFetch(db, scope, connection)
     const output = await operation.run(
       {
+        ...own,
+        ...(decision ? { approvedByMemberId: decision.memberId } : {}),
         fetch,
         callId: call.callId,
+        settings: connection.settings,
         keepFile: async (file) => {
           const ref = await keepConnectorFile(db, scope, session, connection.id, file, { fetch })
           kept.push(ref)
           return ref
         },
-        readFile: async (id) => {
+        openFile: async (id) => {
           // Only what this thread's teammates uploaded to send.
           const row = await db.attachment.findFirst({
             where: { id, source: 'teammate', sessionId: session.id, status: 'ready' },
           })
           if (!row) throw new Error(`No file ${id} to send from this thread`)
-          return {
-            name: row.name,
-            contentType: row.contentType,
-            bytes: await readAttachment(scope, row.id),
-          }
+          return sentAttachment(scope, row)
+        },
+        // The same files, as a link the App fetches from the bucket: never read here.
+        fileLink: async (id) => {
+          const row = await db.attachment.findFirst({
+            where: { id, source: 'teammate', sessionId: session.id, status: 'ready' },
+            select: { id: true, name: true, contentType: true },
+          })
+          if (!row) throw new Error(`No file ${id} to send from this thread`)
+          if (!directUploads)
+            throw new Error('Files go to an App as links only with a bucket (R2) behind Brigade')
+          const signed = await presignGet(
+            attachmentKey(scope, row.id),
+            {
+              contentType: row.contentType,
+              disposition: `inline; filename*=UTF-8''${encodeURIComponent(row.name)}`,
+            },
+            FILE_LINK_SECONDS,
+          )
+          return signed.url
         },
         ...(checkedSha ? { checkedSha } : {}),
       },
@@ -372,14 +559,17 @@ export async function handleConnectorCall(
       ...(onItsOwn ? { input: numbersOf(input.data) } : {}),
     })
     // The playbook's first response went out (on its own or approved): its run's time, set once.
+    // Gmail's leaves later (src/mail/gmail-outbound.ts): its run is timed once it has.
     if (playbook?.firstResponse && !playbook.dryRun && playbookActionKey === playbook.firstResponse)
-      await db.playbookRun
-        .updateMany({
-          where: { id: playbook.runId, firstResponseAt: null },
-          data: { firstResponseAt: new Date() },
-        })
-        .catch((error) => console.warn(`first response bookkeeping failed: ${String(error)}`))
-    // Pull requests a teammate opens or reviews feed the review loop.
+      await (
+        connection.kind === 'gmail' && call.operation === 'gmail_send'
+          ? timeWhenSent(db, (output as { id?: unknown } | null)?.id, playbook.runId)
+          : db.playbookRun.updateMany({
+              where: { id: playbook.runId, firstResponseAt: null },
+              data: { firstResponseAt: new Date() },
+            })
+      ).catch((error) => console.warn(`first response bookkeeping failed: ${String(error)}`))
+    // Pull requests a teammate opens, reviews or merges: Brigade keeps them, their reviews and merges.
     if (connection.kind === 'github')
       await notePullRequestCall(db, scope, {
         sessionId: session.id,
@@ -388,9 +578,36 @@ export async function handleConnectorCall(
         input: input.data as Record<string, unknown>,
         output,
       }).catch((error) => console.warn(`pull request bookkeeping failed: ${String(error)}`))
-    return result({ ok: true, output, attachments: kept, ...(decision ? { decision } : {}) })
+    // One it opens gets a review, or keeps why not, where the teammate decides (src/reviews.ts).
+    const review =
+      connection.kind === 'github' && call.operation === 'github_create_pull_request'
+        ? await reviewOnCreate(db, scope, {
+            sessionId: session.id,
+            teammateId: teammate.id,
+            input: input.data as Record<string, unknown>,
+            output,
+          }).catch((error) => {
+            console.warn(`review on create failed: ${String(error)}`)
+            return undefined
+          })
+        : undefined
+    return result({
+      ok: true,
+      output: review ? { ...(output as object), ...review } : output,
+      attachments: kept,
+      ...(decision ? { decision } : {}),
+    })
   } catch (error) {
-    const message = redact(error instanceof Error ? error.message : String(error))
+    // The provider refused the account's sign-in: say how its owner renews it, from a ticket.
+    const expired = await db.connection.count({
+      where: { id: connection.id, status: 'needs_reauth' },
+    })
+    const account = connection.externalAccount ?? connection.label
+    const message =
+      redact(error instanceof Error ? error.message : String(error)) +
+      (expired
+        ? `\nThe sign-in of ${account} expired: open an access ticket (kind connection, app.kind ${connection.kind}, app.account "${account}") so its owner reconnects it from the ticket.`
+        : '')
     // A call on its own keeps its share of its action's caps even when it fails: the provider
     // may have done the write before its answer was lost, and a retry must not go past the cap.
     await record({
@@ -468,9 +685,72 @@ export async function authorisedFetch(
     return authorised
   }
 
+  // A Meta user token: long-lived, with nothing to refresh it. Once Meta refuses it (expired,
+  // password changed, Brigade's access removed), the account signs in again.
+  if (connectors[connection.kind]?.auth === 'meta') {
+    const credential = await openSecret<MetaCredential>(db, scope, secretId)
+    if (credential.expiresAt && credential.expiresAt < Date.now()) {
+      await needsReauth()
+      throw new Error('The Meta sign-in expired; reconnect the account')
+    }
+    return async (url: string, init: RequestInit = {}) => {
+      const response = await fetch(url, withMetaToken(init, credential.accessToken))
+      if (response.status === 400 || response.status === 401) {
+        const body = await response
+          .clone()
+          .json()
+          .catch(() => null)
+        if (tokenRefused(response.status, body)) {
+          // A write Meta refuses while reads with the same token work is not an expired
+          // sign-in: say what Meta knows of the token (never the token) in the error the
+          // teammate sees and in the logs, and keep the account connected.
+          const method = (init.method ?? 'GET').toUpperCase()
+          // A write first reads the object it changes: explain a refusal there too.
+          if (method !== 'GET' || !/\/(me|act_\d+)(\/|$|\?)/.test(new URL(url).pathname)) {
+            const about = await describeMetaToken(credential.accessToken)
+            const where = `${method} ${new URL(url).pathname}`
+            console.warn(`meta call refused (${connection.id}) ${where}: ${about}`)
+            const e = (body as { error?: { message?: string; error_user_msg?: string } } | null)
+              ?.error
+            // graphJson shows Meta's message for people first: annotate both.
+            if (e) {
+              const note = ` [${where}; token: ${about}]`
+              e.message = `${e.message ?? 'Refused'}${note}`
+              if (e.error_user_msg) e.error_user_msg += note
+            }
+            return new Response(JSON.stringify(body), {
+              status: response.status,
+              headers: { 'content-type': 'application/json' },
+            })
+          }
+          await needsReauth()
+        }
+      }
+      return response
+    }
+  }
+
   // OAuth tokens the API refreshes: Google's, or an MCP server's own.
   const mcp = connectors[connection.kind]?.auth === 'mcp' || custom?.auth === 'oauth'
   let credential = await openSecret<GoogleCredential | McpCredential>(db, scope, secretId)
+  // A Stripe account connected with a key, before Brigade signed in to Stripe: Stripe's MCP
+  // server hides customers' details from keys, so its owner signs in again.
+  // A key pasted for an App that takes keys beside its OAuth (RevenueCat): a Bearer token.
+  if ('apiKey' in credential && connectors[connection.kind]?.mcp?.keys) {
+    const { apiKey } = credential as ApiKeyCredential
+    return async (url: string, init: RequestInit = {}) => {
+      const response = await fetch(url, {
+        ...init,
+        headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${apiKey}` },
+      })
+      if (response.status === 401) await needsReauth()
+      return response
+    }
+  }
+  if ('apiKey' in credential) {
+    await needsReauth()
+    throw new Error('Brigade now signs in to Stripe instead of using a key: reconnect this account')
+  }
   const refresh = async () => {
     try {
       credential = mcp
@@ -499,6 +779,9 @@ export async function authorisedFetch(
     let response = await send()
     if (response.status === 401) {
       await refresh()
+      // A body that streams (a file from the bucket) cannot be sent again: the caller sends it
+      // once more, opened anew (sendParts).
+      if (init.body instanceof ReadableStream) return response
       response = await send()
     }
     return response
@@ -506,33 +789,42 @@ export async function authorisedFetch(
   return authorised
 }
 
-/** Whether a connector call is waiting on this ticket in this process. */
-export const isWaiting = (ticketId: string) => waiting.has(ticketId)
-
-/** Wait in this process for a person to decide an approval ticket (see decideTicket). */
-export const awaitDecision = (ticketId: string) =>
-  new Promise<Decision>((resolve) => waiting.set(ticketId, resolve))
+/** Made once decided, after any restart: the call as the runner sent it (src/held-calls.ts). */
+onDecided('connector', (runner, request, reply, resume) =>
+  handleConnectorCall(runner, { ...request, type: 'connector.call' } as Call, reply, { resume }),
+)
 
 /**
- * A person approves or denies a connector write. Returns false when the call
- * is no longer waiting (for instance after an API restart).
+ * A person approves or denies a held call (a connector write, a credential, a trigger): taken
+ * once, and the call is made right after, whether or not the teammate's tool still waits for it.
+ * Returns false when no call waits on the ticket (one opened before held calls).
  */
 export async function decideTicket(
   scope: Scope & { memberId: string },
   ticketId: string,
-  decision: { approved: boolean; reason?: string; always?: boolean },
+  decision: {
+    approved: boolean
+    reason?: string
+    always?: boolean
+    input?: Record<string, unknown>
+  },
 ): Promise<boolean> {
   const db = scoped(scope)
   const ticket = await db.ticket.findFirst({
     where: { id: ticketId, type: { in: ['approval', 'cap'] }, status: 'open' },
   })
   if (!ticket) return false
-  const resolve = waiting.get(ticketId)
-  waiting.delete(ticketId)
+  const held = await decideHeld(db, ticketId, {
+    approved: decision.approved,
+    memberId: scope.memberId,
+    ...(decision.reason ? { reason: decision.reason } : {}),
+    ...(decision.always && decision.approved ? { always: true } : {}),
+    ...(decision.input && decision.approved ? { input: decision.input } : {}),
+  })
   await db.ticket.updateMany({
     where: { id: ticketId, status: 'open' },
     data: {
-      status: resolve ? (decision.approved ? 'approved' : 'denied') : 'resolved',
+      status: held ? (decision.approved ? 'approved' : 'denied') : 'resolved',
       resolvedByMemberId: scope.memberId,
       resolvedAt: new Date(),
     },
@@ -541,7 +833,7 @@ export async function decideTicket(
     ...scope,
     actor: { type: 'member', id: scope.memberId },
     action: `${ticket.type === 'cap' ? 'cap' : 'approval'}.${
-      resolve
+      held
         ? decision.approved
           ? ticket.type === 'cap'
             ? 'allowed'
@@ -559,14 +851,14 @@ export async function decideTicket(
         }
       : {}),
   })
-  resolve?.({
-    approved: decision.approved,
-    memberId: scope.memberId,
-    ...(decision.reason ? { reason: decision.reason } : {}),
-    ...(decision.always && decision.approved ? { always: true } : {}),
-  })
   // A person's decision on a playbook's approval measures its action's trust: enough approvals
   // propose it act on its own (one decided in bulk is marked first, and does not count).
-  if (resolve) await afterPlaybookDecision(db, scope, ticket)
-  return Boolean(resolve)
+  if (held) await afterPlaybookDecision(db, scope, ticket)
+  // Made after the person's answer: an email may take seconds to go. The minute's tick makes it
+  // if this process stops first.
+  if (held)
+    void held
+      .run()
+      .catch((error: unknown) => console.error(`held call on ${ticketId} failed`, error))
+  return Boolean(held)
 }

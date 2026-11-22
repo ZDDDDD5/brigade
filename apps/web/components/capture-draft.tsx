@@ -1,11 +1,13 @@
 'use client'
-// Brigade.app's screenshot window (apps/desktop/src-tauri/src/capture.rs): each
+// Brigade.app's new thread window (apps/desktop/src/capture.ts): each
 // capture of the shortcut joins this draft, uploaded at once like a pasted file,
 // and the new-thread box sends them with what is written. Closing the window
 // keeps it all; the teammate, project and computer stay picked for the next one.
 import { useEffect, useRef, useState } from 'react'
 import { useDashboard } from '@/components/dashboard'
 import { NewThread, useLastTeammate, useThreadDraft } from '@/components/new-thread'
+import { OPEN_LAYER } from '@/components/side-panel'
+import { newerBuild } from '@/components/update-pill'
 import { captures, inCaptureWindow } from '@/lib/brigade-app'
 
 const TEXT = 'brigade.capture.text'
@@ -80,28 +82,37 @@ export function CaptureDraft() {
         void sync()
         focusMessage()
       }),
-      captures.onShown(focusMessage),
+      captures.onShown(() => {
+        focusMessage()
+        // The window stays loaded for as long as Brigade.app runs, with no "New version"
+        // pill: shown again after a deploy, it reloads. The text and the captures are kept
+        // (localStorage, ~/.brigade/captures), so nothing written is lost.
+        void newerBuild().then((newer) => newer && window.location.reload())
+      }),
     ]
     return () => off.forEach((o) => void o.then((unlisten) => unlisten()))
   }, [app, add])
 
-  // Esc closes the window, unless a menu or the image preview is open: Esc closes that first.
+  // Esc closes the window, unless a menu, the `@` or `/` suggestions or the image preview is
+  // open: Esc closes that first. Heard on the way down (capture), before the message box:
+  // its editor (ProseMirror) takes every Esc, so it would never reach the window otherwise.
+  // Brigade.app gives the page the keyboard as it brings the window up (windows.ts).
   useEffect(() => {
     if (!app) return
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key !== 'Escape' || e.defaultPrevented) return
-      if (document.querySelector('[data-radix-popper-content-wrapper], [role=dialog]')) return
+      if (e.key !== 'Escape' || e.isComposing || e.defaultPrevented) return
+      if (document.querySelector(`${OPEN_LAYER}, [data-radix-popper-content-wrapper]`)) return
       void captures.hide()
     }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true })
   }, [app])
 
   if (!app)
     return (
       <p className="m-auto max-w-sm p-6 text-center text-sm text-muted-foreground">
-        This page is Brigade.app&apos;s screenshot window. On your Mac, press its shortcut (⌘⇧2
-        unless changed in Brigade&apos;s menu) to send a screenshot to a teammate.
+        This page is Brigade.app&apos;s new thread window. On your Mac, press ⌘⇧1 to write to a
+        teammate, or ⌘⇧2 to send them a screenshot (unless changed in Brigade&apos;s menu).
       </p>
     )
   if (!teammate) return null

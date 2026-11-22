@@ -1,18 +1,18 @@
 'use client'
 // Files for a message: picked, dropped or pasted into the composer, uploaded
 // right away, and sent with the message by their ids. In the thread, the files
-// a message came with show under it: images and videos open over the page,
+// a message came with show under it: images, videos and audio open over the page,
 // other files in the file panel.
 import {
   ATTACHMENTS_PER_MESSAGE,
-  isVideoType,
-  uploadMax,
+  UPLOAD_FILE_MAX,
   type AttachmentInfo,
   EFFORTS,
   type MessageAttachment,
 } from '@brigade/contracts'
 import {
   ArrowRightLeft,
+  AudioLines,
   Ban,
   Check,
   CircleDot,
@@ -24,9 +24,18 @@ import {
   Plus,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type DragEvent,
+  type ReactNode,
+} from 'react'
 import { EffortBars, type EffortPick, EffortSlider } from '@/components/effort'
 import { useFileLinks } from '@/components/file-links'
+import { RenewingAudio, RenewingVideo } from '@/components/renewing-media'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import {
@@ -41,15 +50,24 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { api, attachmentUrl, uploadAttachment } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { Hint } from '@/components/ui/tooltip'
 
 const IMAGE = /^image\/(png|jpeg|gif|webp)$/
 const VIDEO = /^video\/(mp4|webm|quicktime)$/
+// Browsers name some files by older types (x-m4a, x-wav) before the API records its own.
+const AUDIO = /^audio\/(mpeg|mp3|mp4|x-m4a|aac|wav|x-wav|wave|ogg|webm|flac|x-flac)$/
 
-export type Media = { name: string; src: string; kind: 'image' | 'video' }
+export type Media = { name: string; src: string; kind: 'image' | 'video' | 'audio' }
 
 /** How a file of this type shows over the page, if it does. */
-const mediaKind = (contentType: string) =>
-  IMAGE.test(contentType) ? 'image' : VIDEO.test(contentType) ? 'video' : undefined
+export const mediaKind = (contentType: string): Media['kind'] | undefined =>
+  IMAGE.test(contentType)
+    ? 'image'
+    : VIDEO.test(contentType)
+      ? 'video'
+      : AUDIO.test(contentType)
+        ? 'audio'
+        : undefined
 
 export function fileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`
@@ -57,7 +75,7 @@ export function fileSize(bytes: number) {
   return `${Math.round(bytes / (1024 * 102.4)) / 10} MB`
 }
 
-type Upload = {
+export type Upload = {
   key: string
   name: string
   size: number
@@ -66,31 +84,69 @@ type Upload = {
   info?: AttachmentInfo
   error?: string
   controller: AbortController
-  /** An image's or video's own bytes, shown before it finishes uploading (an object URL). */
+  /** An image's, video's or audio's own bytes, shown before it finishes uploading (an object URL). */
   preview?: string
   media?: Media['kind']
 }
 
-/** The files of the message being written: each uploads as soon as it is added. */
-export function useUploads() {
-  const [uploads, setUploads] = useState<Upload[]>([])
-  // The list as of now, for adds and removes between renders; uploads start outside any updater.
-  const list = useRef<Upload[]>([])
-  const count = useRef(0)
-  const commit = useCallback((next: Upload[]) => {
-    list.current = next
-    setUploads(next)
-  }, [])
+/** The files of a message being written, outside the box: uploads go on while it is closed. */
+type UploadDraft = {
+  list: Upload[]
+  listeners: Set<() => void>
+  count: number
+}
+
+/** The files of each thread's reply, by thread: opening another thread keeps them, like its text. */
+const drafts = new Map<string, UploadDraft>()
+
+const newDraft = (): UploadDraft => ({ list: [], listeners: new Set(), count: 0 })
+
+/**
+ * The files of the message being written: each uploads as soon as it is added. With a
+ * `draftKey` (a thread's id), they stay when the box closes and are back when it opens again.
+ */
+export function useUploads(draftKey?: string) {
+  // The thread's files kept from before, else new ones, kept once there are some.
+  const kept = useRef<{ key?: string; draft: UploadDraft }>(null)
+  if (!kept.current || kept.current.key !== draftKey)
+    kept.current = { key: draftKey, draft: (draftKey && drafts.get(draftKey)) || newDraft() }
+  const draft = kept.current.draft
+  const uploads = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => {
+        draft.listeners.add(listener)
+        return () => {
+          draft.listeners.delete(listener)
+        }
+      },
+      [draft],
+    ),
+    () => draft.list,
+    () => draft.list,
+  )
+  const commit = useCallback(
+    (next: Upload[]) => {
+      draft.list = next
+      // An empty one is let go; the next file starts it again.
+      if (draftKey && !next.length && drafts.get(draftKey) === draft) drafts.delete(draftKey)
+      else if (draftKey && next.length) drafts.set(draftKey, draft)
+      for (const listener of draft.listeners) listener()
+    },
+    [draft, draftKey],
+  )
   const update = useCallback(
     (key: string, change: Partial<Upload>) =>
-      commit(list.current.map((u) => (u.key === key ? { ...u, ...change } : u))),
-    [commit],
+      commit(draft.list.map((u) => (u.key === key ? { ...u, ...change } : u))),
+    [draft, commit],
   )
 
+  /** Add files to the message; returns their keys, in order. */
   const add = useCallback(
     (files: Iterable<File>) => {
+      const keys: string[] = []
       for (const file of files) {
-        const key = `${Date.now()}-${count.current++}`
+        const key = `${Date.now()}-${draft.count++}`
+        keys.push(key)
         const upload: Upload = {
           key,
           name: file.name || 'Pasted file',
@@ -102,14 +158,12 @@ export function useUploads() {
             : {}),
         }
         const error =
-          list.current.filter((u) => !u.error).length >= ATTACHMENTS_PER_MESSAGE
+          draft.list.filter((u) => !u.error).length >= ATTACHMENTS_PER_MESSAGE
             ? `A message takes up to ${ATTACHMENTS_PER_MESSAGE} files`
-            : file.size > uploadMax(file.type)
-              ? isVideoType(file.type)
-                ? 'Larger than 500 MB'
-                : 'Larger than 25 MB'
+            : file.size > UPLOAD_FILE_MAX
+              ? 'Larger than 500 MB'
               : undefined
-        commit([...list.current, error ? { ...upload, error } : upload])
+        commit([...draft.list, error ? { ...upload, error } : upload])
         if (error) continue
         uploadAttachment(file, (progress) => update(key, { progress }), upload.controller.signal)
           .then((info) => update(key, { info, progress: 1 }))
@@ -117,35 +171,58 @@ export function useUploads() {
             if (e.name !== 'AbortError') update(key, { error: e.message })
           })
       }
+      return keys
     },
-    [commit, update],
+    [draft, commit, update],
   )
 
   /** Take a file off the message; one already uploaded is deleted. */
   const remove = useCallback(
     (key: string) => {
-      const upload = list.current.find((u) => u.key === key)
+      const upload = draft.list.find((u) => u.key === key)
       upload?.controller.abort()
       if (upload?.preview) URL.revokeObjectURL(upload.preview)
       if (upload?.info)
         void api(`/attachments/${upload.info.id}`, { method: 'DELETE' }).catch(() => undefined)
-      commit(list.current.filter((u) => u.key !== key))
+      commit(draft.list.filter((u) => u.key !== key))
     },
-    [commit],
+    [draft, commit],
   )
 
   /** After sending: the files went with the message. */
   const clear = useCallback(() => {
-    for (const u of list.current) if (u.preview) URL.revokeObjectURL(u.preview)
+    for (const u of draft.list) if (u.preview) URL.revokeObjectURL(u.preview)
     commit([])
-  }, [commit])
+  }, [draft, commit])
 
-  // Leaving the page with files still on the message: let their previews go.
+  /**
+   * Sending in the background: the files leave the box at once, and `put` brings them back to
+   * one should the message not go; `done` lets their previews go once it has.
+   */
+  const take = useCallback(() => {
+    const taken = draft.list
+    commit([])
+    return {
+      uploads: taken,
+      done: () => {
+        for (const u of taken) if (u.preview) URL.revokeObjectURL(u.preview)
+      },
+    }
+  }, [draft, commit])
+
+  /** Files taken from a box (`take`) that has gone since, back on this one. */
+  const put = useCallback(
+    (uploads: Upload[]) => commit([...draft.list, ...uploads]),
+    [draft, commit],
+  )
+
+  // Leaving the page with files still on a message no thread keeps: let their previews go.
   useEffect(
     () => () => {
-      for (const u of list.current) if (u.preview) URL.revokeObjectURL(u.preview)
+      if (draftKey) return
+      for (const u of draft.list) if (u.preview) URL.revokeObjectURL(u.preview)
     },
-    [],
+    [draft, draftKey],
   )
 
   return {
@@ -153,6 +230,8 @@ export function useUploads() {
     add,
     remove,
     clear,
+    take,
+    put,
     ids: uploads.flatMap((u) => (u.info ? [u.info.id] : [])),
     /** Still uploading: the message waits. */
     busy: uploads.some((u) => !u.info && !u.error),
@@ -211,6 +290,16 @@ export type MoveTarget = {
   offline?: boolean
 }
 
+/** A setting the + menu offers, such as where a new thread runs: one submenu, one pick. */
+export type ComposerSetting = {
+  id: string
+  label: string
+  icon: ReactNode
+  value: string | undefined
+  options: { id: string; label: string; detail?: string; icon?: ReactNode }[]
+  onPick: (id: string) => void
+}
+
 /** A computer's icon: a laptop for a member's machine, a cloud for the cloud computer. */
 export function ComputerIcon({ cloud, className }: { cloud: boolean; className?: string }) {
   return cloud ? (
@@ -223,7 +312,8 @@ export function ComputerIcon({ cloud, className }: { cloud: boolean; className?:
 /**
  * The composer's +, like Claude's: attach files, teach the teammate a task by
  * recording it on its computer, continue the thread on another computer, or
- * change how hard its teammates think. `teach` is unset where teaching is not
+ * change how hard its teammates think, or settings rarely changed (where a new
+ * thread runs, on which account). `teach` is unset where teaching is not
  * offered (phones), and a reason where it is not possible yet; `move` is unset
  * where the thread cannot move.
  */
@@ -231,12 +321,14 @@ export function ComposerMenu({
   onFiles,
   teach,
   move,
+  settings = [],
   effort,
   effortLater,
 }: {
   onFiles: (files: File[]) => void
   teach?: (() => void) | string
   move?: { targets: MoveTarget[]; onPick: (target: MoveTarget) => void }
+  settings?: ComposerSetting[]
   effort?: EffortPick
   /** A turn is running: a new effort waits for the next one. */
   effortLater?: boolean
@@ -266,7 +358,7 @@ export function ComposerMenu({
             size="icon-sm"
             className="rounded-full [&_svg:not([class*='size-'])]:size-5"
             aria-label="Add files and more"
-            title="Add files and more"
+            tooltip="Add files and more"
           >
             <Plus aria-hidden />
           </Button>
@@ -339,9 +431,47 @@ export function ComposerMenu({
                   </DropdownMenuSub>
                 </>
               )}
+              {settings.length > 0 && <DropdownMenuSeparator />}
+              {settings.map((setting) => (
+                <DropdownMenuSub key={setting.id}>
+                  <DropdownMenuSubTrigger>
+                    {setting.icon}
+                    {setting.label}
+                    <span className="ml-auto max-w-32 truncate pl-3 text-xs text-muted-foreground">
+                      {setting.options.find((o) => o.id === setting.value)?.label}
+                    </span>
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="max-w-80 min-w-56">
+                    {setting.options.map((option) => (
+                      <DropdownMenuItem
+                        key={option.id}
+                        onSelect={() => {
+                          picked.current = true
+                          setting.onPick(option.id)
+                        }}
+                      >
+                        {option.icon}
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate">{option.label}</span>
+                          {option.detail && (
+                            <span className="truncate text-xs text-muted-foreground">
+                              {option.detail}
+                            </span>
+                          )}
+                        </span>
+                        {option.id === setting.value && (
+                          <Check aria-label="Picked" className="ml-auto" />
+                        )}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              ))}
               {effort && (
                 <>
-                  {!(move && move.targets.length > 1) && <DropdownMenuSeparator />}
+                  {!(move && move.targets.length > 1) && settings.length === 0 && (
+                    <DropdownMenuSeparator />
+                  )}
                   <DropdownMenuItem
                     onSelect={(e) => {
                       // Stay open: the slider takes the menu's place.
@@ -380,7 +510,8 @@ const extension = (name: string) => /\.([a-z0-9]{1,5})$/i.exec(name)?.[1]?.toUpp
 
 /**
  * The files of the message being written, as tiles like Claude's: an image or video
- * shows itself and opens larger on a click (Esc closes it), any other file its name and kind.
+ * shows itself and opens larger on a click (Esc closes it), audio opens a player there too,
+ * any other file its name and kind.
  */
 export function UploadList({
   uploads,
@@ -406,15 +537,19 @@ export function UploadList({
               )}
             >
               {src && kind && !u.error ? (
-                <button
-                  type="button"
-                  className="relative block size-full cursor-zoom-in"
-                  onClick={() => setViewing({ name: u.name, src, kind })}
-                  aria-label={`Preview ${u.name}`}
-                  title={u.name}
-                >
-                  <Thumbnail src={src} kind={kind} />
-                </button>
+                <Hint label={u.name}>
+                  <button
+                    type="button"
+                    className={cn(
+                      'relative block size-full',
+                      kind === 'audio' ? 'cursor-pointer' : 'cursor-zoom-in',
+                    )}
+                    onClick={() => setViewing({ name: u.name, src, kind })}
+                    aria-label={`Preview ${u.name}`}
+                  >
+                    <Thumbnail src={src} kind={kind} name={u.name} />
+                  </button>
+                </Hint>
               ) : (
                 <div className="flex size-full flex-col justify-between gap-1 p-2" title={u.name}>
                   <span className="line-clamp-3 font-medium break-all">{u.name}</span>
@@ -462,16 +597,30 @@ export function UploadList({
   )
 }
 
-/** An image or a video's first frame, filling its tile; a video has a play mark. */
-function Thumbnail({
+/**
+ * An image or a video's first frame, filling its tile; a video has a play mark. Audio
+ * shows a sound mark, and in a large tile its name.
+ */
+export function Thumbnail({
   src,
   kind,
+  name,
   small = false,
 }: {
   src: string
   kind: Media['kind']
+  name?: string
   small?: boolean
 }) {
+  if (kind === 'audio')
+    return (
+      <span className="flex size-full flex-col items-center justify-center gap-1 bg-secondary p-2 text-muted-foreground">
+        <AudioLines aria-hidden className={small ? 'size-4' : 'size-6'} />
+        {!small && name && (
+          <span className="line-clamp-2 w-full text-center text-[0.625rem] break-all">{name}</span>
+        )}
+      </span>
+    )
   if (kind === 'image')
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={src} alt="" className="size-full object-cover" />
@@ -499,8 +648,22 @@ function Thumbnail({
   )
 }
 
-/** An image or a video at full size over the page; Esc, a click outside or × closes it. */
-export function MediaPreview({ media, onClose }: { media?: Media; onClose: () => void }) {
+/**
+ * An image or a video at full size over the page, or audio in a player; Esc, a click outside
+ * or × closes it.
+ */
+export function MediaPreview({
+  media,
+  onClose,
+  unavailable = 'This image can’t be shown: it is no longer on the computer, or outside the teammate’s folder.',
+}: {
+  media?: Media
+  onClose: () => void
+  /** Why an image that does not load is missing. */
+  unavailable?: string
+}) {
+  // The src that failed to load: a file gone from the computer, or one it does not show.
+  const [failed, setFailed] = useState<string>()
   return (
     <Dialog open={!!media} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
@@ -513,22 +676,29 @@ export function MediaPreview({ media, onClose }: { media?: Media; onClose: () =>
             variant="secondary"
             size="icon-sm"
             aria-label="Close"
-            title="Close (Esc)"
+            tooltip="Close (Esc)"
             className="absolute top-2 right-2 rounded-full shadow-md"
           >
             <X aria-hidden />
           </Button>
         </DialogClose>
-        {media?.kind === 'image' && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={media.src}
-            alt={media.name}
-            className="max-h-[calc(100vh-4rem)] max-w-[calc(100vw-4rem)] object-contain"
-          />
-        )}
+        {media?.kind === 'image' &&
+          (failed === media.src ? (
+            <p className="flex items-center gap-2 py-6 pr-14 pl-6 text-sm text-muted-foreground">
+              <Ban aria-hidden className="size-4 shrink-0" />
+              {unavailable}
+            </p>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={media.src}
+              alt={media.name}
+              onError={() => setFailed(media.src)}
+              className="max-h-[calc(100vh-4rem)] max-w-[calc(100vw-4rem)] object-contain"
+            />
+          ))}
         {media?.kind === 'video' && (
-          <video
+          <RenewingVideo
             src={media.src}
             aria-label={media.name}
             controls
@@ -537,13 +707,66 @@ export function MediaPreview({ media, onClose }: { media?: Media; onClose: () =>
             className="max-h-[calc(100vh-4rem)] max-w-[calc(100vw-4rem)] bg-black"
           />
         )}
+        {media?.kind === 'audio' && (
+          <div className="flex w-[min(28rem,calc(100vw-4rem))] flex-col gap-3 p-4">
+            <p className="flex min-w-0 items-center gap-2 pr-10 text-sm font-medium">
+              <AudioLines aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              <span className="truncate" title={media.name}>
+                {media.name}
+              </span>
+            </p>
+            <RenewingAudio
+              src={media.src}
+              aria-label={media.name}
+              controls
+              autoPlay
+              className="w-full"
+            />
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   )
 }
 
 /**
- * The files a message came with, under it: an image or video opens over the page
+ * The files of a message whose thread is starting (components/pending-thread.tsx), as
+ * MessageAttachments will show them once it has: from this browser's own copies.
+ */
+export function SentAttachments({
+  uploads,
+  className,
+}: {
+  uploads: Pick<Upload, 'key' | 'name' | 'size' | 'preview' | 'media'>[]
+  className?: string
+}) {
+  return (
+    <ul className={cn('flex flex-wrap gap-2', className)} aria-label="Attached files">
+      {uploads.map((u) => (
+        <li
+          key={u.key}
+          className="flex max-w-64 items-center gap-2 rounded-lg border bg-card py-1.5 pr-3 pl-2 text-xs"
+          title={u.name}
+        >
+          {u.preview && u.media ? (
+            <span className="relative size-8 shrink-0 overflow-hidden rounded">
+              <Thumbnail src={u.preview} kind={u.media} small />
+            </span>
+          ) : (
+            <FileText aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+          )}
+          <span className="flex min-w-0 flex-col text-left">
+            <span className="truncate font-medium">{u.name}</span>
+            <span className="truncate text-muted-foreground">{fileSize(u.size)}</span>
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/**
+ * The files a message came with, under it: an image, video or audio opens over the page
  * like in the composer, any other file in the file panel.
  */
 export function MessageAttachments({
@@ -584,28 +807,34 @@ export function MessageAttachments({
           return (
             <li key={a.id}>
               {a.status !== 'ready' ? (
-                <span className={cn(chip, 'opacity-70')} title={a.note}>
-                  {body}
-                </span>
+                <Hint label={a.note}>
+                  <span className={cn(chip, 'opacity-70')}>{body}</span>
+                </Hint>
               ) : kind ? (
-                <button
-                  type="button"
-                  className={cn(chip, 'cursor-zoom-in hover:border-ring')}
-                  onClick={() => setViewing({ name: a.name, src: attachmentUrl(a.id), kind })}
-                  aria-label={`Preview ${a.name}`}
-                  title={a.name}
-                >
-                  {body}
-                </button>
+                <Hint label={a.name}>
+                  <button
+                    type="button"
+                    className={cn(
+                      chip,
+                      kind === 'audio' ? 'cursor-pointer' : 'cursor-zoom-in',
+                      'hover:border-ring',
+                    )}
+                    onClick={() => setViewing({ name: a.name, src: attachmentUrl(a.id), kind })}
+                    aria-label={`Preview ${a.name}`}
+                  >
+                    {body}
+                  </button>
+                </Hint>
               ) : links ? (
-                <button
-                  type="button"
-                  className={cn(chip, 'hover:border-ring')}
-                  onClick={() => links.open({ path: a.path })}
-                  title={a.path}
-                >
-                  {body}
-                </button>
+                <Hint label={a.path}>
+                  <button
+                    type="button"
+                    className={cn(chip, 'hover:border-ring')}
+                    onClick={() => links.open({ path: a.path })}
+                  >
+                    {body}
+                  </button>
+                </Hint>
               ) : (
                 <a href={attachmentUrl(a.id)} target="_blank" rel="noreferrer" className={chip}>
                   {body}

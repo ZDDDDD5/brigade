@@ -16,6 +16,83 @@ fail() { echo "brigade-teammate: $1" >&2; exit 2; }
 user_ok() { echo "$1" | grep -Eq '^bt-[a-z0-9]{1,28}$' || fail "bad user"; }
 id_ok() { echo "$1" | grep -Eq '^[A-Za-z0-9_-]{1,64}$' || fail "bad id"; }
 cred() { case "$1" in claude_code) echo .credentials.json ;; codex) echo auth.json ;; *) fail "bad provider" ;; esac; }
+# <Chrome's Preferences file>: its colors dark, unless its profile chose already. Run as the teammate.
+CHROME_DARK='
+import json, os, sys
+path = sys.argv[1]
+try:
+    prefs = json.load(open(path))
+except FileNotFoundError:
+    prefs = {}
+theme = prefs.setdefault("browser", {}).setdefault("theme", {})
+if "color_scheme2" not in theme:
+    theme["color_scheme2"] = 2
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".brigade", "w") as f:
+        json.dump(prefs, f)
+    os.replace(path + ".brigade", path)
+'
+# <accounts dir> <accountId> <user> <group> <mode> <file>...: each file of the account's folder
+# given to user:group with mode, changed through the file opened, never by its path again: a
+# teammate may rename entries of these group-writable folders at any time, so neither the folder
+# nor a file is reached through a link, and only a regular file with no other name is changed.
+SHARE_FILES='
+import grp, os, pwd, stat, sys
+root, account, user, group, mode = sys.argv[1:6]
+uid = pwd.getpwnam(user).pw_uid
+gid = grp.getgrnam(group).gr_gid
+flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC
+top = os.open(root, flags | os.O_DIRECTORY)
+try:
+    try:
+        here = os.open(account, flags | os.O_DIRECTORY, dir_fd=top)
+    except FileNotFoundError:
+        sys.exit(0)
+    try:
+        for name in sys.argv[6:]:
+            try:
+                fd = os.open(name, flags | os.O_NONBLOCK, dir_fd=here)
+            except OSError:
+                continue
+            try:
+                info = os.fstat(fd)
+                if stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                    os.fchown(fd, uid, gid)
+                    os.fchmod(fd, int(mode, 8))
+            finally:
+                os.close(fd)
+    finally:
+        os.close(here)
+finally:
+    os.close(top)
+'
+# <user>: the address of the teammate's own accessibility bus, which carries only its own apps, for
+# agent-desktop run as the teammate (the runner's desktop.ts): a session bus of its own in
+# /run/brigade-a11y/<user>, where D-Bus starts the accessibility bus on the first ask. Started with
+# its browser, in the browser's cgroup, so it stops with it. Prints nothing when it can't: the
+# browser starts as before, and only computer use on it goes without.
+a11y() {
+  D="/run/brigade-a11y/$1"
+  install -d -m 755 /run/brigade-a11y
+  install -d -o "$1" -g "$1" -m 700 "$D"
+  as_bus() {
+    (cd / && runuser -u "$AU" -- env -i HOME="/home/$AU" USER="$AU" LOGNAME="$AU" PATH=/usr/bin:/bin \\
+      LANG=C.UTF-8 XDG_RUNTIME_DIR="$D" DBUS_SESSION_BUS_ADDRESS="unix:path=$D/session" "$@")
+  }
+  AU=$1
+  if ! as_bus timeout 5 dbus-send --session --print-reply --dest=org.freedesktop.DBus / \\
+    org.freedesktop.DBus.GetId >/dev/null 2>&1; then
+    rm -f "$D/session"
+    as_bus setsid -f dbus-daemon --session --nofork --address="unix:path=$D/session" \\
+      >/dev/null 2>&1 </dev/null || return 0
+    I=0
+    while [ ! -S "$D/session" ] && [ $I -lt 20 ]; do sleep 0.25; I=$((I + 1)); done
+  fi
+  A=$(as_bus timeout 10 dbus-send --session --print-reply=literal --dest=org.a11y.Bus /org/a11y/bus \\
+    org.a11y.Bus.GetAddress 2>/dev/null | tr -d ' \\n') || return 0
+  echo "$A" | grep -Eq "^unix:path=$D/[A-Za-z0-9/_.-]+(,guid=[0-9a-f]+)?\$" && echo "$A"
+  return 0
+}
 
 case "\${1:-}" in
   ensure-user) # <user>: a Linux user with a private home
@@ -30,6 +107,14 @@ case "\${1:-}" in
     chown -R brigade:"$GROUP" "$D"
     chmod -R g+rwX,o-rwx "$D"
     find "$D" -type d -exec chmod g+s {} +
+    # The long-lived token stays the runner's alone, whatever the chmod above found.
+    python3 -I -c "$SHARE_FILES" "$ACCOUNTS" "$2" brigade "$GROUP" 600 .oauth-token
+    ;;
+  share-login) # <accountId>: a login file a harness rewrote as a teammate (0600, its owner) shared again
+    id_ok "$2"
+    # Only these files, never through a link, never the token: nothing else changes.
+    python3 -I -c "$SHARE_FILES" "$ACCOUNTS" "$2" brigade "$GROUP" 660 \\
+      auth.json auth.json.lock .credentials.json
     ;;
   link-account) # <user> <accountId> <provider>: a private config dir sharing only the login file
     user_ok "$2"; id_ok "$3"; F=$(cred "$4")
@@ -69,13 +154,23 @@ case "\${1:-}" in
     if ! pgrep -u "$2" -f "user-data-dir=/home/$2/.browser" >/dev/null; then
       runuser -u "$2" -- rm -f "/home/$2/.browser/SingletonLock" "/home/$2/.browser/SingletonCookie" \\
         "/home/$2/.browser/SingletonSocket"
+      # Dark, as the rest of the desktop (Chrome follows neither GTK's settings nor the
+      # desktop's without a session bus): set once in its profile, so a later choice in its
+      # Appearance settings stays. Web pages that have a dark style show it.
+      runuser -u "$2" -- python3 -I -c "$CHROME_DARK" "/home/$2/.browser/Default/Preferences" \\
+        2>/dev/null || true
     fi
+    # On its own accessibility bus, which agent-desktop reads (computer use on the browser's own
+    # interface). Chrome turns its pages' accessibility on only once something reads them.
+    A11Y=$(a11y "$2" 2>/dev/null || true)
     cd /
     # Chrome's output goes to ~/.browser.log, written as the teammate, so the runner can
     # say why it did not start. A stopped computer cuts Chrome off: no "Restore pages?"
     # bubble after that, since the tabs it would restore belong to no thread.
     setsid -f runuser -u "$2" -- env -i HOME="/home/$2" USER="$2" LOGNAME="$2" DISPLAY=:0 \\
-      PATH=/usr/bin:/bin LANG=C.UTF-8 sh -c 'exec "$@" >"$HOME/.browser.log" 2>&1' sh \\
+      PATH=/usr/bin:/bin LANG=C.UTF-8 \\
+      \${A11Y:+"AT_SPI_BUS_ADDRESS=$A11Y"} \${A11Y:+ACCESSIBILITY_ENABLED=1} \\
+      sh -c 'exec "$@" >"$HOME/.browser.log" 2>&1' sh \\
       google-chrome --user-data-dir="/home/$2/.browser" \\
       --remote-debugging-port="$3" --no-first-run --no-default-browser-check \\
       --hide-crash-restore-bubble \\
@@ -104,6 +199,16 @@ case "\${1:-}" in
     [ -S "/run/user/$U/docker.sock" ] || fail "no Docker socket for $2"
     echo "$U"
     ;;
+  user-services) # <user>: its systemd, which outlives any login, for the user services it had
+    # on the computer this one replaced (the runner's teammate-backups.ts); prints its uid
+    user_ok "$2"
+    U=$(id -u "$2") || fail "no such user"
+    loginctl enable-linger "$2"
+    I=0
+    while [ ! -S "/run/user/$U/bus" ] && [ $I -lt 60 ]; do sleep 0.25; I=$((I + 1)); done
+    [ -S "/run/user/$U/bus" ] || fail "no user session for $2"
+    echo "$U"
+    ;;
   clipboard) # get|set: the desktop's clipboard as UTF-8, on stdout or from stdin
     AUTH=$(ps -o args= -C Xorg | sed -n 's/.* -auth \\([^ ]*\\).*/\\1/p' | head -1)
     [ -n "$AUTH" ] || fail "no desktop"
@@ -121,6 +226,34 @@ case "\${1:-}" in
       *) fail "bad clipboard command" ;;
     esac
     ;;
+  egress-counts) # what the egress limits stopped since they were last set (brigade-egress)
+    [ -x /usr/local/sbin/brigade-egress ] || exit 0
+    exec /usr/local/sbin/brigade-egress counts
+    ;;
+  stop-process) # <user> <pid>: a miner the runner found (abuse.ts), killed. Only a process of
+    # the teammate's own uid or of its subordinate ones (its rootless containers' users).
+    user_ok "$2"
+    echo "$3" | grep -Eq '^[0-9]{1,10}$' || fail "bad pid"
+    PU=$(awk '/^Uid:/ { print $2 }' "/proc/$3/status" 2>/dev/null) || fail "no such process"
+    [ -n "$PU" ] || fail "no such process"
+    OK=0
+    [ "$PU" = "$(id -u "$2")" ] && OK=1
+    if [ $OK = 0 ]; then
+      R=$(grep "^$2:" /etc/subuid | head -1 | cut -d: -f2,3)
+      if [ -n "$R" ]; then
+        S=\${R%%:*}
+        N=\${R#*:}
+        [ "$PU" -ge "$S" ] && [ "$PU" -lt $((S + N)) ] && OK=1
+      fi
+    fi
+    [ $OK = 1 ] || fail "not $2's"
+    kill -KILL "$3"
+    ;;
+  prune-system-docker) # the computer's own Docker, beside the teammates' rootless ones: images,
+    # stopped containers, networks and build cache nothing uses, when the disk fills. Never volumes.
+    command -v docker >/dev/null && systemctl is-active --quiet docker || exit 0
+    docker system prune --all --force | tail -1
+    ;;
   *) fail "unknown command" ;;
 esac
 `
@@ -128,7 +261,8 @@ esac
 /**
  * Root helper for each thread's own namespaces: a network per thread, where its
  * teammates' processes run (their commands, its preview, a person's terminal),
- * with a rootless Docker per teammate in it; and, joined by the same processes,
+ * whose localhost reaches what its containers publish (each teammate has one
+ * rootless Docker for all its threads, the runner's docker-proxy.ts); and, joined by the same processes,
  * its own /tmp, /var/tmp and /dev/shm, processes and IPC (its holder). Two
  * threads can then use the same ports, their containers' published ones too,
  * and the same socket and lock files, without seeing or stopping each other.
@@ -153,6 +287,125 @@ addr() { B=$(($1 * 4)); echo "10.231.$((B / 256)).$((B % 256 + $2))"; }
 index() { cat "$STATE/$1" 2>/dev/null || fail "no network for thread $1"; }
 netns() { [ -e "/run/netns/bt-$1" ] || fail "no network for thread $1"; echo "/run/netns/bt-$1"; }
 lock() { install -d -m 755 "$STATE"; exec 9>"$STATE/.lock"; flock 9; }
+# Each teammate's rootless Docker: one on the host's network for all its threads (a unit of its
+# own systemd, brigade-docker), behind a proxy of its own (brigade-docker-proxy, the runner's
+# docker-proxy.js) with a socket in each of its threads' folders here.
+DOCKER_RUN=/run/brigade-docker
+RUNNER=/opt/brigade/bin/brigade-runner
+# The Node.js the runner runs on, from its wrapper (its installer's choice: the computer's own
+# when recent enough, else a copy in /opt/brigade/node).
+runner_node() {
+  RN=$(sed -n 's|^ *"\\([^"]*\\)" "/opt/brigade/runner/dist/index.js".*|\\1|p' "$RUNNER" 2>/dev/null | head -1)
+  [ -x "$RN" ] || RN=/opt/brigade/node/bin/node
+  echo "$RN"
+}
+# Where thread n's containers publish their ports on the host: a loopback address of its own.
+# Rootless Docker publishes a port number once per loopback address, but only once for all other
+# addresses (it reaches its containers through its own 127.0.0.1 for those).
+loop_addr() { echo "127.231.$(($1 / 256)).$(($1 % 256))"; }
+# <user> <command>...: as the teammate, with its own systemd.
+as_user() {
+  AU=$1
+  AUI=$(id -u "$AU")
+  shift
+  (cd / && runuser -u "$AU" -- env -i HOME="/home/$AU" USER="$AU" LOGNAME="$AU" \\
+    PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin XDG_RUNTIME_DIR="/run/user/$AUI" \\
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$AUI/bus" "$@")
+}
+# <user>: its systemd, which outlives any login: it runs the teammate's Docker and its proxy.
+user_session() {
+  loginctl enable-linger "$1"
+  SI=0
+  while [ ! -S "/run/user/$(id -u "$1")/bus" ] && [ $SI -lt 60 ]; do sleep 0.25; SI=$((SI + 1)); done
+  [ -S "/run/user/$(id -u "$1")/bus" ] || fail "no user session for $1"
+}
+# One change at a time to a teammate's Docker sockets: two turns, or a turn and a terminal, may
+# ask at once. Held until the helper exits. <user>
+docker_lock() {
+  install -d -m 755 "$DOCKER_RUN"
+  exec 8>"$DOCKER_RUN/.$1.lock"
+  flock 8
+}
+# <user> <address>: "<protocol> <port>" for each port the teammate's running containers publish
+# on that address, read as the teammate. Nothing while its Docker is stopped.
+docker_ports() {
+  DS="unix:///run/user/$(id -u "$1")/docker.sock"
+  DIDS=$(as_user "$1" timeout 20 docker -H "$DS" ps -q 2>/dev/null) || return 0
+  [ -n "$DIDS" ] || return 0
+  # shellcheck disable=SC2086
+  as_user "$1" timeout 20 docker -H "$DS" inspect --format \\
+    '{{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostIp}} {{.HostPort}} {{$p}}{{"\\n"}}{{end}}{{end}}' \\
+    $DIDS 2>/dev/null | awk -v a="$2" 'NF == 3 && $1 == a && $2 ~ "^[0-9]+$" && $2 > 0 && $2 < 65536 &&
+      $3 ~ "^[0-9]+/(tcp|udp)$" { split($3, p, "/"); print p[2], $2 }' | sort -u
+}
+# <thread> <user>: what the teammate's containers publish on the thread's address, the thread's:
+# its localhost (and that address) reach them through the host's side of its pair, which sends
+# them on; no other thread reaches them. Only containers that run, of a teammate with a Docker
+# socket in the thread (docker): those are its own. Nothing left otherwise.
+docker_rules() {
+  DI=$(cat "$STATE/$1" 2>/dev/null) || return 0
+  DH=$(addr "$DI" 1)
+  DL=$(loop_addr "$DI")
+  DC="BD-$DI-$(id -u "$2")"
+  DNC="BD-$(id -u "$2")"
+  DP=""
+  [ ! -f "$DOCKER_RUN/$1/$2.address" ] || DP=$(docker_ports "$2" "$DL")
+  iptables -t nat -N "$DC" 2>/dev/null || iptables -t nat -F "$DC"
+  iptables -N "$DC" 2>/dev/null || iptables -F "$DC"
+  iptables -t nat -C PREROUTING -i "btn$DI" -j "$DC" 2>/dev/null || iptables -t nat -A PREROUTING -i "btn$DI" -j "$DC"
+  iptables -C INPUT -i "btn$DI" -j "$DC" 2>/dev/null || iptables -I INPUT 1 -i "btn$DI" -j "$DC"
+  DN=""
+  if [ -e "/run/netns/bt-$1" ]; then
+    DN="bt-$1"
+    ip netns exec "$DN" iptables -t nat -N "$DNC" 2>/dev/null || ip netns exec "$DN" iptables -t nat -F "$DNC"
+    ip netns exec "$DN" iptables -t nat -C OUTPUT -j "$DNC" 2>/dev/null ||
+      ip netns exec "$DN" iptables -t nat -A OUTPUT -j "$DNC"
+  fi
+  echo "$DP" | while read -r PR PO; do
+    [ -n "$PO" ] || continue
+    iptables -t nat -A "$DC" -d "$DH" -p "$PR" --dport "$PO" -j DNAT --to-destination "$DL"
+    iptables -A "$DC" -d "$DL" -p "$PR" --dport "$PO" -j ACCEPT
+    [ -n "$DN" ] || continue
+    for D in 127.0.0.1 "$DL"; do
+      ip netns exec "$DN" iptables -t nat -A "$DNC" -d "$D" -p "$PR" --dport "$PO" -j DNAT --to-destination "$DH"
+    done
+  done
+}
+# <thread> <user>: those rules gone, their chains too.
+docker_rules_drop() {
+  DI=$(cat "$STATE/$1" 2>/dev/null) || return 0
+  DC="BD-$DI-$(id -u "$2")"
+  DNC="BD-$(id -u "$2")"
+  iptables -t nat -D PREROUTING -i "btn$DI" -j "$DC" 2>/dev/null || true
+  iptables -D INPUT -i "btn$DI" -j "$DC" 2>/dev/null || true
+  for TB in nat filter; do iptables -t $TB -F "$DC" 2>/dev/null && iptables -t $TB -X "$DC" 2>/dev/null || true; done
+  if [ -e "/run/netns/bt-$1" ]; then
+    ip netns exec "bt-$1" iptables -t nat -D OUTPUT -j "$DNC" 2>/dev/null || true
+    ip netns exec "bt-$1" iptables -t nat -F "$DNC" 2>/dev/null &&
+      ip netns exec "bt-$1" iptables -t nat -X "$DNC" 2>/dev/null || true
+  fi
+}
+# <user> <folder>: the teammate's proxy listening in that thread folder: started if needed, told
+# otherwise (it reads its threads' folders again on SIGHUP). Waits for its socket.
+docker_proxy() {
+  DPU=brigade-docker-proxy.service
+  # A stopped proxy's socket answers nobody.
+  as_user "$1" systemctl --user is-active --quiet $DPU || rm -f "$2/docker.sock"
+  PI=0
+  while [ ! -S "$2/docker.sock" ]; do
+    [ $PI -lt 100 ] || fail "the Docker proxy of $1 did not start (journalctl --user-unit $DPU)"
+    if as_user "$1" systemctl --user is-active --quiet $DPU; then
+      [ $((PI % 20)) -ne 0 ] || as_user "$1" systemctl --user kill -s HUP $DPU 2>/dev/null || true
+    else
+      as_user "$1" systemctl --user reset-failed $DPU 2>/dev/null || true
+      # Started again if it fails: a thread's docker commands would fail until its next turn.
+      as_user "$1" systemd-run --user --quiet --collect --unit=$DPU -p Restart=on-failure \\
+        "$(runner_node)" /opt/brigade/runner/dist/docker-proxy.js 2>/dev/null || true
+    fi
+    sleep 0.1
+    PI=$((PI + 1))
+  done
+}
 # Threads reach the internet (masqueraded) and the host's DNS resolver, never each other.
 host_rules() {
   ip addr add "$DNS/32" dev lo 2>/dev/null || true
@@ -338,39 +591,53 @@ case "\${1:-}" in
       rm -rf "\${TMPS:?}/$2"
     fi
     ;;
-  docker) # <thread> <user>: the teammate's rootless Docker in the thread's namespace, started if
-    # needed (its published ports are the thread's); prints its socket. Nothing without Docker.
+  docker) # <thread> <user>: the teammate's Docker, for the thread: a socket of its proxy in the
+    # thread's folder, which starts that Docker on first use (docker-proxy.js), and what the
+    # thread's containers publish its own (docker_rules). Prints that socket. Nothing without Docker.
     thread_ok "$2"
     user_ok "$3"
-    N=$(netns "$2")
+    netns "$2" >/dev/null
     command -v dockerd-rootless.sh >/dev/null && command -v newuidmap >/dev/null || exit 0
     grep -q "^$3:" /etc/subuid || fail "no subordinate ids for $3"
-    R="/run/brigade-docker/$2/$3"
-    UNIT="brigade-docker-$2-$3"
-    if ! systemctl is-active --quiet "$UNIT"; then
-      install -d -m 755 /run/brigade-docker "/run/brigade-docker/$2"
-      install -d -o "$3" -g "$3" -m 700 "$R"
-      D="/home/$3/.local/share/brigade-docker/$2"
-      runuser -u "$3" -- mkdir -p "$D"
-      systemctl reset-failed "$UNIT" 2>/dev/null || true
-      # Its own unit: it outlives the runner's restarts. No systemd of the teammate's to manage
-      # cgroups from there, hence cgroupfs (containers without resource limits).
-      systemd-run --quiet --unit="$UNIT" --collect -p NetworkNamespacePath="$N" \\
-        -p User="$3" -p Group="$3" -p Delegate=yes -p KillMode=mixed \\
-        -E XDG_RUNTIME_DIR="$R" -E HOME="/home/$3" -E PATH=/usr/bin:/bin:/usr/sbin:/sbin \\
-        dockerd-rootless.sh --data-root="$D" --exec-opt native.cgroupdriver=cgroupfs
-    fi
-    I=0
-    while [ ! -S "$R/docker.sock" ] && [ $I -lt 120 ]; do sleep 0.25; I=$((I + 1)); done
-    [ -S "$R/docker.sock" ] || fail "Docker did not start for $3 in thread $2 (journalctl -u $UNIT)"
+    docker_lock "$3"
+    user_session "$3"
+    # The teammate helper's containers enables Docker with the teammate's systemd (a computer
+    # without threads' networks): here it starts on first use only.
+    as_user "$3" systemctl --user disable --quiet docker.service 2>/dev/null || true
+    R="$DOCKER_RUN/$2/$3"
+    install -d -m 755 "$DOCKER_RUN" "$DOCKER_RUN/$2"
+    install -d -o "$3" -g "$3" -m 700 "$R"
+    # Beside the teammate's folder, never in it: root writes no file the teammate could have
+    # made a link to another.
+    loop_addr "$(index "$2")" >"$DOCKER_RUN/$2/$3.address"
+    docker_proxy "$3" "$R"
+    lock
+    docker_rules "$2" "$3"
     echo "$R/docker.sock"
     ;;
-  docker-stop) # <thread> <user> [purge]: that Docker stopped, its containers with it; with purge,
-    # its images, containers and volumes deleted
+  docker-ports) # <thread> <user>: docker_rules, as the teammate's containers start and stop. Its
+    # proxy calls it too (sudo), for itself only.
     thread_ok "$2"
     user_ok "$3"
+    [ -z "\${SUDO_USER:-}" ] || [ "$SUDO_USER" = brigade ] || [ "$SUDO_USER" = "$3" ] || fail "not yours"
+    lock
+    docker_rules "$2" "$3"
+    ;;
+  docker-stop) # <thread> <user> [purge]: the teammate's Docker socket in the thread gone, and the
+    # thread's ports with it (the runner stops or removes its containers first). With purge, what
+    # an older helper's Docker of the thread kept too.
+    thread_ok "$2"
+    user_ok "$3"
+    docker_lock "$3"
+    rm -rf "\${DOCKER_RUN:?}/$2/$3" "$DOCKER_RUN/$2/$3.address"
+    rmdir "$DOCKER_RUN/$2" 2>/dev/null || true
+    if [ -S "/run/user/$(id -u "$3")/bus" ]; then
+      as_user "$3" systemctl --user kill -s HUP brigade-docker-proxy.service 2>/dev/null || true
+    fi
+    lock
+    docker_rules_drop "$2" "$3"
+    # An older helper's: a Docker per thread and teammate, its images in the teammate's home.
     systemctl stop "brigade-docker-$2-$3" 2>/dev/null || true
-    rm -rf "/run/brigade-docker/$2/$3"
     D="/home/$3/.local/share/brigade-docker/$2"
     if [ "\${4:-}" = purge ] && [ -d "$D" ]; then
       # As the teammate, mapped to its subordinate ids as Docker was: no more than it can reach.
@@ -380,21 +647,17 @@ case "\${1:-}" in
       rm -rf "$T"
     fi
     ;;
-  docker-freeze) # <thread> <user>: that Docker frozen, its containers with it (its thread's preview
-    # is): no CPU, and its memory given back to swap, in 10 s at most (the kernel may go on
-    # forever toward what it cannot free). docker pause cannot: it runs without cgroups of its own.
-    thread_ok "$2"
-    user_ok "$3"
-    UNIT="brigade-docker-$2-$3.service"
-    systemctl is-active --quiet "$UNIT" || exit 0
-    systemctl freeze "$UNIT"
-    C="/sys/fs/cgroup$(systemctl show -p ControlGroup --value "$UNIT")"
-    timeout 10 sh -c 'echo "$1" >"$0"' "$C/memory.reclaim" "$(cat "$C/memory.current")" 2>/dev/null || true
-    ;;
-  docker-thaw) # <thread> <user>
-    thread_ok "$2"
-    user_ok "$3"
-    systemctl thaw "brigade-docker-$2-$3.service" 2>/dev/null || true
+  docker-down) # <user>: the teammate's Docker stopped, its containers with it, when none of its
+    # threads uses it (the runner's containers.ts); its proxy starts it again on next use
+    user_ok "$2"
+    [ -S "/run/user/$(id -u "$2")/bus" ] || exit 0
+    as_user "$2" systemctl --user stop brigade-docker.service docker.service 2>/dev/null || true
+    lock
+    for F in "$DOCKER_RUN"/*/"$2".address; do
+      [ -f "$F" ] || continue
+      T=\${F#"$DOCKER_RUN/"}
+      docker_rules "\${T%%/*}" "$2"
+    done
     ;;
   browser) # <thread> <user>: in the thread's namespace, the teammate's browser port (the teammate
     # helper's \`browser\`) reaches its Chrome on the host's loopback, for the teammate's user only
@@ -419,6 +682,189 @@ esac
 `
 
 /**
+ * Root script for what teammates may send out of a cloud computer (docs/abuse.md): no mail
+ * straight to mail servers (port 25), no cloud metadata (169.254.0.0/16), no bursts of new
+ * connections (a scan), no mining pool's protocol (stratum, XMRig's login). It covers
+ * teammates' own processes on the host (their rootless Docker included: its network is a
+ * process of theirs) and their threads' namespaces (traffic out of a btn interface), never
+ * the runner's, root's or the provider's. In the mangle table, so the filter rules of the
+ * thread helper and Docker neither reorder nor flush it.
+ *
+ * `apply` at each boot (brigade-egress.service: iptables rules do not survive one) and with
+ * each setup; `counts` prints "<rule> <packets>" for each kind it stopped since then, which
+ * the runner reads through the teammate helper (egress-counts) and reports (abuse.ts).
+ */
+export const EGRESS_SCRIPT = `#!/bin/sh
+# Brigade's egress limits for teammates. Run as root.
+set -eu
+CHAIN=BRIGADE-EGRESS
+HEAD=BRIGADE-EGRESS-HEAD
+GROUP=brigade-teammates
+# New connections a source may open each second, once its burst is spent: a scan opens
+# thousands; an install, a build or a browser rarely tens. Each thread's namespace is a source
+# of its own; teammates' processes on the host share the host's address.
+RATE=100/sec
+BURST=1000
+# What a mining pool's client sends first, in the clear: stratum's methods, XMRig's login.
+MINING='mining.subscribe mining.authorize mining.submit "agent":"XMRig "rx/0"'
+
+# <iptables|ip6tables> <family>: the chains filled again, hooked once.
+rules() {
+  T=$1
+  $T -t mangle -N $CHAIN 2>/dev/null || $T -t mangle -F $CHAIN
+  $T -t mangle -N $HEAD 2>/dev/null || $T -t mangle -F $HEAD
+  $T -t mangle -A $CHAIN -p tcp --dport 25 -m conntrack --ctstate NEW -m comment --comment smtp -j DROP
+  if [ "$2" = 4 ]; then
+    $T -t mangle -A $CHAIN -d 169.254.0.0/16 -m comment --comment metadata -j DROP
+  fi
+  $T -t mangle -A $CHAIN -m conntrack --ctstate NEW -m hashlimit --hashlimit-name "brigade-new$2" \\
+    --hashlimit-mode srcip --hashlimit-above $RATE --hashlimit-burst $BURST \\
+    -m comment --comment scan -j DROP
+  # Only a connection's first bytes are read: its handshake, not what it downloads. Without
+  # connection accounting or string matching in the kernel, no mining rule.
+  if $T -t mangle -A $CHAIN -p tcp -m conntrack --ctstate ESTABLISHED -m connbytes \\
+    --connbytes 0:4096 --connbytes-dir original --connbytes-mode bytes -j $HEAD 2>/dev/null; then
+    for S in $MINING; do
+      $T -t mangle -A $HEAD -m string --algo bm --string "$S" -m comment --comment mining -j DROP ||
+        echo "brigade-egress: no mining rule for $S ($T)" >&2
+    done
+  else
+    echo "brigade-egress: no mining rules ($T)" >&2
+  fi
+  $T -t mangle -C OUTPUT ! -o lo -m owner --gid-owner $GROUP --suppl-groups -j $CHAIN 2>/dev/null ||
+    $T -t mangle -A OUTPUT ! -o lo -m owner --gid-owner $GROUP --suppl-groups -j $CHAIN
+  $T -t mangle -C FORWARD -i 'btn+' -j $CHAIN 2>/dev/null ||
+    $T -t mangle -A FORWARD -i 'btn+' -j $CHAIN
+}
+
+case "\${1:-}" in
+  apply)
+    getent group $GROUP >/dev/null || groupadd $GROUP
+    # connbytes counts bytes only with conntrack's accounting on.
+    modprobe nf_conntrack 2>/dev/null || true
+    sysctl -qw net.netfilter.nf_conntrack_acct=1 2>/dev/null || true
+    rules iptables 4
+    if command -v ip6tables >/dev/null && ip6tables -t mangle -nL >/dev/null 2>&1; then
+      rules ip6tables 6
+    fi
+    ;;
+  counts)
+    for T in iptables ip6tables; do
+      command -v $T >/dev/null || continue
+      $T -t mangle -nvxL $CHAIN 2>/dev/null || true
+      $T -t mangle -nvxL $HEAD 2>/dev/null || true
+    done | awk '{ for (i = 1; i < NF; i++) if ($i == "/*") { n[$(i + 1)] += $1 } }
+      END { for (k in n) print k, n[k] }' | sort
+    ;;
+  *) echo "usage: brigade-egress apply|counts" >&2; exit 2 ;;
+esac
+`
+
+/**
+ * Brigade's wallpaper for the cloud computers' desktop, on the public media bucket (R2
+ * brigade-media, media.brigade.lol), not in the repository. A new one goes at a new key, with
+ * its SHA-256 here: the computers check it before using it.
+ */
+export const DESKTOP_WALLPAPER = {
+  url: 'https://media.brigade.lol/cloud/wallpaper-v1.png',
+  sha256: '72c5366903c6000c453d4ee976d88e29141e39c83f084f0233f9751ddd2337cf',
+}
+
+/**
+ * Brigade's wallpaper on the provider's desktop (boat's ascii-desktop, run as `user`), as root:
+ * downloaded to /var/lib/brigade and checked against its SHA-256, then put in ascii-desktop's own
+ * place for it (~/.config/boat/wallpaper.png, which wins over its default), written as that user,
+ * never as root in a folder it owns. ascii-desktop reads it when it starts, and again when it
+ * changes. A wallpaper someone put there stays: it is replaced only while it is the one Brigade
+ * put last (its hash, in wallpaper.put, recorded only once that one is in place). Exits 1 when
+ * the wallpaper could not be put, so the boot's run tries again. Its folder: the first argument
+ * (tests), else /var/lib/brigade.
+ */
+export const WALLPAPER_SCRIPT = `#!/bin/sh
+set -u
+D="\${1:-/var/lib/brigade}"
+WANT=${DESKTOP_WALLPAPER.sha256}
+WALL="$D/wallpaper.png"
+# Only the provider's desktop has a place for it.
+id user >/dev/null 2>&1 && command -v ascii-desktop >/dev/null || exit 0
+hash() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
+if [ "$(hash "$WALL")" != "$WANT" ]; then
+  curl -fsSL --retry 3 --max-time 60 ${DESKTOP_WALLPAPER.url} -o "$WALL.new" || true
+  if [ "$(hash "$WALL.new")" != "$WANT" ]; then
+    rm -f "$WALL.new"
+    echo "brigade-wallpaper: the wallpaper could not be downloaded" >&2
+    exit 1
+  fi
+  chmod 644 "$WALL.new"
+  mv -f "$WALL.new" "$WALL"
+fi
+PUT=$(cat "$D/wallpaper.put" 2>/dev/null || true)
+# As the desktop's user: 0 once it is there, 3 when someone else's stays.
+sudo -H -u user sh -c '
+  F="$HOME/.config/boat/wallpaper.png"
+  HAD=$(sha256sum "$F" 2>/dev/null | cut -d" " -f1)
+  [ "$HAD" = "$3" ] && exit 0
+  [ -z "$HAD" ] || [ "$HAD" = "$2" ] || exit 3
+  mkdir -p "$HOME/.config/boat" && cp "$1" "$F.new" && mv -f "$F.new" "$F"' sh "$WALL" "$PUT" "$WANT"
+case $? in
+  0) echo "$WANT" >"$D/wallpaper.put" ;;
+  3) ;;
+  *) exit 1 ;;
+esac
+`
+
+/**
+ * The desktop's look, for everyone on the computer: GTK apps (Chrome, Files) dark, as the
+ * provider's own bar and dock are, and Brigade's wallpaper on the provider's desktop (boat's
+ * ascii-desktop, run as `user`). Teammates' Chromes start with no session bus (the helper's
+ * `browser`), so they follow GTK's settings files rather than the desktop's settings service:
+ * both are set. /etc/xdg comes after /etc/gtk-*: these files win over the image's own, which
+ * stay as they are. Each user's own settings still win over these.
+ * The wallpaper: brigade-wallpaper (WALLPAPER_SCRIPT), run by the setup and again at each boot
+ * until it is in place.
+ */
+const DESKTOP_LOOK = `# The desktop's look: dark apps, Brigade's wallpaper.
+for V in 3.0 4.0; do
+  sudo install -d /etc/xdg/gtk-$V
+  sudo tee /etc/xdg/gtk-$V/settings.ini >/dev/null <<'GTK'
+[Settings]
+gtk-theme-name=Yaru-dark
+gtk-application-prefer-dark-theme=1
+GTK
+done
+if [ -d /etc/dconf/db ]; then
+  sudo install -d /etc/dconf/db/local.d /etc/dconf/profile
+  [ -f /etc/dconf/profile/user ] || printf 'user-db:user\\nsystem-db:local\\n' | sudo tee /etc/dconf/profile/user >/dev/null
+  sudo tee /etc/dconf/db/local.d/10-brigade-look >/dev/null <<'DCONF'
+[org/gnome/desktop/interface]
+color-scheme='prefer-dark'
+gtk-theme='Yaru-dark'
+DCONF
+  ! command -v dconf >/dev/null || sudo dconf update
+fi
+# Brigade's wallpaper, at each boot until it is in place (a download that failed is tried again).
+sudo tee /usr/local/sbin/brigade-wallpaper >/dev/null <<'WALLPAPER'
+${WALLPAPER_SCRIPT}WALLPAPER
+sudo chmod 755 /usr/local/sbin/brigade-wallpaper
+sudo tee /etc/systemd/system/brigade-wallpaper.service >/dev/null <<'UNIT'
+[Unit]
+Description=Brigade's wallpaper on the desktop
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/brigade-wallpaper
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload
+sudo systemctl enable brigade-wallpaper.service 2>/dev/null
+sudo /usr/local/sbin/brigade-wallpaper || true
+`
+
+/**
  * The root-owned parts of a workspace computer that change with Brigade: the
  * teammate and thread helpers, and the library folder. Run by the bootstrap,
  * and again on any computer whose runner reports another stamp (a runner
@@ -431,11 +877,13 @@ ${TEAMMATE_HELPER}HELPER
 sudo chmod 755 /usr/local/sbin/brigade-teammate
 # Each thread's own network (the thread helper). Its \`run\` passes the runner's environment on,
 # as sudo -E -u <teammate> does: sudo still drops what could change the helper itself (LD_*).
+# A teammate's Docker proxy makes its own containers' ports its threads' (docker-ports).
 sudo tee /usr/local/sbin/brigade-thread >/dev/null <<'HELPER'
 ${THREAD_HELPER}HELPER
 sudo chmod 755 /usr/local/sbin/brigade-thread
 sudo tee /etc/sudoers.d/brigade-thread >/dev/null <<'SUDOERS'
 brigade ALL=(root) NOPASSWD:SETENV: /usr/local/sbin/brigade-thread
+%brigade-teammates ALL=(root) NOPASSWD: /usr/local/sbin/brigade-thread docker-ports *
 SUDOERS
 sudo chmod 440 /etc/sudoers.d/brigade-thread
 sudo visudo -cq
@@ -501,22 +949,46 @@ DelegateSubgroup=runner
 OOMScoreAdjust=-500
 OOMPolicy=continue
 UNIT
-# Swap for frozen previews (the runner's previews.ts gives their memory back to it): twice the
-# memory, at most 16 GiB and a quarter of the disk's free space, which thread folders need (the
-# runner's folders.ts does not trim them for it). Made at each boot: a resume brings back neither
-# files at the root nor fstab lines, so it costs nothing at stop or resume. Used before the
-# image's own /swapfile.
+# Swap for frozen previews (the runner's previews.ts gives their memory back to it): as much as
+# the memory, at most 8 GiB, a tenth of the disk and a quarter of its free space. The rest is for
+# thread folders and the caches of teammates' tools, which the runner frees as the disk fills
+# (folders.ts, disk.ts): it cannot free this. Made at each boot: a resume brings back neither
+# files at the root nor fstab lines, so it costs nothing at stop or resume, and a new size takes
+# effect at the next one. Used before the image's own /swapfile.
+# Swapping goes through zswap first: pages compressed in memory (about a third of their size),
+# read back at memory speed, and written to the swap files only once they are cold, as a frozen
+# preview's are. Without it, every page swapped waited on the disk: on an 8 GB computer with
+# turns, previews and the provider's own services swapping together, everything waited on the
+# disk a quarter of the time, and the runner's memory guard stopped preview after preview.
+# Kernel settings, reset at each boot: set here, before anything else.
 sudo tee /usr/local/sbin/brigade-swap >/dev/null <<'SWAP'
 #!/bin/sh
 set -eu
+# zswap_on <its parameters' folder>: on, with what packs best; a kernel without one keeps its own.
+zswap_on() {
+  [ -w "$1/enabled" ] || return 0
+  echo zstd >"$1/compressor" 2>/dev/null || true
+  echo zsmalloc >"$1/zpool" 2>/dev/null || true
+  echo 20 >"$1/max_pool_percent" 2>/dev/null || true
+  echo Y >"$1/shrinker_enabled" 2>/dev/null || true
+  echo Y >"$1/enabled" 2>/dev/null || true
+}
+zswap_on /sys/module/zswap/parameters
 F=/brigade.swap
+# swap_gib <memory KiB> <disk GiB> <free GiB>: the swap file's size in GiB.
+swap_gib() {
+  G=$(( ($1 + 524288) / 1048576 ))
+  [ "$G" -le 8 ] || G=8
+  [ "$G" -le $(( $2 / 10 )) ] || G=$(( $2 / 10 ))
+  [ "$G" -le $(( $3 / 4 )) ] || G=$(( $3 / 4 ))
+  echo "$G"
+}
 swapon --show=NAME --noheadings | grep -qx "$F" && exit 0
 HAD=$(stat -c %s "$F" 2>/dev/null || echo 0)
 # Free space in GiB, with the space of a swap file from an earlier boot, made again here.
 FREE=$(( $(df --output=avail -B1 / | tail -1 | tr -dc 0-9) / 1073741824 + HAD / 1073741824 ))
-GIB=$(awk '/^MemTotal:/ { print int($2 / 1048576 + 0.5) * 2 }' /proc/meminfo)
-[ "$GIB" -le 16 ] || GIB=16
-[ "$GIB" -le $((FREE / 4)) ] || GIB=$((FREE / 4))
+DISK=$(( $(df --output=size -B1 / | tail -1 | tr -dc 0-9) / 1073741824 ))
+GIB=$(swap_gib "$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)" "$DISK" "$FREE")
 [ "$GIB" -ge 2 ] || { rm -f "$F"; echo "no room for swap"; exit 0; }
 if [ "$HAD" -ne $((GIB * 1073741824)) ]; then
   rm -f "$F"
@@ -524,7 +996,8 @@ if [ "$HAD" -ne $((GIB * 1073741824)) ]; then
 fi
 chmod 600 "$F"
 mkswap "$F" >/dev/null
-swapon --priority 10 "$F"
+# A resumed computer may have it on already (the provider brings its swap back): then it is.
+swapon --priority 10 "$F" || swapon --show=NAME --noheadings | grep -qx "$F"
 SWAP
 sudo chmod 755 /usr/local/sbin/brigade-swap
 sudo tee /etc/systemd/system/brigade-swap.service >/dev/null <<'UNIT'
@@ -544,7 +1017,29 @@ UNIT
 sudo systemctl daemon-reload
 sudo systemctl enable brigade-swap.service 2>/dev/null
 sudo systemctl restart brigade-swap.service
-`
+# What teammates may send out (EGRESS_SCRIPT): set at each boot, before the runner starts their
+# commands. A kernel missing a match leaves that rule out; a failure leaves the setup going.
+sudo tee /usr/local/sbin/brigade-egress >/dev/null <<'EGRESS'
+${EGRESS_SCRIPT}EGRESS
+sudo chmod 755 /usr/local/sbin/brigade-egress
+sudo tee /etc/systemd/system/brigade-egress.service >/dev/null <<'UNIT'
+[Unit]
+Description=Brigade's limits on what teammates send out
+After=network-pre.target
+Before=brigade-runner.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/brigade-egress apply
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+sudo systemctl daemon-reload
+sudo systemctl enable brigade-egress.service 2>/dev/null
+sudo systemctl restart brigade-egress.service || echo "brigade-egress did not apply (journalctl -u brigade-egress)"
+${DESKTOP_LOOK}`
 
 /** Identifies the current setup; the runner reports the one last applied. */
 export const SETUP_SHA = createHash('sha256').update(SETUP).digest('hex')
@@ -564,6 +1059,50 @@ export const reinstallScript = (apiUrl: string) => `set -eu
 sudo -u brigade -H env BRIGADE_INSTALL_DIR=${install} sh -c 'curl -fsSL ${apiUrl}/runner/install.sh | sh'
 sudo systemctl restart brigade-runner
 `
+
+/**
+ * Every teammate's home given back to it (the helper's ensure-user), through the provider
+ * once a resumed computer's disk is all there (cloud.ts). Only users that exist: ensure-user
+ * would make one.
+ */
+export const GIVE_HOMES_BACK = `F=0
+for H in /home/bt-*; do
+  U=\${H#/home/}
+  id "$U" >/dev/null 2>&1 || continue
+  sudo /usr/local/sbin/brigade-teammate ensure-user "$U" || F=1
+done
+exit $F
+`
+
+/**
+ * Before a stop (cloud.ts's roomToStop): how full the disk is as boat counts it at the resume,
+ * its size and what is available to users from df (ext4's reserve counted as used, as boat
+ * does), and the bytes of what Brigade puts there itself and makes again after a resume: the
+ * swap file (brigade-swap, at boot) and the runner's reserve (disk.ts, at its next check).
+ * With `free`, those two are removed first, so the snapshot leaves them out; a swap file in use
+ * stays when its pages do not fit back in memory. Prints "<size> <avail> <swap> <reserve>".
+ */
+export const diskBeforeStopScript = (free: boolean) => `sudo sh -s -- ${free ? 1 : 0} <<'ROOM'
+set -u
+S=/brigade.swap
+R=/home/brigade/.brigade/state/disk-reserve
+bytes() { if [ -f "$1" ]; then echo $(( $(stat -c %b "$1") * 512 )); else echo 0; fi; }
+if [ "$1" = 1 ]; then
+  if [ -f "$S" ]; then
+    if swapon --show=NAME --noheadings | grep -qx "$S"; then
+      timeout 120 swapoff "$S" && rm -f "$S"
+    else
+      rm -f "$S"
+    fi
+  fi
+  rm -f "$R"
+fi
+echo $(df -B1 --output=size,avail / | tail -1) $(bytes "$S") $(bytes "$R")
+ROOM
+`
+
+/** Brigade's swap file back after a stop that did not happen (cloud.ts's roomToStop). */
+export const SWAP_BACK = 'sudo systemctl restart brigade-swap.service'
 
 /** Install the runner under its own Linux user, as a service that survives stop and resume. */
 export function bootstrapScript(input: { apiUrl: string; code: string }) {

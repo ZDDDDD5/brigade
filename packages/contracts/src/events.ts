@@ -15,6 +15,21 @@ const base = {
 }
 
 /**
+ * Tokens one harness run spent: input in all (cacheRead and cacheWrite are part of it), output in
+ * all (reasoning is part of it), and the model that spent them as the harness named it. Counts
+ * only, never what was said.
+ */
+export const TokenCounts = z.object({
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  cacheReadTokens: z.number().optional(),
+  cacheWriteTokens: z.number().optional(),
+  reasoningTokens: z.number().optional(),
+  model: z.string().max(200).optional(),
+})
+export type TokenCounts = z.infer<typeof TokenCounts>
+
+/**
  * The earlier message a member's message answers: where it is in the thread
  * (its event's seq), who wrote it (a teammate, else a person) and its text, clipped.
  */
@@ -63,11 +78,11 @@ export const Choices = z.object({
 export type Choices = z.infer<typeof Choices>
 /**
  * The message a click on a choice sends. A design picked from an options
- * folder has been moved to `picked` by then, and the message says where.
+ * folder has been copied to `picked` by then, and the message says where; the
+ * options stay where they are.
  */
 export const choiceMessage = (option: { label: string }, picked?: string) =>
-  `Go with ${option.label}` +
-  (picked ? `. It is now @[${picked}](design:${picked}); the other options went to the trash.` : '')
+  `Go with ${option.label}` + (picked ? `. It is now @[${picked}](design:${picked}).` : '')
 /** The option a message picked, if it is a click on one. */
 export const pickedChoice = <O extends { label: string }>(options: O[], message: string) =>
   options.find(
@@ -86,8 +101,9 @@ export const SUGGESTED_REPLY_MAX = 40
 /**
  * What a button may do instead of sending its text: Brigade's own action, shown
  * only while it can be done. merge: the pull request opened last in the thread.
+ * preview: starts the thread's preview as Preview does, without a turn, while none runs.
  */
-export const REPLY_ACTIONS = ['merge'] as const
+export const REPLY_ACTIONS = ['merge', 'preview'] as const
 export const SuggestedReplies = z
   .object({
     replies: z.array(z.string().trim().min(1).max(SUGGESTED_REPLY_MAX)).max(3),
@@ -114,9 +130,16 @@ export const SHOW_WIDGET_TOOL = 'show_widget'
 /** The rules a teammate reads before its first widget in a thread. */
 export const WIDGET_GUIDE_TOOL = 'widget_guide'
 /**
+ * A teammate's answer to a person's message given to its running turn (its answer_message tool):
+ * the runner records it as the teammate's message, which answers that one (message.done's
+ * `answers`), and the call itself shows nothing.
+ */
+export const ANSWER_MESSAGE_TOOL = 'answer_message'
+/**
  * Steps that are no work of their own, by bare tool name: the reply written
  * before one still answers the turn. A closing card counts even when it was
- * refused and called again; so do a wake-up and a task closed after the reply.
+ * refused and called again; so do a wake-up, a thread declared done (an old thread's task closed) after the
+ * reply.
  */
 export const ASIDE_TOOLS: ReadonlySet<string> = new Set([
   'ToolSearch',
@@ -128,9 +151,12 @@ export const ASIDE_TOOLS: ReadonlySet<string> = new Set([
   SUGGEST_REPLIES_TOOL,
   OFFER_CHOICES_TOOL,
   PROPOSE_TEAM_TOOL,
+  ANSWER_MESSAGE_TOOL,
   'set_wakeup',
   'cancel_wakeup',
+  // An old thread's task closed (the Tasks board is gone).
   'complete_task',
+  'complete_thread',
 ])
 
 /** How many characters of a text a person sees: spaces and zero-width ones do not count. */
@@ -154,14 +180,21 @@ export const LINE_CHARS = 200
  * answers too when it is no mere line and only a line comes after it: a teammate
  * that wrote its answer, then pushed its branch, adds "Pushed." and nothing more.
  * `first` is the first message after the last step (the last message when none).
+ * `steered`: the part of a turn before a message steered into it (or before a report from
+ * its background work woke it), which answers only when the teammate was done: a message
+ * after its last step. Still at work, none does.
  */
-export function turnAnswer(entries: TurnEntry[]): { first: number; messages: number[] } {
+export function turnAnswer(
+  entries: TurnEntry[],
+  steered = false,
+): { first: number; messages: number[] } {
   const chars = (at: number) => {
     const entry = entries[at]
     return entry?.kind === 'message' ? entry.chars : 0
   }
   const done = entries.findLastIndex((e) => e.kind === 'step')
   const after = entries.flatMap((e, at) => (at > done && e.kind === 'message' ? [at] : []))
+  if (!after.length && steered) return { first: -1, messages: [] }
   if (!after.length) {
     const last = entries.findLastIndex((e) => e.kind === 'message')
     return { first: last, messages: last < 0 ? [] : [last] }
@@ -208,6 +241,12 @@ export const WIDGET_THEME_VARS = [
   '--font-mono',
 ] as const
 
+/**
+ * Something else, in place of what the teammate asked: a person's own words, such as
+ * "use the Cloudflare App instead". The teammate drops the ask and does what they say.
+ */
+const DeclineNote = z.string().trim().min(1).max(20_000).optional()
+
 export const QuestionAnswer = z.discriminatedUnion('action', [
   z.object({
     action: z.enum(['answered', 'partially-answered']),
@@ -219,9 +258,17 @@ export const QuestionAnswer = z.discriminatedUnion('action', [
       }),
     ),
   }),
-  z.object({ action: z.literal('declined') }),
+  z.object({ action: z.literal('declined'), note: DeclineNote }),
 ])
 export type QuestionAnswer = z.infer<typeof QuestionAnswer>
+
+/**
+ * The url a runner gives an access ask that names its MCP server by id (app.server): an address
+ * no server has, so an API from before app.server, which drops the id, finds no server by it and
+ * grants nothing, rather than the first server of the ask's name. Newer ones go by the id.
+ */
+export const serverOnlyUrl = (server: string) =>
+  `https://brigade.invalid/mcp-servers/${encodeURIComponent(server)}`
 
 /**
  * One thing a teammate needs from a person, in a ticket it opens itself
@@ -264,14 +311,36 @@ export const Ask = z.discriminatedUnion('type', [
         /** kind mcp: the MCP server's URL, which the person adds from the ticket if it is not yet. */
         url: z.string().max(500).optional(),
         /**
+         * kind mcp: a server already added, by its App's id, as list_apps gives it: the ticket finds
+         * that one, whatever its name (two can have the same). Never its URL, which may hold its key.
+         */
+        server: z.string().max(100).optional(),
+        /**
          * kind github: the repository (owner/name) the teammate needs. The account given must
          * reach it; the person installs the GitHub app on its owner, or adds it, from the ticket.
          */
         repository: RepositoryName.optional(),
+        /** The account the teammate means, as its row shows it (the Gmail address): picked first. */
+        account: z.string().max(320).optional(),
+        /**
+         * A permission the account lacks, which the person allows on the provider's consent page
+         * as they sign in to it again (Cloudflare's "Account API Tokens: Write"). The ticket offers
+         * to reconnect the account, and the access goes once it is reconnected.
+         */
+        permission: z.string().max(300).optional(),
+        /**
+         * The teammate the access is for, by id or name, when not the one asking: one a playbook
+         * it installs hands this App to (its developer). Unset: the one asking.
+         */
+        teammate: z.string().max(100).optional(),
       })
       .refine((app) => !app.repository || app.kind === 'github', {
         message: 'repository is for kind github',
         path: ['repository'],
+      })
+      .refine((app) => !app.server || app.kind === 'mcp', {
+        message: 'server is for kind mcp',
+        path: ['server'],
       })
       .optional(),
     /**
@@ -367,9 +436,19 @@ export type AskReply = z.infer<typeof AskReply>
 
 export const TicketAnswer = z.discriminatedUnion('action', [
   z.object({ action: z.literal('answered'), replies: z.record(z.string(), AskReply) }),
-  z.object({ action: z.literal('declined') }),
+  z.object({ action: z.literal('declined'), note: DeclineNote }),
 ])
 export type TicketAnswer = z.infer<typeof TicketAnswer>
+
+/**
+ * What a stored event has where its teammate's tool returned an image or a PDF in
+ * base64 (a picture it read, a page it captured, a PDF it read): this, then the
+ * file's name in its thread, `<sha256>.<ext>`. The file itself is in the bucket,
+ * served at /api/threads/:id/files/:name.
+ */
+export const STORED_FILE = 'brigade-file:'
+/** A stored file's name: its SHA-256 and an extension for its type. */
+export const STORED_FILE_NAME = /^[0-9a-f]{64}\.(?:png|jpg|gif|webp|pdf)$/
 
 export const AgentEvent = z.discriminatedUnion('type', [
   /**
@@ -387,6 +466,14 @@ export const AgentEvent = z.discriminatedUnion('type', [
     messageId: z.string().optional(),
     /** Given to the teammate during its running turn rather than in a turn of its own. */
     steered: z.boolean().optional(),
+    /** Noted while the teammate waits on a person's answer: it reads it then, so no turn starts now. */
+    waiting: z.boolean().optional(),
+    /**
+     * The side reply it got (message.side), so a page of the thread that starts here still shows
+     * it. With route answer, that reply settled it: no turn of its own comes, and the thread's
+     * state stays as it was. With route steer, it went into the running turn from there.
+     */
+    side: z.object({ text: z.string(), route: z.enum(['answer', 'steer', 'queue']) }).optional(),
     /** The earlier message it replies to. */
     replyTo: ReplyTo.optional(),
   }),
@@ -416,8 +503,60 @@ export const AgentEvent = z.discriminatedUnion('type', [
     /** Set when nobody cancelled it, e.g. a person took over or the computer restarted. */
     reason: z.string().optional(),
   }),
-  z.object({ ...base, type: z.literal('message.delta'), id: z.string(), text: z.string() }),
-  z.object({ ...base, type: z.literal('message.done'), id: z.string(), text: z.string() }),
+  /**
+   * A side reply (side-replies.ts): a person's message sent during its teammate's turn, answered
+   * now by a copy of the teammate's conversation, which says what becomes of it. Sent again as
+   * it moves on; the latest one for a message is its state. answering: under way. answered: the
+   * reply, and its route. failed: no reply came, and the message waits its turn as before.
+   */
+  z.object({
+    ...base,
+    type: z.literal('message.side'),
+    messageId: z.string(),
+    status: z.enum(['answering', 'answered', 'failed']),
+    text: z.string().optional(),
+    /** What becomes of the message (SideRoute); a person can change it once answered. */
+    route: z.enum(['answer', 'steer', 'queue']).optional(),
+    /** With route steer: when it is given to the running turn, unless its sender keeps it. */
+    steerAt: z.string().optional(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('message.delta'),
+    id: z.string(),
+    text: z.string(),
+    /**
+     * Its secrets masked by the runner as it streamed the reply, with the text before it
+     * (MaskedStream). The API stores the text of no other delta: a secret over several deltas
+     * shows in none of them alone, and one written before (an older runner's, still waiting to
+     * be sent) may hold part of one.
+     */
+    masked: z.literal(true).optional(),
+  }),
+  z.object({
+    ...base,
+    type: z.literal('message.done'),
+    id: z.string(),
+    text: z.string(),
+    /**
+     * The person's message it answers (its messageId): one given to the running turn, answered at
+     * once with answer_message. It stays in sight once the turn ends, beside that message, rather
+     * than fold away with the turn's steps.
+     */
+    answers: z.string().optional(),
+  }),
+  /**
+   * The images a finished message shows (`![…](path)` or a link to one), put in the
+   * thread's bucket folder by the runner as the message was sent, so the thread shows
+   * them once the file has gone or the computer is off. By the path as the message
+   * writes it (`relativeFile`): STORED_FILE and the stored file's name.
+   */
+  z.object({
+    ...base,
+    type: z.literal('message.images'),
+    id: z.string(),
+    images: z.record(z.string(), z.string()),
+  }),
   z.object({
     ...base,
     type: z.literal('tool.started'),
@@ -466,6 +605,11 @@ export const AgentEvent = z.discriminatedUnion('type', [
     questionId: z.string(),
     answer: QuestionAnswer,
     memberId: z.string().nullable(),
+    /**
+     * Its teammate's turn no longer waited on it (set aside for a message) and waits on a
+     * decision now: the answer reaches it once that is made, and until then it waits.
+     */
+    waiting: z.boolean().optional(),
   }),
   /** The teammate opens a ticket for a person and waits until it is answered. */
   z.object({
@@ -482,6 +626,11 @@ export const AgentEvent = z.discriminatedUnion('type', [
     requestId: z.string(),
     answer: TicketAnswer,
     memberId: z.string().nullable(),
+    /**
+     * Its teammate's turn no longer waited on it (set aside for a message) and waits on a
+     * decision now: the answer reaches it once that is made, and until then it waits.
+     */
+    waiting: z.boolean().optional(),
   }),
   z.object({
     ...base,
@@ -513,8 +662,8 @@ export const AgentEvent = z.discriminatedUnion('type', [
   z.object({
     ...base,
     type: z.literal('usage.updated'),
-    inputTokens: z.number().optional(),
-    outputTokens: z.number().optional(),
+    /** What one stream of a turn spent (TokenCounts): input counts the cache's reads and writes too. */
+    ...TokenCounts.shape,
     /** allowed, warning (close to a limit) or rejected (out of usage). */
     status: z.enum(['allowed', 'warning', 'rejected']).optional(),
     /** The account the limits are for, when read after its turn (Codex) rather than during it. */
@@ -535,6 +684,8 @@ export const AgentEvent = z.discriminatedUnion('type', [
     type: z.literal('control.changed'),
     controller: z.enum(['teammate', 'human']),
     memberId: z.string().nullable(),
+    /** Handed back while the teammate still waits on a person's answer: no turn starts yet. */
+    waiting: z.boolean().optional(),
   }),
   /** A teammate starts answering. In a thread with several, they answer one after another. */
   z.object({
@@ -545,8 +696,32 @@ export const AgentEvent = z.discriminatedUnion('type', [
     accountId: z.string(),
     /** Names this turn, so an interrupt stops it and not the one after it. */
     turnId: z.string().optional(),
+    /**
+     * What runs it, and on which model (none: the account's own), from PI_PROTOCOL on: the
+     * harness benchmark compares turns by them (docs/harnesses.md).
+     */
+    harness: z.string().optional(),
+    model: z.string().nullish(),
   }),
-  z.object({ ...base, type: z.literal('turn.completed'), finishReason: z.string() }),
+  z.object({
+    ...base,
+    type: z.literal('turn.completed'),
+    finishReason: z.string(),
+    /** The turn's tool calls, and those that ended in an error, from PI_PROTOCOL on (benchmark). */
+    toolCalls: z.number().int().nonnegative().optional(),
+    toolErrors: z.number().int().nonnegative().optional(),
+    /**
+     * The teammate still waits on a person: a ticket or question it asked stays open after it
+     * answered a message written instead of an answer (ASIDE_PROTOCOL).
+     */
+    waiting: z.boolean().optional(),
+  }),
+  /**
+   * What the person who wrote last may write next, guessed by the teammate's harness once its
+   * turn was answered (ThreadSpec.suggestions). It waits in their message box until someone
+   * writes or another turn starts (suggestionFor).
+   */
+  z.object({ ...base, type: z.literal('message.suggested'), text: z.string().max(500) }),
   /** A command a person ran in the computer's terminal during takeover. */
   z.object({
     ...base,
@@ -578,7 +753,16 @@ export const AgentEvent = z.discriminatedUnion('type', [
     type: z.literal('repositories.changed'),
     repositories: z.array(z.string().max(200)).max(50),
   }),
-  z.object({ ...base, type: z.literal('error'), message: z.string() }),
+  z.object({
+    ...base,
+    type: z.literal('error'),
+    message: z.string(),
+    /**
+     * The runner tries the turn again on its own (stopped for memory, a passing error): the turn
+     * is not over, so a child's report waits for the try's end.
+     */
+    retrying: z.boolean().optional(),
+  }),
   z.object({ ...base, type: z.literal('raw'), source: z.string(), value: z.unknown() }),
 ])
 export type AgentEvent = z.infer<typeof AgentEvent>

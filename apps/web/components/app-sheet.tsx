@@ -2,10 +2,15 @@
 import Link from 'next/link'
 import { useEffect, useState, type ReactNode } from 'react'
 import { ChevronDown, EllipsisVertical, ExternalLink, Package, Plus } from 'lucide-react'
+import { AppKeyForm, KEY_SIGN_IN } from '@/components/app-key-form'
 import { AtlassianDomainHint } from '@/components/atlassian-domain-hint'
 import { MixpanelMcpHint } from '@/components/mixpanel-mcp-hint'
 import { RegionMenu } from '@/components/region-menu'
 import { CloseButton } from '@/components/close-button'
+import { EmailApp } from '@/components/email-app'
+import { GoogleAdsAccounts, GoogleAdsPicked } from '@/components/google-ads-accounts'
+import { MetaAdAccounts, MetaAdsPicked } from '@/components/meta-ads-accounts'
+import { mailboxPath } from '@/components/mailboxes'
 import { ConnectionTriggers } from '@/components/connection-triggers'
 import { useDashboard, timeAgo } from '@/components/dashboard'
 import { McpServerCard } from '@/components/mcp-server-card'
@@ -47,8 +52,9 @@ import {
   type Trigger,
   type TriggerCatalog,
 } from '@/lib/api'
-import { openSignIn } from '@/lib/sign-in-window'
+import { onSignIn, openSignIn } from '@/lib/sign-in-window'
 import { cn } from '@/lib/utils'
+import { Hint } from '@/components/ui/tooltip'
 
 type Kind = Connection['kind']
 type Scope = 'none' | 'read' | 'read_write'
@@ -84,11 +90,13 @@ export function AppSheet({
   const custom = kind === 'webhook'
   // An MCP server added by its URL: its App keeps the server, its tools and how it signs in.
   const server = kind === 'mcp'
+  // Brigade's own addresses: turned on for the workspace, with an address per agent or inbox.
+  const email = kind === 'email'
   const mcp = app?.mcp ?? null
   const accounts = app ? data.connections.filter((c) => c.appId === app.id) : []
   const added = accounts.length > 0
   const name = app?.name ?? entry.name
-  const [adding, setAdding] = useState(!added && (kind === 'stripe' || custom))
+  const [adding, setAdding] = useState(!added && custom)
   const [error, setError] = useState<string>()
   // The App as a whole: an admin, or the member who added it while every account is theirs.
   const managesApp =
@@ -111,10 +119,14 @@ export function AppSheet({
    * the sheet stays open and shows the account once it has connected.
    */
   const route =
-    custom || server || kind === 'stripe'
+    custom || server || email
       ? null
-      : kind === 'cloudflare' ||
+      : kind === 'stripe' ||
+          kind === 'cloudflare' ||
           kind === 'google_cloud' ||
+          kind === 'google_drive_mcp' ||
+          kind === 'google_docs_mcp' ||
+          kind === 'google_sheets_mcp' ||
           kind === 'neon' ||
           kind === 'supabase' ||
           kind === 'atlassian' ||
@@ -123,31 +135,52 @@ export function AppSheet({
           kind === 'mixpanel' ||
           kind === 'resend' ||
           kind === 'replicate' ||
-          kind === 'openrouter'
+          kind === 'openrouter' ||
+          kind === 'posthog' ||
+          kind === 'dataforseo' ||
+          kind === 'ahrefs' ||
+          kind === 'expo' ||
+          kind === 'vercel' ||
+          kind === 'revenuecat'
         ? 'mcp'
         : kind === 'github'
           ? 'github'
-          : 'google'
+          : kind === 'meta_ads'
+            ? 'meta'
+            : 'google'
   // A server per data region (Mixpanel): connecting starts by picking one.
   const regions = entry.regions
-  const connect = (region?: string) =>
+  /** Sign in at the provider: a new account, or the one being reconnected. */
+  const connect = (region?: string, reconnecting?: string) =>
     run(async () => {
       if (!route) return setAdding(true)
       const before = accounts.length
       const inWindow = await openSignIn(async (returnTo) => {
         const { url } = await api<{ url: string }>(`/connections/${route}`, {
           body: {
-            ...(route === 'github' ? {} : { kind }),
+            ...(route === 'github' || route === 'meta' ? {} : { kind }),
             ...(region ? { region } : {}),
             ...(returnTo ? { returnTo } : {}),
+            ...(route === 'mcp' && reconnecting ? { reconnect: reconnecting } : {}),
           },
         })
         return url
       })
       if (inWindow) setWaiting({ before, since: Date.now() })
     })
+  // The key form of an App that signs in with one: open, and the account it reconnects if any.
+  const [keying, setKeying] = useState<{ reconnect?: string }>()
   // While the sign-in tab is open: look for the new account every few seconds, for a while.
   const [waiting, setWaiting] = useState<{ before: number; since: number }>()
+  // The sign-in tab says when it is done: an account signed in to again shows no new row, and
+  // may well have been active already.
+  useEffect(() => {
+    if (!waiting) return
+    return onSignIn(() => {
+      setWaiting(undefined)
+      void reload()
+    })
+  }, [waiting, reload])
   useEffect(() => {
     if (!waiting) return
     if (accounts.length > waiting.before) return setWaiting(undefined)
@@ -157,17 +190,6 @@ export function AppSheet({
     }, 2000)
     return () => clearInterval(timer)
   }, [waiting, accounts.length, reload])
-
-  const connectStripe = (form: FormData) =>
-    run(async () => {
-      await api('/connections/stripe', {
-        body: {
-          apiKey: String(form.get('apiKey')),
-        },
-      })
-      setAdding(false)
-      await reload()
-    })
 
   const connectCustomApp = (form: FormData) =>
     run(async () => {
@@ -247,7 +269,7 @@ export function AppSheet({
               </span>
             )}
           </div>
-          {!added && !custom && !server && (
+          {!added && !custom && !server && !email && (
             <RegionMenu regions={regions} onPick={(region) => void connect(region)}>
               <Button
                 onClick={regions ? undefined : () => void connect()}
@@ -265,6 +287,16 @@ export function AppSheet({
           {mcp ? (mcp.description ?? `The MCP server at ${host}.`) : entry.description}
         </DialogDescription>
         {error && <p className="text-sm text-destructive-text">{error}</p>}
+        {/* An App that also takes a pasted key (RevenueCat): its form, beside the sign-in. */}
+        {KEY_SIGN_IN[kind] && !keying && data.available[kind] && (
+          <button
+            type="button"
+            onClick={() => setKeying({})}
+            className="self-start text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            Connect with {KEY_SIGN_IN[kind]!.article} {KEY_SIGN_IN[kind]!.key} instead
+          </button>
+        )}
         {waiting && (
           <p className="text-sm text-muted-foreground">
             Finish signing in in the tab that opened. The account shows here once it is connected.
@@ -272,7 +304,10 @@ export function AppSheet({
         )}
         {waiting && kind === 'atlassian' && <AtlassianDomainHint />}
         {waiting && kind === 'mixpanel' && <MixpanelMcpHint />}
-        {!data.available[kind] && <Unavailable kind={kind} />}
+        {!email && !data.available[kind] && (
+          <Unavailable kind={kind} hidden={!!data.hidden?.includes(kind)} />
+        )}
+        {email && <EmailApp reload={reload} />}
         {kind === 'google_cloud' && data.available[kind] && (
           <p className="text-sm text-muted-foreground">
             Each command runs in a project of yours with the{' '}
@@ -303,7 +338,8 @@ export function AppSheet({
           </Section>
         )}
 
-        {(added || adding) && (
+        {/* The Email App lists its addresses above, in place of accounts. */}
+        {(added || adding || keying) && !email && (
           <Section title={custom ? 'App' : 'Accounts'}>
             {accounts.map((c) => (
               <Account
@@ -314,10 +350,25 @@ export function AppSheet({
                 catalog={catalog}
                 reload={reload}
                 onError={setError}
+                regions={regions}
+                onReconnect={(region) => (server ? setAdding(true) : void connect(region, c.id))}
               />
             ))}
-            {adding && kind === 'stripe' && <StripeForm onSubmit={connectStripe} />}
             {adding && custom && <CustomAppForm onSubmit={connectCustomApp} />}
+            {keying && (
+              <div className="px-4 py-4">
+                <AppKeyForm
+                  kind={kind}
+                  name={name}
+                  reconnect={keying.reconnect}
+                  onConnected={() => {
+                    setKeying(undefined)
+                    void reload()
+                  }}
+                  onCancel={() => setKeying(undefined)}
+                />
+              </div>
+            )}
             {adding && server && app && (
               <div className="px-4 py-4">
                 <McpServerCard
@@ -332,7 +383,7 @@ export function AppSheet({
               </div>
             )}
             {/* A server with nothing to sign in to has one account. */}
-            {added && !custom && !adding && mcp?.auth !== 'none' && (
+            {added && !custom && !adding && !keying && mcp?.auth !== 'none' && (
               <RegionMenu regions={regions} onPick={(region) => void connect(region)}>
                 <button
                   type="button"
@@ -462,7 +513,7 @@ export function AppSheet({
               <Info label="Category" value={entry.category} />
             </>
           )}
-          {!custom && (
+          {!custom && !email && (
             <Info
               label="Accounts"
               value={accounts.length === 0 ? 'None yet' : String(accounts.length)}
@@ -470,7 +521,8 @@ export function AppSheet({
           )}
         </Section>
 
-        {added && managesApp && (
+        {/* An address is turned off from its agent's page or its project's settings. */}
+        {added && managesApp && !email && (
           <div className="flex justify-end">
             <Button variant="outline" onClick={() => void removeApp()}>
               Remove {name}
@@ -511,6 +563,8 @@ function Account({
   catalog,
   reload,
   onError,
+  regions,
+  onReconnect,
 }: {
   connection: Connection
   data: ConnectionsResponse
@@ -518,6 +572,9 @@ function Account({
   catalog?: TriggerCatalog
   reload: () => Promise<unknown>
   onError: (message: string) => void
+  regions: { id: string; label: string }[] | null | undefined
+  /** Sign in again; the same account gets the new credential. */
+  onReconnect: (region?: string) => void
 }) {
   const { me, teammates } = useDashboard()
   const admin = isAdmin(me)
@@ -525,9 +582,10 @@ function Account({
   const manages = admin || mine
   const custom = c.kind === 'webhook'
   const owner = mine ? 'you' : (data.members[c.createdByMemberId] ?? 'a former member')
-  const [open, setOpen] = useState<'teammates' | 'log' | 'triggers'>()
+  const [open, setOpen] = useState<'teammates' | 'log' | 'triggers' | 'ads'>()
+  const ads = c.kind === 'google_ads' || c.kind === 'meta_ads'
 
-  async function update(body: { reach: Connection['reach'] }) {
+  async function update(body: { reach?: Connection['reach']; inbox?: boolean }) {
     try {
       await api(`/connections/${c.id}`, { method: 'PATCH', body })
       await reload()
@@ -566,6 +624,7 @@ function Account({
     teammates: 'Teammates',
     log: 'Call log',
     triggers: custom ? 'Webhooks' : 'Triggers',
+    ads: 'Ads accounts',
   }
   // A chip only when the account is kept to its owner's threads; a dot says the rest.
   const chip = c.reach === 'mine' && !custom ? (mine ? 'Only you' : `${owner} only`) : null
@@ -573,22 +632,38 @@ function Account({
   return (
     <div className="flex flex-col gap-3 px-4 py-3">
       <div className="flex min-h-8 items-center gap-3">
-        <span
-          className={cn(
-            'size-2 shrink-0 rounded-full',
-            c.status === 'needs_reauth' ? 'bg-destructive-text' : 'bg-success',
-          )}
-          title={c.status === 'needs_reauth' ? 'Reconnect needed' : 'Connected'}
-        >
-          <span className="sr-only">
-            {c.status === 'needs_reauth' ? 'Reconnect needed' : 'Connected'}
+        <Hint label={c.status === 'needs_reauth' ? 'Reconnect needed' : 'Connected'}>
+          <span
+            className={cn(
+              'size-2 shrink-0 rounded-full',
+              c.status === 'needs_reauth' ? 'bg-destructive-text' : 'bg-success',
+            )}
+          >
+            <span className="sr-only">
+              {c.status === 'needs_reauth' ? 'Reconnect needed' : 'Connected'}
+            </span>
           </span>
-        </span>
+        </Hint>
         {/* The account itself: a mailbox, a Stripe account, a GitHub owner; a custom app's name. */}
         <span className="min-w-0 flex-1 truncate font-medium">{c.externalAccount ?? c.label}</span>
-        {c.status === 'needs_reauth' && (
-          <span className="shrink-0 text-xs font-medium text-destructive-text">Reconnect</span>
-        )}
+        {/* Only its owner can sign in to it again; anyone else would add an account of their own. */}
+        {c.status === 'needs_reauth' &&
+          (mine ? (
+            <RegionMenu regions={regions} onPick={onReconnect}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={regions ? undefined : () => onReconnect()}
+                className="shrink-0 text-xs text-destructive-text hover:text-destructive-text"
+              >
+                Reconnect
+              </Button>
+            </RegionMenu>
+          ) : (
+            <span className="shrink-0 text-xs font-medium text-destructive-text">
+              Reconnect needed
+            </span>
+          ))}
         {chip && (
           <span className="shrink-0 rounded-md border bg-card px-2 py-0.5 text-xs text-muted-foreground">
             {chip}
@@ -607,8 +682,20 @@ function Account({
                 <span className="ml-auto text-xs text-muted-foreground">{c.grants.length}</span>
               </DropdownMenuItem>
             )}
+            {ads && manages && c.status === 'active' && (
+              <DropdownMenuItem onSelect={() => setOpen('ads')}>
+                Ads accounts
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {c.settings?.customers?.length ?? 0}
+                </span>
+              </DropdownMenuItem>
+            )}
             {!custom && (
               <DropdownMenuItem onSelect={() => setOpen('log')}>Call log</DropdownMenuItem>
+            )}
+            {/* Signing in again while it works: to allow a permission left out at its consent. */}
+            {mine && !custom && c.kind !== 'github' && c.status === 'active' && !regions && (
+              <DropdownMenuItem onSelect={() => onReconnect()}>Reconnect</DropdownMenuItem>
             )}
             <DropdownMenuItem onSelect={() => setOpen('triggers')}>
               {panels.triggers}
@@ -643,6 +730,15 @@ function Account({
                 </DropdownMenuRadioGroup>
               </>
             )}
+            {/* Its mailbox (what shows in the Inbox, its rules): in Inbox › Mailboxes. */}
+            {c.kind === 'gmail' && (c.reach === 'workspace' || mine) && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href={mailboxPath(`gmail:${c.id}`)}>Mailbox</Link>
+                </DropdownMenuItem>
+              </>
+            )}
             {manages && !custom && (
               <>
                 <DropdownMenuSeparator />
@@ -654,6 +750,16 @@ function Account({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* Google Ads: which customer accounts its teammates reach, picked after signing in. */}
+      {ads &&
+        open !== 'ads' &&
+        c.status === 'active' &&
+        (c.kind === 'meta_ads' ? (
+          <MetaAdsPicked connection={c} onPick={manages ? () => setOpen('ads') : undefined} />
+        ) : (
+          <GoogleAdsPicked connection={c} onPick={manages ? () => setOpen('ads') : undefined} />
+        ))}
 
       {open && (
         <div className="flex flex-col gap-2">
@@ -700,6 +806,12 @@ function Account({
             </div>
           )}
           {open === 'log' && <CallLog connectionId={c.id} />}
+          {open === 'ads' &&
+            (c.kind === 'meta_ads' ? (
+              <MetaAdAccounts connection={c} reload={reload} onDone={() => setOpen(undefined)} />
+            ) : (
+              <GoogleAdsAccounts connection={c} reload={reload} onDone={() => setOpen(undefined)} />
+            ))}
           {open === 'triggers' && (
             <ConnectionTriggers
               connection={c}
@@ -712,32 +824,6 @@ function Account({
         </div>
       )}
     </div>
-  )
-}
-
-function StripeForm({ onSubmit }: { onSubmit: (form: FormData) => void }) {
-  return (
-    <form action={onSubmit} className="flex flex-col gap-4 px-4 py-4">
-      <p className="text-sm text-muted-foreground">
-        Create a restricted key in Stripe&apos;s dashboard with only the access your teammates need,
-        and paste it here. It is encrypted in Brigade at once and is never shown again.
-      </p>
-      <div className="flex flex-col gap-2">
-        <Label htmlFor="apiKey">Secret or restricted key</Label>
-        <Input
-          id="apiKey"
-          name="apiKey"
-          type="password"
-          autoComplete="off"
-          placeholder="rk_live_… or sk_test_…"
-          className="bg-card font-mono"
-          required
-        />
-      </div>
-      <div className="flex justify-end">
-        <Button>Connect</Button>
-      </div>
-    </form>
   )
 }
 
@@ -767,7 +853,10 @@ function CustomAppForm({ onSubmit }: { onSubmit: (form: FormData) => void }) {
 }
 
 /** What the server is missing for an App that needs its own setup. */
-function Unavailable({ kind }: { kind: Kind }) {
+function Unavailable({ kind, hidden }: { kind: Kind; hidden: boolean }) {
+  // Behind a feature this member lacks (docs/feature-flags.md).
+  if (hidden)
+    return <p className="text-sm text-muted-foreground">Not available to your account yet.</p>
   if (
     kind === 'gmail' ||
     kind === 'google_calendar' ||
@@ -775,7 +864,8 @@ function Unavailable({ kind }: { kind: Kind }) {
     kind === 'google_docs' ||
     kind === 'google_sheets' ||
     kind === 'google_search_console' ||
-    kind === 'google_analytics'
+    kind === 'google_analytics' ||
+    kind === 'google_ads'
   )
     return (
       <p className="text-sm text-muted-foreground">
@@ -784,7 +874,20 @@ function Unavailable({ kind }: { kind: Kind }) {
         <span className="font-mono text-xs">GOOGLE_CLIENT_SECRET</span>).
       </p>
     )
-  if (kind === 'google_cloud')
+  if (kind === 'meta_ads')
+    return (
+      <p className="text-sm text-muted-foreground">
+        Needs Brigade&apos;s Meta app configured on this Brigade server (
+        <span className="font-mono text-xs">META_APP_ID</span> and{' '}
+        <span className="font-mono text-xs">META_APP_SECRET</span>).
+      </p>
+    )
+  if (
+    kind === 'google_cloud' ||
+    kind === 'google_drive_mcp' ||
+    kind === 'google_docs_mcp' ||
+    kind === 'google_sheets_mcp'
+  )
     return (
       <p className="text-sm text-muted-foreground">
         Needs Brigade&apos;s Google client for agents configured on this Brigade server (

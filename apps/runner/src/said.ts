@@ -3,8 +3,14 @@
 // Brigade itself (a thread.note). A teammate's words never stand for a person's:
 // text inside one cannot pass for a message of its own.
 
-/** One thing said in the thread. by: the teammate's id, or null for a person or a note. */
-export type LogEntry = { by: string | null; name: string; text: string; note?: true }
+import { noteThreads } from '@brigade/contracts'
+
+/**
+ * One thing said in the thread. by: the teammate's id, or null for a person or a note.
+ * to: the teammate a message Brigade wrote was for (a sub-thread's report, a wake-up, a
+ * routine's run): it reads it as it is, the others as a note, never as a person's.
+ */
+export type LogEntry = { by: string | null; name: string; text: string; note?: true; to?: string }
 
 export type Speaker = 'person' | 'teammate' | 'note'
 
@@ -23,4 +29,61 @@ export function said(e: LogEntry) {
   const name = e.name.replace(/["<>\n]/g, '')
   const text = e.text.replace(/<(\/?message\b)/gi, '‹$1')
   return `<message from="${name}" kind="${speakerOf(e)}">\n${text}\n</message>`
+}
+
+/** A log entry and its index since the thread began. */
+export type Indexed = LogEntry & { at: number }
+
+/** The most of the thread's first ask a teammate is told when it comes apart from the rest. */
+export const ASK_CHARS = 8_000
+
+const clip = (e: LogEntry, chars: number) =>
+  e.text.length > chars ? { ...e, text: `${e.text.slice(0, Math.max(0, chars))}…` } : e
+
+/**
+ * What a teammate is told of the messages it missed, oldest first: the newest
+ * that fit in `budget` characters, the newest one cut to fit when none does.
+ * `ask`, the thread's first ask when the teammate missed it: it comes first when
+ * the budget leaves it out, so a teammate joining a long thread still knows what
+ * it is for.
+ */
+export function missedLines(unseen: Indexed[], budget: number, ask?: Indexed): string[] {
+  let left = budget
+  let kept = unseen.length
+  while (kept > 0) {
+    const e = unseen[kept - 1]!
+    if (kept < unseen.length && e.text.length > left) break
+    kept -= 1
+    left -= e.text.length
+  }
+  const lines = unseen.slice(kept).map((e, i) => said(i === 0 ? clip(e, left + e.text.length) : e))
+  if (!ask || unseen.slice(kept).some((e) => e.at === ask.at)) return lines
+  // The ask goes on top of the budget: it is short next to it.
+  return [
+    said(clip(ask, ASK_CHARS)),
+    '(Messages between this one and the next are left out.)',
+    ...lines,
+  ]
+}
+
+/**
+ * For a teammate told the report of a sub-thread it did itself (a review it ran): that the
+ * report is its own, and where to read it whole. It did that work in a session of its own,
+ * so it has no memory of it here, and the note to the teammate it was for holds only its start.
+ */
+export function ownReports(unseen: LogEntry[], teammate: { id: string; name: string }) {
+  const own = unseen.flatMap((e) =>
+    e.note && e.to && e.to !== teammate.id
+      ? // One still working (status null) has no report yet.
+        (noteThreads(e.text)?.threads ?? []).filter(
+          (t) => t.teammate === teammate.name && t.status !== null,
+        )
+      : [],
+  )
+  if (!own.length) return ''
+  const threads = own.map((t) => `“${t.title}” (${t.id})`).join(', ')
+  return (
+    `Among Brigade's notes above is the report of your own sub-thread ${threads}. You did that work in a session of your own, ` +
+    'so you do not remember it here, and the note holds only its start: `read_child` with its id gives the whole report.'
+  )
 }

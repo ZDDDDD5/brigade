@@ -1,17 +1,27 @@
 'use client'
 import { UserPlus } from 'lucide-react'
 import Link from 'next/link'
+import { useBoard } from '@/components/board'
+import { ChiefPassSection } from '@/components/chief-pass'
 import { isAdmin, useDashboard } from '@/components/dashboard'
 import { GettingStarted } from '@/components/getting-started'
 import { LooseEnds, SinceAway } from '@/components/home-feed'
+import { TeamSummary, TodaysRoutines } from '@/components/home-today'
 import { NeedsYou } from '@/components/needs-you'
+import { doneToday } from '@/lib/home-day'
 import { NewThread, useLastTeammate } from '@/components/new-thread'
 import { Button } from '@/components/ui/button'
 import {
+  choicesWaiting,
+  failuresWaiting,
+  isViewer,
+  isList,
   useApi,
+  useRecheck,
   waitingItemKey,
   waitsOn,
   type HomeFeed,
+  type HomeWaiting,
   type PullWaiting,
   type ThreadSummary,
   type Ticket,
@@ -33,53 +43,81 @@ function greeting(name: string) {
 
 export default function Home() {
   const { me, teammates } = useDashboard()
-  const threads = useApi<ThreadSummary[]>('/threads')
+  const threads = useApi<ThreadSummary[]>('/threads', undefined, isList)
   // Open ones: decided ones would only crowd out what waits.
   const tickets = useApi<Ticket[]>('/tickets')
   const pulls = useApi<{ pulls: PullWaiting[] }>('/pulls/attention')
   const feed = useApi<HomeFeed>('/home')
+  // What the team finished today and the day's routines: the Board's, so they agree with it.
+  const board = useBoard()
+  // Failed threads and routines waiting on the member (apps/api/src/failed.ts), and choices
+  // to pick from (apps/api/src/choices-waiting.ts).
+  const failures = useApi<HomeWaiting>('/home/waiting')
+  useRecheck(failures.data?.recheckAt, failures.reload)
   const [chosen, choose] = useLastTeammate()
   const teammate = teammates.find((t) => t.id === chosen) ?? teammates[0]
 
   useLive((message) => {
-    if (message.type === 'tickets.updated') void Promise.all([tickets.reload(), feed.reload()])
+    if (message.type === 'tickets.updated')
+      // A routine that could not start waits by its ticket while it is open.
+      void Promise.all([tickets.reload(), feed.reload(), failures.reload()])
     if (message.type === 'pulls.updated') void Promise.all([pulls.reload(), feed.reload()])
+    if (message.type === 'schedule.updated') void failures.reload()
     if (message.type !== 'thread.updated') return
     void threads.reload()
     void tickets.reload()
     // A thread's pull requests wait on a person once its teammate stops.
     void pulls.reload()
     void feed.reload()
+    // And it waits on them once it failed.
+    void failures.reload()
   })
 
   const waiting = (tickets.data ?? []).filter((t) => waitsOn(t, me))
+  const failed = failuresWaiting(failures.data, waiting)
+  const choices = choicesWaiting(failures.data, waiting, pulls.data?.pulls ?? [])
   // A playbook's approvals are one item, as the sidebar counts them.
-  const waitingCount = new Set(waiting.map(waitingItemKey)).size + (pulls.data?.pulls.length ?? 0)
-  // Only when nothing waits: then Waiting on you is hidden, and this line says so.
-  const calm =
-    tickets.data && pulls.data && feed.data && waitingCount === 0
-      ? feed.data.looseEnds.length
-        ? 'Nothing is waiting on you'
-        : 'Nothing is waiting on you, and nothing needs a nudge'
-      : null
+  const waitingCount =
+    new Set(waiting.map(waitingItemKey)).size +
+    (pulls.data?.pulls.length ?? 0) +
+    failed.threads.length +
+    failed.routines.length +
+    choices.length
+  // The teammates at work now, each once.
+  const working = [
+    ...new Set(
+      (threads.data ?? [])
+        .filter((t) => t.status === 'running' || t.status === 'starting')
+        .map((t) => t.teammate.name),
+    ),
+  ]
+  const summaryReady = threads.data && tickets.data && pulls.data && failures.data
 
   return (
-    <div className="flex flex-col gap-8">
+    <div data-look="today" className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
         <h1 className="text-3xl font-extrabold tracking-tight">{greeting(me.user.name)}</h1>
-        {calm && (
-          <p className="flex items-center gap-2 text-muted-foreground">
-            <span aria-hidden className="size-2 flex-none rounded-full bg-success" />
-            {calm}
-          </p>
+        {summaryReady && (
+          <TeamSummary
+            working={working}
+            waiting={waitingCount}
+            done={board.data ? doneToday(board.data) : null}
+          />
         )}
       </header>
 
-      {teammate ? (
+      {isViewer(me) ? (
+        <p className="text-sm text-muted-foreground">
+          You can view this workspace&apos;s threads, tasks and files. Ask an owner or admin to
+          start work.
+        </p>
+      ) : teammate ? (
         <NewThread
           teammate={teammate}
           rows={3}
           typeToFocus
+          openAtOnce
+          giveBackHere
           picker={teammates.length > 1 ? { teammates, onChange: choose } : undefined}
           placeholder={`Chat with ${teammate.name}`}
         />
@@ -105,12 +143,17 @@ export default function Home() {
 
       <GettingStarted threads={threads.data} />
 
+      {/* Chief's daily pass, for a person who has it on (docs/chief-answers.md). */}
+      {me.chiefPass && <ChiefPassSection />}
+
       {tickets.data && pulls.data && (
         <NeedsYou
           tickets={waiting}
           pulls={pulls.data.pulls}
+          failed={failed}
+          choices={choices}
           onChange={async () => {
-            await Promise.all([tickets.reload(), pulls.reload(), feed.reload()])
+            await Promise.all([tickets.reload(), pulls.reload(), feed.reload(), failures.reload()])
           }}
         />
       )}
@@ -121,6 +164,8 @@ export default function Home() {
           <SinceAway feed={feed.data} />
         </>
       )}
+
+      {board.data && <TodaysRoutines routines={board.data.routines} />}
     </div>
   )
 }

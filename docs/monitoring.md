@@ -1,0 +1,226 @@
+# Monitoring and alerts
+
+Brigade tells its operators when something of its own breaks: the API failing, runners or
+cloud computers down, Stripe's or Resend's webhooks failing, background jobs throwing. All of
+it is in `apps/api/src/ops/`. It is not for members: their own trouble (a teammate's account
+signed out) reaches them as tickets. A cloud computer's full disk is Brigade's, not theirs: it
+is alerted on here only (`disk:<computerId>`).
+
+## Where alerts go
+
+Set on the `brigade-api` Worker as secrets (`wrangler secret put`), each optional:
+
+- `OPS_ALERT_EMAILS`: addresses, comma-separated. Mailed through Resend (`RESEND_API_KEY`)
+  from `alerts@MAIL_DOMAIN`. Each mail counts toward the Resend account's monthly quota,
+  shared with other products: alerts are few by design (below).
+- `OPS_ALERT_WEBHOOK_URL`: a URL each alert is posted to as JSON. It works with:
+  - Slack's and Discord's incoming webhooks, which show its `text` (`content` for Discord);
+  - a Brigade custom app's trigger URL (Apps › Custom app), so that each alert starts a
+    thread where a teammate looks into it. The post's `id` is one per notice, so a
+    redelivery starts no second thread.
+- `OPS_ALERT_WEBHOOK_SECRET`: signs those posts (`x-brigade-signature: sha256=<hex HMAC>`
+  of the body), as a custom app with HMAC verification checks them.
+- `OPS_TOKEN`: turns on `GET /health/ops` (below).
+- `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`: turn on the Workers check (below).
+  The token needs only Account Analytics: Read.
+
+Without any destination, alerts are only logged (`ops alert (no destination set)`).
+
+The post's body:
+
+```json
+{
+  "id": "brigade-ops:api:1793023200000:firing:1793023260000",
+  "source": "brigade-ops",
+  "kind": "firing",
+  "key": "api",
+  "severity": "warning",
+  "title": "API requests failing (500)",
+  "detail": "12 in the last 5 min.\n\n9× GET /api/threads/:id: …",
+  "firstAt": "2026-10-26T12:00:00.000Z",
+  "at": "2026-10-26T12:01:00.000Z",
+  "text": "🔴 API requests failing (500)\n\n…"
+}
+```
+
+## When operators are told
+
+One `OpsAlert` row per problem, by key. The checks run each minute and raise what they see;
+operators hear:
+
+- when a problem starts (`firing`), and at once when a warning turns critical;
+- every 6 hours while it lasts (`reminder`);
+- when it ends (`resolved`), if they were told it started.
+
+A problem back within 30 minutes of its end is the same one: a `reminder`, not a new one.
+A notice no destination took is sent again on the next run: a problem whose end could not be
+told stays open until it is, and a turn for the worse that was not sent is tried again.
+
+## What is checked
+
+| Key                           | Problem                                                                                                                                                                                                                   | Warning / critical                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `api`                         | Requests answered 500 (`app.onError`)                                                                                                                                                                                     | 10 / 50 in 5 min                       |
+| `stripe-webhook`              | Billing events not reconciled (answered 503, Stripe sends them again)                                                                                                                                                     | 1 / 5 in 30 min                        |
+| `stripe-signature`            | Billing webhook requests whose signature fails: `STRIPE_WEBHOOK_SECRET` is wrong?                                                                                                                                         | 3 / 10 in 1 h                          |
+| `stripe-endpoint`             | Brigade's billing endpoint missing at Stripe, or disabled by Stripe                                                                                                                                                       | critical (checked every 30 min)        |
+| `resend-webhook`              | Resend's events failing or badly signed (Brigade's email)                                                                                                                                                                 | 3 / 20 in 30 min                       |
+| `trigger-webhook`             | Triggers' webhooks (Stripe, custom apps) that could not start a thread                                                                                                                                                    | 5 / 30 in 30 min                       |
+| `turn`                        | Teammates' turns failing, in at least 2 workspaces                                                                                                                                                                        | 6 / 25 in 15 min                       |
+| `hub-op`                      | A workspace's hub operation asked from another object (`outcomeHere`) that threw: logged with its stack as `hub <workspace>: <op> failed`                                                                                 | 3 / 15 in 1 h                          |
+| `catalog-size`                | An App's catalog (its tools for a grant, `src/catalogs.ts`) over 2 M characters; over 8 M, its last tools are left out                                                                                                    | 1 / 20 in 6 h                          |
+| `runner-silent`               | Cloud computers' runners that stop their heartbeats without closing their connection                                                                                                                                      | 3 / 10 in 15 min                       |
+| `account-signed-out`          | An account marked `needs_sign_in` after 2 turns in a row failed for want of a login ("Not logged in · Please run /login")                                                                                                 | 1 / 5 in 1 h                           |
+| `runner-restart`              | Cloud computers' runners not back 2 minutes after an update's restart                                                                                                                                                     | 1 / 5 in 1 h                           |
+| `cloud:replacements-burst`    | More than 5 cloud computers moved to new VMs within 30 minutes: boat itself failing, the next replacements held back                                                                                                      | 1 / 10 in 30 min                       |
+| `runner-reconnects`           | A computer's runner connecting 10 times within a minute: a reconnect storm                                                                                                                                                | 1 / 5 in 15 min                        |
+| `runner-outbox`               | Commands refused: too many wait for a computer that stays down (`src/runner-commands.ts`)                                                                                                                                 | 1 / 20 in 30 min                       |
+| `jobs:dead`                   | Job messages that failed every try, waiting in `brigade-jobs-dlq` (once jobs are on the queue)                                                                                                                            | 1 / 20 waiting                         |
+| `jobs:late`                   | The jobs' queue holding a message for 10 minutes: its consumer fails or is slow. A job is given up after 2 min (`JOB_DEADLINE_MS`) and a batch after 4 (`BATCH_BUDGET_MS`, `src/jobs.ts`); a request to boat after 1 min  | warning                                |
+| `job:<name>`                  | A background job throwing (schedules, wake-ups, mail, merges, cloud plans…)                                                                                                                                               | 3 / 10 in 15 min                       |
+| `job:<name>-sweep`            | An hourly sweep throwing                                                                                                                                                                                                  | 2 / 3 in 3 h                           |
+| `computer:<id>`               | A cloud computer in `error`, stuck `creating`/`starting` for 20 min without its runner, or `running` with no runner for 10 min                                                                                            | critical, critical, warning            |
+| `events-waiting:<computerId>` | Threads whose runner has sent the same events, unacknowledged, for 10 min (`events.waiting`)                                                                                                                              | warning; critical at 30 min            |
+| `turn-silent:<computerId>`    | Threads marked running whose runner, connected, has sent no event for an hour: a turn stuck open (the runner ends one that only waits on background work no longer running after 5 min, `staleWait`)                      | warning; critical at 4 h               |
+| `backlog:<computerId>`        | Commands (`RunnerCommand`) its runner has not acknowledged: 20 or more, or the oldest 30 min old; never a member's machine while it is offline                                                                            | warning; critical at 100 or 3 h        |
+| `disk:<computerId>`           | A cloud computer's disk still full once its runner freed what it could (`Computer.disk`, below), with the largest entries of teammates' homes                                                                             | warning                                |
+| `abuse:<computerId>`          | Teammates' processes on a cloud computer sending mail to port 25, reaching the cloud's metadata, scanning, mining (each stopped, docs/abuse.md), or keeping 80% of the CPU for 30 min; over an hour after the last report | critical; warning for CPU alone        |
+| `worker:<script>`             | A `brigade-*` Worker's or Durable Object's failed invocations (exceptions, exceeded limits), as Cloudflare counts them                                                                                                    | 5 / 50 in 10 min (checked every 5 min) |
+| `worker:<script>:resets`      | A `brigade-*` Worker's Durable Objects reset by the runtime: past their memory or CPU, or an internal error (each drops the object's sockets)                                                                             | 1 / 5 in 10 min (checked every 5 min)  |
+| `api-down`                    | The watchdog: the Api object does not answer, or its checks fail                                                                                                                                                          | critical                               |
+
+A failure-count problem ends once none came for a while (15 minutes to 3 hours, by kind).
+Computers of a workspace without a plan are meant to be off and are not checked.
+
+A cloud computer `running` without its runner is mended before operators need to act
+(`src/cloud.ts`'s idle check, each minute, `recoverAway`; the rules are `recoveryStep` in
+`src/runner-away.ts`):
+
+- after 3 minutes, its runner's service is started through boat;
+- after 20 (`RECOVER_AFTER_MS`), boat is asked what it last saved of its disk (a snapshot, or a
+  check that found nothing new to save: about every 10 minutes on a machine that answers). Saved
+  in the last 15 minutes (`UNSAVED_MS`), the machine answers and its runner is the trouble: it is
+  left as it is, for operators. A resumed machine can also stall for a while and come back by
+  itself (Nov 7, 11:05, 12 minutes), and starting it again would only start its restore over;
+- not saved for 15 minutes, boat no longer reaches the machine: it is asked to `recover` it
+  (power-cycle the machine, its disk untouched). boat's baremetal machines cannot be power-cycled
+  (`recover_unsupported`, tried on a throwaway sandbox on Nov 7): the computer is then stopped
+  with its last snapshot (boat's forced stop, which still saves the disk first when it can) and
+  started again, once (`RECOVER_LIMIT`), which keeps its whole disk and sometimes lands it on
+  another of boat's hosts. The same once a power-cycle boat accepted has not brought the runner
+  back within 5 minutes (`RECOVER_WAIT_MS`);
+- still away 20 minutes after that restart, or with no snapshot to restart from, or a full disk
+  (boat does not start one past ~90% again): it moves to a new VM by itself
+  (`replaceAutomatically` in `src/cloud-replace.ts`, the same steps as a member's **Replace cloud
+  computer**, its row's `memberId` set to `brigade`). Nobody has to act: its threads say it is
+  restarting, then carry on from Brigade's backups. On Nov 18, a resumed VM never ran a command
+  again, its restore stuck at 15%: restarted three times on the same host, then left
+  "restarting" for an hour, until a member replaced it by hand;
+- when boat answers it reaches the machine though it does not save it (a full disk, failing
+  snapshots), it is asked again every 10 minutes, and moved to a new VM once it has stayed so 30
+  more minutes (`REACHABLE_REPLACE_MS`);
+- moved twice within 6 hours (`AUTO_REPLACE_LIMIT`, `AUTO_REPLACE_WINDOW_MS`) and still away: its
+  new VMs do not stay up either; its alert says so, `cloud:recovery-gave-up` is raised, and it is
+  left to operators. More than 5 computers moved across Brigade within 30 minutes means boat
+  itself is failing: the next ones wait (`cloud:replacements-burst`), asked again each minute,
+  rather than every workspace's computer being replaced at once.
+
+A machine boat still saves is never moved: its runner is the trouble there, and a runner failing
+everywhere (a bad release) must not move every workspace. One recovery runs at a time per
+computer: the service start is not waited for (boat held such commands 10 minutes on Nov 18), and
+the next minute's check does not join one still waiting on boat (on Nov 18, two restarts 55
+seconds apart). While a replacement is under way, its old VM is never started again: not by the
+idle check nor by a message, and a start that passed that fence first asks again right before boat
+resumes the VM (`StartOptions.proceed`); the replacement waits for it before stopping the old VM.
+The fleet-wide count and the new row are written under one lock, so two workspaces' hubs cannot
+both pass it. An automatic replacement whose runner comes back before its old VM is stopped is
+dropped, the computer left as it is. A restart of Brigade's that leaves the computer in `error`
+(boat refused to resume it, or it never booted) moves it to a new VM too (`recoverFailedRestart`).
+An automatic replacement asks again whether its runner is back right before boat is asked to
+stop the old VM. A new VM stopped while its backups are put back (`restoring`) starts as any.
+A computer in `error` after a restart is moved only when boat confirms the VM did not come up
+(`error`, `stopped`); up at boat (an answer lost), it is marked running and given its grace. An
+old VM boat neither reaches nor ever saved, whose plain stop boat refuses, is never cut over
+from: a forced stop would lose its only disk, and a new VM beside it would run the same logins.
+The replacement fails (shown on Computers), Brigade gives up on it, and `cloud:replace-refused`
+is raised for operators. A `gaveUp` left by the earlier three-restart ladder no longer stops anything: only
+`gaveUpAt` does.
+
+A stop without force does not do: boat refuses to stop a machine it has not saved for 30 minutes,
+so as not to lose what it has not saved, and keeps it running (it mails the account "could not
+stop"). On Nov 6–7, two minutes after a resume, the workspace computer's disk restore failed (its
+processes got `Transport endpoint is not connected`, the runner a SIGBUS) and boat saved nothing
+more from 23:01: it refused every stop and kept the machine running, unreachable, until 05:13.
+
+Since when its runner is away is kept with its workspace's hub (`runnerAway`), so neither the
+hub's hibernation nor the Api object's restarts reset it: kept in the Api object's memory before,
+each restart ended the alert and started the count again. A runner's hello clears it. A start that
+finds boat still archiving the VM from a stop waits up to 30 minutes for it
+(`BOAT_ARCHIVING_WAIT`), rather than failing after 4 and marking the computer `error`.
+
+The counts are in the Api object's memory (`src/ops/failures.ts`). A restart forgets them,
+which only delays an alert. An open alert's end does not depend on them: its row keeps when
+its last failure came (`lastAt`, the failure's own time, never the check's), and it ends once
+none came for the quiet time since then, however often the object restarts meanwhile. A
+failure of an open alert's kind is written to its row as it is counted (`src/ops/last-seen.ts`,
+loaded by `failures.ts` itself, so also in an object that has not run a check since it
+started), in the background (the request never waits for it), at most once a minute per
+kind, so that a restart before the next check does not lose it; a failure within a minute of
+the last one written may end the alert up to a minute early. Every write of `lastAt` is
+`GREATEST("lastAt", …)` in one statement, so writers that race never move it back.
+Before, the quiet time counted from the object's start too: on 2026-11-01 the `api` alert
+stayed open 10 hours after its last failure, until one start of the object lasted 15 minutes.
+What fails in a workspace's hub object, the cron or the jobs' consumer is counted there too,
+sent by RPC.
+
+A read (`SELECT`) outside a transaction that meets a connection the database closed
+(`Connection terminated unexpectedly`, Hyperdrive's 08006) is run once more on another
+connection (`retryReads`, `src/db.ts`), rather than answered 500: on 2026-11-01 one dropped
+connection failed 10 requests in the same second. Writes are not run again, as one may have
+been applied before its answer was lost.
+
+Each minute, the API logs what the hubs it holds hold (`hubs: hubs 3, runners 2, browsers 5,
+queued 0, …`), so a growth shows before it costs a restart. A workspace's hub object logs
+`hub <id>: woke with N sockets` each time it wakes.
+
+A cloud computer's disk is said full by its runner from 80% until it is back under 75%, once it
+has cleared caches, trimmed quiet threads and archived their folders (`apps/runner/src/folders.ts`).
+The computer keeps it (`Computer.disk`, `src/computer-disk.ts`): how full, since when, and the
+largest entries of each teammate's home, its thread folders together (`threads`) and the rest one
+by one. Members are not asked: deleting threads frees no more than archiving their folders did,
+and a larger disk is not theirs to choose. What is left is in use, or outside thread folders,
+where nothing frees it on its own, as a teammate's cron jobs, services and tools may run from its
+home (teammates are told to keep what they make in their thread's folder). To free it by hand,
+run as root through boat on the computer: `du -xsh /home/*/* /home/*/.[!.]* | sort -h | tail`,
+then remove what a teammate left that can be fetched or made again (a clone with nothing
+unpushed, raw render frames, downloads), never `/var/lib/ascii-lazy` (boat's own: `sysbind` binds
+the same files again, so du counts them twice there).
+
+Turns failing in one workspace only are that workspace's trouble (its member's account, say),
+not Brigade's: those are not alerted on.
+
+## The watchdog
+
+Every check above runs in the Api object, so none can say the object itself is down. The
+Worker's cron (`scheduled` in `src/worker.ts`, each minute) pings the object, three times
+20 seconds apart before it counts as down (a deploy resets the object), and its answer says
+when the checks that need the database last succeeded: a database out of reach stops them,
+and they could not alert on it themselves. When the object does not answer, or those checks
+have not succeeded for 10 minutes, the cron sends `api-down` itself, at most once an hour, and `resolved` once it is
+back. It reads the same secrets as the API.
+
+Its resets (past its memory, as on 2026-10-27, or an internal error) are Cloudflare's to count:
+`worker:brigade-api:resets`. It no longer counts its own starts: with the jobs on their queue
+and the sockets in the hub objects, the runtime lets it go between requests, and each start
+looked like a restart no deploy explains.
+
+A whole Worker that does not deploy or load (its cron with it) is not seen from inside
+Cloudflare: for that, an uptime monitor outside (Better Stack, UptimeRobot…) on
+`https://api.brigade.lol/health/ops` with `Authorization: Bearer <OPS_TOKEN>` answers 200
+when nothing critical is open, else 503, with the open alerts:
+
+```json
+{ "checksAt": "2026-10-26T12:01:00.000Z", "alerts": [{ "key": "computer:…", "severity": "critical", … }] }
+```
+
+Without `OPS_TOKEN` it answers 404.

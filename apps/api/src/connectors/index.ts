@@ -1,12 +1,16 @@
 import { z } from 'zod'
 import type { ConnectorDefinition, ConnectorKind, TriggerDefinition } from './types.js'
 import { cloudflare } from './cloudflare.js'
+import { email } from './email.js'
 import { gmail } from './gmail.js'
 import { github } from './github.js'
 import { googleCalendar } from './google-calendar.js'
+import { googleAds } from './google-ads.js'
+import { metaAds } from './meta-ads.js'
 import { googleAnalytics } from './google-analytics.js'
 import { googleCloud } from './google-cloud.js'
 import { googleDocs, googleDrive, googleSheets } from './google-drive.js'
+import { googleDocsMcp, googleDriveMcp, googleSheetsMcp } from './google-workspace-mcp.js'
 import { neon } from './neon.js'
 import { atlassian } from './atlassian.js'
 import { notion } from './notion.js'
@@ -15,6 +19,12 @@ import { mixpanel } from './mixpanel.js'
 import { resend } from './resend.js'
 import { replicate } from './replicate.js'
 import { openrouter } from './openrouter.js'
+import { posthog } from './posthog.js'
+import { dataforseo } from './dataforseo.js'
+import { ahrefs } from './ahrefs.js'
+import { revenuecat } from './revenuecat.js'
+import { expo } from './expo.js'
+import { vercel } from './vercel.js'
 import { googleSearchConsole } from './google-search-console.js'
 import { stripe } from './stripe.js'
 import { supabase } from './supabase.js'
@@ -27,10 +37,15 @@ export const connectors: Partial<Record<ConnectorDefinition['kind'], ConnectorDe
   google_sheets: googleSheets,
   google_search_console: googleSearchConsole,
   google_analytics: googleAnalytics,
+  google_ads: googleAds,
+  meta_ads: metaAds,
   stripe,
   github,
   cloudflare,
   google_cloud: googleCloud,
+  google_drive_mcp: googleDriveMcp,
+  google_docs_mcp: googleDocsMcp,
+  google_sheets_mcp: googleSheetsMcp,
   neon,
   supabase,
   atlassian,
@@ -40,6 +55,13 @@ export const connectors: Partial<Record<ConnectorDefinition['kind'], ConnectorDe
   resend,
   replicate,
   openrouter,
+  posthog,
+  dataforseo,
+  ahrefs,
+  revenuecat,
+  expo,
+  vercel,
+  email,
 }
 
 /**
@@ -75,10 +97,15 @@ export const triggerCatalog = () =>
         'google_sheets',
         'google_search_console',
         'google_analytics',
+        'google_ads',
+        'meta_ads',
         'stripe',
         'github',
         'cloudflare',
         'google_cloud',
+        'google_drive_mcp',
+        'google_docs_mcp',
+        'google_sheets_mcp',
         'neon',
         'supabase',
         'atlassian',
@@ -88,6 +115,13 @@ export const triggerCatalog = () =>
         'resend',
         'replicate',
         'openrouter',
+        'posthog',
+        'dataforseo',
+        'ahrefs',
+        'revenuecat',
+        'expo',
+        'vercel',
+        'email',
         'mcp',
         'webhook',
       ] as const
@@ -104,7 +138,7 @@ export const triggerCatalog = () =>
 
 /**
  * The built-in Apps, as the dashboard shows them. One App asks for one consent:
- * Gmail, Google Calendar, Drive, Docs, Sheets, Search Console and Analytics are Apps of their
+ * Gmail, Google Calendar, Drive, Docs, Sheets, Search Console, Analytics and Ads are Apps of their
  * own, each with its own Google sign-in.
  * personal: an account someone connects is theirs by default (reach mine).
  */
@@ -170,9 +204,30 @@ export const appCatalog: Record<
     category: 'Marketing',
     personal: true,
   },
+  // Behind the google_ads feature until Brigade's Google Cloud project has Basic access and the
+  // adwords scope is verified.
+  google_ads: {
+    name: 'Google Ads',
+    description:
+      'Campaign, ad group, keyword, search term and ad reports, and changes to budgets, statuses, keywords, negative keywords and ads.',
+    developer: 'Google',
+    category: 'Marketing',
+    personal: true,
+  },
+  // Behind the meta_ads feature until Brigade's Meta app passes business verification and App
+  // Review for ads_read and ads_management.
+  meta_ads: {
+    name: 'Meta Ads',
+    description:
+      'Facebook and Instagram ad reports by campaign, ad set and ad, Insights breakdowns, and changes to statuses and budgets.',
+    developer: 'Meta',
+    category: 'Marketing',
+    personal: true,
+  },
   stripe: {
     name: 'Stripe',
-    description: 'Look up customers, payments, invoices and subscriptions, and issue refunds.',
+    description:
+      'Customers, payments, invoices, subscriptions, products and prices, refunds and reports, with Stripe’s MCP server.',
     developer: 'Stripe',
     category: 'Finance',
     personal: false,
@@ -200,6 +255,28 @@ export const appCatalog: Record<
     developer: 'Google',
     category: 'Developer tools',
     // A Google sign-in is someone's own account, as for Gmail.
+    personal: true,
+  },
+  // Behind the google_workspace_mcp feature until Google's servers are generally available.
+  google_drive_mcp: {
+    name: 'Google Drive (MCP)',
+    description: 'Search, read, create and copy files in Drive, with Google’s Drive MCP server.',
+    developer: 'Google',
+    category: 'Productivity',
+    personal: true,
+  },
+  google_docs_mcp: {
+    name: 'Google Docs (MCP)',
+    description: 'Read and edit documents, with Google’s Docs MCP server.',
+    developer: 'Google',
+    category: 'Productivity',
+    personal: true,
+  },
+  google_sheets_mcp: {
+    name: 'Google Sheets (MCP)',
+    description: 'Read and edit spreadsheets, with Google’s Sheets MCP server.',
+    developer: 'Google',
+    category: 'Productivity',
     personal: true,
   },
   neon: {
@@ -282,6 +359,61 @@ export const appCatalog: Record<
     // An OpenRouter sign-in mints a key that spends its account's credits: kept to its member's threads until they share it.
     personal: true,
   },
+  posthog: {
+    name: 'PostHog',
+    description:
+      'Query events with SQL, trends and funnels, manage dashboards, feature flags and experiments, and debug with error tracking, logs and session replays, with PostHog’s MCP server.',
+    developer: 'PostHog',
+    category: 'Analytics',
+    // A PostHog sign-in reaches its person's organizations and projects: kept to their threads until they share it.
+    personal: true,
+  },
+  dataforseo: {
+    name: 'DataForSEO',
+    description:
+      'Research keywords, search results, backlinks, competitors and AI search visibility, and audit pages, with DataForSEO’s MCP server.',
+    developer: 'DataForSEO',
+    category: 'Marketing',
+    // A DataForSEO sign-in spends its account's balance on every request: kept to its member's threads until they share it.
+    personal: true,
+  },
+  ahrefs: {
+    name: 'Ahrefs',
+    description:
+      'Research keywords, backlinks, competitors, rankings, site audits and AI search visibility in Ahrefs, with Ahrefs’ MCP server.',
+    developer: 'Ahrefs',
+    category: 'Marketing',
+    // An Ahrefs sign-in spends its workspace's monthly API units on most calls: kept to its member's threads until they share it.
+    personal: true,
+  },
+  revenuecat: {
+    name: 'RevenueCat',
+    description:
+      'Products, entitlements, offerings, paywalls, customers and subscriptions, revenue charts and experiments of an app, with RevenueCat’s MCP server.',
+    developer: 'RevenueCat',
+    category: 'Finance',
+    // A project's key, as a Stripe account is the business's: the workspace's to share.
+    personal: false,
+  },
+  expo: {
+    name: 'Expo',
+    description:
+      'Build, submit and update Expo apps with EAS, read their build logs and crashes, and search Expo’s docs, with Expo’s MCP server and its skills.',
+    developer: 'Expo',
+    category: 'Developer tools',
+    // An Expo sign-in reaches its person's accounts and projects: kept to their threads until they share it.
+    personal: true,
+    skills: 'https://github.com/expo/skills/tree/main/plugins/expo',
+  },
+  vercel: {
+    name: 'Vercel',
+    description:
+      'Check Vercel projects and deployments, read their build and runtime logs, and search Vercel’s docs, with Vercel’s MCP server.',
+    developer: 'Vercel',
+    category: 'Developer tools',
+    // A Vercel sign-in reaches its person's teams and projects: kept to their threads until they share it.
+    personal: true,
+  },
   mcp: {
     name: 'MCP server',
     description:
@@ -290,6 +422,15 @@ export const appCatalog: Record<
     category: 'Custom',
     // A sign-in is someone's own account: kept to their threads until they open it to every thread.
     personal: true,
+  },
+  email: {
+    name: 'Email',
+    description:
+      'Addresses of your own for your agents, on Brigade’s mail domain: to sign up to services, receive codes, ' +
+      'and answer customers from a project’s inbox.',
+    developer: 'Brigade',
+    category: 'Productivity',
+    personal: false,
   },
   webhook: {
     name: 'Custom app',

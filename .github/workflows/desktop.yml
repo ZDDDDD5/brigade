@@ -1,0 +1,126 @@
+# Brigade.app (apps/desktop) on each pull request that changes it: its tests, then the app packaged
+# as a release packages it (not signed) on macOS, Windows and Linux, and started there against a
+# stand-in dashboard (test/e2e/smoke.mjs). A change that breaks a platform's app shows here rather
+# than in a release.
+name: Brigade.app
+
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'apps/computer-use-macos/**'
+      - '.github/workflows/desktop*.yml'
+      - 'pnpm-lock.yaml'
+
+concurrency:
+  group: desktop-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @brigade/desktop...
+
+      - name: Typecheck
+        working-directory: apps/desktop
+        run: pnpm typecheck
+
+      # The runner's parts are POSIX: no runner on Windows.
+      - name: Tests
+        if: runner.os != 'Windows'
+        working-directory: apps/desktop
+        run: pnpm test
+
+      - name: Package
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: apps/desktop/scripts/build.sh
+
+      - name: The macOS bundle
+        if: runner.os == 'macOS'
+        working-directory: apps/desktop/release/out
+        run: |
+          APP="$(ls -d mac*/Brigade.app | head -1)"
+          PLIST="$APP/Contents/Info.plist"
+          # The executable the Tauri app's login item starts.
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST")" = brigade-desktop ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" = ai.brigade.desktop ]
+          # A regular Mac app, in the Dock: no LSUIElement (menu-bar only) any more.
+          ! /usr/libexec/PlistBuddy -c 'Print :LSUIElement' "$PLIST" 2>/dev/null
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$PLIST"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$PLIST" | grep -qx brigade
+          HELPER="$APP/Contents/Resources/Brigade Computer Use.app"
+          [ -x "$HELPER/Contents/MacOS/brigade-computer-use" ]
+          # The helper as its own script signed it: packaging must not touch it (a universal
+          # merge once broke its signature, which notarization refused).
+          codesign --verify --strict --verbose=2 "$HELPER"
+          diff -r "$HELPER" "../../../computer-use-macos/build/Brigade Computer Use.app"
+          lipo -archs "$APP/Contents/MacOS/brigade-desktop" | tr ' ' '\n' | sort | tr '\n' ' ' | grep -q 'arm64 x86_64'
+          ls Brigade.dmg *-mac.zip latest-mac.yml
+
+      - name: Smoke test
+        working-directory: apps/desktop
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq xvfb >/dev/null
+            xvfb-run -a node test/e2e/smoke.mjs
+          else
+            node test/e2e/smoke.mjs
+          fi
+
+  # Computer use on Linux, served by Brigade.app itself: the packaged app in an X11 desktop session
+  # (Xvfb with Mutter, as GNOME on Xorg), asked what the runner asks, its effects checked on GNOME
+  # Calculator and Text Editor (test/e2e/linux-computer-use.mjs). agent-desktop, which reads apps'
+  # interfaces, needs Ubuntu 24.04. GNOME on Wayland runs the same test by hand
+  # (test/e2e/linux-sessions.sh … wayland): headless gnome-shell is too slow to start reliably here.
+  linux-computer-use:
+    name: Linux computer use
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @brigade/desktop...
+      - name: Package
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: apps/desktop/scripts/build.sh --dir
+      - name: Desktop session
+        run: |
+          sudo apt-get update -qq
+          # x11-apps: xwd, the test's own capture of the root window to compare the screenshot with.
+          sudo apt-get install -y -qq xvfb mutter at-spi2-core dbus-x11 xdotool imagemagick x11-apps \
+            gnome-calculator gnome-text-editor >/dev/null
+      # The agent-desktop the runner pins (apps/runner's devDependency).
+      - name: agent-desktop
+        run: |
+          VERSION=$(node -p "require('./apps/runner/package.json').devDependencies['agent-desktop']")
+          mkdir -p "$RUNNER_TEMP/agent-desktop" && cd "$RUNNER_TEMP/agent-desktop"
+          npm pack "agent-desktop@$VERSION" >/dev/null && tar xzf agent-desktop-*.tgz
+          echo "AGENT_DESKTOP=$PWD/package/bin/agent-desktop-linux-x64" >> "$GITHUB_ENV"
+      - name: Computer use (X11)
+        working-directory: apps/desktop
+        run: test/e2e/linux-sessions.sh release/out/linux-unpacked/brigade-desktop "$AGENT_DESKTOP" x11

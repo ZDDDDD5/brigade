@@ -13,6 +13,8 @@ type Token = Editor & { room: string; exp: number }
 
 const EDITOR_HEADER = 'x-brigade-editor'
 const SHA = 'x-collab-sha'
+/** The teammate who wrote what the API sends (URI-encoded JSON), when one did. */
+const WRITER = 'x-collab-writer'
 
 const encoder = new TextEncoder()
 
@@ -132,6 +134,17 @@ export class DocRoom extends YServer<Env> {
     if (response.status === 404) return this.#forget()
     if (!response.ok) throw new Error(`reconcile returned ${response.status}`)
     const update = new Uint8Array(await response.arrayBuffer())
+    // A teammate's edit to a document people have open: say whose it is just
+    // before it goes out, so their editors type it in. Not on a first load.
+    const writer = response.headers.get(WRITER)
+    if (writer && this.#base) {
+      try {
+        const notice = { type: 'typing', writer: JSON.parse(decodeURIComponent(writer)) }
+        this.broadcastCustomMessage(JSON.stringify(notice))
+      } catch (error) {
+        console.warn(`${this.name}: unreadable writer`, error)
+      }
+    }
     Y.applyUpdate(this.document, update, 'api')
     const base = new Y.Doc()
     if (this.#base) Y.applyUpdate(base, this.#base)
@@ -180,6 +193,23 @@ export class DocRoom extends YServer<Env> {
     if (this.#deleted) return connection.close(4404, 'This document was deleted')
     const editor = JSON.parse(ctx.request.headers.get(EDITOR_HEADER) ?? '{}') as Editor
     connection.setState((previous) => ({ ...previous, member: editor.member, name: editor.name }))
+    // The room matched the stored text before, and the API tells it of each change since
+    // (onRequest): an editor that holds its edits until the check is done (`?early=1`) opens
+    // on what the room has, and the check for a missed notice runs behind it. It shows
+    // nothing until this call returns, so a check here would hold the document back on every
+    // open. Its edits wait for `checked`: a change the check finds can replace a whole block,
+    // and what was typed in the block it replaced would be lost. Editors that do not ask,
+    // such as a dashboard loaded before this, wait for the check as before.
+    const early = new URL(ctx.request.url).searchParams.get('early') === '1'
+    if (this.#base && early) {
+      // `checks`: it can be asked to check again (onCustomMessage).
+      this.sendCustomMessage(connection, JSON.stringify({ type: 'checking', checks: true }))
+      super.onConnect(connection, ctx)
+      this.#check(connection)
+      return
+    }
+    // Otherwise the editor waits for the check: a room that never matched the stored text has
+    // nothing to show until the API sends it.
     try {
       await this.#serial(() => this.#reconcile())
     } catch (error) {
@@ -188,7 +218,37 @@ export class DocRoom extends YServer<Env> {
       if (!this.#base) return connection.close(4503, 'Could not load the document')
     }
     if (this.#deleted) return
-    return super.onConnect(connection, ctx)
+    super.onConnect(connection, ctx)
+    // Checked already; that it can be asked again.
+    if (early) this.sendCustomMessage(connection, JSON.stringify({ type: 'checked', checks: true }))
+  }
+
+  /**
+   * Check what the room has against the stored text, then tell `connection` it is `checked`:
+   * after the change it found, if any, which went out first on the same socket. Without the
+   * API, edits go ahead on what the room has, as they do when an editor waited.
+   */
+  #check(connection: Connection<Editor>) {
+    void this.#serial(() => this.#reconcile())
+      .catch((error) => console.error(`${this.name}: could not check the stored text`, error))
+      .finally(() => {
+        if (!this.#deleted) this.sendCustomMessage(connection, JSON.stringify({ type: 'checked' }))
+      })
+  }
+
+  /**
+   * An editor showing again a document it kept open (apps/web/lib/live-documents.ts): the
+   * stored text may have changed meanwhile, its notice missed. Checked as on connecting, its
+   * edits waiting for `checked`, without a new connection.
+   */
+  onCustomMessage(connection: Connection<Editor>, message: string) {
+    let request: { type?: string }
+    try {
+      request = JSON.parse(message) as typeof request
+    } catch {
+      return
+    }
+    if (request.type === 'check') this.#check(connection)
   }
 
   /** The API's notices: the stored text changed, or the document is gone. */

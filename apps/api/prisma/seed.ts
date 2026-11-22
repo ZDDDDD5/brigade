@@ -2,9 +2,7 @@
 //   pnpm --filter @brigade/api db:seed
 // Ada (owner), Bob (admin) and Carol (member) share the sample Acme workspace
 // (seed-workspace.ts); Dana has no organization yet, to try onboarding.
-import { auth } from '../src/auth.js'
 import { prisma } from '../src/db.js'
-import { SAMPLE_ORGANIZATION, seedWorkspace } from './seed-workspace.js'
 
 export const DEV_PASSWORD = 'correct-horse-battery'
 const DEV_USERS = {
@@ -17,6 +15,54 @@ const DEV_USERS = {
 if (!/localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL ?? '')) {
   throw new Error('Refusing to seed a non-local database')
 }
+
+// Features hidden until ready (docs/feature-flags.md) are open to everyone locally, as before
+// they were hidden. Added only when missing, so a row changed by hand stays: set its everyone to
+// false to see the feature as people without it do.
+await prisma.featureFlag.createMany({
+  data: [
+    { key: 'gmail', everyone: true, note: 'Local development' },
+    { key: 'google_drive', everyone: true, note: 'Local development' },
+    { key: 'tools', everyone: true, note: 'Local development' },
+    { key: 'missions', everyone: true, note: 'Local development' },
+    { key: 'antigravity_harness', everyone: true, note: 'Local development' },
+  ],
+  skipDuplicates: true,
+})
+
+// Nothing to add: every account is there, and Ada, Bob or Carol has an organization (the
+// sample's, or their own). Said before loading what adding takes, seconds on each preview
+// start (scripts/preview/setup.sh runs this every time).
+const emails = Object.values(DEV_USERS).map((user) => user.email)
+const sharing = [DEV_USERS.ada.email, DEV_USERS.bob.email, DEV_USERS.carol.email]
+const [accounts, organized] = await Promise.all([
+  prisma.user.count({ where: { email: { in: emails } } }),
+  prisma.member.count({ where: { user: { email: { in: sharing } } } }),
+])
+if (accounts === emails.length && organized) {
+  console.log('exists: the dev accounts and their organization')
+  // The sample's Inbox mail came after it: added to a sample without it (its reply set to leave
+  // later marks the latest part). Checked here first,
+  // since loading what adding takes costs seconds ('acme' is seed-workspace's SAMPLE_ORGANIZATION).
+  const sample = await prisma.organization.findFirst({
+    where: { slug: 'acme' },
+    select: { id: true },
+  })
+  if (
+    sample &&
+    !(await prisma.mailMessage.count({
+      where: { organizationId: sample.id, direction: 'out', status: 'scheduled' },
+    }))
+  )
+    await (await import('./seed-inbox.js')).seedInbox()
+  // So came its missions (docs/missions.md): added once to a sample without them.
+  await (await import('./seed-missions.js')).seedMissions()
+  await prisma.$disconnect()
+  process.exit(0)
+}
+
+const { auth } = await import('../src/auth.js')
+const { SAMPLE_ORGANIZATION, seedWorkspace } = await import('./seed-workspace.js')
 
 const users = {} as Record<keyof typeof DEV_USERS, { id: string }>
 for (const [key, user] of Object.entries(DEV_USERS) as [
@@ -41,6 +87,8 @@ const onboarded = await prisma.member.count({
 if (sample) console.log('exists: sample organization Acme')
 else if (onboarded) console.log('skipped: sample organization (Ada, Bob or Carol already has one)')
 else await seedWorkspace(users)
+await (await import('./seed-inbox.js')).seedInbox()
+await (await import('./seed-missions.js')).seedMissions()
 
 await prisma.$disconnect()
 // Library saves leave timers for runners; none listen here.

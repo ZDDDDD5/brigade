@@ -1,27 +1,62 @@
 'use client'
-import { LoaderCircle, ShieldCheck, Terminal } from 'lucide-react'
+import { GETTING_STARTED, newListItemId, setupMessage, type ListSummary } from '@brigade/contracts'
+import {
+  Check,
+  ChevronDown,
+  Cloud,
+  ExternalLink,
+  Laptop,
+  Moon,
+  Timer,
+  Wallet,
+  Terminal,
+} from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { AccountCard } from '@/components/account-card'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { AccountCard, machineName } from '@/components/account-card'
+import { HarnessLogo } from '@/components/harness-logo'
+import { StatusBadge } from '@/components/status-badge'
+import { SetupWorkspaceSwitcher } from '@/components/workspace-switcher'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
+  answerOf,
   api,
+  isList,
   ApiError,
+  subscribeToCloud,
   useApi,
   usableComputers,
   type Account,
   type AccountLogin,
   type ComputersResponse,
   type Me,
+  type OpenInvitation,
   type Teammate,
   type ThreadSummary,
 } from '@/lib/api'
 import { authClient } from '@/lib/auth-client'
+import { inDesktopApp } from '@/lib/brigade-app'
+import { computerTaken } from '@/lib/guest'
+import { detectDevice, type Device } from '@/lib/device'
+import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
+import { MAC_APP_URL } from '@/lib/mac-app'
+import { useWindowsAppReady, WINDOWS_APP_URL } from '@/lib/windows-app'
 import { markSignedIn, markSignedOut } from '@/lib/signed-in'
 import { useLive } from '@/lib/use-live'
+import { cn } from '@/lib/utils'
+import { Questions } from './questions'
+import { Shell } from './shell'
 
 const slugify = (name: string) =>
   `${
@@ -32,41 +67,21 @@ const slugify = (name: string) =>
       .slice(0, 40) || 'org'
   }-${Math.random().toString(36).slice(2, 6)}`
 
-/** Centered column with the brand mark, shared by every onboarding step. */
-function Shell({
-  title,
-  description,
-  children,
-}: {
-  title?: string
-  description?: string
-  children?: React.ReactNode
-}) {
-  return (
-    <main className="flex min-h-svh items-center justify-center px-4 py-12">
-      <div className="flex w-full max-w-md flex-col gap-7">
-        <div className="flex flex-col items-center gap-4 text-center">
-          <span
-            aria-hidden
-            className="flex size-14 items-center justify-center rounded-2xl bg-primary text-2xl font-extrabold text-primary-foreground"
-          >
-            B
-          </span>
-          {title && (
-            <div className="flex flex-col gap-1.5">
-              <h1 className="text-3xl font-extrabold tracking-tight">{title}</h1>
-              {description && <p className="text-sm text-muted-foreground">{description}</p>}
-            </div>
-          )}
-        </div>
-        {children}
-      </div>
-    </main>
-  )
+/**
+ * The line of the workspace's Getting started list the setup thread works on, so the list shows
+ * it in progress with the chief. None without the list: the thread starts alone (and so it does
+ * when the line is gone from it, which the API leaves out).
+ */
+async function setupLine() {
+  const lists = await api<ListSummary[]>('/lists').catch(() => [])
+  const list = lists.find((l) => l.path === GETTING_STARTED.path)
+  return list
+    ? {
+        documentId: list.documentId,
+        items: [{ id: newListItemId(), text: GETTING_STARTED.setupLine }],
+      }
+    : undefined
 }
-
-/** The first message of a new workspace's setup thread with the chief. */
-const SETUP_MESSAGE = 'Hi Chief, I just started on Brigade. Help me set up my team.'
 
 /**
  * First run: name the project (its organization and first workspace), connect
@@ -80,6 +95,21 @@ export default function Onboarding() {
   const [busy, setBusy] = useState(false)
   // A member who has a workspace and an AI account came here to add a workspace.
   const [adding, setAdding] = useState<boolean>()
+  // Who just made their project answers onboarding's questions next, once.
+  const [asking, setAsking] = useState(false)
+  // A form sent and not answered yet: a second Enter or click meanwhile sends nothing. Not
+  // `<form action>`: React runs an action as a transition and shows its `busy` only once it
+  // ends, so the button stayed enabled and each click made another organization.
+  const sending = useRef(false)
+  const onSubmit =
+    (send: (form: FormData) => Promise<void>) => (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault()
+      if (sending.current) return
+      sending.current = true
+      void send(new FormData(event.currentTarget)).finally(() => {
+        sending.current = false
+      })
+    }
 
   const reload = useCallback(
     () =>
@@ -104,6 +134,28 @@ export default function Onboarding() {
     void reload()
   }, [reload])
 
+  // Someone invited and not in an organization yet: join one rather than start their own.
+  const [invitations, setInvitations] = useState<OpenInvitation[]>([])
+  const noOrganization = !!me && !me.activeOrganizationId
+  useEffect(() => {
+    if (!noOrganization) return
+    api<OpenInvitation[]>('/invitations')
+      .then(setInvitations)
+      .catch(() => setInvitations([]))
+  }, [noOrganization])
+
+  async function join(invitation: OpenInvitation) {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await api(`/invitations/${encodeURIComponent(invitation.id)}/accept`, { body: {} })
+      await reload()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+    setBusy(false)
+  }
+
   /** A new organization and its first workspace, both named after the project. */
   async function createProject(form: FormData) {
     setBusy(true)
@@ -115,9 +167,13 @@ export default function Onboarding() {
       // Reading /me makes the new organization the session's.
       await api<Me>('/me')
       await api('/workspaces', { body: { name } })
-      await reload()
+      const next = await reload()
+      setAsking(next?.onboardingAnswers === null)
     } catch (e) {
       setError((e as Error).message)
+      // An organization made before a later step failed is the one to go on with: shown
+      // again, this form would make another.
+      await reload()
     }
     setBusy(false)
   }
@@ -153,9 +209,29 @@ export default function Onboarding() {
         title="What are you building?"
         description="Name your project. Your AI team works on it, and you can rename it later."
       >
+        {invitations.length > 0 && (
+          <Card>
+            <CardContent className="flex flex-col gap-4">
+              <p className="text-sm text-muted-foreground">You were invited to join:</p>
+              {invitations.map((i) => (
+                <div key={i.id} className="flex items-center gap-3">
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate font-semibold">{i.organization}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      Invited by {i.invitedBy}
+                    </span>
+                  </div>
+                  <Button disabled={busy} onClick={() => void join(i)}>
+                    Join
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardContent>
-            <form action={createProject} className="flex flex-col gap-5">
+            <form onSubmit={onSubmit(createProject)} className="flex flex-col gap-5">
               <div className="flex flex-col gap-2">
                 <Label htmlFor="name">Project name</Label>
                 <Input id="name" name="name" placeholder="Acme" required autoFocus />
@@ -171,50 +247,207 @@ export default function Onboarding() {
     )
   }
 
+  if (me.activeWorkspaceId && !adding && asking)
+    return (
+      <Questions
+        onDone={() => {
+          setAsking(false)
+          void reload()
+        }}
+      />
+    )
+
   // Stays up once the account works, while the chief's thread starts.
-  if (me.activeWorkspaceId && !adding) return <ConnectAI onReady={reload} />
+  if (me.activeWorkspaceId && !adding)
+    return (
+      <>
+        <SetupWorkspaceSwitcher me={me} />
+        <ConnectAI onReady={reload} guest={!!me.guest} />
+      </>
+    )
 
   return (
-    <Shell
-      title="Create a workspace"
-      description="A workspace is one business or project. It has its own AI teammates, computer and run log."
-    >
-      <Card>
-        <CardContent>
-          <form action={createWorkspace} className="flex flex-col gap-5">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="name">Workspace name</Label>
-              <Input id="name" name="name" placeholder="Customer support" required />
-            </div>
-            {error && <p className="text-sm text-destructive-text">{error}</p>}
-            <Button
-              type="submit"
-              size="lg"
-              className="w-full"
-              disabled={busy || (me.role !== 'owner' && me.role !== 'admin')}
-            >
-              Create workspace
-            </Button>
-            {me.role === 'member' && (
-              <p className="text-sm text-muted-foreground">
-                Ask an owner or admin to create a workspace.
-              </p>
-            )}
-          </form>
-        </CardContent>
-      </Card>
-    </Shell>
+    <>
+      <SetupWorkspaceSwitcher me={me} />
+      <Shell
+        title="Create a workspace"
+        description="A workspace is one business or project. It has its own AI teammates, computer and run log."
+      >
+        <Card>
+          <CardContent>
+            <form onSubmit={onSubmit(createWorkspace)} className="flex flex-col gap-5">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="name">Workspace name</Label>
+                <Input id="name" name="name" placeholder="Customer support" required />
+              </div>
+              {error && <p className="text-sm text-destructive-text">{error}</p>}
+              <Button
+                type="submit"
+                size="lg"
+                className="w-full"
+                disabled={busy || (me.role !== 'owner' && me.role !== 'admin')}
+              >
+                Create workspace
+              </Button>
+              {me.role === 'member' && (
+                <p className="text-sm text-muted-foreground">
+                  Ask an owner or admin to create a workspace.
+                </p>
+              )}
+            </form>
+          </CardContent>
+        </Card>
+      </Shell>
+    </>
   )
 }
 
-type LinkCode = { command: string; expiresAt: string }
+type LinkCode = { command: string; expiresAt: string; appLink?: string; issuedAt: number }
+
+/** How long a machine may take to connect after its command before the page says what to look for. */
+const RELEASES_URL = 'https://github.com/gmpetrov/brigade/releases/latest'
+const SLOW_LINK_MS = 90_000
+
+/** Apple's mark, in the text color, for the Mac download. */
+function AppleLogo({ className }: { className?: string }) {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" fill="currentColor" className={cn('size-4', className)}>
+      <path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701" />
+    </svg>
+  )
+}
+
+/** Windows' mark, in the text color, for the Windows download. */
+function WindowsLogo({ className }: { className?: string }) {
+  return (
+    <svg aria-hidden viewBox="0 0 24 24" fill="currentColor" className={cn('size-4', className)}>
+      <path d="M3 3h8.5v8.5H3zM12.5 3H21v8.5h-8.5zM3 12.5h8.5V21H3zM12.5 12.5H21V21h-8.5z" />
+    </svg>
+  )
+}
+
+/** A card's leading icon on a soft tile; violet for Brigade Cloud. */
+function Tile({ children, violet }: { children: React.ReactNode; violet?: boolean }) {
+  return (
+    <span
+      className={cn(
+        'flex size-9 shrink-0 items-center justify-center rounded-xl [&_svg]:size-4',
+        violet ? 'bg-primary/15 text-primary' : 'bg-secondary',
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+/** A card's head: icon, title, one line under it, and what sits at its right. */
+function CardHead({
+  icon,
+  violet,
+  title,
+  meta,
+  aside,
+}: {
+  icon: React.ReactNode
+  violet?: boolean
+  title: React.ReactNode
+  meta?: React.ReactNode
+  aside?: React.ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <Tile violet={violet}>{icon}</Tile>
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <p className="font-bold">{title}</p>
+        {meta && <p className="text-xs text-muted-foreground">{meta}</p>}
+      </div>
+      {aside}
+    </div>
+  )
+}
+
+/** Something on its way, with a pulsing violet dot rather than a spinner. */
+function Waiting({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1 rounded-xl bg-muted px-3.5 py-3">
+      <p className="flex items-center gap-2.5 text-sm">
+        <span aria-hidden className="size-2 shrink-0 animate-pulse rounded-full bg-primary" />
+        {title}
+      </p>
+      <p className="text-xs text-muted-foreground">{children}</p>
+    </div>
+  )
+}
 
 /**
- * Nothing runs without an AI account: sign in to Claude (or ChatGPT for
- * Codex) on the workspace computer, or link a machine already signed in.
- * Once one works, the chief's setup thread starts.
+ * What stops the install command, as the terminal shows it: the page cannot see that terminal,
+ * so it says what to look for once the machine is slow to connect.
  */
-function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
+function TerminalHelp({ onNewCode }: { onNewCode: () => void }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border px-3.5 py-3 text-xs text-muted-foreground">
+      <p className="text-sm text-foreground">Still nothing? Look at the terminal:</p>
+      <ul className="flex list-disc flex-col gap-1.5 pl-4">
+        <li>
+          <code>curl: command not found</code>: install curl (on Debian or Ubuntu,{' '}
+          <code>sudo apt install curl</code>), then run the command again.
+        </li>
+        <li>
+          <code>Could not link</code>: each code links one machine, once, for 10 minutes.{' '}
+          <button
+            type="button"
+            className="text-foreground underline underline-offset-4"
+            onClick={onNewCode}
+          >
+            Get a new code
+          </button>{' '}
+          and run the new command.
+        </li>
+        <li>
+          <code>connected to</code> and nothing here: keep that terminal open, this page follows in
+          a few seconds.
+        </li>
+      </ul>
+    </div>
+  )
+}
+
+function Command({ command }: { command: string }) {
+  return (
+    <pre className="rounded-xl border bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap text-foreground">
+      {command}
+    </pre>
+  )
+}
+
+const PRICE = (
+  <>
+    $99<span className="text-xs font-medium text-muted-foreground"> / month</span>
+  </>
+)
+
+/** Cloud's entry plan, offered first in onboarding: 100 hours a month. */
+const STARTER_PRICE = (
+  <>
+    $15<span className="text-xs font-medium text-muted-foreground"> / month</span>
+  </>
+)
+
+/**
+ * Nothing runs without an AI account on a computer: Brigade Cloud first, then
+ * the member's own machine, for free, offered as this device allows (Brigade.app
+ * on a Mac, the install command on Linux). Not one or the other: the second can
+ * be added later from Computers. Once an account works, the chief's setup
+ * thread starts.
+ */
+function ConnectAI({
+  onReady,
+  guest,
+}: {
+  onReady: () => Promise<Me | undefined>
+  /** A guest (docs/guests.md): their own computer only, Brigade Cloud once the account is saved. */
+  guest: boolean
+}) {
   const router = useRouter()
   const accounts = useApi<Account[]>('/accounts')
   const computers = useApi<ComputersResponse>('/computers')
@@ -222,59 +455,77 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [link, setLink] = useState<LinkCode>()
+  // On a Mac: the install command rather than Brigade.app.
+  const [terminal, setTerminal] = useState(false)
+  const [device, setDevice] = useState<Device>()
+  // A link code expires: the page offers a new one once it has.
+  const [now, setNow] = useState(() => Date.now())
   const [finishing, setFinishing] = useState(false)
   // The live update and the timer can both see the account ready: start one thread.
   const started = useRef(false)
 
-  /** Meet the chief: a new workspace starts by setting up its team with it. */
-  const finish = useCallback(async () => {
-    if (started.current) return
-    started.current = true
-    setFinishing(true)
-    try {
-      const [teammates, ready] = await Promise.all([
-        api<Teammate[]>('/teammates'),
-        api<Account[]>('/accounts'),
-      ])
-      const chief = teammates.find((t) => t.kind === 'chief')
-      const works = (a: Account) => ['ready', 'unverified', 'exhausted'].includes(a.status)
-      // Only a Codex account: the chief runs on Codex.
-      if (
-        chief &&
-        !ready.some((a) => works(a) && a.provider === chief.harness) &&
-        ready.some((a) => works(a))
-      ) {
-        const harness = ready.find(works)!.provider
-        await api(`/teammates/${chief.id}`, { method: 'PATCH', body: { harness, model: null } })
-        chief.harness = harness
-      }
-      const account = ready.find((a) => works(a) && a.provider === chief?.harness)
-      const others = teammates.filter((t) => t.kind !== 'chief')
-      if (chief && account && others.length === 0) {
-        const started = await api<ThreadSummary[]>(`/threads?teammateId=${chief.id}`)
-        if (started.length === 0) {
-          const thread = await api<{ id: string }>('/threads', {
-            body: {
-              teammateId: chief.id,
-              computerId: account.computer.id,
-              accountId: account.id,
-              text: SETUP_MESSAGE,
-            },
-          })
-          return router.replace(`/app/threads/${thread.id}`)
+  /**
+   * Meet the chief: a new workspace starts by setting up its team with it, its owner or admin.
+   * Anyone else (a member who joined, a workspace with a team already) goes to the dashboard.
+   */
+  const finish = useCallback(
+    async (me: Me) => {
+      if (started.current) return
+      started.current = true
+      setFinishing(true)
+      try {
+        const [teammates, ready] = await Promise.all([
+          api<Teammate[]>('/teammates'),
+          api<Account[]>('/accounts'),
+        ])
+        const chief = teammates.find((t) => t.kind === 'chief')
+        const others = teammates.filter((t) => t.kind !== 'chief')
+        // Changing the chief is an owner's or admin's: a member's account would be refused.
+        if (others.length > 0 || (me.role !== 'owner' && me.role !== 'admin'))
+          return router.replace('/app')
+        const works = (a: Account) => ['ready', 'unverified', 'exhausted'].includes(a.status)
+        // Only a Codex account: the chief runs on Codex.
+        if (
+          chief &&
+          !ready.some((a) => works(a) && a.provider === chief.harness) &&
+          ready.some((a) => works(a))
+        ) {
+          const harness = ready.find(works)!.provider
+          await api(`/teammates/${chief.id}`, { method: 'PATCH', body: { harness, model: null } })
+          chief.harness = harness
         }
+        const account = ready.find((a) => works(a) && a.provider === chief?.harness)
+        if (chief && account) {
+          const started = await answerOf<ThreadSummary[]>(`/threads?teammateId=${chief.id}`, {
+            accept: isList,
+          })
+          if (started.length === 0) {
+            const listLines = await setupLine()
+            const thread = await api<{ id: string }>('/threads', {
+              body: {
+                teammateId: chief.id,
+                computerId: account.computer.id,
+                accountId: account.id,
+                text: setupMessage(me.onboardingAnswers),
+                ...(listLines ? { listLines } : {}),
+              },
+            })
+            return router.replace(`/app/threads/${thread.id}`)
+          }
+        }
+        router.replace('/app')
+      } catch (e) {
+        setError((e as Error).message)
+        started.current = false
+        setFinishing(false)
       }
-      router.replace('/app')
-    } catch (e) {
-      setError((e as Error).message)
-      started.current = false
-      setFinishing(false)
-    }
-  }, [router])
+    },
+    [router],
+  )
 
   const check = useCallback(async () => {
     const me = await onReady()
-    if (me?.aiReady) await finish()
+    if (me?.aiReady) await finish(me)
   }, [onReady, finish])
 
   useLive((message) => {
@@ -297,27 +548,90 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
       void reloadAccounts()
       void reloadComputers()
       void check()
+      setNow(Date.now())
     }, 5000)
     return () => clearInterval(timer)
   }, [reloadAccounts, reloadComputers, check])
 
+  useEffect(() => setDevice(detectDevice(navigator.userAgent)), [])
+  // Windows gets Brigade.app's download once the latest release runs teammates there.
+  const windowsReady = useWindowsAppReady()
+
+  const getLink = useCallback(() => {
+    setError(undefined)
+    return api<Omit<LinkCode, 'issuedAt'>>('/computers/link-code', { method: 'POST' })
+      .then((issued) => {
+        setLink({ ...issued, issuedAt: Date.now() })
+        return issued
+      })
+      .catch((e: Error) => {
+        setError(e.message)
+        return undefined
+      })
+  }, [])
+  // In Brigade.app's own window, it is this computer: its link goes straight to the app, which
+  // asks before it connects (apps/desktop/src/links.ts).
+  const [inApp, setInApp] = useState(false)
+  useEffect(() => setInApp(inDesktopApp()), [])
+  const linkHere = useCallback(async () => {
+    const issued = await getLink()
+    if (issued?.appLink) location.href = issued.appLink
+  }, [getLink])
+
+  const all = computers.data?.computers ?? []
   const usable = usableComputers(computers.data)
-  // The workspace computer first: it needs nothing on the person's machine.
-  const computer = usable.find((c) => c.kind === 'cloud') ?? usable.find((c) => c.online)
-  const cloud = computers.data?.computers.find((c) => c.kind === 'cloud')
+  const cloud = all.find((c) => c.kind === 'cloud')
+  const cloudUsable = usable.find((c) => c.kind === 'cloud')
+  const machine = all.find((c) => c.kind === 'member_machine' && c.online)
   const signingIn = (accounts.data ?? []).filter((a) => a.source === 'brigade')
+  // A sign-in under way on this computer; one that failed, or on another computer, leaves its buttons.
+  const signingInOn = (computerId: string) =>
+    signingIn.some((a) => {
+      const login = logins[a.id] ?? a.login
+      return (
+        a.computer.id === computerId &&
+        a.status === 'signing_in' &&
+        login?.state !== 'done' &&
+        login?.state !== 'failed'
+      )
+    })
+  const offerCloud = !guest && !!computers.data?.cloudAvailable
+  // With billing on, the cloud computer comes with Brigade Cloud: their own machine is free.
+  const planNeeded = offerCloud && !computers.data?.cloudEntitled
   // A new workspace's computer is still being made: sign-in opens once it starts.
   const preparing =
-    !computer &&
-    (cloud ? ['pending', 'creating'].includes(cloud.status) : !!computers.data?.cloudAvailable)
-  const failed = !computer && cloud?.status === 'error'
+    !cloudUsable &&
+    (cloud ? ['pending', 'creating'].includes(cloud.status) : offerCloud && !planNeeded)
+  const failed = !cloudUsable && cloud?.status === 'error'
+  // Once they set up their own machine, Brigade Cloud steps back to one line.
+  const cloudCompact = planNeeded && (!!link || !!machine)
 
-  async function signIn(provider: Account['provider']) {
-    if (!computer) return
+  // A guest chose to start here: this computer links at once, once. Not when it runs another
+  // workspace's teammates already: the link would stop them, so the guest links by the button,
+  // which the app asks about first (docs/guests.md).
+  const linkedHere = useRef(false)
+  useEffect(() => {
+    if (!guest || !inApp || !computers.data || machine || linkedHere.current) return
+    linkedHere.current = true
+    void computerTaken().then((taken) => {
+      if (!taken.linked && !taken.linking) void linkHere()
+    })
+  }, [guest, inApp, computers.data, machine, linkHere])
+
+  // On Chromebooks the command is the way in: show it straight away.
+  const linuxLink = useRef(false)
+  useEffect(() => {
+    if (device !== 'chromeos' || !computers.data || machine) return
+    if (linuxLink.current) return
+    linuxLink.current = true
+    void getLink()
+  }, [device, computers.data, machine, getLink])
+
+  async function signIn(computerId: string, provider: Account['provider']) {
     setBusy(true)
     setError(undefined)
     try {
-      await api('/accounts', { body: { computerId: computer.id, provider } })
+      await api('/accounts', { body: { computerId, provider } })
       await accounts.reload()
     } catch (e) {
       setError((e as Error).message)
@@ -335,127 +649,457 @@ function ConnectAI({ onReady }: { onReady: () => Promise<Me | undefined> }) {
     }
   }
 
-  if (finishing) return <Shell title="Meeting Chief…" description="Starting your first thread." />
+  function subscribe(tier: 'cloud' | 'starter' = 'cloud') {
+    setBusy(true)
+    void act(subscribeToCloud('onboarding', tier)).then(() => setBusy(false))
+  }
+
+  if (finishing)
+    return (
+      <Shell
+        title="Your team is ready"
+        description="Chief, your first teammate, is setting up your team with you."
+      >
+        <p className="flex items-center justify-center gap-2.5 text-sm">
+          <span aria-hidden className="size-2 animate-pulse rounded-full bg-primary" />
+          Meeting Chief… starting your first thread.
+        </p>
+      </Shell>
+    )
+
+  const signInButtons = (computerId: string) =>
+    !signingInOn(computerId) && (
+      <div className="flex flex-col gap-2.5">
+        <Button
+          size="lg"
+          variant="outline"
+          disabled={busy}
+          onClick={() => void signIn(computerId, 'claude_code')}
+        >
+          <HarnessLogo harness="claude_code" />
+          Sign in with Claude
+        </Button>
+        <Button
+          size="lg"
+          variant="outline"
+          disabled={busy}
+          onClick={() => void signIn(computerId, 'codex')}
+        >
+          <HarnessLogo harness="codex" />
+          Sign in with ChatGPT (Codex)
+        </Button>
+      </div>
+    )
+
+  const cloudHead = (aside: React.ReactNode) => (
+    <CardHead
+      icon={<Cloud />}
+      violet
+      title="Brigade Cloud"
+      meta="Your team's own computer, always on"
+      aside={aside}
+    />
+  )
+
+  const cloudCard = !offerCloud ? null : cloudCompact ? null : planNeeded ? (
+    <Card>
+      <CardContent className="flex flex-col gap-4">
+        {cloudHead(<p className="text-xl font-extrabold tracking-tight">{STARTER_PRICE}</p>)}
+        <ul className="flex flex-col gap-2 text-sm [&_svg]:mt-0.5 [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-muted-foreground">
+          <li className="flex gap-2.5">
+            <Moon aria-hidden />
+            Works with your laptop closed
+          </li>
+          <li className="flex gap-2.5">
+            <Timer aria-hidden />
+            100 hours of cloud computer a month
+          </li>
+          <li className="flex gap-2.5">
+            <Wallet aria-hidden />
+            Uses your Claude or ChatGPT plan
+          </li>
+        </ul>
+        <Button size="lg" disabled={busy} onClick={() => subscribe('starter')}>
+          Start with Cloud
+        </Button>
+      </CardContent>
+    </Card>
+  ) : cloudUsable ? (
+    <Card>
+      <CardContent className="flex flex-col gap-4">
+        {cloudHead(<StatusBadge status={cloudUsable.online ? 'online' : 'starting'} />)}
+        {signInButtons(cloudUsable.id)}
+        {!cloudUsable.online && !signingInOn(cloudUsable.id) && (
+          <p className="text-center text-xs text-muted-foreground">
+            Your cloud computer is starting. Sign-in begins as soon as it is up, which takes a few
+            minutes the first time.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  ) : preparing ? (
+    <Card>
+      <CardContent className="flex flex-col gap-4">
+        {cloudHead(<StatusBadge status="active" />)}
+        <Waiting title="Getting your cloud computer ready…">
+          A few minutes the first time. Sign-in opens here as soon as it is up.
+        </Waiting>
+      </CardContent>
+    </Card>
+  ) : failed ? (
+    <Card>
+      <CardContent className="flex flex-col gap-4">
+        {cloudHead(<StatusBadge status="error" />)}
+        <p className="text-sm text-muted-foreground">
+          Your cloud computer could not be set up. Try again, or use your own computer.
+        </p>
+        <Button
+          variant="outline"
+          className="self-start"
+          onClick={() =>
+            void act(api(`/computers/${cloud!.id}/start`, { method: 'POST' })).then(() =>
+              computers.reload(),
+            )
+          }
+        >
+          Try again
+        </Button>
+      </CardContent>
+    </Card>
+  ) : null
+
+  const free = <StatusBadge status="free" tone="success" />
+  /** Brigade.app's download and link, where it runs teammates: a Mac, a Linux desktop (a .deb,
+   * or the AppImage for other distributions), or a Windows PC. */
+  const app: {
+    os: string
+    name: string
+    icon: React.ReactNode
+    url: string
+    meta: string
+    asks: string
+    terminal: boolean
+    label?: string
+  } | null =
+    device === 'linux'
+      ? {
+          os: 'Linux',
+          name: 'computer',
+          icon: <Laptop />,
+          url: LINUX_DEB_URL,
+          label: 'Download Brigade for Linux (.deb)',
+          meta: 'Uses the Claude or Codex login already on it. Your teammates work while it is on.',
+          asks: 'Brigade asks before it installs anything.',
+          terminal: true,
+        }
+      : device === 'mac'
+        ? {
+            os: 'Mac',
+            name: 'Mac',
+            icon: <AppleLogo />,
+            url: MAC_APP_URL,
+            meta: 'Uses the Claude or Codex login already on it. Your teammates work while your Mac is awake.',
+            asks: 'Brigade.app asks before it installs anything.',
+            terminal: true,
+          }
+        : device === 'windows' && windowsReady
+          ? {
+              os: 'Windows',
+              name: 'PC',
+              icon: <WindowsLogo />,
+              url: WINDOWS_APP_URL,
+              meta: 'You sign in to Claude or ChatGPT once it is linked. Your teammates work while your PC is on.',
+              asks: 'Brigade asks before it installs anything, then sets itself up in a few minutes.',
+              terminal: false,
+            }
+          : null
+  /** Every build of Brigade.app, for the download menu (as on the landing page's hero). */
+  const downloads = [
+    {
+      name: 'macOS',
+      detail: 'Apple Silicon and Intel · .dmg',
+      url: MAC_APP_URL,
+      icon: <AppleLogo />,
+    },
+    { name: 'Windows', detail: 'Installer · .exe', url: WINDOWS_APP_URL, icon: <WindowsLogo /> },
+    { name: 'Linux · Ubuntu, Debian', detail: '.deb', url: LINUX_DEB_URL, icon: <Laptop /> },
+    { name: 'Linux · other', detail: '.AppImage', url: LINUX_APPIMAGE_URL, icon: <Laptop /> },
+  ]
+  const until = link && new Date(link.expiresAt).toLocaleTimeString([], { timeStyle: 'short' })
+  const expired = !!link && Date.parse(link.expiresAt) <= now
+  const slow = !!link && now - link.issuedAt >= SLOW_LINK_MS
+  /** Waiting for the machine while its code works; a new code once it expired. */
+  const waitFor = (what: string, code: 'code' | 'link') =>
+    expired ? (
+      <div className="flex flex-col items-start gap-2 rounded-xl bg-muted px-3.5 py-3">
+        <p className="text-sm">
+          This {code} expired before your {what} connected.
+        </p>
+        <Button size="sm" variant="outline" onClick={() => void getLink()}>
+          Get a new {code}
+        </Button>
+      </div>
+    ) : (
+      <Waiting title={`Waiting for your ${what}…`}>
+        This page goes on by itself once it connects. The {code} works once, until {until}.
+      </Waiting>
+    )
+
+  const machineCard = machine ? (
+    <Card>
+      <CardContent className="flex flex-col gap-4">
+        <CardHead
+          icon={device === 'mac' ? <AppleLogo /> : <Laptop />}
+          title={machineName(machine)}
+          meta="Your computer · linked"
+          aside={<StatusBadge status="online" />}
+        />
+        {!signingInOn(machine.id) && (
+          <>
+            <p className="text-sm text-muted-foreground">
+              No Claude or Codex login on it yet. Sign in on the vendor&apos;s page:
+            </p>
+            {signInButtons(machine.id)}
+            <p className="text-center text-xs text-muted-foreground">
+              Already signed in with <code>claude</code> or <code>codex</code> in a terminal? It
+              shows up here by itself.
+            </p>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  ) : app ? (
+    <Card className={cn(!link && 'bg-transparent shadow-none')}>
+      <CardContent className="flex flex-col gap-4">
+        <CardHead
+          icon={<Laptop />}
+          title="Run them on your computer"
+          meta="Free · works while your computer is on"
+          aside={cloudCard ? undefined : free}
+        />
+        {inApp && !terminal ? (
+          <>
+            <Button size="lg" onClick={() => void linkHere()}>
+              {app.icon}
+              Link this {app.name}
+            </Button>
+            {link && waitFor(app.name, 'link')}
+          </>
+        ) : !link ? (
+          <>
+            {/* A split button like the landing hero's (components/landing/download-button.tsx),
+                sized as the Starter CTA: this system's build, and the others in the menu. */}
+            <div className="flex w-full">
+              <Button size="lg" variant="outline" className="flex-1 rounded-r-none" asChild>
+                <a href={app.url} onClick={() => void getLink()}>
+                  {app.icon}
+                  {app.label ?? `Download Brigade for ${app.os}`}
+                </a>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    className="rounded-l-none border-l-0 px-3 has-[>svg]:px-3"
+                    aria-label="Other platforms"
+                  >
+                    <ChevronDown />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64">
+                  <DropdownMenuLabel>Download Brigade.app</DropdownMenuLabel>
+                  {downloads.map((d) => (
+                    <DropdownMenuItem key={d.url} asChild>
+                      <a href={d.url} onClick={() => void getLink()}>
+                        {d.icon}
+                        <span className="flex flex-col">
+                          <span className="font-medium">{d.name}</span>
+                          <span className="text-xs text-muted-foreground">{d.detail}</span>
+                        </span>
+                      </a>
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <a href={RELEASES_URL} target="_blank" rel="noreferrer">
+                      <ExternalLink />
+                      All releases on GitHub
+                    </a>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </>
+        ) : terminal || !link.appLink ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Run this in a terminal on {device === 'mac' ? 'your Mac' : 'it'}:
+            </p>
+            <Command command={link.command} />
+            {waitFor(device === 'mac' ? 'Mac' : 'machine', 'code')}
+            {device === 'linux' && slow && !expired && (
+              <TerminalHelp onNewCode={() => void getLink()} />
+            )}
+          </>
+        ) : (
+          <>
+            <ol className="flex flex-col gap-3.5 text-sm">
+              <li className="flex gap-3">
+                <span className="flex size-5.5 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                  <Check aria-hidden className="size-3" />
+                </span>
+                <span className="flex flex-col gap-0.5">
+                  <span className="text-muted-foreground">Download Brigade for {app.os}</span>
+                  <a
+                    href={app.url}
+                    className="text-xs text-muted-foreground underline underline-offset-4"
+                  >
+                    Download again
+                  </a>
+                </span>
+              </li>
+              <li className="flex gap-3">
+                <span className="flex size-5.5 shrink-0 items-center justify-center rounded-full border border-primary text-xs font-semibold text-primary">
+                  2
+                </span>
+                <span className="flex flex-col items-start gap-2">
+                  <span className="font-semibold">Open it and link this workspace</span>
+                  <span className="text-xs text-muted-foreground">{app.asks}</span>
+                  {!expired && (
+                    <Button asChild>
+                      <a href={link.appLink}>
+                        <ExternalLink aria-hidden />
+                        Open in Brigade
+                      </a>
+                    </Button>
+                  )}
+                </span>
+              </li>
+            </ol>
+            {waitFor(app.name, 'link')}
+            {app.terminal && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer text-center">Or run it in a terminal</summary>
+                <div className="mt-2.5">
+                  <Command command={link.command} />
+                </div>
+              </details>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  ) : device === 'chromeos' ? (
+    <Card className={cn(!link && 'bg-transparent shadow-none')}>
+      <CardContent className="flex flex-col gap-4">
+        <CardHead
+          icon={<Terminal />}
+          title="Run them on this Chromebook"
+          meta="In its Linux environment, on the claude or codex login there. Your teammates work while it is on."
+          aside={free}
+        />
+        {link ? (
+          <>
+            <ol className="flex list-decimal flex-col gap-2 pl-5 text-sm text-muted-foreground">
+              <li>
+                Turn on Linux: Settings, About ChromeOS, Developers, Linux development environment,
+                Set up. Skip this if the Terminal app already lists <code>penguin</code>.
+              </li>
+              <li>
+                Open the Terminal app and pick <code>penguin</code>. Not Ctrl+Alt+T: that terminal,
+                crosh, can&apos;t run the command.
+              </li>
+              <li>Run this there:</li>
+            </ol>
+            <Command command={link.command} />
+            {waitFor('Chromebook', 'code')}
+            {slow && !expired && <TerminalHelp onNewCode={() => void getLink()} />}
+          </>
+        ) : (
+          <Button variant="outline" className="self-start" onClick={() => void getLink()}>
+            Get the install command
+          </Button>
+        )}
+      </CardContent>
+    </Card>
+  ) : device === 'other' || (device === 'windows' && windowsReady === false) ? (
+    <Card className="bg-transparent shadow-none">
+      <CardContent className="flex flex-col gap-4">
+        <CardHead
+          icon={<Laptop />}
+          title={
+            device === 'windows'
+              ? "Teammates don't run on Windows yet"
+              : 'Have a Mac or Linux machine?'
+          }
+          meta={
+            device === 'windows'
+              ? 'They run for free on a Mac or Linux machine, on its Claude or Codex login'
+              : 'Your teammates can run there, on its Claude or Codex login'
+          }
+          aside={free}
+        />
+        {link ? (
+          <>
+            <p className="text-sm text-muted-foreground">Run this in a terminal on it:</p>
+            <Command command={link.command} />
+            {waitFor('machine', 'code')}
+            {slow && !expired && <TerminalHelp onNewCode={() => void getLink()} />}
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Open this page on it to link it, or link it later from Computers.{' '}
+            <button
+              type="button"
+              className="text-foreground underline underline-offset-4"
+              onClick={() => void getLink()}
+            >
+              Get the install command
+            </button>
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  ) : null
 
   return (
-    <Shell
-      title="Connect your AI"
-      description="Your teammates run on your own Claude or ChatGPT subscription. Nothing runs until one is connected."
-    >
-      <div className="flex gap-3 rounded-lg bg-accent p-4 text-sm text-accent-foreground">
-        <ShieldCheck className="mt-0.5 size-4 shrink-0" aria-hidden />
-        <p>
-          You sign in on the vendor&apos;s own page. Brigade never sees your password, and the login
-          stays on the computer.
-        </p>
-      </div>
-
+    <Shell title="Give your teammates a computer">
       {signingIn.map((a) => (
         <AccountCard key={a.id} account={a} login={logins[a.id] ?? a.login} onAct={act} />
       ))}
 
-      {signingIn.length === 0 && (
-        <Card>
-          <CardContent className="flex flex-col gap-3">
-            {!computers.data ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
-            ) : computer ? (
-              <>
-                <Button size="lg" disabled={busy} onClick={() => void signIn('claude_code')}>
-                  Sign in with Claude
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => void signIn('codex')}
-                >
-                  Sign in with ChatGPT (Codex)
-                </Button>
-                {cloud && !cloud.online && (
-                  <p className="text-center text-xs text-muted-foreground">
-                    Your cloud computer is starting. Sign-in begins as soon as it is up, which
-                    takes a few minutes the first time.
-                  </p>
-                )}
-              </>
-            ) : preparing ? (
-              <div className="flex flex-col items-center gap-2 py-2 text-center">
-                <LoaderCircle aria-hidden className="size-5 animate-spin text-muted-foreground" />
-                <p className="text-sm font-medium">Getting your cloud computer ready…</p>
+      {!computers.data ? (
+        <p className="text-center text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <>
+          {cloudCard}
+          {cloudCard && machineCard && (
+            <div className="flex items-center gap-3 text-xs text-muted-foreground before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border">
+              {planNeeded ? 'or, for free' : 'and, for free'}
+            </div>
+          )}
+          {machineCard}
+          {cloudCompact && (
+            <div className="flex items-center gap-3 rounded-xl border px-4 py-3">
+              <Tile violet>
+                <Cloud />
+              </Tile>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <p className="text-sm font-semibold">Brigade Cloud · {PRICE}</p>
                 <p className="text-xs text-muted-foreground">
-                  This takes a few minutes the first time. Sign-in opens here as soon as it is up.
+                  Your teammates keep working when your computer sleeps
                 </p>
               </div>
-            ) : failed ? (
-              <div className="flex flex-col gap-3">
-                <p className="text-sm text-muted-foreground">
-                  Your cloud computer could not be set up. Try again, or link your own machine
-                  below.
-                </p>
-                <Button
-                  variant="outline"
-                  className="self-start"
-                  onClick={() =>
-                    void act(api(`/computers/${cloud!.id}/start`, { method: 'POST' })).then(() =>
-                      computers.reload(),
-                    )
-                  }
-                >
-                  Try again
-                </Button>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                This Brigade has no cloud computer. Link your own machine below: its Claude or
-                Codex login is used as is.
-              </p>
-            )}
-          </CardContent>
-        </Card>
+              <Button variant="outline" size="sm" disabled={busy} onClick={() => subscribe()}>
+                Start
+              </Button>
+            </div>
+          )}
+        </>
       )}
 
       {error && <p className="text-center text-sm text-destructive-text">{error}</p>}
-
-      <details
-        className="group rounded-lg border px-4 py-3 text-sm"
-        open={!computer && !preparing && !!computers.data}
-      >
-        <summary className="flex cursor-pointer items-center gap-2 font-medium">
-          <Terminal className="size-4" aria-hidden />
-          Use my own machine instead
-        </summary>
-        <div className="mt-3 flex flex-col gap-3 text-muted-foreground">
-          <p>
-            Already signed in to <code>claude</code> or <code>codex</code> on your Mac or Linux
-            machine? Link it and your teammates run there, on that login.
-          </p>
-          {link ? (
-            <>
-              <pre className="rounded-md border bg-muted p-3 font-mono text-xs break-all whitespace-pre-wrap text-foreground">
-                {link.command}
-              </pre>
-              <p>
-                Run it in a terminal. The code works once and expires at{' '}
-                {new Date(link.expiresAt).toLocaleTimeString()}. This page goes on by itself once
-                your machine connects.
-              </p>
-            </>
-          ) : (
-            <Button
-              variant="outline"
-              className="self-start"
-              onClick={() =>
-                void api<LinkCode>('/computers/link-code', { method: 'POST' })
-                  .then(setLink)
-                  .catch((e: Error) => setError(e.message))
-              }
-            >
-              Get the install command
-            </Button>
-          )}
-        </div>
-      </details>
     </Shell>
   )
 }

@@ -1,20 +1,40 @@
 // Maps AI SDK harness stream parts to Brigade's AgentEvent. Nothing outside
 // this module sees an AI SDK type.
 import {
+  ANSWER_MESSAGE_TOOL,
   Ask,
+  bareToolName,
+  COMPLETE_THREAD_TOOL,
+  doneLine,
   hasVisibleText,
+  MaskedStream,
   OFFER_CHOICES_TOOL,
   Question,
   replyCard,
+  serverOnlyUrl,
   SUGGEST_REPLIES_TOOL,
   type AgentEvent,
   type QuestionAnswer,
   type TicketAnswer,
+  type TokenCounts,
 } from '@brigade/contracts'
+import { codexRestartRefused } from './codex-restart.js'
 import { ASK_USER_TOOL, OPEN_TICKET_TOOL } from './tools.js'
 
 /** The AI SDK's name for a harness's built-in question tool. */
 export const QUESTION_TOOL = 'askUserQuestions'
+
+/**
+ * The call a done block at the end of a reply stands for (EventMapper, with `closes`): the
+ * thread's runner sends it to Brigade as the turn ends (HarnessThread), rather than the teammate
+ * call complete_thread and wait for its answer before it writes its reply.
+ */
+export const declaredDone = (
+  event: AgentEvent,
+): event is Extract<AgentEvent, { type: 'tool.started' }> =>
+  event.type === 'tool.started' &&
+  event.toolName === COMPLETE_THREAD_TOOL &&
+  event.toolCallId.endsWith(`:${COMPLETE_THREAD_TOOL}`)
 
 type AskUserInput = {
   id?: string
@@ -55,13 +75,26 @@ export function askUserQuestions(input: unknown): Question[] | undefined {
   return parsed.success ? parsed.data : undefined
 }
 
+/** The answer an answer_message call gives, if it gives one a person can read. */
+export function answerText(input: unknown): string | undefined {
+  const text = (input as { text?: unknown } | null | undefined)?.text
+  return typeof text === 'string' && hasVisibleText(text) ? text.trim() : undefined
+}
+
+/** A decline with the person's own words: what they want in place of the ask. */
+const INSTEAD =
+  'The person answered with something else instead (in `instead`): drop what you asked for and do what they say. ' +
+  'It is their message to you, as if they had written it in the thread.'
+
 /** A person's answer to ask_user, in words the model reads: labels, not option ids. */
 export function askUserResult(questions: Question[], answer: QuestionAnswer) {
   if (answer.action === 'declined')
-    return {
-      declined: true,
-      note: 'The person declined to answer. Do not ask again; carry on or stop.',
-    }
+    return answer.note
+      ? { declined: true, instead: answer.note, note: INSTEAD }
+      : {
+          declined: true,
+          note: 'The person declined to answer. Do not ask again; carry on or stop.',
+        }
   return {
     answers: questions.flatMap((q) => {
       const a = answer.answers[q.id]
@@ -78,6 +111,37 @@ export function askUserResult(questions: Question[], answer: QuestionAnswer) {
       ]
     }),
   }
+}
+
+/** What a teammate is told of a ticket nobody could answer. */
+export const INVALID_TICKET =
+  'Invalid ticket: give a title and 1 to 6 asks, each with the fields its type needs ' +
+  '(approval: title, draft; decision: question; access: kind, what; action: title; input: question). ' +
+  'An app.repository is for kind github only, as owner/name.'
+
+/** The error for a ticket that asks for Apps closed to the thread's starter (spec.closedApps). */
+export const closedAppsTicket = (kinds: string[]) =>
+  `Not opened: ${kinds.join(', ')} ${kinds.length > 1 ? 'are' : 'is'} not open to this person's Brigade account yet. ` +
+  'Brigade opens some Apps to people gradually (Gmail and Google Drive once Google ends its security review of ' +
+  "Brigade), so nobody could grant it from a ticket. Don't ask for it again: tell the person in a line that " +
+  "it isn't available to their account yet, and do the work another way (an App list_apps offers, or what " +
+  'they paste or forward to you).'
+
+/**
+ * Why open_ticket's input can't open a ticket a person can answer, if it can't: invalid, or an
+ * access ask for an App closed to the thread's starter.
+ */
+export function ticketRefused(input: unknown, closedApps: readonly string[] = []) {
+  const ticket = ticketAsks(input)
+  if (!ticket) return INVALID_TICKET
+  const closed = [
+    ...new Set(
+      ticket.asks.flatMap((a) =>
+        a.type === 'access' && a.app && closedApps.includes(a.app.kind) ? [a.app.kind] : [],
+      ),
+    ),
+  ]
+  return closed.length ? closedAppsTicket(closed) : undefined
 }
 
 /** open_ticket's input as a ticket; ids filled in where the model left them out. */
@@ -97,6 +161,17 @@ export function ticketAsks(input: unknown): { title: string; asks: Ask[] } | und
                 : (a.app as { kind: string }).kind,
           }
         : {}),
+      // An MCP server named by its id: with a URL no server has too, so that an API from before
+      // app.server, which drops it, grants nothing rather than the first server of its name.
+      ...((a.app as { kind?: string; server?: unknown } | undefined)?.kind === 'mcp' &&
+      typeof (a.app as { server?: unknown }).server === 'string'
+        ? {
+            app: {
+              ...(a.app as object),
+              url: serverOnlyUrl((a.app as { server: string }).server),
+            },
+          }
+        : {}),
       ...(Array.isArray(a.options)
         ? {
             options: (a.options as { id?: string }[]).map((o, j) => ({
@@ -114,10 +189,12 @@ export function ticketAsks(input: unknown): { title: string; asks: Ask[] } | und
 /** A person's answer to open_ticket, in words the model reads. */
 export function ticketResult(asks: Ask[], answer: TicketAnswer) {
   if (answer.action === 'declined')
-    return {
-      declined: true,
-      note: 'The person declined the ticket. Do not do what it asked about; carry on without it or stop.',
-    }
+    return answer.note
+      ? { declined: true, instead: answer.note, note: INSTEAD }
+      : {
+          declined: true,
+          note: 'The person declined the ticket. Do not do what it asked about; carry on without it or stop.',
+        }
   return {
     replies: asks.flatMap((ask): Record<string, unknown>[] => {
       const reply = answer.replies[ask.id]
@@ -151,6 +228,9 @@ export function ticketResult(asks: Ask[], answer: TicketAnswer) {
               ? {
                   note:
                     `The person gave you ${ask.app.scope === 'read' ? 'read' : 'read and write'} access to ${ask.what} from the ticket. ` +
+                    (ask.app.permission
+                      ? `They signed in to it again to allow ${ask.app.permission}: try the refused call again. `
+                      : '') +
                     (ask.app.kind === 'mcp'
                       ? 'Its tools are yours in this thread from now on: carry on with them.'
                       : ask.app.repository
@@ -273,24 +353,119 @@ const FILE_TOOLS = new Set([
 const PLAN_TOOLS = new Set(['TodoWrite', 'todoWrite', 'update_plan'])
 /** Low-level echoes of the model stream; their content already arrives as mapped parts. */
 const DROPPED_RAW = new Set(['stream_event'])
+/**
+ * Claude Code's session start and status notes, which its bridge passes on since
+ * harness-claude-code 1.0.191 for the permission mode they name: Brigade's is its own (allow-all),
+ * and one of each for every turn would only add rows to the thread.
+ */
+const DROPPED_SYSTEM = new Set(['init', 'status'])
+/** Longest guess at a person's next message kept: Claude Code's own are under 100 characters. */
+const SUGGESTION_CHARS = 300
+
+/**
+ * How often a reply's streamed text goes out while it is written: what came meanwhile goes as one
+ * message.delta. The stream gives a piece every few characters (12 on average), and each delta is
+ * an event, stored as a row of its own: 44 for a reply, two thirds of every thread's events.
+ * Grouped by 200 ms, 15 times fewer, and the reply still reads as it is written.
+ */
+export const DELTA_EVERY_MS = 200
+
+/**
+ * The harness's copy of a message (a sub-agent's, as Claude Code streams it) without the
+ * signatures of its thinking blocks: an encrypted blob only Anthropic's API reads, often
+ * longer than the thinking itself, that nothing in Brigade uses. The value as it was when it
+ * holds none.
+ */
+export function withoutSignatures(value: unknown): unknown {
+  const message = (value as { message?: { content?: unknown } } | null)?.message
+  const content = message?.content
+  if (!Array.isArray(content) || !content.some(signed)) return value
+  return {
+    ...(value as object),
+    message: {
+      ...message,
+      content: content.map((block) => {
+        if (!signed(block)) return block
+        const { signature: _, ...rest } = block as { signature: unknown }
+        return rest
+      }),
+    },
+  }
+}
+
+const signed = (block: unknown) =>
+  (block as { type?: unknown } | null)?.type === 'thinking' &&
+  typeof (block as { signature?: unknown }).signature === 'string'
+
+/** The bridge's word that the turn is answered and only Claude Code's guess is still to come. */
+export const answered = (event: AgentEvent) =>
+  event.type === 'raw' &&
+  event.source === 'harness' &&
+  (event.value as { subtype?: unknown } | null)?.subtype === 'brigade_answered'
 
 type Part = { type: string; [key: string]: any }
 
+const count = (n: unknown) =>
+  typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : undefined
+
+/**
+ * A stream's usage as the AI SDK totals it (LanguageModelUsage), as Brigade counts it. Both
+ * harnesses put the cache's reads and writes in inputTokens. Nothing when it counted no token.
+ */
+export function tokenCounts(usage: any, model?: string): TokenCounts | undefined {
+  const counts = {
+    inputTokens: count(usage?.inputTokens),
+    outputTokens: count(usage?.outputTokens),
+    cacheReadTokens: count(usage?.inputTokenDetails?.cacheReadTokens),
+    cacheWriteTokens: count(usage?.inputTokenDetails?.cacheWriteTokens),
+    reasoningTokens: count(usage?.outputTokenDetails?.reasoningTokens),
+  }
+  if (counts.inputTokens === undefined && counts.outputTokens === undefined) return
+  return {
+    ...Object.fromEntries(Object.entries(counts).filter(([, n]) => n !== undefined)),
+    ...(model ? { model: model.slice(0, 200) } : {}),
+  }
+}
+
 export class EventMapper {
   finishReason = 'unknown'
+  /** The model the harness says it ran, once a step finished. */
+  model: string | undefined
   /** The first error the harness reported during this turn. */
   error: string | undefined
   /** Set when the account ran out of usage during this turn. */
   exhausted: { resetsAt: string | null } | undefined
+  /** The harness no longer has the conversation it was to resume (sessionLost); `error` says so. */
+  lost = false
   /** Calls of a pausing tool (open_ticket) with input nobody could answer. */
   rejected: { toolCallId: string; toolName: string; error: string }[] = []
   /** Calls already shown as started: one repeated after its result must not show twice. */
   private started = new Set<string>()
+  /** Text blocks streaming in this turn, each one's deltas masked as they go out (MaskedStream). */
+  private readonly streams = new Map<string, MaskedStream>()
+  /** answer_message calls recorded as the teammate's message: their result shows nothing. */
+  private answers = new Set<string>()
+  /** Streamed text not sent yet (DELTA_EVERY_MS), with when its first piece came. */
+  private pending: { id: string; text: string; at: string } | undefined
+  private pendingTimer: ReturnType<typeof setTimeout> | undefined
 
-  /** Recognise an out-of-usage error from either harness. */
+  /**
+   * Recognise Claude Code's answer to resuming a conversation it no longer has: it deletes
+   * those older than its cleanupPeriodDays setting (30 days by default). Or Codex's harness
+   * refusing to start a thread over without its conversation (codex-restart.ts).
+   */
+  static sessionLost(message: string) {
+    // Codex's: its thread can't go on with the tools it has now (codex-restart.ts).
+    return /No conversation found with session ID/i.test(message) || codexRestartRefused(message)
+  }
+
+  /**
+   * Recognise an out-of-usage error from a harness: Claude Code's, Codex's, or Antigravity's
+   * (Google's RESOURCE_EXHAUSTED, its weekly and five-hour quotas).
+   */
   static exhaustedBy(message: string): { resetsAt: string | null } | undefined {
     if (
-      !/usage limit|limit reached|hit your (usage )?limit|out of (usage|credits)|quota exceeded|rate_limit_error|too many requests/i.test(
+      !/usage limit|limit reached|hit your (?:[\w-]+ )?limit|out of (usage|credits)|quota exceeded|rate_limit_error|too many requests|resource.?exhausted|exhausted your (?:[\w-]+ )?(?:quota|capacity)|(?:weekly|five-hour|5-hour) quota/i.test(
         message,
       )
     )
@@ -300,7 +475,7 @@ export class EventMapper {
   }
 
   constructor(
-    private readonly emit: (event: AgentEvent) => void,
+    private readonly send: (event: AgentEvent) => void,
     /**
      * Tool calls seen so far in the thread. Shared across turns: a call that
      * waited for approval finishes in the next turn, which needs its input.
@@ -312,17 +487,79 @@ export class EventMapper {
      */
     private readonly texts = new Map<string, string>(),
     private readonly reasoning = new Map<string, string>(),
+    /** The person's message given to the running turn last (its messageId), if any. */
+    private readonly steered: () => string | undefined = () => undefined,
+    /**
+     * Whether a done block declares the thread done (declaredDone): in the turn of a thread a
+     * person talks to, not in a child, a playbook's or a schedule's run, nor in a run beside it.
+     * Elsewhere the block is only taken out of the reply.
+     */
+    private readonly closes = false,
+    /**
+     * App kinds closed to the thread's starter, as its latest spec says (spec.closedApps): a
+     * ticket for one is refused. Read at each call, as Codex's ticket tool reads it.
+     */
+    private readonly closedApps: () => readonly string[] = () => [],
   ) {}
+
+  /**
+   * Send the streamed text not sent yet, as one message.delta, masked (MaskedStream) as each of
+   * its pieces was. Done before any other event (emit), once DELTA_EVERY_MS passed, and by
+   * whoever reads the stream when it ends, whatever way it ended.
+   */
+  flush() {
+    clearTimeout(this.pendingTimer)
+    this.pendingTimer = undefined
+    const pending = this.pending
+    this.pending = undefined
+    if (pending?.text)
+      this.send({
+        at: pending.at,
+        type: 'message.delta',
+        id: pending.id,
+        text: pending.text,
+        masked: true,
+      })
+  }
+
+  /**
+   * Every event but streamed text goes out here, after the text not sent yet: events keep their
+   * order. Only parts that make an event send it: the stream's low-level echoes (DROPPED_RAW),
+   * which come between the pieces of a reply, do not.
+   */
+  private emit(event: AgentEvent) {
+    this.flush()
+    this.send(event)
+  }
 
   map(part: Part) {
     const at = new Date().toISOString()
     switch (part.type) {
       case 'text-delta': {
-        this.texts.set(part.id, (this.texts.get(part.id) ?? '') + part.text)
-        return this.emit({ at, type: 'message.delta', id: part.id, text: part.text })
+        const before = this.texts.get(part.id) ?? ''
+        this.texts.set(part.id, before + part.text)
+        // Masked with the text before it, a secret over several deltas whole (MaskedStream). A
+        // block this mapper did not start (a new turn, a turn handed over) goes on from its text
+        // so far, as if it had all gone out: what was held of it shows with its message.done.
+        let stream = this.streams.get(part.id)
+        if (!stream) this.streams.set(part.id, (stream = new MaskedStream(before)))
+        const text = stream.next(part.text)
+        if (!text) return
+        // Then grouped (DELTA_EVERY_MS): what goes out of it meanwhile, as one delta.
+        const pending = this.pending
+        if (pending && pending.id === part.id) {
+          pending.text += text
+          return
+        }
+        // Another block's text (two replies in a row): the first one's goes first.
+        this.flush()
+        this.pending = { id: part.id, text, at }
+        this.pendingTimer = setTimeout(() => this.flush(), DELTA_EVERY_MS)
+        return
       }
       case 'text-end': {
-        const { text, replies, choices } = replyCard(this.texts.get(part.id) ?? '')
+        this.streams.delete(part.id)
+        const { text, replies, choices, done } = replyCard(this.texts.get(part.id) ?? '')
         this.texts.delete(part.id)
         this.emit({ at, type: 'message.done', id: part.id, text })
         // A card written at the end of the reply, recorded as the card tools recorded one: threads read it as before.
@@ -333,23 +570,35 @@ export class EventMapper {
               input: choices,
               shown: choices.options.length,
             }
-        if (!card) return
-        const toolCallId = `${part.id}:${card.toolName}`
-        this.emit({
-          at,
-          type: 'tool.started',
-          toolCallId,
-          toolName: card.toolName,
-          input: card.input,
-        })
-        return this.emit({
-          at,
-          type: 'tool.finished',
-          toolCallId,
-          toolName: card.toolName,
-          output: { shown: card.shown },
-          isError: false,
-        })
+        if (card) {
+          const toolCallId = `${part.id}:${card.toolName}`
+          this.emit({
+            at,
+            type: 'tool.started',
+            toolCallId,
+            toolName: card.toolName,
+            input: card.input,
+          })
+          this.emit({
+            at,
+            type: 'tool.finished',
+            toolCallId,
+            toolName: card.toolName,
+            output: { shown: card.shown },
+            isError: false,
+          })
+        }
+        // Declared done, after the reply and its card: recorded as complete_thread was, its
+        // result to come from Brigade (declaredDone).
+        if (done !== undefined && this.closes)
+          this.emit({
+            at,
+            type: 'tool.started',
+            toolCallId: `${part.id}:${COMPLETE_THREAD_TOOL}`,
+            toolName: COMPLETE_THREAD_TOOL,
+            input: { summary: doneLine(done, text) },
+          })
+        return
       }
       case 'reasoning-delta':
         return void this.reasoning.set(part.id, (this.reasoning.get(part.id) ?? '') + part.text)
@@ -374,6 +623,21 @@ export class EventMapper {
         if (this.toolCalls.has(part.toolCallId) || this.started.has(part.toolCallId)) return
         this.started.add(part.toolCallId)
         this.toolCalls.set(part.toolCallId, { toolName: part.toolName, input: part.input })
+        // An answer to a person's message given to the turn: the teammate's message, which
+        // answers the one given to it last, word for word. Without an answer, an error step.
+        const answer =
+          bareToolName(part.toolName) === ANSWER_MESSAGE_TOOL ? answerText(part.input) : undefined
+        if (answer) {
+          this.answers.add(part.toolCallId)
+          const answers = this.steered()
+          return this.emit({
+            at,
+            type: 'message.done',
+            id: part.toolCallId,
+            text: answer,
+            ...(answers ? { answers } : {}),
+          })
+        }
         // The harness's own question tool: a person answers, then the turn continues.
         if (part.toolName === QUESTION_TOOL || part.toolName === ASK_USER_TOOL) {
           const questions =
@@ -390,7 +654,8 @@ export class EventMapper {
         }
         // Brigade's ticket tool: a person answers every ask, then the turn continues.
         if (part.toolName === OPEN_TICKET_TOOL) {
-          const ticket = ticketAsks(part.input)
+          const refused = ticketRefused(part.input, this.closedApps())
+          const ticket = refused ? undefined : ticketAsks(part.input)
           if (ticket)
             return this.emit({
               at,
@@ -403,10 +668,7 @@ export class EventMapper {
           this.rejected.push({
             toolCallId: part.toolCallId,
             toolName: part.toolName,
-            error:
-              'Invalid ticket: give a title and 1 to 6 asks, each with the fields its type needs ' +
-              '(approval: title, draft; decision: question; access: kind, what; action: title; input: question). ' +
-              'An app.repository is for kind github only, as owner/name.',
+            error: refused ?? INVALID_TICKET,
           })
         }
         this.emit({
@@ -440,6 +702,7 @@ export class EventMapper {
       case 'tool-result': {
         const call = this.toolCalls.get(part.toolCallId)
         this.toolCalls.delete(part.toolCallId)
+        if (this.answers.delete(part.toolCallId)) return
         this.emit({
           at,
           type: 'tool.finished',
@@ -457,12 +720,13 @@ export class EventMapper {
       }
       case 'tool-error':
         this.toolCalls.delete(part.toolCallId)
+        if (this.answers.delete(part.toolCallId)) return
         return this.emit({
           at,
           type: 'tool.finished',
           toolCallId: part.toolCallId,
           toolName: part.toolName,
-          output: String(part.error?.message ?? part.error),
+          output: toolErrorText(part.error),
           isError: true,
         })
       case 'tool-output-denied':
@@ -477,27 +741,33 @@ export class EventMapper {
         })
       case 'finish': {
         this.finishReason = part.finishReason
-        const usage = part.totalUsage ?? {}
-        if (usage.inputTokens !== undefined || usage.outputTokens !== undefined) {
-          this.emit({
-            at,
-            type: 'usage.updated',
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-          })
-        }
+        const usage = tokenCounts(part.totalUsage, this.model)
+        if (usage) this.emit({ at, type: 'usage.updated', ...usage })
+        return
+      }
+      case 'finish-step': {
+        // The model the harness ran, as it named it: the account's own when Brigade set none.
+        const model = part.response?.modelId
+        if (typeof model === 'string' && model) this.model = model
         return
       }
       case 'error': {
         const message = errorMessage(part.error)
         const exhausted = EventMapper.exhaustedBy(message)
-        if (exhausted) return void (this.exhausted = exhausted)
+        // Its text rarely says when the limit resets; the rate limit event before it may have.
+        if (exhausted)
+          return void (this.exhausted = {
+            resetsAt: exhausted.resetsAt ?? this.exhausted?.resetsAt ?? null,
+          })
         this.error ??= message
+        // No failure of the teammate's: the thread goes on in a new session (HarnessThread.run).
+        if (EventMapper.sessionLost(message)) return void (this.lost = true)
         return this.emit({ at, type: 'error', message })
       }
       case 'raw': {
         const value = part.rawValue
         if (DROPPED_RAW.has(value?.type)) return
+        if (value?.type === 'system' && DROPPED_SYSTEM.has(value.subtype)) return
         if (value?.type === 'rate_limit_event') {
           const info = value.rate_limit_info ?? {}
           const status =
@@ -513,12 +783,18 @@ export class EventMapper {
           }
           return this.emit({ at, type: 'usage.updated', status, limits: limits(info) })
         }
-        return this.emit({ at, type: 'raw', source: 'harness', value })
+        // Claude Code's guess at the person's next message, once the turn is over. Its own
+        // commands (/compact) mean nothing in a thread.
+        if (value?.type === 'prompt_suggestion') {
+          const text = typeof value.suggestion === 'string' ? value.suggestion.trim() : ''
+          if (!text || text.startsWith('/')) return
+          return this.emit({ at, type: 'message.suggested', text: text.slice(0, SUGGESTION_CHARS) })
+        }
+        return this.emit({ at, type: 'raw', source: 'harness', value: withoutSignatures(value) })
       }
       // Stream lifecycle parts carry nothing a person needs to see.
       case 'start':
       case 'start-step':
-      case 'finish-step':
       case 'text-start':
       case 'reasoning-start':
       case 'tool-input-start':
@@ -542,6 +818,27 @@ function limits(
     utilization: w.utilization ?? 0,
     resetsAt: w.resetsAt ? new Date(w.resetsAt * 1000).toISOString() : null,
   }))
+}
+
+/**
+ * What a failed tool call says: an Error's message, a string as is, or, as Pi reports its own tools'
+ * failures, the text of a tool result ({ content: [{ type: 'text', text }] }), never "[object
+ * Object]".
+ */
+export function toolErrorText(error: unknown): string {
+  if (error instanceof Error || typeof error === 'string') return errorMessage(error)
+  const value = error as { message?: unknown; content?: unknown } | null | undefined
+  if (typeof value?.message === 'string') return value.message
+  if (Array.isArray(value?.content)) {
+    const text = value.content
+      .map((part: { type?: string; text?: unknown }) =>
+        part?.type === 'text' && typeof part.text === 'string' ? part.text : '',
+      )
+      .filter(Boolean)
+      .join('\n')
+    if (text) return text
+  }
+  return error == null ? 'Failed' : errorMessage(error)
 }
 
 export function errorMessage(error: unknown): string {

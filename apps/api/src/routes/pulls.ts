@@ -1,6 +1,6 @@
-// Pull requests: any member reads them and asks a teammate to review one;
-// owners and admins merge, close or reopen one, arm a review to merge once approved,
-// or have the teammate that wrote one resolve its conflicts and then merge it.
+// Pull requests: any member reads them and asks a teammate to review one (src/reviews.ts);
+// owners and admins merge, close or reopen one, or have the teammate that wrote one
+// resolve its conflicts and then merge it.
 import {
   MergePullRequest,
   PreviewPullRequest,
@@ -12,6 +12,7 @@ import {
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import {
+  canonicalRepository,
   listPulls,
   mergeNow,
   needsAttention,
@@ -19,12 +20,13 @@ import {
   previewPull,
   pullDetail,
   pullState,
-  requestReview,
   resolveConflicts,
   setPullState,
-  stopLoop,
+  stopMerge,
 } from '../pull-requests.js'
-import type { ScopedDb } from '../db.js'
+import { requestReview } from '../reviews.js'
+import type { Scope, ScopedDb } from '../db.js'
+import { latersOf } from '../later.js'
 import { parseBody, requireUser, requireWorkspace, type AppEnv } from '../scope.js'
 
 /** A pull request is a project's when its repository is, or a thread of the project opened it. */
@@ -48,12 +50,16 @@ async function inProject(db: ScopedDb, list: PullRequestList, projectId: string)
   }
 }
 
-function target(params: { owner: string; name: string; number: string }) {
+/** The pull request a route names, under the name Brigade keeps it (one renamed since: its name now). */
+async function target(
+  c: { var: { db: ScopedDb; scope: Scope } },
+  params: { owner: string; name: string; number: string },
+) {
   const repo = RepositoryName.safeParse(`${params.owner}/${params.name}`)
   const number = Number(params.number)
   if (!repo.success || !Number.isInteger(number) || number < 1)
     throw new HTTPException(404, { message: 'Pull request not found' })
-  return { repo: repo.data, number }
+  return { repo: await canonicalRepository(c.var.db, c.var.scope, repo.data), number }
 }
 
 export const pulls = new Hono<AppEnv>()
@@ -72,43 +78,54 @@ export const pulls = new Hono<AppEnv>()
    * Database only, no GitHub call.
    */
   .get('/attention', async (c) => {
-    const [waiting, open] = await Promise.all([needsAttention(c.var.db), openCount(c.var.db)])
+    // Not those of a thread this member put away for later (src/later.ts). A member, who may
+    // not merge, only those of the threads they started.
+    const { scope } = c.var
+    const laters = await latersOf(c.var.db, scope.memberId)
+    const [waiting, open] = await Promise.all([
+      needsAttention(c.var.db, [...laters.keys()], {
+        startedBy: scope.role === 'owner' || scope.role === 'admin' ? undefined : scope.memberId,
+      }),
+      openCount(c.var.db),
+    ])
     return c.json({ count: waiting.length, open, pulls: waiting })
   })
 
   .get('/:owner/:name/:number', async (c) => {
-    const { repo, number } = target(c.req.param())
+    const { repo, number } = await target(c, c.req.param())
     return c.json(await pullDetail(c.var.db, c.var.scope, repo, number))
   })
 
   /** Without the diff or reviews, and checks only with `?checks=1`: for the pull request's card in a thread. */
   .get('/:owner/:name/:number/state', async (c) => {
-    const { repo, number } = target(c.req.param())
+    const { repo, number } = await target(c, c.req.param())
     const checks = c.req.query('checks') === '1'
     return c.json(await pullState(c.var.db, c.var.scope, repo, number, { checks }))
   })
 
+  /** A teammate reviews it in a child thread of its thread; Brigade picks who unless reviewerId says. */
   .post('/:owner/:name/:number/review', async (c) => {
-    const { repo, number } = target(c.req.param())
+    const { repo, number } = await target(c, c.req.param())
     const input = await parseBody(c.req.raw, RequestReview)
     return c.json(await requestReview(c.var.scope, repo, number, input))
   })
 
   /** Preview one without a thread: a teammate checks out its branch in a new thread and starts it. */
   .post('/:owner/:name/:number/preview', async (c) => {
-    const { repo, number } = target(c.req.param())
+    const { repo, number } = await target(c, c.req.param())
     const input = await parseBody(c.req.raw, PreviewPullRequest)
     return c.json(await previewPull(c.var.scope, repo, number, input.teammateId))
   })
 
+  /** Stop a merge under way (Resolve conflicts). */
   .post('/:owner/:name/:number/stop', async (c) => {
-    const { repo, number } = target(c.req.param())
-    await stopLoop(c.var.scope, repo, number)
+    const { repo, number } = await target(c, c.req.param())
+    await stopMerge(c.var.scope, repo, number)
     return c.json({ ok: true })
   })
 
   .post('/:owner/:name/:number/merge', async (c) => {
-    const { repo, number } = target(c.req.param())
+    const { repo, number } = await target(c, c.req.param())
     const input = await parseBody(c.req.raw, MergePullRequest)
     await mergeNow(c.var.scope, repo, number, input.method)
     return c.json({ ok: true })
@@ -116,19 +133,19 @@ export const pulls = new Hono<AppEnv>()
 
   /** The teammate that wrote it resolves its conflicts in its thread; then it merges by itself. */
   .post('/:owner/:name/:number/resolve', async (c) => {
-    const { repo, number } = target(c.req.param())
+    const { repo, number } = await target(c, c.req.param())
     const input = await parseBody(c.req.raw, ResolvePullRequest)
     return c.json(await resolveConflicts(c.var.scope, repo, number, input.method))
   })
 
   .post('/:owner/:name/:number/close', async (c) => {
-    const { repo, number } = target(c.req.param())
+    const { repo, number } = await target(c, c.req.param())
     await setPullState(c.var.scope, repo, number, 'closed')
     return c.json({ ok: true })
   })
 
   .post('/:owner/:name/:number/reopen', async (c) => {
-    const { repo, number } = target(c.req.param())
+    const { repo, number } = await target(c, c.req.param())
     await setPullState(c.var.scope, repo, number, 'open')
     return c.json({ ok: true })
   })

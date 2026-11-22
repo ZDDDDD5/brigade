@@ -1,0 +1,1685 @@
+diff --git a/dist/bridge/index.mjs b/dist/bridge/index.mjs
+index 64e55df6a34edfab8541a09252df74fb5efc5a95..144da6ef9a747f1d2676e3e7dc16102703bff195 100644
+--- a/dist/bridge/index.mjs
++++ b/dist/bridge/index.mjs
+@@ -1,12 +1,21 @@
+ import { appendFile, lstat, mkdir, readdir, realpath, writeFile } from "node:fs/promises";
+-import { existsSync, readFileSync } from "node:fs";
+-import { createPublicKey, randomBytes, randomUUID, verify } from "node:crypto";
++import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
++import { createHash, createPublicKey, randomBytes, randomUUID, verify } from "node:crypto";
++import { homedir } from "node:os";
++import { basename, dirname, join } from "node:path";
++import { fileURLToPath } from "node:url";
+ import { argv, env, pid, stdout } from "node:process";
+ import { WebSocketServer } from "ws";
+ import { Buffer as Buffer$1 } from "node:buffer";
+ import path from "node:path";
+ import * as claudeAgentSdk from "@anthropic-ai/claude-agent-sdk";
+ import * as mcpServerModule from "@modelcontextprotocol/sdk/server/mcp.js";
++import { Server as McpLowLevelServer } from "@modelcontextprotocol/sdk/server/index.js";
++import { CallToolRequestSchema, ErrorCode as McpErrorCode, ListToolsRequestSchema, McpError, ToolListChangedNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
++import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
++import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
++import { getParseErrorMessage, safeParseAsync } from "@modelcontextprotocol/sdk/server/zod-compat.js";
++import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
+ import { isDeepStrictEqual } from "node:util";
+ import { z } from "zod/v4";
+ //#region ../harness/dist/bridge/index.js
+@@ -475,7 +484,11 @@ async function runBridge(options) {
+ 	};
+ 	const writeStartConfig = async (start) => {
+ 		try {
+-			const serialized = JSON.stringify(start);
++			// Brigade: without the host's tools (6 MB on a workspace computer, at each turn): nothing reads them back.
++			const serialized = JSON.stringify(start.tools ? {
++				...start,
++				tools: start.tools.length
++			} : start);
+ 			await writeFile(startConfigPath, serialized);
+ 			if (!existsSync(rerunStartConfigPath)) await writeFile(rerunStartConfigPath, serialized);
+ 		} catch {}
+@@ -1356,6 +1369,8 @@ function handleStreamEvent({ event, message, state, send, toCommonName }) {
+ 			id: block.id,
+ 			delta: event.delta.partial_json
+ 		});
++		// Brigade: a thinking block's signature says what it is, for the host to read at its end.
++		else if (block.kind === "thinking" && event.delta?.type === "signature_delta" && typeof event.delta.signature === "string") block.signature = (block.signature ?? "") + event.delta.signature;
+ 		return;
+ 	}
+ 	if (event.type === "content_block_stop") {
+@@ -1366,9 +1381,12 @@ function handleStreamEvent({ event, message, state, send, toCommonName }) {
+ 			type: "text-end",
+ 			id: block.id
+ 		});
++		// Brigade: with its signature, which tells the server's summary of the text written
++		// between tool calls (narration) from reasoning.
+ 		else if (block.kind === "thinking") send({
+ 			type: "reasoning-end",
+-			id: block.id
++			id: block.id,
++			...block.signature ? { harnessMetadata: { "claude-code": { signature: block.signature } } } : {}
+ 		});
+ 		else send({
+ 			type: "tool-input-end",
+@@ -1797,8 +1815,328 @@ await runBridge({
+ 			});
+ 		}
+ 	},
+-	onStop: () => lastClaudeSessionId == null ? {} : { claudeSessionId: lastClaudeSessionId }
++	onStop: () => {
++		disposeLiveQuery();
++		return lastClaudeSessionId == null ? {} : { claudeSessionId: lastClaudeSessionId };
++	},
++	onDestroy: () => disposeLiveQuery()
+ });
++/**
++* Brigade: Claude Code's process, kept from one turn to the next. A query per turn started
++* Claude Code anew each time: its binary, the session's resume from its file, its MCP servers
++* (the host's tools, 6 MB of them on a workspace computer, and the browser's relay), seconds
++* before each turn's prompt reached the model. A turn with nothing else to wait for once
++* answered (allow-all, no fork, no structured output, no deferred call) leaves the process
++* running, its input open, and the next turn whose options are the same gives it its prompt as
++* the next message. The process ends after BRIGADE_CLAUDE_KEEP_MS without a turn (0: never
++* kept), when the bridge stops, and with any turn that ends otherwise than answered (an error,
++* a stop, work still running in the background): the next turn starts a new one, as before.
++*/
++/** Brigade: how long a turn waits for a report Claude Code may have read already to start a turn of its own. */
++const REPORT_WAIT_MS = env.BRIGADE_REPORT_WAIT_MS != null && env.BRIGADE_REPORT_WAIT_MS !== "" && Number.isFinite(Number(env.BRIGADE_REPORT_WAIT_MS)) ? Number(env.BRIGADE_REPORT_WAIT_MS) : 6e4;
++/** Brigade: the longest a new process waits for its in-process MCP servers before its first message. */
++const SDK_MCP_READY_MS = Number(env.BRIGADE_SDK_MCP_READY_MS) > 0 ? Number(env.BRIGADE_SDK_MCP_READY_MS) : 15e3;
++/**
++* Brigade: Claude Code connects the in-process (sdk) MCP servers, Brigade's own tools among them,
++* a moment after it starts. A message sent before then is answered without their tools: Claude
++* Code tells the model they are "no longer available (MCP server disconnected)" and not to look for
++* them, and the teammate believes it for the rest of the thread. A new process gets its first
++* message once each of them is connected (or failed), as Claude Code's status says.
++*/
++async function sdkMcpServersReady(q, mcpServers) {
++	const names = Object.entries(mcpServers ?? {}).filter(([, config]) => config?.type === "sdk").map(([name]) => name);
++	if (names.length === 0) return;
++	const until = Date.now() + SDK_MCP_READY_MS;
++	while (Date.now() < until) {
++		// Each ask bounded by what is left of the wait: an answer that never comes ends it too.
++		let timer;
++		const left = new Promise((resolve) => timer = setTimeout(resolve, Math.max(0, until - Date.now()), "timeout"));
++		let statuses;
++		try {
++			statuses = await Promise.race([q.mcpServerStatus(), left]);
++		} catch {
++			return;
++		} finally {
++			clearTimeout(timer);
++		}
++		if (statuses === "timeout") return;
++		if (names.every((name) => statuses.some((s) => s.name === name && s.status !== "pending"))) return;
++		await new Promise((resolve) => setTimeout(resolve, 25));
++	}
++}
++/** Brigade: Claude Code's query, its prompt held back until its sdk MCP servers are connected. */
++function queryWhenToolsReady(args) {
++	let release;
++	const ready = new Promise((resolve) => release = resolve);
++	const prompt = args.prompt;
++	const q = claudeSdk.query({
++		...args,
++		prompt: (async function* () {
++			await ready;
++			yield* prompt;
++		})()
++	});
++	sdkMcpServersReady(q, args.options?.mcpServers).finally(release);
++	return q;
++}
++const CLAUDE_KEEP_MS = env.BRIGADE_CLAUDE_KEEP_MS != null && env.BRIGADE_CLAUDE_KEEP_MS !== "" && Number.isFinite(Number(env.BRIGADE_CLAUDE_KEEP_MS)) ? Number(env.BRIGADE_CLAUDE_KEEP_MS) : 12e4;
++let liveQuery;
++/** Brigade: the host's tools as served last, by their JSON's hash: a turn with the same converts none again. */
++let keptHostTools;
++/** Brigade: values pushed in, read in order by one reader; closed, it ends once read out. */
++function createMailbox() {
++	const items = [];
++	let wake;
++	let closed = false;
++	const notify = () => {
++		const w = wake;
++		wake = void 0;
++		w?.();
++	};
++	return {
++		push(item) {
++			if (closed) return;
++			items.push(item);
++			notify();
++		},
++		close() {
++			closed = true;
++			notify();
++		},
++		[Symbol.asyncIterator]() {
++			return {
++				next: async () => {
++					for (;;) {
++						if (items.length > 0) return {
++							value: items.shift(),
++							done: false
++						};
++						if (closed) return {
++							value: void 0,
++							done: true
++						};
++						await new Promise((resolve) => wake = resolve);
++					}
++				},
++				return: async () => ({
++					value: void 0,
++					done: true
++				})
++			};
++		}
++	};
++}
++/** Brigade: the longest a lazy MCP server's tool call may take (createLazyMcpServer). */
++const LAZY_MCP_CALL_MS = 30 * 6e4;
++/** Brigade: where a lazy MCP server's tool list is kept, under its key, in the user's own home. */
++function lazyToolsFile(key) {
++	return join(homedir(), ".ai-sdk-harness", ".mcp-tools", `${createHash("sha256").update(String(key)).digest("hex").slice(0, 16)}.json`);
++}
++/**
++* Brigade: an MCP server on stdio started at its first tool call, rather than with Claude Code's
++* process (the browser's relay, about 60 MB, in a turn that never browses). Served in the bridge,
++* it lists the tools the server listed last time (kept under its `lazy` key); with none kept, it
++* starts the server at once and keeps its list. Once started, everything goes to the server: its
++* list, its calls, its word that the list changed. `close` stops it.
++*/
++function createLazyMcpServer(name, config, env) {
++	const { lazy, type: _type, ...stdio } = config;
++	const file = lazyToolsFile(lazy);
++	let kept;
++	try {
++		const entry = JSON.parse(readFileSync(file, "utf8"));
++		if (Array.isArray(entry?.tools)) kept = entry.tools;
++	} catch {}
++	const server = new McpLowLevelServer({
++		name,
++		version: "1.0.0"
++	}, { capabilities: { tools: { listChanged: true } } });
++	let client;
++	// The client being started, closed with the server even before it is ready.
++	let starting;
++	let connecting;
++	let closed = false;
++	const connect = () => connecting ??= (async () => {
++		const transport = new StdioClientTransport({
++			command: stdio.command,
++			args: stdio.args ?? [],
++			env: {
++				...env,
++				...stdio.env
++			},
++			cwd: stdio.cwd ?? workdir,
++			stderr: "inherit"
++		});
++		const started = new McpClient({
++			name: "claude-code",
++			version: "1.0.0"
++		});
++		started.setNotificationHandler(ToolListChangedNotificationSchema, () => {
++			server.sendToolListChanged().catch(() => {});
++		});
++		starting = started;
++		// Any failure before it is ready (connecting, the first list, a close meanwhile) stops it.
++		try {
++			await started.connect(transport);
++			if (closed) throw new Error(`The ${name} MCP server was stopped.`);
++			if (kept == null) {
++				const tools = (await started.listTools()).tools;
++				if (closed) throw new Error(`The ${name} MCP server was stopped.`);
++				kept = tools;
++				try {
++					mkdirSync(dirname(file), {
++						recursive: true,
++						mode: 448
++					});
++					writeFileSync(file, JSON.stringify({ tools: kept }), { mode: 384 });
++				} catch {}
++			}
++		} catch (err) {
++			await started.close().catch(() => {});
++			throw err;
++		}
++		client = started;
++		return started;
++	})().catch((err) => {
++		connecting = void 0;
++		throw err;
++	}).finally(() => {
++		starting = void 0;
++	});
++	server.setRequestHandler(ListToolsRequestSchema, async () => client ? await client.listTools() : { tools: kept ?? (await connect(), kept) });
++	server.setRequestHandler(CallToolRequestSchema, async (request) => {
++		const started = await connect();
++		return await started.callTool(request.params, void 0, {
++			timeout: LAZY_MCP_CALL_MS,
++			resetTimeoutOnProgress: true
++		});
++	});
++	return {
++		config: {
++			type: "sdk",
++			name,
++			instance: server
++		},
++		close: () => {
++			closed = true;
++			void client?.close().catch(() => {});
++			void starting?.close().catch(() => {});
++		}
++	};
++}
++/** Brigade: end the kept process (liveQuery), and the turn reading it, if any. */
++function disposeLiveQuery(live = liveQuery) {
++	if (!live) return;
++	if (liveQuery === live) liveQuery = void 0;
++	live.dead = true;
++	clearTimeout(live.idleTimer);
++	live.input.close();
++	live.turn?.end();
++	live.turn = void 0;
++	try {
++		live.abort.abort();
++	} catch {}
++	void disposeQuery(live.q);
++	for (const close of live.closers ?? []) close();
++}
++/**
++* Brigade: a query whose input stays open between turns, read by one loop that hands each
++* message to the turn reading it (liveTurn). Claude Code at work with no turn to read it (it
++* took up a report by itself) is ended: nobody would see what it does.
++*/
++function openLiveQuery(queryArgs, key, hostTools, hookTarget) {
++	const input = createMailbox();
++	const abort = new AbortController();
++	const live = {
++		key,
++		input,
++		abort,
++		hostTools,
++		hookTarget,
++		dead: false,
++		turn: void 0,
++		idleTimer: void 0,
++		q: void 0
++	};
++	live.q = queryWhenToolsReady({
++		prompt: input,
++		options: {
++			...queryArgs.options,
++			abortController: abort
++		}
++	});
++	(async () => {
++		let failure;
++		try {
++			for await (const msg of live.q) {
++				if (typeof msg.session_id === "string" && msg.session_id.length > 0) lastClaudeSessionId = msg.session_id;
++				if (live.turn) live.turn.push(msg);
++				else if (msg.parent_tool_use_id == null && (msg.type === "assistant" || msg.type === "stream_event")) {
++					disposeLiveQuery(live);
++					return;
++				}
++			}
++		} catch (err) {
++			failure = err;
++		}
++		if (liveQuery === live) liveQuery = void 0;
++		live.dead = true;
++		clearTimeout(live.idleTimer);
++		live.turn?.end(live.abort.signal.aborted ? void 0 : failure ?? new Error("Claude Code's process ended during the turn."));
++		live.turn = void 0;
++	})();
++	return live;
++}
++/**
++* Brigade: what a turn reads of the kept process, as it read its own query: Claude Code's
++* messages from now until the turn lets go (return), and its interrupt.
++*/
++function liveTurn(live) {
++	const box = createMailbox();
++	let failure;
++	const view = {
++		push: (msg) => box.push(msg),
++		end: (err) => {
++			if (err != null) failure ??= err;
++			box.close();
++		}
++	};
++	live.turn = view;
++	clearTimeout(live.idleTimer);
++	const detach = () => {
++		if (live.turn === view) live.turn = void 0;
++		box.close();
++	};
++	const iterator = box[Symbol.asyncIterator]();
++	return {
++		view,
++		detach,
++		[Symbol.asyncIterator]() {
++			return {
++				next: async () => {
++					const result = await iterator.next();
++					if (result.done && failure != null) throw failure;
++					return result;
++				},
++				return: async () => {
++					detach();
++					return {
++						value: void 0,
++						done: true
++					};
++				}
++			};
++		},
++		return: async () => {
++			detach();
++			return {
++				value: void 0,
++				done: true
++			};
++		},
++		interrupt: () => live.q.interrupt()
++	};
++}
+ function createPermissionOptions(input) {
+ 	const permissionMode = input.start.permissionMode ?? "allow-all";
+ 	const autoMode = input.start.autoMode === true && permissionMode !== "allow-all";
+@@ -1927,6 +2265,21 @@ function createPermissionSettings(input) {
+ 	};
+ }
+ /**
++* Brigade: its settings under the bridge's own. The permission rules of both stay: the tools
++* Brigade denies, and those the permission mode asks before. Without settings of its own
++* (a run with no thread), the bridge's alone.
++*/
++function withBrigadeSettings(settings, brigade) {
++	if (brigade == null) return settings;
++	const permissions = { ...brigade.permissions };
++	for (const [key, rules] of Object.entries(settings.permissions ?? {})) permissions[key] = Array.isArray(rules) && Array.isArray(permissions[key]) ? [...new Set([...permissions[key], ...rules])] : rules;
++	return {
++		...brigade,
++		...settings,
++		...Object.keys(permissions).length > 0 ? { permissions } : {}
++	};
++}
++/**
+ * Claude Code picks a model's output limit, system prompt and default effort
+ * from its own reading of the model id, and misreads AI Gateway ids with a
+ * dotted version such as `anthropic/claude-opus-5.5`. `modelOverrides` maps
+@@ -1960,6 +2313,11 @@ async function needsHostApproval(input) {
+ 		nativeName: input.toolName,
+ 		permissionMode: input.permissionMode
+ 	})) return true;
++	// Brigade: a side reply (the runner's side-replies) reads wherever the thread's own turn can,
++	// as before the harness kept reads to the work directory: the library, the teammate's skills,
++	// the thread's other checkouts. Its tools are Read, Glob and Grep, which reach here only when
++	// active, and nobody is there to approve a read outside the folder: asked, it lost its answer.
++	if (env.BRIGADE_READS_ANYWHERE === "1") return false;
+ 	const args = input.toolInput != null && typeof input.toolInput === "object" ? input.toolInput : {};
+ 	let paths;
+ 	let access;
+@@ -2064,6 +2422,36 @@ function createApprovalPreToolUseHook(input) {
+ 		} };
+ 	};
+ }
++/**
++* Brigade: tools that act for the whole thread (its report, its children, its wake-ups, what it
++* says to people and other threads, the work it then owns) are the thread's alone. A sub-agent
++* inherits every tool, and one that sent the thread's report sent a partial result as final.
++* Claude Code gives a hook `agent_id` only when a sub-agent makes the call, so those calls are
++* refused, with Brigade's reason, and the sub-agent gives its result to the thread instead.
++* BRIGADE_THREAD_TOOLS: { tools: names, or prefixes ending in "*"; refusal: "{tool}" is the
++* tool's name without its MCP prefix }.
++*/
++function createThreadToolsPreToolUseHook(config) {
++	const matches = (name) => config.tools.some((tool) => tool.endsWith("*") ? name.startsWith(tool.slice(0, -1)) : name === tool);
++	return async (hookInput) => {
++		const toolName = hookInput?.tool_name;
++		if (hookInput?.hook_event_name !== "PreToolUse" || typeof hookInput.agent_id !== "string" || hookInput.agent_id.length === 0) return {};
++		if (typeof toolName !== "string" || !matches(toolName)) return {};
++		return { hookSpecificOutput: {
++			hookEventName: "PreToolUse",
++			permissionDecision: "deny",
++			permissionDecisionReason: config.refusal.replaceAll("{tool}", toolName.replace(/^mcp__.+?__/, ""))
++		} };
++	};
++}
++function threadToolsConfig(value) {
++	if (!value) return void 0;
++	try {
++		const config = JSON.parse(value);
++		if (Array.isArray(config?.tools) && config.tools.every((tool) => typeof tool === "string") && typeof config.refusal === "string") return config;
++	} catch {}
++	return void 0;
++}
+ function nativeToolRequiresApproval(input) {
+ 	if (input.permissionMode === "allow-all") return false;
+ 	if (input.nativeName === "EnterWorktree" || input.nativeName === "ExitWorktree") return true;
+@@ -2072,6 +2460,160 @@ function nativeToolRequiresApproval(input) {
+ 	if (input.permissionMode === "allow-edits") return kind === "bash";
+ 	return kind === "edit" || kind === "bash";
+ }
++/** Brigade: converted schemas not used by a turn for this many days are dropped (createToolSchemas). */
++const TOOL_SCHEMAS_KEEP_DAYS = 30;
++/** Brigade: another bridge version's schemas file (or a write left halfway) not written for this long is removed. */
++const TOOL_SCHEMAS_STALE_MS = 3 * 864e5;
++/**
++* Brigade: the file of converted tool schemas, in the user's own home (another user could plant
++* schemas in a shared folder), named after this bridge and its dependencies: the conversion is
++* theirs, so another version converts again.
++*/
++function toolSchemasFile() {
++	const version = createHash("sha256");
++	const self = fileURLToPath(import.meta.url);
++	// The bootstrap installs the dependencies' lock beside the bridge as pnpm-lock.yaml (the
++	// package ships it as pnpm-lockfile.yaml): either one names the converter's versions.
++	for (const name of [
++		basename(self),
++		"package.json",
++		"pnpm-lock.yaml",
++		"pnpm-lockfile.yaml"
++	]) {
++		version.update(`${name}\0`);
++		try {
++			version.update(readFileSync(join(dirname(self), name)));
++		} catch {}
++		version.update("\0");
++	}
++	return join(homedir(), ".ai-sdk-harness", ".tool-schemas", `${version.digest("hex").slice(0, 16)}.json`);
++}
++function readToolSchemas(file) {
++	try {
++		const entries = JSON.parse(readFileSync(file, "utf8"));
++		return entries && typeof entries === "object" && !Array.isArray(entries) ? entries : {};
++	} catch {
++		return {};
++	}
++}
++const isPlainObject = (value) => value != null && typeof value === "object" && !Array.isArray(value);
++/**
++* Brigade: the host's tools' schemas, converted as McpServer's tools/list converted them, kept
++* between turns. Converting a teammate's App tools (883 tools on the workspace computer) takes
++* about 300 MB at each turn's start, for a minute or two until it is collected; a turn whose
++* tools an earlier turn converted reads them from the file instead (about 20 MB). An entry is a
++* converted schema under the SHA-256 of the schema it came from, with the day a turn last used
++* it. Any problem with the file only means converting again.
++*/
++function createToolSchemas() {
++	let file;
++	try {
++		file = toolSchemasFile();
++	} catch {}
++	const entries = file ? readToolSchemas(file) : {};
++	const today = Math.floor(Date.now() / 864e5);
++	let changed = false;
++	return {
++		schema(inputSchema, convert) {
++			const key = createHash("sha256").update(JSON.stringify(inputSchema ?? null)).digest("base64url");
++			const entry = entries[key];
++			if (isPlainObject(entry) && isPlainObject(entry.s)) {
++				if (entry.d !== today) {
++					entry.d = today;
++					changed = true;
++				}
++				return entry.s;
++			}
++			const converted = convert();
++			entries[key] = {
++				d: today,
++				s: converted
++			};
++			changed = true;
++			return converted;
++		},
++		/** Write what this turn converted or used (at most once a day for a turn that converted nothing). */
++		save() {
++			if (!file || !changed) return;
++			try {
++				const dir = dirname(file);
++				// What turns wrote meanwhile, then this turn's.
++				const merged = {
++					...readToolSchemas(file),
++					...entries
++				};
++				for (const [key, entry] of Object.entries(merged)) if (!isPlainObject(entry) || !isPlainObject(entry.s) || typeof entry.d !== "number" || today - entry.d > TOOL_SCHEMAS_KEEP_DAYS) delete merged[key];
++				mkdirSync(dir, {
++					recursive: true,
++					mode: 448
++				});
++				const partial = `${file}.${pid}.tmp`;
++				writeFileSync(partial, JSON.stringify(merged), { mode: 384 });
++				renameSync(partial, file);
++				for (const name of readdirSync(dir)) {
++					const other = join(dir, name);
++					if (name !== basename(file) && Date.now() - statSync(other).mtimeMs > TOOL_SCHEMAS_STALE_MS) rmSync(other, { force: true });
++				}
++			} catch {}
++		}
++	};
++}
++/**
++* Brigade: a tool as McpServer's tools/list gave it (registerTool's fields, the same JSON Schema
++* conversion), computed once so that no zod schema stays behind. The conversion's result holds
++* its zod schema (a hidden `~standard` property): only a plain copy of it lets that go.
++*/
++function hostToolDefinition(tool, hints, schemas) {
++	return {
++		name: tool.name,
++		description: tool.description ?? "",
++		inputSchema: schemas.schema(tool.inputSchema, () => JSON.parse(JSON.stringify(toJsonSchemaCompat(jsonSchemaToZodObject(tool.inputSchema), {
++			strictUnions: true,
++			pipeStrategy: "input"
++		})))),
++		...hints?.readOnly == null ? {} : { annotations: { readOnlyHint: hints.readOnly } },
++		execution: { taskSupport: "forbidden" },
++		...hints?.alwaysLoad == null ? {} : { _meta: { "anthropic/alwaysLoad": hints.alwaysLoad } }
++	};
++}
++/**
++* Brigade: the host's tools served as McpServer served them (tools/list; tools/call with the
++* input checked against the tool's schema, and a failure as the tool's error result), from their
++* JSON. A tool's zod schema is built when it is first called, and kept for the turn's later calls.
++*/
++function createHostToolsServer(hostTools) {
++	const server = new McpLowLevelServer({
++		name: "harness-tools",
++		version: "1.0.0"
++	}, { capabilities: { tools: { listChanged: true } } });
++	const schemas = /* @__PURE__ */ new Map();
++	server.setRequestHandler(ListToolsRequestSchema, () => ({ tools: [...hostTools.values()].map((tool) => tool.definition) }));
++	server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
++		try {
++			const toolName = request.params.name;
++			const tool = hostTools.get(toolName);
++			if (!tool) throw new McpError(McpErrorCode.InvalidParams, `Tool ${toolName} not found`);
++			let schema = schemas.get(toolName);
++			if (!schema) {
++				schema = jsonSchemaToZodObject(tool.inputSchema);
++				schemas.set(toolName, schema);
++			}
++			const parsed = await safeParseAsync(schema, request.params.arguments ?? {});
++			if (!parsed.success) throw new McpError(McpErrorCode.InvalidParams, `Input validation error: Invalid arguments for tool ${toolName}: ${getParseErrorMessage(parsed.error)}`);
++			return await tool.run(parsed.data, extra);
++		} catch (error) {
++			if (error instanceof McpError && error.code === McpErrorCode.UrlElicitationRequired) throw error;
++			return {
++				content: [{
++					type: "text",
++					text: error instanceof Error ? error.message : String(error)
++				}],
++				isError: true
++			};
++		}
++	});
++	return server;
++}
+ async function runTurn(start, turn) {
+ 	const emit = (msg) => {
+ 		if (!turn.abortSignal.aborted) turn.emit(msg);
+@@ -2087,85 +2629,112 @@ async function runTurn(start, turn) {
+ 	else turn.abortSignal.addEventListener("abort", onHostAbort, { once: true });
+ 	const streamEventState = createClaudeStreamEventState();
+ 	const mcpServers = { ...start.mcpServers };
+-	if (start.tools && start.tools.length > 0) {
+-		const server = new mcpModule.McpServer({
+-			name: "harness-tools",
+-			version: "1.0.0"
++	// Brigade: see liveQuery. Kept only where nothing in the turn waits on the host but its own
++	// tools and questions, which reach this turn through hookTarget and each tool's run.
++	const forkingSession = env.BRIGADE_FORK_SESSION === "1";
++	const keepable = CLAUDE_KEEP_MS > 0 && !forkingSession && (start.permissionMode ?? "allow-all") === "allow-all" && start.deferredToolUseId == null && start.responseFormat == null;
++	// A host tool's call, for this turn: its result comes from this turn's host.
++	const hostToolRun = (toolName) => async (...handlerArgs) => {
++		const [input, extra] = handlerArgs;
++		const metadataToolCallId = extra._meta?.["claudecode/toolUseId"];
++		const toolCallId = resolveMcpHandlerToolUseId({
++			state: streamEventState,
++			metadataToolUseId: typeof metadataToolCallId === "string" ? metadataToolCallId : void 0,
++			toolName,
++			input
++		}) ?? randomUUID();
++		streamEventState.mcpHandlerCalls.set(toolCallId, {
++			toolName,
++			input
+ 		});
+-		for (const tool of start.tools) {
+-			const hints = start.toolHints?.[tool.name];
+-			server.registerTool(tool.name, {
+-				description: tool.description ?? "",
+-				inputSchema: jsonSchemaToZodObject(tool.inputSchema),
+-				...hints?.readOnly == null ? {} : { annotations: { readOnlyHint: hints.readOnly } },
+-				...hints?.alwaysLoad == null ? {} : { _meta: { "anthropic/alwaysLoad": hints.alwaysLoad } }
+-			}, async (...handlerArgs) => {
+-				const [input, extra] = handlerArgs;
+-				const metadataToolCallId = extra._meta?.["claudecode/toolUseId"];
+-				const toolCallId = resolveMcpHandlerToolUseId({
+-					state: streamEventState,
+-					metadataToolUseId: typeof metadataToolCallId === "string" ? metadataToolCallId : void 0,
+-					toolName: tool.name,
+-					input
+-				}) ?? randomUUID();
+-				streamEventState.mcpHandlerCalls.set(toolCallId, {
+-					toolName: tool.name,
+-					input
+-				});
+-				if (!streamEventState.emittedToolCallIds.has(toolCallId)) {
+-					streamEventState.emittedToolCallIds.add(toolCallId);
+-					emit({
+-						type: "tool-call",
+-						toolCallId,
+-						toolName: tool.name,
+-						input: JSON.stringify(input),
+-						providerExecuted: false
+-					});
+-					markWaitingOnHostInput({
+-						state: streamEventState,
+-						emit,
+-						toolUseId: toolCallId
+-					});
+-				}
+-				const { output, isError, toolResult } = await turn.requestToolResult(toolCallId).finally(() => {
+-					clearWaitingOnHostInput({
+-						state: streamEventState,
+-						toolUseId: toolCallId
+-					});
+-					if (!streamEventState.mcpToolCalls.has(toolCallId)) streamEventState.pendingStepToolUseIds.delete(toolCallId);
+-				});
+-				emit({
+-					type: "tool-result",
+-					toolCallId,
+-					toolName: tool.name,
+-					result: output ?? null,
+-					isError: !!isError
+-				});
+-				if (toolResult != null) {
+-					const converted = convertHarnessToolModelOutput({ output: toolResult.output });
+-					return {
+-						content: converted.content.map((part) => part.type === "text" ? part : {
+-							type: "image",
+-							data: part.data,
+-							mimeType: part.mediaType
+-						}),
+-						isError: isError === true || converted.isError
+-					};
+-				}
+-				return {
+-					content: [{
+-						type: "text",
+-						text: JSON.stringify(output ?? null)
+-					}],
+-					isError
+-				};
++		if (!streamEventState.emittedToolCallIds.has(toolCallId)) {
++			streamEventState.emittedToolCallIds.add(toolCallId);
++			emit({
++				type: "tool-call",
++				toolCallId,
++				toolName,
++				input: JSON.stringify(input),
++				providerExecuted: false
++			});
++			markWaitingOnHostInput({
++				state: streamEventState,
++				emit,
++				toolUseId: toolCallId
+ 			});
+ 		}
+-		mcpServers["harness-tools"] = {
+-			type: "sdk",
+-			name: "harness-tools",
+-			instance: server
++		const { output, isError, toolResult } = await turn.requestToolResult(toolCallId).finally(() => {
++			clearWaitingOnHostInput({
++				state: streamEventState,
++				toolUseId: toolCallId
++			});
++			if (!streamEventState.mcpToolCalls.has(toolCallId)) streamEventState.pendingStepToolUseIds.delete(toolCallId);
++		});
++		emit({
++			type: "tool-result",
++			toolCallId,
++			toolName,
++			result: output ?? null,
++			isError: !!isError
++		});
++		if (toolResult != null) {
++			const converted = convertHarnessToolModelOutput({ output: toolResult.output });
++			return {
++				content: converted.content.map((part) => part.type === "text" ? part : {
++					type: "image",
++					data: part.data,
++					mimeType: part.mediaType
++				}),
++				isError: isError === true || converted.isError
++			};
++		}
++		return {
++			content: [{
++				type: "text",
++				text: JSON.stringify(output ?? null)
++			}],
++			isError
+ 		};
++	};
++	// Brigade: the host's tools, kept by their JSON's hash: a turn with the same converts none again,
++	// and only gives each its own run.
++	let hostTools;
++	let toolsKey = "";
++	// Brigade: a host that sent these tools in an earlier turn of this bridge (the turn's finish
++	// said it kept them, under `toolsHash`) sends only their hash.
++	if (start.tools == null && start.toolsHash != null) {
++		if (keptHostTools?.key !== start.toolsHash) throw new Error("Brigade: the bridge no longer has the host's tools; the next turn sends them again.");
++		toolsKey = start.toolsHash;
++		hostTools = keptHostTools.tools;
++		for (const [name, entry] of hostTools) entry.run = hostToolRun(name);
++	} else if (start.tools && start.tools.length > 0) {
++		// Brigade: the host's tools as JSON, not as zod. McpServer keeps a zod schema per tool for the
++		// whole turn, and zod v4 objects are heavy: a thread's 883 App tools (3.8 MB of JSON) held
++		// about 600 MB in each turn's bridge. Each tool's schema is converted once, as McpServer's
++		// tools/list did (the same JSON), then let go, and kept as JSON for the next turns
++		// (createToolSchemas); a tool's zod is built again only when it is called, to check its
++		// input as McpServer did.
++		toolsKey = start.toolsHash ?? createHash("sha256").update(JSON.stringify([start.tools, start.toolHints ?? null])).digest("base64url");
++		if (keptHostTools?.key === toolsKey) {
++			hostTools = keptHostTools.tools;
++			for (const [name, entry] of hostTools) entry.run = hostToolRun(name);
++		} else {
++			hostTools = /* @__PURE__ */ new Map();
++			const schemas = createToolSchemas();
++			for (const tool of start.tools) {
++				if (hostTools.has(tool.name)) throw new Error(`Tool ${tool.name} is already registered`);
++				const hints = start.toolHints?.[tool.name];
++				hostTools.set(tool.name, {
++					definition: hostToolDefinition(tool, hints, schemas),
++					inputSchema: tool.inputSchema,
++					run: hostToolRun(tool.name)
++				});
++			}
++			schemas.save();
++			keptHostTools = {
++				key: toolsKey,
++				tools: hostTools
++			};
++		}
+ 	}
+ 	const compaction = createCompactionLatch((event) => {
+ 		const hasOpenStep = streamEventState.stepOpen;
+@@ -2224,11 +2793,25 @@ async function runTurn(start, turn) {
+ 		deferredToolUseIds,
+ 		nativeToolCallNames: streamEventState.nativeToolCallNames
+ 	});
+-	const settings = {
++	// Brigade: what it turns off in Claude Code, as settings above every settings file (the
++	// runner's claude-settings.ts), under the bridge's own. See withBrigadeSettings.
++	const brigadeSettings = env.BRIGADE_CLAUDE_SETTINGS ? JSON.parse(env.BRIGADE_CLAUDE_SETTINGS) : void 0;
++	const settings = withBrigadeSettings({
+ 		...permissionOptions.settings,
+ 		...start.skillOverrides !== void 0 ? { skillOverrides: start.skillOverrides } : {},
+ 		...modelOverrides ? { modelOverrides } : {}
+-	};
++	}, brigadeSettings);
++	// Brigade: Claude Code guesses the person's next message once a turn is over, for the
++	// thread's message box (the runner sets this when the thread wants it). See drain below.
++	const suggesting = env.BRIGADE_PROMPT_SUGGESTIONS === "1";
++	// Brigade: the thread's own tools, refused to its sub-agents (createThreadToolsPreToolUseHook).
++	const threadTools = threadToolsConfig(env.BRIGADE_THREAD_TOOLS);
++	// Brigade: a side reply (the runner's side-replies) answers from a copy of the conversation it
++	// resumes: Claude Code forks it under a new id and writes nothing, so the conversation it
++	// came from, whose turn goes on, never sees it, and its folder keeps no session of its own.
++	const forking = forkingSession;
++	let draining = false;
++	let drainTimer;
+ 	const questionPreToolUseHook = createQuestionPreToolUseHook({
+ 		turn,
+ 		emit,
+@@ -2243,9 +2826,19 @@ async function runTurn(start, turn) {
+ 			toolUseId
+ 		})
+ 	});
++	// Brigade: the hooks a kept process calls go to the turn that reads it now (liveQuery).
++	const turnHooks = {
++		question: questionPreToolUseHook,
++		postCompact: async (input) => {
++			if (typeof input?.compact_summary === "string") compaction.onSummary(input.compact_summary);
++			return {};
++		}
++	};
++	let hookTarget = { current: turnHooks };
+ 	const queryArgs = {
+ 		prompt: queryInput.input,
+ 		options: {
++			...suggesting ? { promptSuggestions: true } : {},
+ 			...start.model ? { model: start.model } : {},
+ 			...start.maxTurns !== void 0 ? { maxTurns: start.maxTurns } : {},
+ 			...start.maxBudgetUsd !== void 0 ? { maxBudgetUsd: start.maxBudgetUsd } : {},
+@@ -2266,28 +2859,92 @@ async function runTurn(start, turn) {
+ 			} } : {},
+ 			includePartialMessages: true,
+ 			hooks: {
+-				PreToolUse: [...permissionMode === "allow-all" ? [] : [{ hooks: [approvalPreToolUseHook] }], {
++				PreToolUse: [
++					...threadTools ? [{ hooks: [createThreadToolsPreToolUseHook(threadTools)] }] : [],
++					...permissionMode === "allow-all" ? [] : [{ hooks: [approvalPreToolUseHook] }],
++					{
+ 					matcher: "AskUserQuestion",
+-					hooks: [questionPreToolUseHook],
++					hooks: [(...hookArgs) => hookTarget.current.question(...hookArgs)],
+ 					...start.questionTimeoutMs !== void 0 ? { timeout: Math.ceil(start.questionTimeoutMs / 1e3) } : {}
+ 				}],
+-				PostCompact: [{ hooks: [async (input) => {
+-					if (typeof input?.compact_summary === "string") compaction.onSummary(input.compact_summary);
+-					return {};
+-				}] }]
++				PostCompact: [{ hooks: [(...hookArgs) => hookTarget.current.postCompact(...hookArgs)] }]
+ 			},
+ 			...start.resumeSessionId ?? lastClaudeSessionId ? { resume: start.resumeSessionId ?? lastClaudeSessionId } : start.continue === true || !turn.firstTurn ? { continue: true } : {},
++			...forking ? {
++				forkSession: true,
++				persistSession: false
++			} : {},
+ 			...permissionOptions,
+ 			...Object.keys(settings).length > 0 ? { settings } : {},
+ 			mcpServers,
+-			settingSources: ["user"],
++			// Brigade: every settings file, as before 1.0.180, which read only the user's. Brigade's
++			// instructions are the CLAUDE.md in the thread's folder, read only with the project's
++			// settings; so are a repository's own CLAUDE.md, settings and skills.
++			settingSources: [
++				"user",
++				"project",
++				"local"
++			],
+ 			cwd: workdir,
+ 			abortController: abortCtl
+ 		}
+ 	};
+ 	let deferredToolUseId = start.deferredToolUseId;
+ 	let resumingDeferredCall = false;
+-	let q = deferredToolUseId == null ? claudeSdk.query(queryArgs) : void 0;
++	// Brigade: the host's tools, served anew for each new process (an MCP server serves one).
++	// Brigade: the lazy MCP servers' (createLazyMcpServer), stopped with the process they serve.
++	const queryClosers = [];
++	const serveHostTools = () => {
++		if (hostTools) mcpServers["harness-tools"] = {
++			type: "sdk",
++			name: "harness-tools",
++			instance: createHostToolsServer(hostTools)
++		};
++		for (const [name, config] of Object.entries(mcpServers)) if (config != null && typeof config === "object" && config.lazy != null && config.type !== "sdk") {
++			const lazy = createLazyMcpServer(name, config, {
++				...env,
++				...start.env
++			});
++			mcpServers[name] = lazy.config;
++			queryClosers.push(lazy.close);
++		}
++	};
++	let live;
++	let liveView;
++	if (keepable) {
++		const { hooks: _hooks, mcpServers: _mcpServers, abortSignal: _abortSignal, resume: _resume, continue: _continue, ...plain } = queryArgs.options;
++		const key = JSON.stringify([
++			plain,
++			start.mcpServers ?? null,
++			toolsKey
++		]);
++		const resumes = start.resumeSessionId ?? lastClaudeSessionId;
++		if (liveQuery && (liveQuery.dead || liveQuery.key !== key || liveQuery.turn || resumes !== lastClaudeSessionId)) disposeLiveQuery();
++		if (liveQuery) {
++			live = liveQuery;
++			live.hookTarget.current = turnHooks;
++			hookTarget = live.hookTarget;
++		} else {
++			serveHostTools();
++			live = liveQuery = openLiveQuery(queryArgs, key, hostTools, hookTarget);
++			live.closers = queryClosers;
++		}
++		liveView = liveTurn(live);
++		// Stopped for good (after its interrupt, a failure), the process goes with the turn; once
++		// answered, Claude Code only guesses the next message, and the turn lets it go on.
++		abortCtl.signal.addEventListener("abort", () => {
++			if (draining) liveView.detach();
++			else disposeLiveQuery(live);
++		}, { once: true });
++		// The turn's messages go in as the next of the kept process's.
++		void (async () => {
++			for await (const message of queryInput.input) live.input.push(message);
++		})().catch(() => {});
++	} else {
++		disposeLiveQuery();
++		serveHostTools();
++	}
++	let q = live ? liveView : deferredToolUseId == null ? queryWhenToolsReady(queryArgs) : void 0;
+ 	const hostAborted = new Promise((resolve) => {
+ 		if (abortCtl.signal.aborted) resolve(void 0);
+ 		abortCtl.signal.addEventListener("abort", () => resolve(void 0), { once: true });
+@@ -2343,6 +3000,11 @@ async function runTurn(start, turn) {
+ 	let emittedTerminalError = false;
+ 	let emittedTerminalFinish = false;
+ 	const emitTerminalError = (message) => {
++		// Brigade: the turn was answered; a failure while Claude Code guesses only ends the guess.
++		if (draining) {
++			abortCtl.abort();
++			return;
++		}
+ 		const normalized = message?.trim();
+ 		if (!normalized || emittedTerminalError || emittedTerminalFinish) return;
+ 		streamEventState.observedTerminalError = normalized;
+@@ -2362,6 +3024,81 @@ async function runTurn(start, turn) {
+ 		onCompactionBoundary: (boundary) => compaction.onBoundary(boundary),
+ 		toCommonName
+ 	});
++	// Brigade: work started in the background (agents, workflows, shells, Monitors) reports
++	// back in a turn Claude Code starts by itself. Ending the query at the first result killed
++	// it with the CLI, so the turn stays open while any runs, and until Claude Code has
++	// answered the last report.
++	const HELD_TASKS = new Set(["local_agent", "remote_agent", "local_workflow", "local_bash", "monitor_mcp"]);
++	const heldTasks = new Set();
++	// Started in the foreground, with the tool call that started them waiting on them: held only once moved to the background.
++	const foreground = new Set();
++	// Running now; and ended, with their notification (which starts the turn that reads it) still to come.
++	let running = new Set();
++	const ended = new Set();
++	const notified = new Set();
++	// How many of Claude Code's messages the turn has seen.
++	let received = 0;
++	let reportedAt = -1;
++	let turnFrom = 0;
++	let awaitingTurn = true;
++	let reportPending = false;
++	let reportTimer;
++	let waiting = false;
++	const holding = () => running.size > 0 || ended.size > 0 || reportPending;
++	const reported = () => {
++		reportedAt = received;
++		// Between turns: Claude Code starts one to answer it.
++		if (awaitingTurn) reportPending = true;
++	};
++	// The host learns when the turn only waits on that work, and when Claude Code is at it again:
++	// a person's message then goes straight in rather than waiting for the turn to end.
++	const setWaiting = (value) => {
++		if (waiting === value) return;
++		waiting = value;
++		emit({
++			type: "raw",
++			rawValue: {
++				type: "system",
++				subtype: "brigade_waiting",
++				waiting: value
++			}
++		});
++	};
++	// A report folded into a turn already running gets no turn of its own: stop waiting for one.
++	const waitForReport = () => {
++		clearTimeout(reportTimer);
++		reportTimer = setTimeout(() => {
++			reportPending = false;
++			ended.clear();
++			if (!holding() && queryInput.hasObservedResult && !queryInput.hasActiveUserMessages() && !drain()) {
++				queryInput.close();
++				// A kept process reads on past its closed input, waiting for the next turn's
++				// messages: the turn lets go of it, or it would wait for Claude Code forever.
++				liveView?.detach();
++			}
++		}, REPORT_WAIT_MS);
++		reportTimer.unref?.();
++	};
++	// Brigade: Claude Code sends its guess only after the turn's last result, and only while its
++	// process lives. Rather than end the query there, its input closes and the process gets to
++	// finish the guess, which it waits for before it exits. The host hears first that the turn
++	// is answered, so nothing waits on the guess; a stop from it ends the process at once.
++	const drain = () => {
++		if (!suggesting || draining) return false;
++		draining = true;
++		queryInput.close();
++		emit({
++			type: "raw",
++			rawValue: {
++				type: "system",
++				subtype: "brigade_answered"
++			}
++		});
++		gracefulAbort = void 0;
++		drainTimer = setTimeout(() => abortCtl.abort(), 2e4);
++		drainTimer.unref?.();
++		return true;
++	};
+ 	async function* messages() {
+ 		for (;;) {
+ 			if (deferredToolUseId != null) {
+@@ -2375,7 +3112,7 @@ async function runTurn(start, turn) {
+ 				approvalDecisions.set(toolUseId, decision);
+ 				deferredToolUseId = void 0;
+ 				resumingDeferredCall = true;
+-				q = claudeSdk.query({
++				q = queryWhenToolsReady({
+ 					prompt: withoutInitialMessage(queryInput.input),
+ 					options: {
+ 						...queryArgs.options,
+@@ -2402,6 +3139,19 @@ async function runTurn(start, turn) {
+ 			if (type === "command_lifecycle") queryInput.handleLifecycle(msg);
+ 			const sessionId = msg.session_id;
+ 			if (typeof sessionId === "string" && sessionId.length > 0) lastClaudeSessionId = sessionId;
++			// Brigade: Claude Code's guess at the person's next message goes to the host. It is no
++			// part of the turn, whose counts and timers stay as they were: a report the turn still
++			// waits on keeps its timeout. Draining, the guess was all the drain waited for, and
++			// what the closing process says besides is no part of the turn either.
++			if (type === "prompt_suggestion") {
++				emit({
++					type: "raw",
++					rawValue: msg
++				});
++				if (draining) break;
++				continue;
++			}
++			if (draining) continue;
+ 			emitStreamEvent(msg);
+ 			if (type === "result" && msg.terminal_reason === "tool_deferred" && msg.deferred_tool_use?.id != null) {
+ 				const harnessUsage = mapUsage(msg.usage ?? msg.message?.usage);
+@@ -2413,8 +3163,46 @@ async function runTurn(start, turn) {
+ 					toolName: msg.deferred_tool_use.name,
+ 					toolInput: msg.deferred_tool_use.input
+ 				});
++				// Brigade: the turn goes on once the call is decided, in a query of its own, so this
++				// result ends no turn. Claude Code's process ends with this query, and so does the
++				// work it ran in the background, which reports nothing to the next one.
++				clearTimeout(reportTimer);
++				running = new Set();
++				ended.clear();
++				reportPending = false;
+ 				continue;
+ 			}
++			received++;
++			clearTimeout(reportTimer);
++			// One started in the foreground is its tool call's own result, read in the turn that made
++			// the call: its notification starts no turn. It reports back once moved to the background.
++			if (type === "system" && msg.subtype === "task_started" && HELD_TASKS.has(msg.task_type)) (msg.is_backgrounded === false ? foreground : heldTasks).add(msg.task_id);
++			if (type === "system" && msg.subtype === "task_updated" && msg.patch?.is_backgrounded === true && foreground.has(msg.task_id)) heldTasks.add(msg.task_id);
++			if (type === "system" && msg.subtype === "background_tasks_changed" && Array.isArray(msg.tasks)) {
++				const now = new Set(msg.tasks.filter((t) => !t.ambient && HELD_TASKS.has(t.task_type)).map((t) => t.task_id));
++				for (const id of now) heldTasks.add(id);
++				// One that stopped running reports back, whether this or its notification comes first.
++				for (const id of running) if (!now.has(id) && !notified.has(id)) ended.add(id);
++				running = now;
++			}
++			// Its notification starts the turn that reads it; one stopped on purpose starts none.
++			if (type === "system" && msg.subtype === "task_notification" && heldTasks.has(msg.task_id)) {
++				notified.add(msg.task_id);
++				ended.delete(msg.task_id);
++				if (msg.status !== "stopped" && !msg.skip_transcript && !msg.ambient) reported();
++			}
++			if (awaitingTurn && msg.parent_tool_use_id == null && (type === "assistant" || type === "stream_event")) {
++				awaitingTurn = false;
++				turnFrom = received;
++				setWaiting(false);
++			}
++			if (type === "result") {
++				// A report that came in after this turn began is answered in a turn of its own.
++				reportPending = reportedAt > turnFrom;
++				awaitingTurn = true;
++			}
++			if (awaitingTurn && (reportPending || ended.size > 0) && running.size === 0) waitForReport();
++			if (awaitingTurn && holding() && queryInput.hasObservedResult && !queryInput.hasActiveUserMessages()) setWaiting(true);
+ 			if (type === "result") {
+ 				if (msg.subtype === "success") {
+ 					if (msg.is_error) {
+@@ -2450,34 +3238,64 @@ async function runTurn(start, turn) {
+ 						emit,
+ 						usage: streamEventState.pendingStepUsage ?? harnessUsage
+ 					});
+-					if (!resumingDeferredCall && !queryInput.answersSentMessage(msg)) continue;
++					if (!resumingDeferredCall && !queryInput.answersSentMessage(msg)) {
++						// The answer to the last report: nothing else to wait for.
++						if (queryInput.hasObservedResult && !queryInput.hasActiveUserMessages() && !holding()) {
++							if (drain()) continue;
++							queryInput.close();
++							break;
++						}
++						if (queryInput.hasObservedResult && !queryInput.hasActiveUserMessages()) setWaiting(true);
++						continue;
++					}
+ 					queryInput.observeResult();
+-					if (!queryInput.hasActiveUserMessages()) {
++					if (!queryInput.hasActiveUserMessages() && !holding()) {
++						if (drain()) continue;
+ 						queryInput.close();
+ 						break;
+ 					}
++					if (!queryInput.hasActiveUserMessages()) setWaiting(true);
+ 				} else emitTerminalError((Array.isArray(msg.errors) ? msg.errors.join("\n") : void 0) || streamEventState.observedTerminalError || msg.result || "Unknown error");
+ 				continue;
+ 			}
+-			if (queryInput.hasObservedResult && !queryInput.hasActiveUserMessages()) {
++			if (queryInput.hasObservedResult && !queryInput.hasActiveUserMessages() && !holding()) {
++				if (drain()) continue;
+ 				queryInput.close();
+ 				break;
+ 			}
+ 		}
+ 	} catch (err) {
+-		if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) turn.emitError({
+-			error: err,
+-			message: "claude-code turn failed"
+-		});
+-		return;
++		// Brigade: the turn was answered; how the process ends while it guesses changes nothing.
++		if (!draining || turn.abortSignal.aborted) {
++			if (!turn.abortSignal.aborted && !(abortCtl.signal.aborted && emittedTerminalError)) turn.emitError({
++				error: err,
++				message: "claude-code turn failed"
++			});
++			return;
++		}
+ 	} finally {
+ 		gracefulAbort = void 0;
++		clearTimeout(reportTimer);
++		clearTimeout(drainTimer);
+ 		if (hardAbortTimer != null) clearTimeout(hardAbortTimer);
+ 		turn.abortSignal.removeEventListener("abort", onHostAbort);
+ 		queryInput.close();
+ 		await disposeQuery(q);
++		if (!live) for (const close of queryClosers) close();
++		// Brigade: answered, with nothing left running, the process waits for the next turn (liveQuery).
++		if (live) {
++			liveView.detach();
++			const answered = !live.dead && !emittedTerminalError && !holding() && (draining || queryInput.hasObservedResult && !turn.abortSignal.aborted && !abortCtl.signal.aborted);
++			if (answered) {
++				live.idleTimer = setTimeout(() => disposeLiveQuery(live), CLAUDE_KEEP_MS);
++				live.idleTimer.unref?.();
++			} else disposeLiveQuery(live);
++		}
+ 	}
+ 	if (emittedTerminalError) return;
++	// Brigade: stopped by the host while it guessed, the turn is settled there already. A finish
++	// sent now, once the process is gone, would end the host's next turn instead.
++	if (draining && turn.abortSignal.aborted) return;
+ 	emittedTerminalFinish = true;
+ 	emit({
+ 		type: "finish",
+@@ -2486,9 +3304,10 @@ async function runTurn(start, turn) {
+ 			raw: "stop"
+ 		},
+ 		totalUsage: turnUsage ?? streamEventState.stepUsage ?? defaultUsage(),
+-		...totalCostUsd !== void 0 || lastClaudeSessionId !== void 0 ? { harnessMetadata: { "claude-code": {
++		...totalCostUsd !== void 0 || lastClaudeSessionId !== void 0 || hostTools ? { harnessMetadata: { "claude-code": {
+ 			...totalCostUsd !== void 0 ? { costUsd: totalCostUsd } : {},
+-			...lastClaudeSessionId !== void 0 ? { sessionId: lastClaudeSessionId } : {}
++			...lastClaudeSessionId !== void 0 ? { sessionId: lastClaudeSessionId } : {},
++			...hostTools && start.toolsHash != null ? { toolsKept: toolsKey } : {}
+ 		} } } : {}
+ 	});
+ }
+diff --git a/dist/bridge/package.json b/dist/bridge/package.json
+index 1698be76a84980bcbcf2fa38b6ee744ad8efcdd6..d18e604e2ebeebefaeb3ceebb48701b99c11e6f0 100644
+--- a/dist/bridge/package.json
++++ b/dist/bridge/package.json
+@@ -4,8 +4,8 @@
+   "private": true,
+   "type": "module",
+   "dependencies": {
+-    "@anthropic-ai/claude-agent-sdk": "0.3.319",
+-    "@anthropic-ai/claude-code": "2.1.319",
++    "@anthropic-ai/claude-agent-sdk": "0.3.327",
++    "@anthropic-ai/claude-code": "2.1.327",
+     "@modelcontextprotocol/sdk": "1.32.2",
+     "ws": "8.21.0",
+     "zod": "4.6.7"
+diff --git a/dist/bridge/pnpm-lockfile.yaml b/dist/bridge/pnpm-lockfile.yaml
+index 70c0125f8712b56ac63a7234ddd7f4f3b5dba80b..b67f0eef750cb2e646ddb829cc2a4a614770517c 100644
+--- a/dist/bridge/pnpm-lockfile.yaml
++++ b/dist/bridge/pnpm-lockfile.yaml
+@@ -9,11 +9,11 @@ importers:
+   .:
+     dependencies:
+       '@anthropic-ai/claude-agent-sdk':
+-        specifier: 0.3.319
+-        version: 0.3.319(@anthropic-ai/sdk@0.97.1(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)
++        specifier: 0.3.327
++        version: 0.3.327(@anthropic-ai/sdk@0.97.1(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)
+       '@anthropic-ai/claude-code':
+-        specifier: 2.1.319
+-        version: 2.1.319
++        specifier: 2.1.327
++        version: 2.1.327
+       '@modelcontextprotocol/sdk':
+         specifier: 1.32.2
+         version: 1.32.2(zod@4.6.7)
+@@ -26,104 +26,104 @@ importers:
+ 
+ packages:
+ 
+-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.319':
+-    resolution: {integrity: sha512-rNiAbMbRhgOM2CELsDTIq7q++sFVIZukTkgeswcncGbcX8STIgtf0XaZzKdRXtKK+v9ez+mQn8P4pb2Ka17wGA==}
++  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.327':
++    resolution: {integrity: sha512-n+tQOPqz264l12BAKBcBPBbdB/bmZ2SfyONtEXQufTU6EeCoQMPS58RSt51Cxk5sDUme1hTF0vVAqRPdhq8tFg==}
+     cpu: [arm64]
+     os: [darwin]
+ 
+-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.319':
+-    resolution: {integrity: sha512-jM730Fl+cFotDnjF9cStIf+Xe57YdfDB3TXaSVVv8uVAXW4xoWFwIj2eDvmsciEEe5UMkKzjVqXu9kR21OrXng==}
++  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.327':
++    resolution: {integrity: sha512-u091X+eQIyqg8BIEYLWJ0o6U3BaivMcf8Im4hI3hti/NGJ6YC5sR+LLEa1RjSIKE+JoOfCxipdCNSKaEI+0d5Q==}
+     cpu: [x64]
+     os: [darwin]
+ 
+-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.319':
+-    resolution: {integrity: sha512-8KDZQJAS2CEb5aGAvuXkpyHMc9TOM/zYTw2iKmbbVi4im0atw93EtJPapYyp0g/lQI/Xk8jMYdWU6Zlv9EWjLw==}
++  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.327':
++    resolution: {integrity: sha512-oV8/+ZixiPzEW1BStoP9FOXsHcznONaom6S2PwwIfhi5Pxa5fGuloy8TiOB9wK+03zavqt7jmzLgVPF2a2NsTA==}
+     cpu: [arm64]
+     os: [linux]
+     libc: [musl]
+ 
+-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.319':
+-    resolution: {integrity: sha512-g2tpMsHLMQahI4bk5CIcMHAB/RwzxoPGmL5Q5G5MDir5WTrl71vulWbtLQISUPm/yFPRG97tdzZnCa5Uq1v/dw==}
++  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.327':
++    resolution: {integrity: sha512-/k6BfV+L2er67UoLUabcp0w3L1DMemJjoijdxvXDiU8w81fGfHaKWKhRuhUQFmIrMLyMyQcBKaoyUNSLWovPnw==}
+     cpu: [arm64]
+     os: [linux]
+     libc: [glibc]
+ 
+-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.319':
+-    resolution: {integrity: sha512-XkKYj3c1jVFjLATrZr4YTsmS5AIb5s2iphF9X670EcVQqDCCGIKKTVNLLg9mg1e7D+2xX8FU0XNlOJatWfpBeA==}
++  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.327':
++    resolution: {integrity: sha512-O0nDZ1gpXi83qAdd8SM0gTdjlzrqpOlW0M4W7PfHVrMXWLh9I+1tvHat+s17ehIW6A9VQIWIq4oMwq7jb708Dg==}
+     cpu: [x64]
+     os: [linux]
+     libc: [musl]
+ 
+-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.319':
+-    resolution: {integrity: sha512-uBAZA8x0hd5gVifyL5Lo73dVmi9xZeJ6jro2NO0al6yyWaw/6UL9xbsVh9lOhLFOmYIdSbQ2j4zAfnvG/t5F3Q==}
++  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.327':
++    resolution: {integrity: sha512-oAdL7KM9UVAZlATeSjh2haeEjex1N7ZcHzWO1tY2hgyhkyLNVw/tWUhITOucxMwokBx++h2dMVjxiPJiZ5uVOQ==}
+     cpu: [x64]
+     os: [linux]
+     libc: [glibc]
+ 
+-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.319':
+-    resolution: {integrity: sha512-YoP0lYHJCziENFCotHQq9qd/gaJrwUNkAcnZyVjXxg1OPmtKuyw31aG60s4cWXRDXXGm/m1siNSQaGGfAYBvrw==}
++  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.327':
++    resolution: {integrity: sha512-a5ju83mylDvUwvQyRt1E0TQ0ar2nzVMPeWZhjcmgpB1cNTjf+KT5jgUnLvxPOG2tyjhm8bYGysRMdgB+tVnhvw==}
+     cpu: [arm64]
+     os: [win32]
+ 
+-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.319':
+-    resolution: {integrity: sha512-UC27x+8gfCS2OjNGJWrueP0gLOOKsLEsJ/kg0p6aa8GToZcJYjJ8KeAapHHRYMUAIB6Sarqe49Itm5P1wswCcQ==}
++  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.327':
++    resolution: {integrity: sha512-bf52nw4j5RCvkXI5Poj5Qf0jWvuLQ/UPFqdav86UwaGTZZ0txNV33MKBIUoCyxXV6IC1/p2BNfkwmCAZ+Uc9pw==}
+     cpu: [x64]
+     os: [win32]
+ 
+-  '@anthropic-ai/claude-agent-sdk@0.3.319':
+-    resolution: {integrity: sha512-7X+sh4uZv/u4OL4I4cQvMr9N3NM6FDiuyk829hFylgbrnNwVyiGElWEDWGuO26zwMIxmgpKdPoDILoFIHh1uwA==}
++  '@anthropic-ai/claude-agent-sdk@0.3.327':
++    resolution: {integrity: sha512-zS5RIrYphnhftgafFUpNCGwNUwR6UzLUv3cEy6iD1+LDxmVKnwJAaYTgzgsdijqwuGvcpeiWmbkVrEk0Jc4M5A==}
+     engines: {node: '>=18.14.0'}
+     peerDependencies:
+       '@anthropic-ai/sdk': '>=0.93.0'
+       '@modelcontextprotocol/sdk': ^1.29.0
+       zod: ^4.0.0
+ 
+-  '@anthropic-ai/claude-code-darwin-arm64@2.1.319':
+-    resolution: {integrity: sha512-dyAOFnsXbeyGgFJMlo2n6zSgLli5r4fTZ3Tj48eELxjccqM4s/wUmQ6P0DyCbxU0EC44VV44T2qj5xEpen25aA==}
++  '@anthropic-ai/claude-code-darwin-arm64@2.1.327':
++    resolution: {integrity: sha512-LAK6PYjIZLxLMqhjj/R4bexyKqItk8RXtyUpIHPpgs3opSBzNb7AszbbN3hfdyoyf0VacA2hThVsnDkkpz9R7g==}
+     cpu: [arm64]
+     os: [darwin]
+ 
+-  '@anthropic-ai/claude-code-darwin-x64@2.1.319':
+-    resolution: {integrity: sha512-XuzaFESZRKPupllcbbFCy0xdw9G9+VHLWbXaJhJhUD4gNTmt/ALkKMnECwr3umA7if1cAGDNb2tcgRCIpIy+nQ==}
++  '@anthropic-ai/claude-code-darwin-x64@2.1.327':
++    resolution: {integrity: sha512-QNGpfnwjftqzx1otsZjD9f+PAyo7PBomfnB+yNBgZ911o/1ERu9S5n5oNL3jeJTGV2pLbrVRCx/yg2X4/zkqOA==}
+     cpu: [x64]
+     os: [darwin]
+ 
+-  '@anthropic-ai/claude-code-linux-arm64-musl@2.1.319':
+-    resolution: {integrity: sha512-969quP2nXj7GRHzLSe9kov9c/f2p+ZuZrXkrvaenbLOX6zZJtyqZKRUyhDUjaVmSEEGFSxgCr/BtUMOXV8jaOw==}
++  '@anthropic-ai/claude-code-linux-arm64-musl@2.1.327':
++    resolution: {integrity: sha512-zVRKZ1IdMOvm7M4Y0FIuJY1g3BWnpGVUOv8Fu8kGHYk0WbkES1BkuJG0O/6Jzd+LhkadEmBypz0odbGqvoqD+w==}
+     cpu: [arm64]
+     os: [linux]
+     libc: [musl]
+ 
+-  '@anthropic-ai/claude-code-linux-arm64@2.1.319':
+-    resolution: {integrity: sha512-PlyxaZTAuU0VF3P/ERF4+deMRjT57cr90SHCrYms3HTebr3eItEWJozw6zq9cs88tc8XoF9ESAIghKXfq9HACg==}
++  '@anthropic-ai/claude-code-linux-arm64@2.1.327':
++    resolution: {integrity: sha512-vI4ygSwj6e8f0hWzM2sRxe6r2OvQU35HgoIZtx0rkvu574lxCFUUKUpn9hgWd6FwwMFz2gQyRhwQD7lPmTgW9A==}
+     cpu: [arm64]
+     os: [linux]
+     libc: [glibc]
+ 
+-  '@anthropic-ai/claude-code-linux-x64-musl@2.1.319':
+-    resolution: {integrity: sha512-LAj03VLWWZ+5T2c3dMxWZh5BhFzExwywIpT6y1oHnBj0Tx/ILIXYF1z6lcKSYsmiKChixPWzso35QnIfYLO8jg==}
++  '@anthropic-ai/claude-code-linux-x64-musl@2.1.327':
++    resolution: {integrity: sha512-GhxvaKxZSNSFOyGP3Dwm+QoHz2h5TMmONN+GXb4xH4tbWT5AnvoCT6P62r342fTdGoonVEigEH1bnkcALNzLOw==}
+     cpu: [x64]
+     os: [linux]
+     libc: [musl]
+ 
+-  '@anthropic-ai/claude-code-linux-x64@2.1.319':
+-    resolution: {integrity: sha512-FO4Sd23BO1VCQPiJe5vG3bNnmV5+YiTau7o1lqK3Fr5VlE4TLdKiyYpwQRwEXO91kE2l12Ep2i7J19T8Md2oOQ==}
++  '@anthropic-ai/claude-code-linux-x64@2.1.327':
++    resolution: {integrity: sha512-uJ24I+t47cpQjeo31ZrHepsFQ8QUsLjCxmDxLshMjYHEtoxhQdgKc4iuViQDaKpFqn3puR85gwHlLj4e7s+1iQ==}
+     cpu: [x64]
+     os: [linux]
+     libc: [glibc]
+ 
+-  '@anthropic-ai/claude-code-win32-arm64@2.1.319':
+-    resolution: {integrity: sha512-LJXWhy1rZGysmjwmC1/kapdaM55phYFPa3MGad033F01f76+q1lT4N8TCPC6wysHxrkLed/yucLGqMSTNY63cg==}
++  '@anthropic-ai/claude-code-win32-arm64@2.1.327':
++    resolution: {integrity: sha512-NRHSCyQEVLxhOHSP/nuiZwdTABGGICNiUfiJe2Z2BDOcodR6kCg99rYuLlXoyws6SLI50tzgjZLDL9c9KeZkrw==}
+     cpu: [arm64]
+     os: [win32]
+ 
+-  '@anthropic-ai/claude-code-win32-x64@2.1.319':
+-    resolution: {integrity: sha512-wncPKSYL/zvjs84k7wZEj+IGQx/LjqQNhgnQhzDEibP0yAVBguAs4p8nBfFAEDbDdUc4Z2co+OaKZV1t02xINA==}
++  '@anthropic-ai/claude-code-win32-x64@2.1.327':
++    resolution: {integrity: sha512-iOg2eIuMxvTiqIjS0rl//2iWU4ziZ6hyFzzvr/1cxNTTUH9miYNehzZaAni8chj3tB2RnQp81B1NZW3CnveuSQ==}
+     cpu: [x64]
+     os: [win32]
+ 
+-  '@anthropic-ai/claude-code@2.1.319':
+-    resolution: {integrity: sha512-XoyAxGXBmNsb9ahz0xLAtyz/I6b1j+4lyLpucyTQIq4FcKUxrMDM2AzA2sHipHoN1DdMJINQQrLZxRZRq7FqBA==}
++  '@anthropic-ai/claude-code@2.1.327':
++    resolution: {integrity: sha512-QToNtikIupqVMsxRUdDHUP0nS/uv3Wc43vcbT8YNRo7FtQOE9MvYLqPLQPoVhJ2DQQVPOFMB5PkaBNJbnNYeVg==}
+     engines: {node: '>=22.0.0'}
+     hasBin: true
+ 
+@@ -540,79 +540,79 @@ packages:
+ 
+ snapshots:
+ 
+-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.319':
++  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.319':
++  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.319':
++  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.319':
++  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.319':
++  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.319':
++  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.319':
++  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.319':
++  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-agent-sdk@0.3.319(@anthropic-ai/sdk@0.97.1(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)':
++  '@anthropic-ai/claude-agent-sdk@0.3.327(@anthropic-ai/sdk@0.97.1(zod@4.6.7))(@modelcontextprotocol/sdk@1.32.2(zod@4.6.7))(zod@4.6.7)':
+     dependencies:
+       '@anthropic-ai/sdk': 0.97.1(zod@4.6.7)
+       '@modelcontextprotocol/sdk': 1.32.2(zod@4.6.7)
+       zod: 4.6.7
+     optionalDependencies:
+-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.319
+-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.319
+-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.319
+-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.319
+-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.319
+-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.319
+-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.319
+-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.319
+-
+-  '@anthropic-ai/claude-code-darwin-arm64@2.1.319':
++      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.327
++      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.327
++      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.327
++      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.327
++      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.327
++      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.327
++      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.327
++      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.327
++
++  '@anthropic-ai/claude-code-darwin-arm64@2.1.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-code-darwin-x64@2.1.319':
++  '@anthropic-ai/claude-code-darwin-x64@2.1.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-code-linux-arm64-musl@2.1.319':
++  '@anthropic-ai/claude-code-linux-arm64-musl@2.1.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-code-linux-arm64@2.1.319':
++  '@anthropic-ai/claude-code-linux-arm64@2.1.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-code-linux-x64-musl@2.1.319':
++  '@anthropic-ai/claude-code-linux-x64-musl@2.1.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-code-linux-x64@2.1.319':
++  '@anthropic-ai/claude-code-linux-x64@2.1.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-code-win32-arm64@2.1.319':
++  '@anthropic-ai/claude-code-win32-arm64@2.1.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-code-win32-x64@2.1.319':
++  '@anthropic-ai/claude-code-win32-x64@2.1.327':
+     optional: true
+ 
+-  '@anthropic-ai/claude-code@2.1.319':
++  '@anthropic-ai/claude-code@2.1.327':
+     optionalDependencies:
+-      '@anthropic-ai/claude-code-darwin-arm64': 2.1.319
+-      '@anthropic-ai/claude-code-darwin-x64': 2.1.319
+-      '@anthropic-ai/claude-code-linux-arm64': 2.1.319
+-      '@anthropic-ai/claude-code-linux-arm64-musl': 2.1.319
+-      '@anthropic-ai/claude-code-linux-x64': 2.1.319
+-      '@anthropic-ai/claude-code-linux-x64-musl': 2.1.319
+-      '@anthropic-ai/claude-code-win32-arm64': 2.1.319
+-      '@anthropic-ai/claude-code-win32-x64': 2.1.319
++      '@anthropic-ai/claude-code-darwin-arm64': 2.1.327
++      '@anthropic-ai/claude-code-darwin-x64': 2.1.327
++      '@anthropic-ai/claude-code-linux-arm64': 2.1.327
++      '@anthropic-ai/claude-code-linux-arm64-musl': 2.1.327
++      '@anthropic-ai/claude-code-linux-x64': 2.1.327
++      '@anthropic-ai/claude-code-linux-x64-musl': 2.1.327
++      '@anthropic-ai/claude-code-win32-arm64': 2.1.327
++      '@anthropic-ai/claude-code-win32-x64': 2.1.327
+ 
+   '@anthropic-ai/sdk@0.97.1(zod@4.6.7)':
+     dependencies:
+@@ -631,7 +631,7 @@ snapshots:
+     dependencies:
+       '@hono/node-server': 2.1.6(hono@4.13.16)
+       ajv: 8.20.0
+-      ajv-formats: 3.0.1
++      ajv-formats: 3.0.1(ajv@8.20.0)
+       content-type: 1.0.5
+       cors: 2.8.6
+       cross-spawn: 7.0.6
+@@ -656,8 +656,8 @@ snapshots:
+       mime-types: 3.0.2
+       negotiator: 1.1.0
+ 
+-  ajv-formats@3.0.1:
+-    dependencies:
++  ajv-formats@3.0.1(ajv@8.20.0):
++    optionalDependencies:
+       ajv: 8.20.0
+ 
+   ajv@8.20.0:
+diff --git a/dist/index.js b/dist/index.js
+index dec9125a4439b2024038da07fc5d304ea581d8a8..40e6aaa5855a4939eef651aba27db3404fe412ec 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -5,6 +5,7 @@ import { generateId, isRecord, safeParseJSON, tool } from "@ai-sdk/provider-util
+ import { WebSocket } from "ws";
+ import { z } from "zod/v4";
+ import { execFileSync, execSync } from "node:child_process";
++import { createHash } from "node:crypto";
+ import { readFileSync } from "node:fs";
+ import { homedir } from "node:os";
+ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+@@ -313,6 +314,7 @@ const skillOverridesSchema = z.record(z.string(), z.enum([
+ const startMessageSchema = harnessV1BridgeStartBaseSchema.extend({
+ 	prompt: harnessPromptContentSchema,
+ 	readableSkillRoots: z.array(z.string()).optional(),
++	toolsHash: z.string().optional(),
+ 	instructions: z.string().optional(),
+ 	thinking: thinkingSchema,
+ 	effort: z.enum([
+@@ -350,6 +352,25 @@ const VERSION = "1.0.191";
+ //#endregion
+ //#region src/claude-code-harness.ts
+ /**
++* Brigade: the host's tools' hash, as the bridge keeps them (toolsPayload). Each schema is hashed
++* once per object: an agent's tools keep theirs from turn to turn.
++*/
++const schemaHashes = /* @__PURE__ */ new WeakMap();
++function hostToolsHash(tools, toolHints) {
++	const hash = createHash("sha256");
++	for (const t of tools) {
++		let schema = t.inputSchema != null && typeof t.inputSchema === "object" ? schemaHashes.get(t.inputSchema) : void 0;
++		if (schema == null) {
++			schema = createHash("sha256").update(JSON.stringify(t.inputSchema ?? null)).digest("base64url");
++			if (t.inputSchema != null && typeof t.inputSchema === "object") schemaHashes.set(t.inputSchema, schema);
++		}
++		hash.update(JSON.stringify([t.name, t.description ?? null, schema]));
++		hash.update("\0");
++	}
++	hash.update(JSON.stringify(toolHints ?? null));
++	return hash.digest("base64url");
++}
++/**
+ * Value to use in User-Agent and `x-client-app` headers.
+ */
+ const CLAUDE_CODE_CLIENT_APP = `ai-sdk-harness-claude-code/${VERSION}`;
+@@ -1101,10 +1122,14 @@ function createClaudeCode(settings = {}) {
+ 					portEndpointOverride: settings.portEndpoint
+ 				});
+ 				const attachChannel = new SandboxChannel({
++					// Brigade: attaching to a bridge handed over by an update retries for as long as a start
++					// does, as before 1.0.168, rather than give up at once and start a second one.
+ 					connect: createBridgeWebSocketConnect({
+ 						endpoint: attachEndpoint,
+ 						privateKey: coords.privateKey,
+ 						webSocketConstructor: WebSocket,
++						openRetryTimeoutMs: timeoutMs,
++						startAbortSignal: startOpts.abortSignal,
+ 						onHello
+ 					}),
+ 					outboundSchema: outboundMessageSchema,
+@@ -1305,6 +1330,22 @@ function createSession({ sessionId, channel, startId, finishListenerAttachment,
+ 	let stopPromise;
+ 	let pendingResumeFlag = continueOnFirstPrompt;
+ 	let lastClaudeSessionId = resumeSessionId;
++	// Brigade: the host's tools the bridge said it keeps (a turn's finish, `toolsKept`), by their
++	// hash: a turn with the same sends only the hash, not the tools again (6 MB with many Apps).
++	let toolsKept;
++	const toolsPayload = (tools) => {
++		const list = (tools ?? []).map((t) => ({
++			name: t.name,
++			description: t.description,
++			inputSchema: t.inputSchema
++		}));
++		if (list.length === 0) return { tools: list };
++		const toolsHash = hostToolsHash(list, toolHints);
++		return toolsHash === toolsKept ? { toolsHash } : {
++			tools: list,
++			toolsHash
++		};
++	};
+ 	let activeStartId = startId;
+ 	const wireTurn = (turnOpts) => {
+ 		activeStartId = turnOpts.startId;
+@@ -1352,6 +1393,8 @@ function createSession({ sessionId, channel, startId, finishListenerAttachment,
+ 		const settleError = (err) => {
+ 			if (isSettled) return;
+ 			isSettled = true;
++			// Brigade: the next turn sends the tools again, in case the bridge lost them.
++			toolsKept = void 0;
+ 			clearPendingStart();
+ 			userMessageSubmitter?.close(err);
+ 			for (const u of unsubs) u();
+@@ -1417,6 +1460,8 @@ function createSession({ sessionId, channel, startId, finishListenerAttachment,
+ 			if (!belongsToTurn(msg)) return;
+ 			const metadata = msg.harnessMetadata?.["claude-code"]?.sessionId;
+ 			if (typeof metadata === "string" && metadata.length > 0) lastClaudeSessionId = metadata;
++			const kept = msg.harnessMetadata?.["claude-code"]?.toolsKept;
++			if (typeof kept === "string") toolsKept = kept;
+ 			forward(msg);
+ 			settleSuccess();
+ 		}));
+@@ -1493,12 +1538,16 @@ function createSession({ sessionId, channel, startId, finishListenerAttachment,
+ 			}
+ 		};
+ 	};
++	// Brigade: the skills the session last wrote. Writing them reads their manifest back first (on a
++	// cloud computer, a sudo as the teammate), at every turn, for skills that seldom change.
++	let writtenSkills;
+ 	const prepareTurn = async (turnOpts) => {
+ 		if (turnOpts.responseFormat?.type === "json" && turnOpts.responseFormat.schema == null) throw new HarnessCapabilityUnsupportedError({
+ 			message: "Harness 'claude-code' requires a JSON schema for structured output.",
+ 			harnessId: "claude-code"
+ 		});
+-		await writeSkills({
++		const skillsKey = JSON.stringify(turnOpts.skills ?? []);
++		if (skillsKey !== writtenSkills) await writeSkills({
+ 			sandbox,
+ 			homePath: sandboxHomeDir,
+ 			skillsDir: ".claude/skills",
+@@ -1507,7 +1556,7 @@ function createSession({ sessionId, channel, startId, finishListenerAttachment,
+ 			invalidSkillNameMessage: ({ name }) => `Invalid Claude Code skill name: ${name}`,
+ 			invalidSkillFilePathMessage: ({ skillName, filePath }) => `Invalid Claude Code skill file path for ${skillName}: ${filePath}`,
+ 			trailingNewline: true
+-		});
++		}).then(() => writtenSkills = skillsKey);
+ 		return wireTurn({
+ 			emit: turnOpts.emit,
+ 			abortSignal: turnOpts.abortSignal,
+@@ -1526,11 +1575,7 @@ function createSession({ sessionId, channel, startId, finishListenerAttachment,
+ 			const startMessage = {
+ 				type: "start",
+ 				prompt: extractHarnessPromptContent({ prompt: promptOpts.prompt }),
+-				tools: (promptOpts.tools ?? []).map((t) => ({
+-					name: t.name,
+-					description: t.description,
+-					inputSchema: t.inputSchema
+-				})),
++				...toolsPayload(promptOpts.tools),
+ 				...promptOpts.responseFormat == null ? {} : { responseFormat: promptOpts.responseFormat },
+ 				...promptOpts.instructions ? { instructions: promptOpts.instructions } : {},
+ 				model: promptOpts.model,
+@@ -1574,11 +1619,7 @@ function createSession({ sessionId, channel, startId, finishListenerAttachment,
+ 				sendStart({
+ 					type: "start",
+ 					prompt: "Continue.",
+-					tools: (continueOpts.tools ?? []).map((t) => ({
+-						name: t.name,
+-						description: t.description,
+-						inputSchema: t.inputSchema
+-					})),
++					...toolsPayload(continueOpts.tools),
+ 					...continueOpts.responseFormat == null ? {} : { responseFormat: continueOpts.responseFormat },
+ 					...continueOpts.instructions ? { instructions: continueOpts.instructions } : {},
+ 					model: continueOpts.model,

@@ -2,7 +2,9 @@
 // the memory a quiet thread leaves behind. Both come from a runner over its socket;
 // the API checks the thread is on that runner's computer and the teammate's grant.
 import {
-  LIBRARY_SAVE_MAX,
+  formatMention,
+  LIBRARY_FILE_MAX,
+  LIBRARY_READ_MAX,
   TRASH_DAYS,
   type ApiToRunner,
   type RunnerToApi,
@@ -11,13 +13,22 @@ import { HTTPException } from 'hono/http-exception'
 import { audit } from './audit.js'
 import { scoped, type Scope } from './db.js'
 import { personEdits, saveTeammateDesignSystem } from './designs.js'
-import { notifyLibraryChanged } from './hub.js'
+import { hubs } from './hub.js'
 import { libraryChangeRefusal } from './library-changes.js'
-import { moveFolder, teammateLibraryAccess, trashFolder } from './library-folders.js'
+import { moveFolder, saveRefusal, teammateLibraryAccess, trashFolder } from './library-folders.js'
 import { trashLibraryFile } from './library-history.js'
-import { editMemory, moveLibraryFile, saveLibraryFile, saveSummary, search } from './library.js'
+import {
+  editMemory,
+  moveLibraryFile,
+  saveLibraryFile,
+  saveSummary,
+  search,
+  tidyMemory,
+} from './library.js'
 import { proposeSkill } from './skills.js'
-import { actingTeammate } from './thread-spec.js'
+import { actingTeammate, shownAccounts } from './thread-spec.js'
+import { toolStateFor } from './tools.js'
+import { claimUpload, discardUpload, readyUpload, uploadBytesKey } from './uploads.js'
 
 type Runner = { computerId: string; organizationId: string; workspaceId: string }
 
@@ -71,7 +82,12 @@ export async function handleLibraryCall(
   }
 
   if (op.name === 'skill_proposal')
-    return done(await proposeSkill(db, scope, teammate, session.id, op.proposal))
+    try {
+      return done(await proposeSkill(db, scope, teammate, session.id, op.proposal))
+    } catch (error) {
+      if (error instanceof HTTPException) return fail(error.message)
+      throw error
+    }
 
   if (op.name === 'move' || op.name === 'delete') {
     const to = op.name === 'move' ? op.to : undefined
@@ -132,23 +148,71 @@ export async function handleLibraryCall(
     return access === 'none'
       ? fail(`${teammate.name} has no access to that folder of the library.`)
       : done(await personEdits(db, session, op.path))
-  if (access !== 'read_write')
-    return fail(
-      access === 'none'
-        ? `${teammate.name} has no access to that folder of the library.`
-        : `${teammate.name} may read ${op.path.includes('/') ? 'that folder of ' : ''}the library but not save to it. An admin can allow it in the library or on the teammate's page.`,
+  if (op.name === 'tool_state') {
+    if (access === 'none')
+      return fail(`${teammate.name} has no access to that folder of the library.`)
+    // The shared keys, and the own keys of the person the thread works for, if one.
+    const { person } = await shownAccounts(db, session)
+    try {
+      return done(await toolStateFor(db, scope, op.path, person))
+    } catch (error) {
+      if (error instanceof HTTPException) return fail(error.message)
+      throw error
+    }
+  }
+  const refusal = saveRefusal(teammate.name, access, op.path)
+  if (refusal) return fail(refusal)
+  const actor = { type: 'teammate' as const, id: teammate.id }
+  let row
+  if (op.upload) {
+    // Uploaded straight to the bucket by the runner, and checked (routes/runner-uploads.ts).
+    const owner = { computerId: runner.computerId, sessionId: session.id }
+    try {
+      const upload = await readyUpload(db, owner, op.upload.id, 'library')
+      if (upload.size > LIBRARY_FILE_MAX)
+        return fail('Files saved from a thread can be up to 500 MB')
+      // Taken for this save alone: the same save sent again (a runner that restarted before it
+      // heard this one's answer) writes nothing, rather than over what was saved there since.
+      if (!(await claimUpload(db, upload.id)))
+        return fail('This upload was used or refused; upload it again')
+      row = await saveLibraryFile(
+        db,
+        scope,
+        actor,
+        {
+          path: op.path,
+          contentType: op.contentType ?? upload.contentType,
+          upload: { key: uploadBytesKey(scope, upload), ...upload },
+        },
+        { sessionId: session.id },
+      )
+      await discardUpload(scope, upload.id)
+    } catch (error) {
+      if (error instanceof HTTPException) return fail(error.message)
+      throw error
+    }
+  } else {
+    // A runner before DIRECT_UPLOAD_PROTOCOL: the bytes in the message. Remove with it.
+    const bytes = Buffer.from(op.content ?? '', 'base64')
+    if (bytes.byteLength > LIBRARY_READ_MAX)
+      return fail(
+        "Files saved from a thread can be up to 25 MB until this computer's runner is updated",
+      )
+    row = await saveLibraryFile(
+      db,
+      scope,
+      actor,
+      { path: op.path, bytes, contentType: op.contentType ?? null },
+      { sessionId: session.id },
     )
-  const bytes = Buffer.from(op.content, 'base64')
-  if (bytes.byteLength > LIBRARY_SAVE_MAX)
-    return fail('Files saved from a thread can be up to 10 MB')
-  const row = await saveLibraryFile(
-    db,
-    scope,
-    { type: 'teammate', id: teammate.id },
-    { path: op.path, bytes, contentType: op.contentType ?? null },
-    { sessionId: session.id },
-  )
-  return done({ path: row.path, size: row.size, contentType: row.contentType })
+  }
+  // The mention opens this file from the teammate's reply, where a bare name may not.
+  return done({
+    path: row.path,
+    size: row.size,
+    contentType: row.contentType,
+    mention: formatMention({ kind: 'document', id: row.id, label: row.path }),
+  })
 }
 
 /**
@@ -207,5 +271,59 @@ export async function handleMemoryUpdate(
       session.id,
     )
   }
-  notifyLibraryChanged(scope.workspaceId)
+  void hubs.get(scope.workspaceId).notifyLibraryChanged()
+}
+
+/**
+ * A tidy run's new layout for one memory file, run on the account of a thread
+ * that went quiet. Only for a file that thread may edit: the workspace's (not
+ * from a private thread), its project's, or one of its teammates'.
+ */
+export async function handleMemoryTidy(
+  runner: Runner,
+  tidy: Extract<RunnerToApi, { type: 'memory.tidy' }>,
+) {
+  const scope: Scope = { organizationId: runner.organizationId, workspaceId: runner.workspaceId }
+  const db = scoped(scope)
+  const session = await db.session.findFirst({
+    where: { id: tidy.sessionId, computerId: runner.computerId },
+    include: { teammates: { include: { teammate: true } } },
+  })
+  if (!session) return
+  const { file } = tidy
+  const input = { sessionId: session.id, lastTidied: tidy.lastTidied }
+  if (file.kind === 'workspace') {
+    if (session.private) return
+    await tidyMemory(
+      scope,
+      { type: 'teammate', id: session.teammateId },
+      { kind: 'workspace_memory' },
+      tidy.layout,
+      input,
+    )
+  } else if (file.kind === 'project') {
+    if (session.private || session.projectId !== file.projectId) return
+    const project = await db.project.findFirst({
+      where: { id: file.projectId },
+      select: { id: true, name: true },
+    })
+    if (!project) return
+    await tidyMemory(
+      scope,
+      { type: 'teammate', id: session.teammateId },
+      { kind: 'project_memory', projectId: project.id, name: project.name },
+      tidy.layout,
+      input,
+    )
+  } else {
+    const seat = session.teammates.find((t) => t.teammateId === file.teammateId)
+    if (!seat) return
+    await tidyMemory(
+      scope,
+      { type: 'teammate', id: file.teammateId },
+      { kind: 'teammate_memory', teammateId: file.teammateId, name: seat.teammate.name },
+      tidy.layout,
+      input,
+    )
+  }
 }

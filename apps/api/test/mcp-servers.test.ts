@@ -17,6 +17,12 @@ const { mixpanel, mixpanelAccountName } = await import('../src/connectors/mixpan
 const { resendAccountName } = await import('../src/connectors/resend.js')
 const { replicateAccountName } = await import('../src/connectors/replicate.js')
 const { openrouterAccountName } = await import('../src/connectors/openrouter.js')
+const { posthog, posthogAccountName } = await import('../src/connectors/posthog.js')
+const { dataforseoAccountName, dataforseoTarget } = await import('../src/connectors/dataforseo.js')
+const { ahrefs } = await import('../src/connectors/ahrefs.js')
+const { revenuecat, revenuecatAccountId, revenuecatAccountName } =
+  await import('../src/connectors/revenuecat.js')
+const { keyReconnectRefusal } = await import('../src/routes/connections.js')
 const { mcpOutput } = await import('../src/connectors/mcp-output.js')
 
 type Handler = (req: IncomingMessage, res: ServerResponse, body: string) => void
@@ -205,6 +211,167 @@ test('an OpenRouter account shows as personal or an organization’s', () => {
   assert.equal(openrouterAccountName(organization), 'Organization account')
   assert.equal(openrouterAccountName({ error: { message: 'Invalid API key', code: 401 } }), null)
   assert.equal(openrouterAccountName(null), null)
+})
+
+test('PostHog: each tool on its own, in the chosen areas', () => {
+  const server = posthog.mcp!
+  // Without mode=tools PostHog gives an unknown client one exec tool, all reads and writes.
+  const url = new URL(server.url)
+  assert.equal(url.searchParams.get('mode'), 'tools')
+  assert.ok(url.searchParams.get('features')!.split(',').includes('flags'))
+  assert.equal(server.tools['execute-sql']?.write, false)
+  assert.equal(server.tools['create-feature-flag']?.write, true)
+  assert.equal(server.tools['switch-project']?.write, false)
+  assert.equal(server.account!.name, posthogAccountName)
+})
+
+test('a PostHog account shows as its organizations', () => {
+  // organizations-get's reply, as a real account gave it (id changed): TOON, not JSON.
+  const one =
+    '[1]{id,name,slug,membership_level}:\n  019f0000-0000-0000-0000-4f3fc111640d,NoCo AI,noco-ai,15'
+  assert.equal(posthogAccountName(one), 'NoCo AI')
+  const two =
+    '[2]{id,name,slug,membership_level}:\n  1,"Acme, Inc.",acme,15\n  2,"Beta \\"B\\"",beta,1'
+  assert.equal(posthogAccountName(two), 'Acme, Inc. +1')
+  assert.equal(posthogAccountName('[1]{id,name}:\n  1,"Beta \\"B\\""'), 'Beta "B"')
+  assert.equal(posthogAccountName([{ id: '1', name: 'Acme' }]), 'Acme')
+  assert.equal(posthogAccountName('[0]{id,name,slug,membership_level}:'), null)
+  assert.equal(posthogAccountName('Failed to get organizations'), null)
+})
+
+test('a DataForSEO account shows as its login', () => {
+  // GET /v3/appendix/user_data's reply, trimmed (its money, rates and price are long).
+  const reply = {
+    version: '0.1.20250526',
+    status_code: 20000,
+    status_message: 'Ok.',
+    cost: 0,
+    tasks_count: 1,
+    tasks_error: 0,
+    tasks: [
+      {
+        id: '10241900-0000-0000-0000-000000000000',
+        status_code: 20000,
+        status_message: 'Ok.',
+        cost: 0,
+        result_count: 1,
+        path: ['v3', 'appendix', 'user_data'],
+        data: { api: 'appendix', function: 'user_data' },
+        result: [{ login: 'seo@acme.com', timezone: 'UTC', money: { total: 50, balance: 49.2 } }],
+      },
+    ],
+  }
+  assert.equal(dataforseoAccountName(reply), 'seo@acme.com')
+  assert.equal(
+    dataforseoAccountName({ status_code: 40100, status_message: 'Not authorized.', tasks: null }),
+    null,
+  )
+  assert.equal(dataforseoAccountName(null), null)
+})
+
+test('a DataForSEO request shows its method and route', () => {
+  assert.equal(
+    dataforseoTarget('api_request', {
+      method: 'POST',
+      path: '/v3/serp/google/organic/live/regular',
+      data: [{ keyword: 'crm', location_code: 2840 }],
+    }),
+    'POST /v3/serp/google/organic/live/regular [{"keyword":"crm","location_code":2840}]',
+  )
+  assert.equal(
+    dataforseoTarget('api_request', {
+      method: 'GET',
+      url: 'https://api.dataforseo.com/v3/appendix/user_data',
+    }),
+    'GET https://api.dataforseo.com/v3/appendix/user_data',
+  )
+  assert.equal(dataforseoTarget('docs_search', { url: '/v3/serp/' }), null)
+})
+
+test('Ahrefs tools that change something are writes, as its server marks them', () => {
+  // Its server marks every other tool readOnlyHint, even those that spend API units.
+  const tools = Object.entries(ahrefs.mcp!.tools)
+  assert.equal(tools.length, 157)
+  for (const [name, tool] of tools)
+    assert.equal(
+      tool.write,
+      /-(create|update|delete|add)$|^management-update-project$/.test(name),
+      name,
+    )
+})
+
+test("a RevenueCat account shows as its key's project", () => {
+  // list-projects' answer to a project's key, as RevenueCat's server gave it.
+  const one = {
+    object: 'list',
+    items: [
+      {
+        object: 'project',
+        id: 'proj2220e338',
+        name: 'NoCo AI',
+        created_at: '2026-06-14T07:33:34.157Z',
+        icon_url: 'https://www.appatar.io/com.nocontactai/small?store=app_store',
+        icon_url_large: 'https://www.appatar.io/com.nocontactai/large?store=app_store',
+      },
+    ],
+    next_page: null,
+    url: 'https://api.revenuecat.com/v2/projects',
+  }
+  assert.equal(revenuecatAccountName(one), 'NoCo AI')
+  assert.equal(revenuecatAccountId(one), 'proj2220e338')
+  const two = { ...one, items: [...one.items, { object: 'project', id: 'proj9', name: 'Talkie' }] }
+  assert.equal(revenuecatAccountName(two), 'NoCo AI +1')
+  assert.equal(revenuecatAccountName({ items: [] }), null)
+  assert.equal(revenuecatAccountName('Unauthorized'), null)
+  assert.equal(revenuecatAccountName(null), null)
+})
+
+test("a key reconnects only its own project's account, by the project's id", () => {
+  // Two projects may both be called Production: their ids tell them apart.
+  const projects = (...items: { id: string; name: string }[]) => ({
+    object: 'list',
+    items: items.map((p) => ({ object: 'project', ...p })),
+  })
+  const a = projects({ id: 'projA1', name: 'Production' })
+  const b = projects({ id: 'projB2', name: 'Production' })
+  assert.equal(revenuecatAccountName(a), revenuecatAccountName(b))
+  assert.equal(revenuecatAccountId(a), 'projA1')
+  assert.equal(revenuecatAccountId(b), 'projB2')
+  assert.equal(
+    revenuecatAccountId(projects({ id: 'projZ', name: 'Z' }, { id: 'projA', name: 'A' })),
+    'projA,projZ',
+  )
+  assert.equal(revenuecatAccountId({ items: [] }), null)
+  // A list with more pages names only some of the projects: no identity to renew an account by.
+  assert.equal(
+    revenuecatAccountId({
+      ...projects({ id: 'projA1', name: 'A' }),
+      next_page: '/v2/projects?starting_after=projA1',
+    }),
+    null,
+  )
+  assert.equal(revenuecatAccountId('Unauthorized'), null)
+  // connection-a is Project A's row: a key reaching it (same) may reconnect it, no other may.
+  assert.equal(
+    keyReconnectRefusal('RevenueCat', 'connection-a', 'connection-a', 'Production'),
+    null,
+  )
+  assert.match(
+    keyReconnectRefusal('RevenueCat', 'connection-a', undefined, 'Production')!,
+    /another RevenueCat account \(Production\)/,
+  )
+  assert.ok(keyReconnectRefusal('RevenueCat', 'connection-a', 'connection-b', 'Production'))
+})
+
+test('RevenueCat signs in with its OAuth or a key, and its tools that change something are writes', () => {
+  // Its OAuth, and the keys accounts were connected with before it.
+  assert.equal(revenuecat.auth, 'mcp')
+  assert.equal(revenuecat.mcp!.auth, undefined)
+  assert.equal(revenuecat.mcp!.keys, true)
+  const tools = Object.entries(revenuecat.mcp!.tools)
+  assert.equal(tools.length, 129)
+  const reads = /^(get|list|validate|preview|render)-/
+  for (const [name, tool] of tools) assert.equal(tool.write, !reads.test(name), name)
 })
 
 test("a Mixpanel account keeps its region's server", async () => {

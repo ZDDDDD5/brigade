@@ -5,17 +5,17 @@
 // beside it (a file, the preview, the computer) need the room, so asking for one
 // expands it first.
 import {
-  AppWindow,
+  Globe,
   ArrowDown,
+  ArrowUp,
   CalendarClock,
-  CircleStop,
+  ChevronDown,
   CloudUpload,
-  CornerDownLeft,
   FolderKanban,
   Laptop,
   Reply,
   LoaderCircle,
-  SquareKanban,
+  Split,
   UserRound,
   UsersRound,
   X,
@@ -23,63 +23,131 @@ import {
 } from 'lucide-react'
 import {
   defaultEffort,
+  loginOf,
   type Effort,
-  type HarnessId,
+  formatPreviewElement,
+  type TeammateHarness,
   mentionsToText,
+  type PreviewElement,
   type QueuedMessageAction,
   type ReplyTo,
+  suggestionFor,
+  toolFolderOf,
+  designFolderOf,
 } from '@brigade/contracts'
 import Link from 'next/link'
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
   type RefObject,
 } from 'react'
+import { flushSync } from 'react-dom'
 import {
   ComposerMenu,
   ComputerIcon,
+  SentAttachments,
   UploadList,
   useFileDrop,
   useUploads,
   type MoveTarget,
+  type Upload,
 } from '@/components/attachments'
 import { EffortButton, type EffortPick } from '@/components/effort'
 import { Composer } from '@/components/composer'
+import {
+  DictationBar,
+  DictationButton,
+  useDictation,
+  useDictationStatus,
+  withDictated,
+} from '@/components/dictation'
 import { TeammateAvatar, useDashboard } from '@/components/dashboard'
+import { useTouchScreen } from '@/components/desktop-touch'
 import { ComputerPanel, ExpandedComputer, useMacScreen } from '@/components/computer-panel'
 import { TeachTask } from '@/components/teach-task'
-import { useDocumentPanel } from '@/components/document-panel'
+import { AskedDocument, DocumentsButton, useDocumentPanel } from '@/components/document-panel'
 import { FileLinksProvider } from '@/components/file-links'
 import { FilePanel } from '@/components/file-panel'
 import {
+  dropKeptDesign,
+  dropKeptPreview,
+  dropKeptTool,
+  KeepDesign,
+  KeepPreview,
+  KeepTool,
+} from '@/components/kept-previews'
+import {
   PHASE,
-  PreviewPanel,
   previewLive,
   previewPhase,
   useCheckedPreview,
   useThreadPreview,
   useThreadRepositories,
 } from '@/components/preview-panel'
+import { PendingEdits, type PendingEditRow } from '@/components/pending-edits'
+import type { PickHandlers } from '@/components/preview-panel'
 import { usePreviewStart } from '@/components/preview-start'
 import { ThreadProjectMenu } from '@/components/projects'
-import { QueuedMessages, type Outgoing } from '@/components/queued-messages'
+import {
+  MessagesOnTheirWay,
+  QueuedMessages,
+  type Outgoing,
+  type OutgoingDraft,
+} from '@/components/queued-messages'
+import type { SideAction } from '@/components/side-reply'
+import { EndFollower } from '@/lib/end-follow'
+import { expireAttempt, inThread, useOutgoing } from '@/lib/outgoing-messages'
+import { onRevealSeq, revealSeq } from '@/lib/reveal'
 import { Takeover } from '@/components/takeover'
-import { ChildrenWaiting, ParentLink } from '@/components/thread-children'
+import {
+  ChildrenWaiting,
+  ChildrenWorking,
+  isQueuedReport,
+  ParentLink,
+  QueuedReports,
+} from '@/components/thread-children'
 import { TicketRow } from '@/components/ticket-row'
 import { useThreadOutputs } from '@/components/thread-outputs'
+import { ChangesPanel } from '@/components/changes-panel'
 import { useThreadPanel } from '@/components/thread-panel'
-import { ThreadSkeleton } from '@/components/thread-skeleton'
-import { ThreadItems, useThreadItems } from '@/components/thread-view'
+import { ThreadLoaded, ThreadSkeleton } from '@/components/thread-skeleton'
+import { ThreadTimeline, useThreadPrompts } from '@/components/thread-timeline'
+import {
+  Answering,
+  MessageBubble,
+  OutgoingMessage,
+  ThreadItems,
+  useThreadItems,
+  type ComputerDown,
+  type Item,
+} from '@/components/thread-view'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { useIsMobile } from '@/hooks/use-mobile'
 import {
+  designEditText,
+  removeDesignEdit,
+  restoreDesignEdits,
+  setDesignEdits,
+  setEditsSender,
+  type EditsSender,
+  designEditsOf,
+  updateDesignEdit,
+  useDesignEdits,
+  withUnsent,
+} from '@/lib/pending-edits'
+import { registerElementPicker } from '@/lib/element-pickers'
+import { pendingThreads, useOpenedMessage } from '@/lib/pending-threads'
+import {
   api,
   computerName,
+  isAdmin,
   preload,
   teammateModelLabel,
   useApi,
@@ -88,9 +156,23 @@ import {
   type ProjectSummary,
   type Teammate,
   type Thread,
+  type Ticket,
 } from '@/lib/api'
+import { GoalBanner } from '@/components/goal-banner'
+import { ThreadItemsCard } from '@/components/list-items'
+import { changeControl, inControlOrder, useControlled, useControlPending } from '@/lib/control'
+import { useChangesCount } from '@/lib/code-changes'
+import { openCodeTab, setCodePanel } from '@/lib/code-tabs'
+import { useReplyDraft } from '@/lib/reply-drafts'
+import { readThreadSide, rememberThreadSide } from '@/lib/thread-side'
+import { MORE_MESSAGES, OPEN_MESSAGES, windowStart } from '@/lib/thread-window'
 import { useLive } from '@/lib/use-live'
-import { preloadThreadEvents, useThreadEvents } from '@/lib/use-thread-events'
+import {
+  preloadThreadEvents,
+  useThreadEvents,
+  type ComputerAvailability,
+  type EventGap,
+} from '@/lib/use-thread-events'
 import { cn } from '@/lib/utils'
 
 /** What the threads panel's bar shows of a thread: who leads it, its title and state. */
@@ -98,6 +180,8 @@ export type ThreadHeading = {
   teammate: Pick<Teammate, 'id' | 'name' | 'harness'>
   /** Everyone in it: the channel beside it is one of theirs. */
   teammateIds: string[]
+  /** Everyone in it, who leads it first: the pill at the top shows them all. */
+  teammates: Pick<Teammate, 'id' | 'name'>[]
   title: string
   /** The project it works in, if any. */
   project: Pick<ProjectSummary, 'id' | 'name' | 'icon'> | null
@@ -111,22 +195,61 @@ export type ThreadHeading = {
   control: 'mine' | 'other' | null
 }
 
-/** Replies being written, per thread: closing the panel or opening another thread keeps them. */
-const replyDrafts = new Map<string, string>()
-
-function useReplyDraft(id: string) {
-  const [text, setText] = useState(() => replyDrafts.get(id) ?? '')
-  useEffect(() => {
-    if (text) replyDrafts.set(id, text)
-    else replyDrafts.delete(id)
-  }, [id, text])
-  return [text, setText] as const
+/**
+ * An element picked in the preview, by the id its page gave it, and the upload of its
+ * picture; `drawing` while its page draws it, when the message waits for the picture.
+ */
+export type Picked = {
+  id: string
+  element: PreviewElement
+  upload?: string
+  drawing?: boolean
+  /** When it was picked: the pending edits go in that order, with the design comments. */
+  at: number
+  /** What should change on it, written in its row. */
+  note?: string
 }
+
+/** Elements picked in each thread's preview, kept when another thread opens. */
+const keptElements = new Map<string, Picked[]>()
+
+const editsCount = (n: number) => (n === 1 ? '1 edit' : `${n} edits`)
+
+/** How long a message waits for a picture its page is drawing (it may have gone away). */
+const DRAWING_MS = 15_000
 
 /** Sends ahead what a thread's conversation asks for as it opens (lib/api.ts's `preload`). */
 export function preloadConversation(id: string) {
+  // Not started yet: nothing to ask for, and a refusal sent ahead would be what it opens on.
+  if (pendingThreads.has(id)) return
   preload(`/threads/${id}`)
   preloadThreadEvents(id)
+}
+
+/** How long the mouse rests on a thread's link before it is sent ahead: passing over a list sends nothing. */
+const HOVER_MS = 80
+let hovering: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * A link to a thread sends it ahead (`preloadConversation`) as the mouse rests on it, and as
+ * it is pressed (a touch, or a click quicker than that): it has often come back by the click.
+ * None for the thread open already, which has it.
+ */
+export function preloadOnPoint(id: string, open = false): ComponentProps<'a'> {
+  if (open) return {}
+  return {
+    onPointerEnter: (e) => {
+      if (e.pointerType !== 'mouse') return
+      clearTimeout(hovering)
+      hovering = setTimeout(() => preloadConversation(id), HOVER_MS)
+    },
+    onPointerLeave: () => clearTimeout(hovering),
+    onPointerDown: (e) => {
+      if (e.button !== 0) return
+      clearTimeout(hovering)
+      preloadConversation(id)
+    },
+  }
 }
 
 export function ThreadConversation({
@@ -149,7 +272,10 @@ export function ThreadConversation({
   top?: ReactNode
 }) {
   const { me, projects } = useDashboard()
-  const thread = useApi<Thread>(`/threads/${id}`)
+  const fetched = useApi<Thread>(`/threads/${id}`)
+  // Taking control or handing it back shows here at once, while the API takes it.
+  const thread = { ...fetched, data: useControlled(fetched.data) }
+  const controlPending = useControlPending(id)
   const computers = useApi<ComputersResponse>('/computers')
   const accounts = useApi<Account[]>('/accounts')
   // Since when its updates have not reached Brigade, as the thread and then the API say.
@@ -171,31 +297,104 @@ export function ThreadConversation({
       message.eventsWaitingSince !== undefined
     )
       setEventsWaitingSince(message.eventsWaitingSince)
-    if (message.type === 'computer.updated') void computers.reload()
+    if (message.type === 'computer.updated') {
+      void computers.reload()
+      // Its own computer, also another member's: whether it is there, as the message says.
+      if (message.computerId === thread.data?.computer.id)
+        setAvailability((was) => ({
+          id: message.computerId,
+          online: message.online,
+          restarting: message.restarting ?? false,
+          status: message.status ?? was?.status,
+        }))
+    }
   })
   // Keyed by the thread: when it started loading, for its placeholder's delays.
   const [openedAt] = useState(() => Date.now())
   const [status, setStatus] = useState<string>()
+  // Its computer's availability since the thread loaded, from its sockets: newer than the thread's.
+  const [availability, setAvailability] = useState<ComputerAvailability>()
+  useEffect(() => setAvailability(undefined), [id])
   const {
     events,
     connected,
     firstSeq,
+    gaps,
     loadOlder,
     loadingOlder,
+    jumpTo,
+    fillGap,
     loaded: eventsLoaded,
     reconnect,
-  } = useThreadEvents(id, setStatus)
-  const { items, queued, seen, turnId, background } = useThreadItems(events, firstSeq)
+  } = useThreadEvents(id, (status, computer) => {
+    setStatus(status)
+    if (!computer) return
+    setAvailability(computer)
+    // It moved while this page was away: the thread again, for its new computer's name and move.
+    if (thread.data && computer.id !== thread.data.computer.id) void thread.reload()
+  })
+  const { items, queued, seen, turnId, background, next } = useThreadItems(events, firstSeq, gaps)
+  // A long thread opens on its last messages, what is above them drawn as the person reads up to
+  // it (lib/thread-window.ts): the seq of the person's message it shows from, null for all of it.
+  // Set once, as its events come in: new messages below do not move where it starts.
+  const [startSeq, setStartSeq] = useState<number | null>()
+  if (startSeq === undefined && eventsLoaded) setStartSeq(windowStart(items, OPEN_MESSAGES))
+  const startRef = useRef(startSeq)
+  startRef.current = startSeq
+  // Opened at once (lib/pending-threads.ts): its first message shows until an event has it.
+  const opened = useOpenedMessage(id)
+  const delivered = events.some((e) => e.event.type === 'message.user')
+  useEffect(() => {
+    if (opened && delivered) pendingThreads.delivered(id)
+  }, [opened, delivered, id])
   const outputs = useThreadOutputs(events)
   const macScreen = useMacScreen(events)
   const preview = useCheckedPreview(id, useThreadPreview(events))
   // Preview is offered once there is something to preview: a preview it had, or code it checked out.
   const repositories = useThreadRepositories(events)
   const offersPreview = !!preview || repositories.length > 0
+  // Whose code its Changes show: the teammate that last checked out code here.
+  const codeTeammateId = useMemo(() => {
+    const event = events.findLast(
+      (e) => e.event.type === 'repositories.changed' && e.event.repositories.length > 0,
+    )?.event
+    return event?.type === 'repositories.changed' ? event.teammateId : undefined
+  }, [events])
   const [error, setError] = useState<string>()
   // The turn asked to stop, until it ends: a tool can take a moment to give up.
   const [stopping, setStopping] = useState<string>()
-  const [text, setText] = useReplyDraft(id)
+  // Text added from elsewhere (a document's Ask) lands here with the cursor after it.
+  const [text, setText] = useReplyDraft(id, () => focusComposer())
+  // Dictation: its words go in the box; with send pressed while recording, they go at once.
+  const dictationStatus = useDictationStatus()
+  const sendDictated = useRef(false)
+  const dictation = useDictation((words, sendNow) => {
+    sendDictated.current = sendNow
+    setText(withDictated(text, words))
+    if (!sendNow) focusComposer()
+  })
+  useEffect(() => {
+    dictation.clearError()
+    if (!sendDictated.current || !text.trim()) return
+    sendDictated.current = false
+    void send().catch(() => undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sends once, as the words land
+  }, [text])
+  // The teammate's guess at this member's next message, while it stands (suggestionFor).
+  const guess = useMemo(
+    () =>
+      suggestionFor(
+        events.map((e) => e.event),
+        me.suggestions ? me.memberId : null,
+      ),
+    [events, me.memberId, me.suggestions],
+  )
+  const guessSeq = guess ? events[guess.index]?.seq : undefined
+  // Typing writes over it for good, even once the box is empty again; so does taking it.
+  const [dismissed, setDismissed] = useState<number>()
+  useEffect(() => {
+    if (guessSeq !== undefined && text !== '') setDismissed(guessSeq)
+  }, [guessSeq, text])
   // The message the next one replies to, quoted above the composer.
   const [replyTo, setReplyTo] = useState<ReplyTo>()
   useEffect(() => setReplyTo(undefined), [id])
@@ -213,7 +412,119 @@ export function ThreadConversation({
   // Its machine went offline: Wait keeps the card offering the cloud computer away.
   const [waitForMachine, setWaitForMachine] = useState(false)
   useEffect(() => setWaitForMachine(false), [id])
-  const files = useUploads()
+  // Its files stay with the thread, like its text, when another thread opens.
+  const files = useUploads(id)
+  // Elements picked in the preview, as chips above it; the message carries them, and their
+  // pictures as files of its own that show in their chips rather than with the other files.
+  // Kept with the thread's files: a picture's file shows in its chip.
+  const [elements, setElements] = useState<Picked[]>(() =>
+    (keptElements.get(id) ?? []).map(({ drawing: _drawing, ...e }) => e),
+  )
+  useEffect(() => {
+    if (elements.length) keptElements.set(id, elements)
+    else keptElements.delete(id)
+  }, [id, elements])
+  const elementsRef = useRef(elements)
+  elementsRef.current = elements
+  const pickElement = useMemo<PickHandlers>(() => {
+    const drawn = (pickId: string, change: Partial<Picked> = {}) =>
+      setElements((list) =>
+        list.map((e) => (e.id === pickId ? { ...e, ...change, drawing: false } : e)),
+      )
+    return {
+      element: (pickId, element) => {
+        setElements((list) =>
+          list.some(
+            (e) => e.element.page === element.page && e.element.selector === element.selector,
+          )
+            ? list
+            : [...list, { id: pickId, element, drawing: true, at: Date.now() }],
+        )
+        setFocusEdit(pickId)
+        setTimeout(() => drawn(pickId), DRAWING_MS)
+      },
+      picture: (pickId, image) => {
+        const picked = elementsRef.current.find((e) => e.id === pickId)
+        if (!picked?.drawing) return
+        if (!image) return drawn(pickId)
+        const name = `element-${pickId}.png`
+        const [upload] = files.add([new File([image], name, { type: 'image/png' })])
+        drawn(pickId, { ...(upload && { upload }), element: { ...picked.element, image: name } })
+      },
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- files.add, not the uploads list
+  }, [files.add])
+  // A tool beside this thread, or in the document panel while it shows, picks for it too.
+  const pickRef = useRef(pickElement)
+  pickRef.current = pickElement
+  const mayPick = thread.data?.mayPrompt === true
+  useEffect(() => (mayPick ? registerElementPicker(id, pickRef) : undefined), [id, mayPick])
+  // A picture that did not upload is left out: the element goes without it.
+  const removeUpload = files.remove
+  useEffect(() => {
+    const failed = elements.filter(
+      (e) => e.upload && files.uploads.some((u) => u.key === e.upload && u.error),
+    )
+    if (!failed.length) return
+    for (const e of failed) removeUpload(e.upload!)
+    setElements((list) =>
+      list.map((e) => {
+        if (!failed.some((f) => f.id === e.id)) return e
+        const { image: _image, ...element } = e.element
+        return { id: e.id, element, at: e.at, ...(e.note !== undefined && { note: e.note }) }
+      }),
+    )
+  }, [elements, files.uploads, removeUpload])
+  const pictureKeys = new Set(elements.flatMap((e) => (e.upload ? [e.upload] : [])))
+  const removeElement = (pickId: string) => {
+    const upload = elements.find((e) => e.id === pickId)?.upload
+    if (upload) files.remove(upload)
+    setElements((list) => list.filter((e) => e.id !== pickId))
+  }
+  // Comments made on a design's canvas beside the thread wait here too, with the elements:
+  // one numbered list, in the order they were made, sent in one message.
+  const designEdits = useDesignEdits(id)
+  const [focusEdit, setFocusEdit] = useState<string>()
+  const lastDesignEdit = designEdits.at(-1)?.id
+  useEffect(() => {
+    if (!lastDesignEdit) return
+    // Picked on the canvas in Comment, it comes without its note: written here, as a preview's.
+    const added = designEditsOf(id).find((d) => d.id === lastDesignEdit)
+    setFocusEdit(added && !added.note ? lastDesignEdit : undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- when one is added
+  }, [lastDesignEdit])
+  const pendingEdits = [
+    ...elements.map((e) => ({ at: e.at, element: e, design: undefined })),
+    ...designEdits.map((d) => ({ at: d.at, element: undefined, design: d })),
+  ].sort((a, b) => a.at - b.at)
+  const editRows: PendingEditRow[] = pendingEdits.map(({ element: e, design: d }) =>
+    e
+      ? {
+          kind: 'element',
+          key: e.id,
+          picked: {
+            element: e.element,
+            ...(e.drawing && { drawing: true }),
+            ...(e.upload && {
+              picture: files.uploads.find((u) => u.key === e.upload)?.preview,
+            }),
+          },
+          where: e.element.page || '/',
+          note: e.note ?? '',
+          onNote: (note: string) =>
+            setElements((list) => list.map((x) => (x.id === e.id ? { ...x, note } : x))),
+          onRemove: () => removeElement(e.id),
+        }
+      : {
+          kind: 'design',
+          key: d!.id,
+          label: d!.label,
+          where: d!.folder,
+          note: d!.note,
+          onNote: (note: string) => updateDesignEdit(id, d!.id, note),
+          onRemove: () => removeDesignEdit(id, d!.id),
+        },
+  )
   const drop = useFileDrop(files.add)
   const root = useRef<HTMLDivElement>(null)
   const scroller = useRef<HTMLDivElement>(null)
@@ -227,48 +538,116 @@ export function ThreadConversation({
     computerPage,
     previewRequest,
     takePreviewRequest,
+    computerRequest,
+    takeComputerRequest,
   } = useThreadPanel()
+  // Beside the thread as it was left in this tab: back from another thread, the same one shows.
+  const [side] = useState(() => readThreadSide(id))
   // A file a message names, open beside the thread in the desktop's place.
-  const [file, setFile] = useState<{ path: string; teammateId?: string }>()
+  const [file, setFile] = useState<{ path: string; teammateId?: string } | undefined>(() =>
+    side?.kind === 'file'
+      ? { path: side.path, ...(side.teammateId && { teammateId: side.teammateId }) }
+      : undefined,
+  )
   // The app the teammate runs, beside the thread in the desktop's place.
-  const [previewing, setPreviewing] = useState(false)
+  const [previewing, setPreviewing] = useState(side?.kind === 'preview')
+  // The files it changed, beside the thread in the desktop's place, without a preview.
+  const [changesOpen, setChangesOpen] = useState(side?.kind === 'changes')
+  // Closed, or something else beside it: its kept frame goes too.
+  useEffect(() => {
+    if (!previewing) dropKeptPreview(id)
+  }, [id, previewing])
+  // A library tool beside it (its folder, as its mention names it, or its page): kept as the
+  // preview is, so back from another thread its page is as it was left, not loaded again.
+  const keptTool = useMemo(() => {
+    if (!file || !(me.features?.includes('tools') ?? false)) return undefined
+    const path = file.path.trim().replace(/\/+$/, '')
+    if (path.startsWith('/')) return undefined
+    const tool = toolFolderOf(path)
+    // Its folder is always the library's (components/file-panel.tsx); its page, unless a
+    // teammate's own copy is named.
+    if (!tool) return undefined
+    return path === tool || (path === `${tool}/index.html` && !file.teammateId) ? tool : undefined
+  }, [file, me.features])
+  useEffect(() => {
+    if (!keptTool) dropKeptTool(id)
+  }, [id, keptTool])
+  // A design beside it (its folder, as its mention names it): kept the same way, its canvas as
+  // it was left (boards loaded, where it was zoomed, what was selected).
+  const keptDesign = useMemo(() => {
+    if (!file) return undefined
+    const path = file.path.trim().replace(/\/+$/, '')
+    return !path.startsWith('/') && designFolderOf(path) === path ? path : undefined
+  }, [file])
+  useEffect(() => {
+    if (!keptDesign) dropKeptDesign(id)
+  }, [id, keptDesign])
+  useEffect(() => {
+    rememberThreadSide(
+      id,
+      file
+        ? { kind: 'file', ...file }
+        : previewing
+          ? { kind: 'preview' }
+          : changesOpen
+            ? { kind: 'changes' }
+            : undefined,
+    )
+  }, [id, file, previewing, changesOpen])
   // The computer expanded over the thread from its details, which it hides until it closes.
   const [computerOpen, setComputerOpen] = useState(false)
   // Teach a task: the computer over the window, recording the person doing it.
   const [teaching, setTeaching] = useState(false)
   // Recording a task needs a desktop to do it on: not offered on phones.
   const phone = useIsMobile()
+  // Asked of the API only for a thread not loaded from its start, shown wide.
+  const prompts = useThreadPrompts(
+    id,
+    items,
+    firstSeq <= 1 && gaps.length === 0,
+    expanded && !phone,
+  )
+  // No Tab key to take a suggestion: a Use button beside the box instead.
+  const touch = useTouchScreen()
   // One panel beside the thread: a document opened anywhere replaces the file, preview or computer.
   const documents = useDocumentPanel()
   const openFile = (f: { path: string; teammateId?: string }) => {
     if (!expanded) onExpand()
     documents.close()
     setPreviewing(false)
+    setChangesOpen(false)
     setFile(f)
   }
   const openPreview = () => {
     if (!expanded) onExpand()
     documents.close()
     setFile(undefined)
+    setChangesOpen(false)
     setPreviewing(true)
   }
   useEffect(() => {
     if (documents.current) {
       setFile(undefined)
       setPreviewing(false)
+      setChangesOpen(false)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- when the open document changes
   }, [documents.current])
-  // The bar's computer button brings the teammate's panel back in front of a file or preview.
+  // The bar's computer button brings the teammate's panel back in front of a file or preview:
+  // a click since this thread opened, not one made on another thread.
+  const revealedAt = useRef(revealKey)
   useEffect(() => {
-    if (!revealKey) return
+    if (revealKey === revealedAt.current) return
+    revealedAt.current = revealKey
     setFile(undefined)
     setPreviewing(false)
+    setChangesOpen(false)
   }, [revealKey])
   // And it shows pressed only while the panel is the one in front.
   useEffect(() => {
-    setCovered(!!file || previewing)
+    setCovered(!!file || previewing || changesOpen)
     return () => setCovered(false)
-  }, [file, previewing, setCovered])
+  }, [file, previewing, changesOpen, setCovered])
   // A preview a person started, or asked the teammate for: its panel opens once it starts.
   const [awaitingPreview, setAwaitingPreview] = useState(false)
   const live = previewLive(preview)
@@ -278,6 +657,12 @@ export function ThreadConversation({
     takePreviewRequest()
     setAwaitingPreview(true)
   }, [previewRequest, id, takePreviewRequest])
+  // Opened from Home's ticket once the member took control: its computer, over the window.
+  useEffect(() => {
+    if (computerRequest?.threadId !== id) return
+    takeComputerRequest()
+    setComputerOpen(true)
+  }, [computerRequest, id, takeComputerRequest])
   useEffect(() => {
     if (!awaitingPreview || !live) return
     setAwaitingPreview(false)
@@ -323,7 +708,8 @@ export function ThreadConversation({
     focusComposer()
   }
   // Messages sent from here that the thread has not shown yet (queued, read or cancelled).
-  const [outgoing, setOutgoing] = useState<Outgoing[]>([])
+  // Kept per thread: one not through is still here after another thread opened.
+  const [outgoing, setOutgoing] = useOutgoing(id)
   const pendingOut = useMemo(() => {
     // A runner too old for message ids shows the message without one: matched by its text.
     const plain = events.filter((e) => e.event.type === 'message.user' && !e.event.messageId)
@@ -335,40 +721,75 @@ export function ThreadConversation({
         ),
     )
   }, [outgoing, seen, events])
-  const pendingRef = useRef(pendingOut)
-  pendingRef.current = pendingOut
+  const inThreadOut = pendingOut.filter(inThread)
+  const lastOut = inThreadOut.at(-1)
+  // Once the thread has them, they go, and their files' previews with them.
+  useEffect(() => {
+    const gone = outgoing.filter((o) => !pendingOut.includes(o))
+    if (gone.length === 0) return
+    for (const o of gone) for (const u of o.uploads) if (u.preview) URL.revokeObjectURL(u.preview)
+    setOutgoing((list) => list.filter((o) => !gone.some((g) => g.messageId === o.messageId)))
+  }, [outgoing, pendingOut, setOutgoing])
 
   // At the end, the thread follows what comes in, streamed words included. Scrolled up to
   // read, nothing moves: a button goes back down. An older page above does not move the view.
-  const following = useRef(true)
   const [atEnd, setAtEnd] = useState(true)
   const loaded = !!thread.data
+  // Following the end, the person's own scrolling always winning (lib/end-follow.ts).
+  const [follower] = useState(
+    () =>
+      new EndFollower(
+        () => scroller.current,
+        {
+          now: () => performance.now(),
+          frame: (run) => requestAnimationFrame(run),
+          cancelFrame: (id) => cancelAnimationFrame(id),
+          after: (run, ms) => setTimeout(run, ms),
+          cancel: (handle) => clearTimeout(handle),
+        },
+        setAtEnd,
+        END_SLACK,
+        QUIET_MS,
+      ),
+  )
   useEffect(() => {
     const view = scroller.current
     if (!view) return
-    const measure = () => {
-      const end = view.scrollHeight - view.clientHeight - view.scrollTop < END_SLACK
-      following.current = end
-      setAtEnd(end)
-    }
+    const measure = () => follower.measure()
     // Opening or closing a fold moves the end too, without a scroll.
     const afterClick = () => requestAnimationFrame(measure)
+    const theirs = (event: Event) =>
+      follower.theirs({
+        type: event.type,
+        ...(event instanceof WheelEvent ? { deltaY: event.deltaY } : {}),
+        ...(event instanceof KeyboardEvent ? { key: event.key } : {}),
+      })
     view.addEventListener('scroll', measure, { passive: true })
     view.addEventListener('click', afterClick)
+    for (const type of ['wheel', 'touchstart', 'keydown'] as const)
+      view.addEventListener(type, theirs, { passive: true })
     return () => {
+      follower.dispose()
       view.removeEventListener('scroll', measure)
       view.removeEventListener('click', afterClick)
+      for (const type of ['wheel', 'touchstart', 'keydown'] as const)
+        view.removeEventListener(type, theirs)
     }
-  }, [loaded])
-  const toEnd = (behavior: ScrollBehavior = 'instant') => {
-    following.current = true
-    scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior })
-  }
+  }, [loaded, follower])
   const lastKey = items.at(-1)?.key
   const lastSeq = events.at(-1)?.seq
   useEffect(() => {
-    if (following.current) toEnd()
-  }, [lastKey, lastSeq, pendingOut.length, loaded])
+    follower.follow()
+    follower.settle(loaded)
+  }, [lastKey, lastSeq, pendingOut.length, lastOut?.state, loaded, follower])
+  // A reply revealed word by word grows between events (lib/stream-text.ts): followed as it grows.
+  useEffect(() => {
+    const content = scroller.current?.firstElementChild
+    if (!content) return
+    const grown = new ResizeObserver(() => follower.follow())
+    grown.observe(content)
+    return () => grown.disconnect()
+  }, [loaded, follower])
   // An older page goes in above what is on screen: keep that where it was.
   const anchor = useRef<number>(undefined)
   const loadEarlier = () =>
@@ -381,7 +802,87 @@ export function ThreadConversation({
     anchor.current = undefined
     const view = scroller.current
     if (fromEnd !== undefined && view) view.scrollTop = view.scrollHeight - fromEnd
-  }, [firstSeq])
+  }, [firstSeq, gaps, startSeq])
+  // Read up to the messages held back above: more of them, what is on screen staying where it was.
+  const showEarlier = () => {
+    if (startSeq == null) return
+    const view = scroller.current
+    anchor.current = view ? view.scrollHeight - view.scrollTop : undefined
+    setStartSeq(windowStart(items, MORE_MESSAGES, startSeq))
+  }
+  // Going to a message held back (a reply's quote): all of it at once, for what goes there to find
+  // it in the page right after, and again, for a fold that holds it to open now that it is drawn.
+  useEffect(
+    () =>
+      onRevealSeq((seq) => {
+        const start = startRef.current
+        if (start == null || seq >= start) return
+        startRef.current = null
+        // Going up on purpose: what goes in above must not pull the view back to the end. The view
+        // goes there at once, since the browser keeping it where it was as the rest goes in above
+        // reads as the view at the end, which it would follow again.
+        follower.leave()
+        flushSync(() => setStartSeq(null))
+        scroller.current
+          ?.querySelector<HTMLElement>(`[data-seq="${seq}"]`)
+          ?.scrollIntoView({ block: 'center' })
+        revealSeq(seq)
+      }),
+    [follower],
+  )
+  // A gap's page goes in where it is: read up into it, what is on screen stays where it was.
+  const loadGap = (gap: EventGap, line: HTMLElement) => {
+    const view = scroller.current
+    const fromBelow =
+      !!view &&
+      line.getBoundingClientRect().top < view.getBoundingClientRect().top + view.clientHeight / 2
+    return fillGap(gap, fromBelow ? 'last' : 'first', () => {
+      if (fromBelow && view) anchor.current = view.scrollHeight - view.scrollTop
+    })
+  }
+
+  // The timeline: a message it went to, once it shows, comes to the top of the view. Pages
+  // near it then wait for a scroll of the person's own, rather than loading at once.
+  const [jumping, setJumping] = useState<number>()
+  const [settled, setSettled] = useState(true)
+  useEffect(() => {
+    setJumping(undefined)
+    setSettled(true)
+  }, [id])
+  const jump = (seq: number) => {
+    setSettled(false)
+    setJumping(seq)
+    // Held back above: all of it, for the message to be there to go to.
+    if (startSeq != null && seq < startSeq) setStartSeq(null)
+    // Only this message's own failure: a newer click keeps its place.
+    void jumpTo(seq).catch(() => setJumping((was) => (was === seq ? undefined : was)))
+  }
+  useLayoutEffect(() => {
+    const view = scroller.current
+    const node =
+      jumping !== undefined && view?.querySelector<HTMLElement>(`[data-seq="${jumping}"]`)
+    if (!view || !node) return
+    setJumping(undefined)
+    follower.leave()
+    // Folded away (a turn's Aside), it opens where it is.
+    revealSeq(jumping!)
+    // Below the bar floating over the top of the conversation.
+    const top = node.getBoundingClientRect().top - view.getBoundingClientRect().top
+    view.scrollTo({ top: view.scrollTop + top - JUMP_MARGIN })
+  }, [jumping, events, gaps, follower])
+  useEffect(() => {
+    const view = scroller.current
+    if (!view || settled) return
+    const scrolled = () => setSettled(true)
+    view.addEventListener('wheel', scrolled, { passive: true })
+    view.addEventListener('touchmove', scrolled, { passive: true })
+    view.addEventListener('keydown', scrolled)
+    return () => {
+      view.removeEventListener('wheel', scrolled)
+      view.removeEventListener('touchmove', scrolled)
+      view.removeEventListener('keydown', scrolled)
+    }
+  }, [settled])
   useEffect(() => {
     if (thread.data) setStatus(thread.data.status)
     if (thread.data) setEventsWaitingSince(thread.data.eventsWaitingSince)
@@ -392,6 +893,10 @@ export function ThreadConversation({
     onHeading({
       teammate: { ...t.teammate, harness: t.teammate.harness as Teammate['harness'] },
       teammateIds: t.teammates.length ? t.teammates.map((p) => p.teammate.id) : [t.teammate.id],
+      teammates: [
+        t.teammate,
+        ...t.teammates.map((p) => p.teammate).filter((p) => p.id !== t.teammate.id),
+      ].map(({ id, name }) => ({ id, name })),
       title: t.title,
       project: t.project,
       computer: { kind: t.computer.kind, name: t.computer.name },
@@ -423,6 +928,15 @@ export function ThreadConversation({
     reconnect()
     void thread.reload()
   }
+  // Outputs' changed files: of the teammate that checked out code, read again as its status
+  // changes (a turn starts or ends).
+  const changesTeammate = repositories.length
+    ? (codeTeammateId ?? thread.data?.teammate.id)
+    : undefined
+  const changedFiles = useChangesCount(thread.data?.id, changesTeammate, status)
+  // Above the return while the thread loads: hooks after it would change their count.
+  const sendRef = useRef<() => Promise<void>>(async () => {})
+  const sendEdits = useCallback(() => void sendRef.current().catch(() => undefined), [])
   if (!thread.data)
     return thread.error ? (
       <p className={cn(column, 'pt-6 text-sm text-destructive-text')}>{thread.error.message}</p>
@@ -434,10 +948,23 @@ export function ThreadConversation({
   const t = thread.data
   const current = status ?? t.status
   const busy = current === 'running' || current === 'starting'
+  // Its teammate's call waits on a decision: a message waits for it too. Waiting only on a
+  // ticket or question it opened, the teammate reads a message at once and the ask stays open.
+  const deciding = current === 'waiting' && t.tickets.some(holdsCall)
+  // In an empty box only, with nothing attached or quoted, and once the teammate is done.
+  const suggestion =
+    guess &&
+    guessSeq !== dismissed &&
+    !busy &&
+    current !== 'waiting' &&
+    !replyTo &&
+    files.uploads.length === 0
+      ? guess.text
+      : undefined
   const effort: EffortPick = {
     value: effortPicked ? effortPicked.value : t.effort,
     // The starting teammate's model: where Default sits.
-    fallback: defaultEffort(t.teammate.harness as HarnessId, t.teammate.model),
+    fallback: defaultEffort(t.teammate.harness as TeammateHarness, t.teammate.model),
     onPick: (value) => {
       setEffortPicked({ value })
       setEffortTurn(busy ? turnId : undefined)
@@ -474,7 +1001,9 @@ export function ThreadConversation({
       ticket.type === 'approval' &&
       (ticket.payload.skillAction ||
         ticket.payload.playbookActivation ||
-        ticket.payload.playbookPromotion),
+        ticket.payload.playbookPromotion ||
+        // A mission's draft to approve (docs/missions.md), planned with no event of its own.
+        ticket.payload.missionAction),
   )
   const ticketCard = (tickets: typeof t.tickets, className: string) => (
     <Card className={cn('gap-0 overflow-hidden py-0', className)}>
@@ -498,12 +1027,17 @@ export function ThreadConversation({
                 teammate: t.teammate,
               },
             }}
-            onResolve={async (ticketId, approved) => {
+            onResolve={async (ticketId, approved, _always, edited) => {
               setError(undefined)
               try {
-                await api(`/tickets/${ticketId}/resolve`, { body: { approved } })
+                await api(`/tickets/${ticketId}/resolve`, {
+                  body: { approved, ...(edited ? { edited } : {}) },
+                })
               } catch (e) {
+                // Its row gives the buttons back.
                 setError((e as Error).message)
+                await thread.reload()
+                throw e
               }
               await thread.reload()
             }}
@@ -515,13 +1049,14 @@ export function ThreadConversation({
 
   // Where the thread can continue: its starter moves it, it runs on their accounts. The cloud
   // computer or a machine of theirs, with an account for each of its teammates.
-  const harnesses = new Set(people.map((p) => p.harness))
+  // Each login its teammates run on (for Pi, its model's vendor's: loginOf).
+  const logins = new Set(people.map((p) => loginOf(p.harness as TeammateHarness, p.model)))
   const hasAccounts = (computerId: string) =>
-    [...harnesses].every((harness) =>
+    [...logins].every((login) =>
       (accounts.data ?? []).some(
         (a) =>
           a.computer.id === computerId &&
-          a.provider === harness &&
+          a.provider === login &&
           (a.status === 'ready' || a.status === 'unverified'),
       ),
     )
@@ -539,7 +1074,29 @@ export function ThreadConversation({
         }))
         .sort((a, b) => Number(!!b.current) - Number(!!a.current))
     : []
-  const machineOnline = computers.data?.computers.find((c) => c.id === t.computer.id)?.online
+  // What the sockets said, once about the computer the thread is on (after a move, not yet reloaded: not).
+  const liveComputer = availability?.id === t.computer.id ? availability : undefined
+  const machine = {
+    ...t.computer,
+    ...liveComputer,
+    status: liveComputer?.status ?? t.computer.status,
+  }
+  const machineOnline = machine.online
+  // Its computer went away during a turn: said where the answer would show, by the machine's name.
+  const machineDown: ComputerDown | undefined = machine.restarting
+    ? { name: machine.name, cloud: machine.kind === 'cloud', state: 'restarting' }
+    : machine.online
+      ? undefined
+      : machine.kind === 'cloud'
+        ? machine.status === 'error' || machine.status === 'destroyed'
+          ? undefined
+          : // Stopped from its menu, it waits for someone to start it; else it is coming back.
+            {
+              name: machine.name,
+              cloud: true,
+              state: machine.status === 'stopped' ? 'offline' : 'restarting',
+            }
+        : { name: machine.name, cloud: false, state: 'offline' }
   // Its machine is offline: offer the cloud computer, where its teammates can pick up.
   const cloudTarget = moveTargets.find((c) => c.cloud && !c.current && !c.unavailable)
   const offerCloud =
@@ -563,8 +1120,12 @@ export function ThreadConversation({
             ? `Moves to ${movingTo} once it is online`
             : `Moving to ${movingTo}…`
       : undefined
-  // The computer's own page, the thread docked beside it.
-  const showComputer = () => openComputer(t.teammate.id, { threadId: id })
+  // Expanded, its computer over the window, to act there (its details' screen is to watch);
+  // docked, the computer's own page, the thread beside it.
+  const showComputer = () => {
+    if (!expanded) return openComputer(t.teammate.id, { threadId: id })
+    setComputerOpen(true)
+  }
 
   async function call(path: string, body?: unknown) {
     setError(undefined)
@@ -576,7 +1137,15 @@ export function ThreadConversation({
     }
   }
 
-  const ready = (text.trim() || files.ids.length > 0 || moveTo) && !files.busy && !files.failed
+  const ready =
+    (text.trim() ||
+      files.ids.length > 0 ||
+      elements.length > 0 ||
+      designEdits.length > 0 ||
+      moveTo) &&
+    !files.busy &&
+    !elements.some((e) => e.drawing) &&
+    !files.failed
 
   /**
    * Send the composer's message; it shows above the composer until the thread shows it.
@@ -585,28 +1154,63 @@ export function ThreadConversation({
    */
   async function send(e?: React.FormEvent) {
     e?.preventDefault()
-    if (!ready || current === 'waiting') return
-    const sending = text.trim()
+    if (!ready || deciding) return
+    const written = text.trim()
     const replying = replyTo
     const moving = moveTo
-    if (moving && !sending && files.ids.length === 0) {
+    const picked = elements
+    const commented = designEdits
+    if (
+      moving &&
+      !written &&
+      files.ids.length === 0 &&
+      picked.length === 0 &&
+      commented.length === 0
+    ) {
       setMoveTo(undefined)
       return moveThread(moving.id).catch(() => setMoveTo((current) => current ?? moving))
     }
+    // The edits after what the person wrote, so a preview of the message starts with it,
+    // in the order they were made.
+    const sending = [
+      written,
+      ...pendingEdits.map(({ element: e, design: d }) =>
+        e
+          ? formatPreviewElement({ ...e.element, ...(e.note?.trim() && { note: e.note }) })
+          : designEditText(d!),
+      ),
+    ]
+      .filter(Boolean)
+      .join('\n\n')
+    const attachmentIds = files.ids
+    // Its files leave the box with it, and show with it in the thread.
+    const taken = files.take()
     setText('')
     setReplyTo(undefined)
     setMoveTo(undefined)
-    try {
-      await deliver(sending, files.ids, undefined, replying, moving)
-      files.clear()
-    } catch (err) {
-      // Not sent: back in the composer, as it was.
-      setText((current) => current || sending)
-      setReplyTo((current) => current ?? replying)
-      setMoveTo((current) => current ?? moving)
-      setError((err as Error).message)
-    }
+    setElements([])
+    setDesignEdits(id, [])
+    await deliver(sending, attachmentIds, undefined, replying, moving, {
+      uploads: taken.uploads,
+      // Not through, and edited: back in the composer, as it was.
+      draft: {
+        text: written,
+        ...(replying ? { replyTo: replying } : {}),
+        ...(moving ? { moveTo: moving } : {}),
+        elements: picked,
+        designEdits: commented,
+      },
+    })
   }
+
+  // The canvas of a design beside the thread adds its comments here while this composer can take
+  // them; over the page, it hides the composer and sends the edits from there.
+  sendRef.current = send
+  const editsDisabled = deciding
+    ? 'Approve or deny the request above first'
+    : !ready
+      ? 'Wait for the pictures to finish'
+      : undefined
 
   /** Continue the thread on another computer without a message: its teammate picks up where it was. */
   async function moveThread(computerId: string) {
@@ -614,29 +1218,45 @@ export function ThreadConversation({
     await thread.reload()
   }
 
-  /** Send a message to the thread: the composer's, or a choice someone clicked. Throws when it is not sent. */
+  /**
+   * Send a message to the thread: the composer's, or a choice someone clicked. It shows at once,
+   * in the thread or (the teammate working) above the composer. Refused, it throws, unless it can
+   * go back to the composer (`draft`): then it stays, marked, to send again or edit.
+   */
   async function deliver(
     sending: string,
     attachmentIds: string[] = [],
     pick?: string,
     replyTo?: ReplyTo,
     moveTo?: MoveTarget,
+    how: { messageId?: string; uploads?: Upload[]; draft?: OutgoingDraft } = {},
   ) {
     const message: Outgoing = {
-      messageId: newMessageId(),
+      messageId: how.messageId ?? newMessageId(),
       text: sending,
       files: attachmentIds.length,
+      uploads: how.uploads ?? [],
       afterSeq: events.at(-1)?.seq ?? 0,
       state: 'sending',
+      queues: busy,
+      at: Date.now(),
+      with: {
+        attachmentIds,
+        ...(pick ? { pick } : {}),
+        ...(replyTo ? { replyTo } : {}),
+        ...(moveTo ? { moveTo } : {}),
+      },
       ...(moveTo ? { movingTo: moveTo.name } : {}),
+      ...(how.draft ? { draft: how.draft } : {}),
     }
-    const update = (state: Outgoing['state']) =>
+    const update = (patch: Partial<Outgoing>) =>
       setOutgoing((list) =>
-        list.map((o) => (o.messageId === message.messageId ? { ...o, state } : o)),
+        list.map((o) => (o.messageId === message.messageId ? { ...o, ...patch } : o)),
       )
-    setOutgoing((list) => [...list, message])
+    // Sent again, it takes the place of the one that did not get through.
+    setOutgoing((list) => [...list.filter((o) => o.messageId !== message.messageId), message])
     // Sending goes back to the end, to see the answer come.
-    following.current = true
+    follower.following = true
     try {
       const sent = await api<{ delivery?: string }>(`/threads/${id}/messages`, {
         body: {
@@ -651,20 +1271,50 @@ export function ThreadConversation({
       setError(undefined)
       const starting = sent.delivery === 'starting'
       const moving = sent.delivery === 'moving'
-      update(moving ? 'moving' : starting ? 'starting' : 'sent')
+      const sentAt = Date.now()
+      update({ state: moving ? 'moving' : starting ? 'starting' : 'sent', sentAt })
       if (moving) void thread.reload()
       // The computer says it got a message within seconds, or a few minutes when it starts
-      // first. A move waits for the turn, then for the files to be handed over: longer.
+      // first. A move waits for the turn, then for the files to be handed over: longer. Only
+      // this attempt: one sent again since waits its own time.
       setTimeout(
-        () => {
-          if (pendingRef.current.some((o) => o.messageId === message.messageId)) update('failed')
-        },
+        () => expireAttempt(id, message.messageId, sentAt),
         moving ? 30 * 60_000 : starting ? 10 * 60_000 : 20_000,
       )
     } catch (err) {
-      setOutgoing((list) => list.filter((o) => o.messageId !== message.messageId))
-      throw err
+      if (!how.draft) {
+        setOutgoing((list) => list.filter((o) => o.messageId !== message.messageId))
+        throw err
+      }
+      update({ state: 'unsent', error: (err as Error).message })
     }
+  }
+
+  /** The same message again, with its id: should the first have gone after all, it goes once. */
+  const retryOutgoing = (m: Outgoing) =>
+    void deliver(m.text, m.with.attachmentIds, m.with.pick, m.with.replyTo, m.with.moveTo, {
+      messageId: m.messageId,
+      uploads: m.uploads,
+      ...(m.draft ? { draft: m.draft } : {}),
+    }).catch((err: Error) => setError(err.message))
+  /** Back in the composer, to change and send as a new message. */
+  const editOutgoing = (m: Outgoing) => {
+    setOutgoing((list) => list.filter((o) => o.messageId !== m.messageId))
+    const draft = m.draft
+    if (draft) {
+      setText((current) => current || draft.text)
+      files.put(m.uploads)
+      setReplyTo((current) => current ?? draft.replyTo)
+      setMoveTo((current) => current ?? draft.moveTo)
+      // Edits added since stay, after the ones it took.
+      setElements((current) => withUnsent(current, draft.elements))
+      restoreDesignEdits(id, draft.designEdits)
+    } else setText((current) => current || m.text)
+    focusComposer()
+  }
+  const discardOutgoing = (m: Outgoing) => {
+    setOutgoing((list) => list.filter((o) => o.messageId !== m.messageId))
+    for (const u of m.uploads) if (u.preview) URL.revokeObjectURL(u.preview)
   }
 
   const queueAction = (messageId: string, action: QueuedMessageAction) =>
@@ -690,13 +1340,14 @@ export function ThreadConversation({
 
   // Expanded, what is not the conversation sits in the panel beside it: the thread's
   // computer (with Preview), its details, then what it made.
-  // One row per fact, an icon for its kind: who is in it, where it runs, its project, its task,
-  // who started it. Not what the page already says: its title is in the pill, its teammate and
-  // the cloud computer in the panel's header.
+  // Its name first, on one line that opens when it is cut, as the pill is out of sight on a
+  // phone. Then one row per fact, an icon for its kind: who is in it, where it runs, its project,
+  // the thread a teammate started it from, who started it. Not its teammate and the cloud computer: the panel's header says them.
   const fact = 'flex min-w-0 items-center gap-2.5'
   const factIcon = 'size-4 shrink-0 text-muted-foreground'
   const details = (
     <div className="flex flex-col gap-2 text-sm">
+      {t.title && <ThreadName title={t.title} />}
       {people.length > 1 && (
         <div className={fact}>
           <UsersRound aria-label="Teammates" className={factIcon} />
@@ -731,12 +1382,15 @@ export function ThreadConversation({
           {projectMenu}
         </div>
       )}
-      {t.task && (
+      {t.startedFrom && (
         <div className={fact}>
-          <SquareKanban aria-label="Task" className={factIcon} />
-          <Link href={`/app/tasks?task=${t.task.id}`} className="truncate hover:underline">
-            {t.task.title}
-          </Link>
+          <Split aria-label="Started from" className={factIcon} />
+          <span className="min-w-0 truncate">
+            From{' '}
+            <Link href={`/app/threads/${t.startedFrom.id}`} className="hover:underline">
+              {t.startedFrom.title}
+            </Link>
+          </span>
         </div>
       )}
       <div className={cn(fact, 'text-muted-foreground')}>
@@ -769,57 +1423,115 @@ export function ThreadConversation({
       </div>
     </div>
   )
-  // Preview is the computer's one action.
-  const computerActions = offersPreview && (
-    <div className="flex flex-wrap gap-2">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        aria-pressed={previewing}
-        disabled={previewStart.busy}
-        onClick={() => {
-          if (previewing) return setPreviewing(false)
-          if (live) return openPreview()
-          // Stopped: the panel says what happens while it starts again.
-          if (preview) openPreview()
-          void previewStart.start()
-        }}
-        title={
-          live
-            ? `Opens the app ${previewTeammate?.name ?? answering.name} runs, so you can try it`
-            : 'Runs the app this thread builds, so you can try it'
-        }
-      >
-        {previewStart.busy ? (
-          <LoaderCircle aria-hidden className="animate-spin" />
-        ) : (
-          <AppWindow aria-hidden />
-        )}
-        {/* What a click does, not only what it is about. */}
-        {previewStart.busy
-          ? 'Starting…'
-          : previewing
-            ? 'Hide preview'
-            : live
-              ? 'Open preview'
-              : 'Start preview'}
-        {preview && live && (
-          <span
-            className={cn('size-1.5 rounded-full', PHASE[previewPhase(preview)].dot)}
-            aria-label={PHASE[previewPhase(preview)].label}
-            role="img"
-          />
-        )}
-      </Button>
+  // Top right of the expanded thread, across from the sidebar's toggle and round like it: the
+  // app it builds is the thread's, not its computer's, and stays in reach with the details closed.
+  // What a click does, not only what it is about: its label, on hover and for screen readers.
+  // As far in as the toggle (left-2), so the pill bar's px-12 leaves the same gap on each side.
+  const openChanges = () => {
+    if (!changesTeammate) return
+    // A preview running this copy: the code beside it, on Changes.
+    if (live && preview?.teammateId === changesTeammate) {
+      setCodePanel(t.id, { open: true, side: 'changes', tree: true })
+      return openPreview()
+    }
+    if (!expanded) onExpand()
+    documents.close()
+    setFile(undefined)
+    setPreviewing(false)
+    setChangesOpen(true)
+  }
+  const previewLabel = previewStart.busy
+    ? 'Starting the preview…'
+    : previewing
+      ? 'Hide preview'
+      : live
+        ? 'Open preview'
+        : 'Start preview'
+  const previewButton = (
+    <Button
+      type="button"
+      variant="outline"
+      size="icon"
+      className="pointer-events-auto relative rounded-full bg-card/90 shadow-sm backdrop-blur"
+      aria-pressed={previewing}
+      aria-label={previewLabel}
+      disabled={previewStart.busy}
+      onClick={() => {
+        if (previewing) return setPreviewing(false)
+        if (live) return openPreview()
+        // Stopped: the panel says what happens while it starts again.
+        if (preview) openPreview()
+        void previewStart.start()
+      }}
+      tooltip={
+        previewStart.busy || previewing
+          ? previewLabel
+          : live
+            ? `${previewLabel}: the app ${previewTeammate?.name ?? answering.name} runs, to try it`
+            : `${previewLabel}: runs the app this thread builds, to try it`
+      }
+    >
+      {previewStart.busy ? (
+        <LoaderCircle aria-hidden className="animate-spin" />
+      ) : (
+        <Globe aria-hidden />
+      )}
+      {preview && live && (
+        <span
+          className={cn(
+            'absolute top-0.5 right-0.5 size-2 rounded-full ring-2 ring-card',
+            PHASE[previewPhase(preview)].dot,
+          )}
+          aria-label={PHASE[previewPhase(preview)].label}
+          role="img"
+        />
+      )}
+    </Button>
+  )
+  // Under it, a minimized document's button (DocumentsButton): in its place without a preview.
+  const corner = top && (
+    <div className="pointer-events-none absolute top-0 right-0 z-20 flex flex-col items-end gap-2 px-2 pt-2.5">
+      {offersPreview && previewButton}
+      <DocumentsButton className="pointer-events-auto" />
     </div>
   )
 
   return (
-    <div ref={root} className="flex min-h-0 flex-1 flex-col">
+    <div ref={root} data-look="thread" className="flex min-h-0 flex-1 flex-col">
+      <EditsSenderSync
+        threadId={id}
+        // Without the right to write here, no composer takes them: the canvas sends at once.
+        sender={
+          t.mayPrompt
+            ? {
+                count: editRows.length,
+                order: editRows.map((r) => r.key),
+                send: sendEdits,
+                ...(editsDisabled && { disabled: editsDisabled }),
+              }
+            : undefined
+        }
+      />
       {/* Beside the thread, so only expanded: docked, opening one expands it first. Outside
           what scrolls: its fade would hide them. */}
-      {expanded && file && (
+      {/* Rendered by the dashboard, so its frame stays as it was while another thread shows. */}
+      {file && keptTool && (
+        <KeepTool
+          shown={expanded}
+          threadId={t.id}
+          folder={keptTool}
+          onClose={() => setFile(undefined)}
+        />
+      )}
+      {file && keptDesign && (
+        <KeepDesign
+          shown={expanded}
+          threadId={t.id}
+          folder={keptDesign}
+          onClose={() => setFile(undefined)}
+        />
+      )}
+      {expanded && file && !keptTool && !keptDesign && (
         <FilePanel
           key={`${file.teammateId ?? ''}:${file.path}`}
           threadId={t.id}
@@ -828,13 +1540,29 @@ export function ThreadConversation({
           teammateName={(teammateId) =>
             people.find((p) => p.id === teammateId)?.name ?? t.teammate.name
           }
+          mayEdit={t.mayPrompt}
+          previewCopy={
+            live && preview?.teammateId
+              ? {
+                  teammateId: preview.teammateId,
+                  name: people.find((p) => p.id === preview.teammateId)?.name ?? answering.name,
+                  // In the code beside the preview, the file of the copy it runs.
+                  open: (path) => {
+                    openCodeTab(t.id, { teammateId: preview.teammateId!, path })
+                    openPreview()
+                  },
+                }
+              : undefined
+          }
           onOpen={openFile}
           onClose={() => setFile(undefined)}
         />
       )}
 
-      {expanded && !file && !documents.current && previewing && preview && (
-        <PreviewPanel
+      {/* Rendered by the dashboard, so its frame stays as it was while another thread shows. */}
+      {previewing && preview && (
+        <KeepPreview
+          shown={expanded && !file && !documents.current}
           threadId={t.id}
           preview={preview}
           teammateName={people.find((p) => p.id === preview.teammateId)?.name ?? answering.name}
@@ -845,13 +1573,29 @@ export function ThreadConversation({
           starting={previewStart.busy}
           waking={previewStart.waking}
           onAsk={t.mayPrompt ? askInComposer : undefined}
+          code={{
+            mayEdit: t.mayPrompt,
+            teammateName: (teammateId) =>
+              people.find((p) => p.id === teammateId)?.name ?? t.teammate.name,
+          }}
+          {...(t.mayPrompt ? { onPick: pickElement, picked: elements.length } : {})}
+        />
+      )}
+      {expanded && !file && !documents.current && !previewing && changesOpen && changesTeammate && (
+        <ChangesPanel
+          threadId={t.id}
+          teammateId={changesTeammate}
+          teammateName={(teammateId) =>
+            people.find((p) => p.id === teammateId)?.name ?? t.teammate.name
+          }
+          mayEdit={t.mayPrompt}
+          onClose={() => setChangesOpen(false)}
         />
       )}
       {expanded && computerOpen && t.computer.kind === 'cloud' && (
         <ExpandedComputer
           thread={t}
           memberId={me.memberId ?? ''}
-          status={status ?? t.status}
           onChange={() => void thread.reload()}
           onClose={() => setComputerOpen(false)}
         />
@@ -867,22 +1611,32 @@ export function ThreadConversation({
           onClose={() => setTeaching(false)}
         />
       )}
-      {expanded && !computerOpen && !file && !documents.current && !previewing && watching && (
-        <ComputerPanel
-          thread={t}
-          memberId={me.memberId ?? ''}
-          // Expanded where it is: the thread stays the page.
-          onOpenComputer={() => setComputerOpen(true)}
-          onClose={() => setWatching(false)}
-          outputs={outputs}
-          onOpenFile={openFile}
-          details={details}
-          actions={computerActions}
-          onChange={() => void thread.reload()}
-          screen={t.computer.kind === 'cloud' ? undefined : macScreen}
-          turnId={busy ? turnId : undefined}
-        />
-      )}
+      {expanded &&
+        !computerOpen &&
+        !file &&
+        !documents.current &&
+        !previewing &&
+        !changesOpen &&
+        watching && (
+          <ComputerPanel
+            thread={t}
+            memberId={me.memberId ?? ''}
+            // Expanded where it is: the thread stays the page.
+            onOpenComputer={() => setComputerOpen(true)}
+            onClose={() => setWatching(false)}
+            outputs={outputs}
+            onOpenFile={openFile}
+            changes={
+              changesTeammate && !changedFiles.unsupported
+                ? { data: changedFiles.data, error: changedFiles.error, onOpen: openChanges }
+                : undefined
+            }
+            details={details}
+            onChange={() => void thread.reload()}
+            screen={t.computer.kind === 'cloud' ? undefined : macScreen}
+            turnId={busy ? turnId : undefined}
+          />
+        )}
 
       <div
         className="relative flex min-h-0 flex-1 flex-col"
@@ -891,7 +1645,16 @@ export function ThreadConversation({
       >
         {drop.dragging && <DropOverlay />}
         {top}
-        <div ref={scroller} className="scroll-fade min-h-0 flex-1 overflow-y-auto">
+        {corner}
+        {expanded && eventsLoaded && (
+          <ThreadTimeline
+            scroller={scroller}
+            prompts={prompts}
+            long={firstSeq > 1 || gaps.length > 0 || startSeq != null}
+            onJump={jump}
+          />
+        )}
+        <div ref={scroller} className="scroll-fade scroll-fade-y min-h-0 flex-1 overflow-y-auto">
           <div className={cn(column, top ? 'pt-16' : expanded ? 'pt-6 md:pt-8' : 'pt-4', 'pb-12')}>
             {t.parent && (
               <ParentLink
@@ -901,6 +1664,8 @@ export function ThreadConversation({
                 reportDueAt={t.mayPrompt ? t.reportDueAt : null}
               />
             )}
+            <GoalBanner threadId={t.id} goal={t.goal} onChange={reload} />
+            <ThreadItemsCard threadId={t.id} />
 
             {notices.length > 0 && ticketCard(notices, 'mb-4')}
 
@@ -909,37 +1674,119 @@ export function ThreadConversation({
             {!eventsLoaded ? (
               <ThreadSkeleton since={openedAt} onRetry={retry} />
             ) : (
-              // In with a quick fade, in the column the placeholder held.
-              <div className="animate-in duration-200 fade-in motion-reduce:animate-none">
+              // In the column the placeholder held: with a quick fade after it, else at once.
+              <ThreadLoaded since={openedAt}>
                 <FileLinksProvider value={{ open: openFile, threadId: t.id }}>
-                  {/* Once its page is in and shown at its end, not before: it would load one at once. */}
-                  {firstSeq > 1 && (events.at(-1)?.seq ?? 0) >= firstSeq && (
+                  {/* Messages held back above: drawn as the person reads up to them. */}
+                  {startSeq != null ? (
                     <EarlierMessages
-                      key={firstSeq}
+                      key={`held-${startSeq}`}
                       root={scroller}
-                      loading={loadingOlder}
-                      onLoad={loadEarlier}
+                      loading={false}
+                      onLoad={async () => showEarlier()}
                     />
+                  ) : (
+                    /* Once its page is in and shown at its end, not before: it would load one at once. */
+                    firstSeq > 1 &&
+                    (events.at(-1)?.seq ?? 0) >= firstSeq && (
+                      <EarlierMessages
+                        key={firstSeq}
+                        root={scroller}
+                        loading={loadingOlder}
+                        onLoad={loadEarlier}
+                        auto={settled}
+                      />
+                    )
+                  )}
+                  {/* Opened at once: the message it started with, until its runner has it here. */}
+                  {opened && !delivered && (
+                    <div className="mb-4 ml-auto flex max-w-[85%] flex-col items-end gap-1.5">
+                      {opened.text && <MessageBubble text={opened.text} />}
+                      {opened.files.length > 0 && (
+                        <SentAttachments uploads={opened.files} className="justify-end" />
+                      )}
+                    </div>
                   )}
                   <ThreadItems
+                    pending={
+                      <>
+                        {/* Not read yet: as sent, where the turn reads them, its status under them. */}
+                        {t.mayPrompt && !t.controlledByMemberId && (
+                          <QueuedMessages
+                            queued={queued.filter((m) => !isQueuedReport(m))}
+                            teammateName={answering.name}
+                            canSteer={busy}
+                            canParallel={!t.parent}
+                            onAction={queueAction}
+                          />
+                        )}
+                        {/* Sent from here: in the thread at once, until the thread has them. */}
+                        {inThreadOut.map((m) => (
+                          <OutgoingMessage
+                            key={m.messageId}
+                            message={m}
+                            teammates={people}
+                            onRetry={() => retryOutgoing(m)}
+                            onEdit={() => editOutgoing(m)}
+                            onDiscard={() => discardOutgoing(m)}
+                          />
+                        ))}
+                        {/* Sent to a quiet thread: how it goes, until the turn says it itself. */}
+                        {(lastOut?.state === 'sent' || lastOut?.state === 'starting') &&
+                          !lastOut.queues && (
+                            <Answering
+                              teammate={answering}
+                              phase={lastOut.state === 'starting' ? 'starting' : 'reading'}
+                              {...(lastOut.sentAt !== undefined ? { since: lastOut.sentAt } : {})}
+                            />
+                          )}
+                      </>
+                    }
                     threadId={t.id}
                     items={items}
+                    startSeq={startSeq}
                     teammate={t.teammate}
                     teammates={people}
                     drafting={text.trim() !== ''}
                     canApprove={t.mayPrompt}
+                    admin={isAdmin(me)}
                     working={busy}
                     starting={current === 'starting'}
                     background={background}
+                    next={next}
                     eventsWaitingSince={eventsWaitingSince}
+                    computerDown={machineDown}
+                    gapLine={(gap) => (
+                      <MessagesBetween
+                        key={`${gap.from}-${gap.to}`}
+                        root={scroller}
+                        auto={settled}
+                        onLoad={(line) => loadGap(gap, line)}
+                      />
+                    )}
                     childThreads={t.children}
+                    {...(t.mayPrompt
+                      ? {
+                          onSideAction: (messageId: string, action: SideAction) =>
+                            queueAction(messageId, { action }),
+                        }
+                      : {})}
                     onOpenPreview={previewLive(preview) ? openPreview : undefined}
-                    onApproval={(approvalId, approved, always) =>
-                      void call('/approvals', {
-                        approvalId,
-                        approved,
-                        ...(always ? { always: true } : {}),
-                      }).catch(() => undefined)
+                    previewStart={{
+                      live,
+                      busy: previewStart.busy,
+                      start: (words) => void previewStart.start(words),
+                    }}
+                    onApproval={(approvalId, approved, always, edited) =>
+                      // Shown at once on its card, which says why if it did not go.
+                      api(`/threads/${id}/approvals`, {
+                        body: {
+                          approvalId,
+                          approved,
+                          ...(always ? { always: true } : {}),
+                          ...(edited ? { edited } : {}),
+                        },
+                      }).then(() => undefined)
                     }
                     onAnswer={(questionId, answer) =>
                       api(`/threads/${id}/answers`, { body: { questionId, answer } }).then(
@@ -947,36 +1794,78 @@ export function ThreadConversation({
                       )
                     }
                     onChoose={
-                      t.mayPrompt && current !== 'waiting'
-                        ? (text, pick) => deliver(text, [], pick)
+                      t.mayPrompt && !deciding ? (text, pick) => deliver(text, [], pick) : undefined
+                    }
+                    onDismissChoices={
+                      t.mayPrompt
+                        ? (seq) =>
+                            api(`/threads/${id}/choices/dismiss`, { body: { seq } }).then(
+                              () => void thread.reload(),
+                            )
+                        : undefined
+                    }
+                    choicesDismissedSeq={t.choicesDismissedSeq}
+                    chiefDecisions={t.chiefDecisions}
+                    onChiefWrong={
+                      t.mayPrompt
+                        ? (decisionId) =>
+                            api(`/threads/${id}/chief/${decisionId}/wrong`, { body: {} }).then(
+                              () => void thread.reload(),
+                            )
                         : undefined
                     }
                     onReply={t.mayPrompt && !t.controlledByMemberId ? replyToMessage : undefined}
-                    onTicket={(requestId, answer) =>
-                      // Answering may hand control back: show the composer again.
-                      api(`/threads/${id}/tickets`, { body: { requestId, answer } }).then(
-                        () => void thread.reload(),
-                      )
+                    onRetry={
+                      t.mayPrompt && !t.controlledByMemberId ? () => call('/retry') : undefined
                     }
+                    onTicket={(requestId, answer) => {
+                      const answering = () =>
+                        api(`/threads/${id}/tickets`, { body: { requestId, answer } })
+                      // Answered by the member in control, any answer hands back (src/decide.ts):
+                      // shown at once, and after a takeover still going, which it would overtake.
+                      const sent =
+                        t.controlledByMemberId === me.memberId
+                          ? changeControl(id, null, answering)
+                          : inControlOrder(id, answering)
+                      return sent.then(() => void thread.reload())
+                    }}
                     takeover={
                       t.computer.kind === 'cloud' &&
                       me.memberId &&
                       (!t.controlledByMemberId || t.controlledByMemberId === me.memberId)
                         ? {
                             mine: t.controlledByMemberId === me.memberId,
+                            pending: controlPending,
                             open: async () => {
-                              if (t.controlledByMemberId !== me.memberId)
-                                await api(`/threads/${id}/takeover`, { body: { interrupt: false } })
+                              if (t.controlledByMemberId === me.memberId) return showComputer()
+                              // The computer opens at once, already in the member's hands.
+                              const taking = changeControl(id, me.memberId!, () =>
+                                api(`/threads/${id}/takeover`, { body: { interrupt: false } }),
+                              )
                               showComputer()
+                              await taking
+                              void thread.reload()
                             },
                           }
                         : undefined
                     }
                   />
+                  {t.mayPrompt && !t.controlledByMemberId && (
+                    <QueuedReports
+                      queued={queued}
+                      teammateName={answering.name}
+                      canSteer={busy}
+                      onAction={queueAction}
+                    />
+                  )}
                   {proposals.length > 0 && ticketCard(proposals, 'mt-4')}
+                  {/* While its turn runs, they hang under its Working line instead. */}
+                  {!busy && (
+                    <ChildrenWorking className="mt-4" children={t.children} teammate={t.teammate} />
+                  )}
                   <ChildrenWaiting children={t.children} />
                 </FileLinksProvider>
-              </div>
+              </ThreadLoaded>
             )}
           </div>
         </div>
@@ -984,7 +1873,7 @@ export function ThreadConversation({
         <div className={cn(column, 'relative shrink-0 pt-2 pb-4')}>
           {t.controlledByMemberId ? (
             <>
-              {!atEnd && <JumpToEnd onClick={() => toEnd('smooth')} />}
+              {!atEnd && <JumpToEnd onClick={() => follower.toEnd(true)} />}
               <Takeover
                 thread={t}
                 memberId={me.memberId ?? ''}
@@ -994,21 +1883,15 @@ export function ThreadConversation({
             </>
           ) : t.mayPrompt ? (
             <>
-              {!atEnd && <JumpToEnd onClick={() => toEnd('smooth')} />}
-              <QueuedMessages
-                queued={queued}
+              {!atEnd && <JumpToEnd onClick={() => follower.toEnd(true)} />}
+              <MessagesOnTheirWay
                 outgoing={pendingOut}
-                teammateName={answering.name}
-                canSteer={busy}
-                canParallel={!t.parent}
-                onAction={queueAction}
-                onResend={(m) => {
-                  setOutgoing((list) => list.filter((o) => o.messageId !== m.messageId))
-                  setText((current) => current || m.text)
+                onRetry={retryOutgoing}
+                onEdit={editOutgoing}
+                onDiscard={(messageId) => {
+                  const m = outgoing.find((o) => o.messageId === messageId)
+                  if (m) discardOutgoing(m)
                 }}
-                onDiscard={(messageId) =>
-                  setOutgoing((list) => list.filter((o) => o.messageId !== messageId))
-                }
               />
               {offerCloud && (
                 <Card className="mb-2 gap-2 rounded-xl p-3 text-sm shadow-sm">
@@ -1054,8 +1937,9 @@ export function ThreadConversation({
                     anywhere on the conversation, not just here. */}
                 <Card
                   data-composer-frame
+                  data-look="composer"
                   className={cn(
-                    'relative gap-2 rounded-xl p-2 shadow-md focus-within:border-ring',
+                    'relative gap-2 rounded-xl p-2 shadow-md',
                     drop.dragging && 'border-primary',
                   )}
                 >
@@ -1079,7 +1963,7 @@ export function ThreadConversation({
                         className="shrink-0 rounded-full"
                         onClick={() => setReplyTo(undefined)}
                         aria-label="Don’t reply to this message"
-                        title="Don’t reply to this message"
+                        tooltip="Don’t reply to this message"
                       >
                         <X aria-hidden />
                       </Button>
@@ -1102,15 +1986,21 @@ export function ThreadConversation({
                           className="shrink-0 rounded-full"
                           onClick={() => setMoveTo(undefined)}
                           aria-label={`Don’t move to ${moveTo.name}`}
-                          title="Stay on this computer"
+                          tooltip="Stay on this computer"
                         >
                           <X aria-hidden />
                         </Button>
                       </span>
                     </div>
                   )}
-                  <UploadList uploads={files.uploads} onRemove={files.remove} />
-                  <div className="flex items-end gap-1">
+                  <AskedDocument text={text} />
+                  <PendingEdits rows={editRows} focus={focusEdit} onDone={focusComposer} />
+                  <UploadList
+                    uploads={files.uploads.filter((u) => !pictureKeys.has(u.key))}
+                    onRemove={files.remove}
+                  />
+                  {dictation.active && <DictationBar dictation={dictation} />}
+                  <div className={cn('flex items-end gap-1', dictation.active && 'hidden')}>
                     <div className="mb-1">
                       {/* The + on phones too: teaching needs a desktop, so not there. */}
                       <ComposerMenu
@@ -1147,10 +2037,20 @@ export function ThreadConversation({
                         onSubmit={() => void send().catch(() => undefined)}
                         rows={1}
                         typeToFocus
-                        placeholder={`Chat with ${answering.name}`}
+                        placeholder={
+                          editRows.length
+                            ? 'Add a note for all the edits'
+                            : `Chat with ${answering.name}`
+                        }
+                        suggestion={suggestion}
                       />
                     </div>
                     <EffortButton effort={effort} later={effortLater} className="mb-1" />
+                    <DictationButton
+                      status={dictationStatus}
+                      dictation={dictation}
+                      className="mb-1"
+                    />
                     {busy && (
                       <Button
                         type="button"
@@ -1165,7 +2065,7 @@ export function ThreadConversation({
                           )
                         }}
                         aria-label={`Stop ${answering.name}`}
-                        title={
+                        tooltip={
                           stopping === (turnId ?? '')
                             ? 'Stopping…'
                             : queued.length
@@ -1173,44 +2073,71 @@ export function ThreadConversation({
                               : `Stop ${answering.name}`
                         }
                       >
-                        <CircleStop aria-hidden />
+                        {/* A filled rounded square, as in other chat apps' stop button. */}
+                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                          <rect x="5" y="5" width="14" height="14" rx="3" />
+                        </svg>
                       </Button>
                     )}
-                    {(text.trim() || files.uploads.length > 0 || moveTo) && (
+                    {/* No Tab key on a touch screen: Use puts the suggestion in the box, the
+                        keyboard staying down, and the send button takes its place. */}
+                    {suggestion && touch && !text && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mb-1 rounded-full"
+                        onClick={() => setText(suggestion)}
+                        aria-label={`Use the suggested message: ${suggestion}`}
+                      >
+                        Use
+                      </Button>
+                    )}
+                    {(text.trim() || files.uploads.length > 0 || editRows.length > 0 || moveTo) && (
                       <Button
                         size="icon-sm"
-                        className="mb-1 rounded-full"
-                        disabled={!ready || current === 'waiting'}
+                        className="mb-1 rounded-full [&_svg:not([class*='size-'])]:size-5"
+                        disabled={!ready || deciding}
                         aria-label={
                           moveTo
                             ? `Continue on ${moveTo.name}`
-                            : busy
-                              ? 'Queue for after this turn'
-                              : 'Send'
+                            : editRows.length
+                              ? `${busy ? 'Queue' : 'Send'} ${editsCount(editRows.length)}`
+                              : busy
+                                ? 'Queue for after this turn'
+                                : 'Send'
                         }
-                        title={
-                          moveTo
-                            ? busy
-                              ? `Continue on ${moveTo.name} after this turn (↵)`
-                              : `Continue on ${moveTo.name} (↵)`
-                            : busy
-                              ? 'Queue for after this turn (↵)'
-                              : 'Send (↵) · New line (⇧↵)'
+                        tooltip={
+                          deciding
+                            ? 'Approve or deny the request above first'
+                            : moveTo
+                              ? busy
+                                ? `Continue on ${moveTo.name} after this turn (↵)`
+                                : `Continue on ${moveTo.name} (↵)`
+                              : editRows.length
+                                ? busy
+                                  ? `Queue ${editsCount(editRows.length)} for after this turn (↵)`
+                                  : `Send ${editsCount(editRows.length)} (↵)`
+                                : busy
+                                  ? 'Queue for after this turn (↵)'
+                                  : 'Send (↵) · New line (⇧↵)'
                         }
                       >
-                        <CornerDownLeft aria-hidden />
+                        <ArrowUp aria-hidden />
                       </Button>
                     )}
                   </div>
                   {error && <p className="px-2 pb-1 text-sm text-destructive-text">{error}</p>}
+                  {dictation.error && !dictation.active && (
+                    <p className="px-2 pb-1 text-sm text-destructive-text">{dictation.error}</p>
+                  )}
                 </Card>
               </form>
             </>
           ) : (
             <p className="text-sm text-muted-foreground">
-              {!atEnd && <JumpToEnd onClick={() => toEnd('smooth')} />}
-              This thread runs on {t.startedBy.user.name}&apos;s subscription. You can watch it
-              live.
+              {!atEnd && <JumpToEnd onClick={() => follower.toEnd(true)} />}
+              {t.startedBy.user.name} started this thread and writes in it. You can watch it live.
             </p>
           )}
         </div>
@@ -1226,9 +2153,54 @@ export function ThreadConversation({
  */
 /** How near the end still counts as there: a reader this close keeps following. */
 const END_SLACK = 48
+/** After the person's own scrolling, this long their scroll decides before anything follows. */
+const QUIET_MS = 600
 
 /** Back down to the latest, while reading higher up. */
 /** Over the whole conversation while files are dragged on it: dropping attaches them. */
+// The thread's name in its details: one line, cut with an ellipsis; when cut, a tap anywhere on
+// it shows it whole, and the chevron after it says so.
+/**
+ * The work asked in it was declared done (docs/board.md): a quiet line at its top, what was
+ * delivered cut to fit, then who and when. A person's new message reopens it.
+ */
+function ThreadName({ title }: { title: string }) {
+  const [open, setOpen] = useState(false)
+  const [cut, setCut] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el || open) return
+    const measure = () => setCut(el.scrollWidth > el.clientWidth)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [open, title])
+  return (
+    <button
+      type="button"
+      disabled={!cut && !open}
+      aria-expanded={cut || open ? open : undefined}
+      onClick={() => setOpen((o) => !o)}
+      className="flex min-w-0 items-start gap-1.5 text-left text-base font-semibold text-foreground disabled:cursor-default"
+    >
+      <span ref={ref} className={cn('min-w-0 flex-1', open ? 'break-words' : 'truncate')}>
+        {title}
+      </span>
+      {(cut || open) && (
+        <ChevronDown
+          aria-hidden
+          className={cn(
+            'mt-1 size-4 shrink-0 text-muted-foreground transition-transform',
+            open && 'rotate-180',
+          )}
+        />
+      )}
+    </button>
+  )
+}
+
 function DropOverlay() {
   return (
     <div className="pointer-events-none absolute inset-0 z-30 grid place-items-center bg-background/80 backdrop-blur-[2px]">
@@ -1255,7 +2227,7 @@ export function JumpToEnd({ onClick }: { onClick: () => void }) {
       size="icon"
       onClick={onClick}
       aria-label="Scroll to the latest"
-      title="Scroll to the latest"
+      tooltip="Scroll to the latest"
       className="absolute -top-8 left-1/2 z-10 size-8 -translate-x-1/2 rounded-full bg-background shadow-md"
     >
       <ArrowDown aria-hidden />
@@ -1269,6 +2241,7 @@ export function EarlierMessages({
   loading,
   onLoad,
   noun = 'messages',
+  auto = true,
 }: {
   /** What scrolls the thread: "near" is near its top. */
   root: RefObject<HTMLElement | null>
@@ -1276,6 +2249,8 @@ export function EarlierMessages({
   onLoad: () => Promise<void>
   /** What it loads: messages, or threads in the threads panel. */
   noun?: string
+  /** Loads as it comes near; else only on a click. */
+  auto?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [failed, setFailed] = useState(false)
@@ -1284,7 +2259,7 @@ export function EarlierMessages({
   // Keyed by the page: a new observer per page, which loads the next one if this is still near.
   useEffect(() => {
     const node = ref.current
-    if (!node || failed) return
+    if (!node || failed || !auto) return
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry?.isIntersecting) void load.current().catch(() => setFailed(true))
@@ -1293,7 +2268,7 @@ export function EarlierMessages({
     )
     observer.observe(node)
     return () => observer.disconnect()
-  }, [failed, root])
+  }, [failed, root, auto])
   return (
     <div ref={ref} className="mb-4 flex justify-center text-sm text-muted-foreground">
       {loading ? (
@@ -1315,6 +2290,96 @@ export function EarlierMessages({
     </div>
   )
 }
+
+/** Where the timeline left messages out: loads them as it comes in sight, from the side it is read. */
+function MessagesBetween({
+  root,
+  auto,
+  onLoad,
+}: {
+  root: RefObject<HTMLElement | null>
+  /** Loads as it comes in sight; else only on a click. */
+  auto: boolean
+  onLoad: (line: HTMLElement) => Promise<void>
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [loading, setLoading] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const load = useRef(onLoad)
+  load.current = onLoad
+  const run = () => {
+    const node = ref.current
+    if (!node) return
+    setLoading(true)
+    setFailed(false)
+    void load
+      .current(node)
+      .catch(() => setFailed(true))
+      .finally(() => setLoading(false))
+  }
+  const runRef = useRef(run)
+  runRef.current = run
+  useEffect(() => {
+    const node = ref.current
+    if (!node || failed || !auto) return
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) runRef.current()
+      },
+      { root: root.current, rootMargin: '400px 0px' },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [failed, root, auto])
+  return (
+    <div ref={ref} className="flex items-center gap-3 text-sm text-muted-foreground">
+      <span className="h-px flex-1 bg-border" />
+      {loading ? (
+        <span className="flex items-center gap-2">
+          <LoaderCircle aria-hidden className="size-4 animate-spin" /> Loading messages…
+        </span>
+      ) : (
+        <Button variant="ghost" size="sm" onClick={run}>
+          {failed ? 'Could not load these messages. Try again' : 'Show messages in between'}
+        </Button>
+      )}
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  )
+}
+
+/** Room above a message the timeline went to: the bar over the conversation's top. */
+const JUMP_MARGIN = 72
+
+/**
+ * An open ticket whose call waits on a decision: an approval before a built-in tool call, an
+ * App write or its cap, a credential or a trigger. The API refuses a message until then.
+ */
+/** Offers the composer's pending edits to the canvas beside the thread, once the thread is loaded. */
+function EditsSenderSync({
+  threadId,
+  sender,
+}: {
+  threadId: string
+  sender: EditsSender | undefined
+}) {
+  const order = sender?.order.join('\n')
+  useEffect(() => {
+    setEditsSender(threadId, sender)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the order by its keys
+  }, [threadId, !sender, sender?.count, order, sender?.send, sender?.disabled])
+  useEffect(() => () => setEditsSender(threadId, undefined), [threadId])
+  return null
+}
+
+const holdsCall = ({ type, payload }: Pick<Ticket, 'type' | 'payload'>) =>
+  type === 'cap'
+    ? !!payload.connectionId
+    : type === 'approval' &&
+      (payload.source === 'harness' ||
+        !!payload.connectionId ||
+        !!payload.credentialAction ||
+        !!payload.triggerAction)
 
 const newMessageId = () =>
   typeof crypto.randomUUID === 'function'

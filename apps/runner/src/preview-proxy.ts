@@ -9,8 +9,18 @@
 //   Domain, so signing in works in the frame without changing the app.
 // - While the app starts, restarts or is down, a page that says so and reloads
 //   itself, instead of a blank frame.
+// - Its pages get the script that lets people pick elements in them from the
+//   dashboard (preview-select.ts).
 import http from 'node:http'
 import net from 'node:net'
+import { pipeline } from 'node:stream'
+import {
+  SCREENSHOT_SCRIPT_PATH,
+  SELECT_SCRIPT,
+  SELECT_SCRIPT_PATH,
+  screenshotScript,
+  withSelectScript,
+} from './preview-select.js'
 
 /** Where an app's other ports are served on the preview's address. */
 export const PORTS_PREFIX = '/__ports/'
@@ -28,12 +38,22 @@ export type PreviewProxyOptions = {
   ports: number[]
   /** Rewrite cookies for a cross-site frame: the address people open is HTTPS. */
   crossSiteCookies: boolean
+  /**
+   * The host people open (the preview gateway's, apps/preview-gateway): the app gets it as
+   * the Host it was asked for, not the provider's that forwarded it, as on a real deploy.
+   */
+  publicHost?: string
   /** What the app is doing, for the page shown while it does not answer. */
   state: () => ProxyState
   /** Someone used the preview. */
   onUse: () => void
   /** Before a request goes through: a promise while the app is woken (thawed), else nothing. */
   wake?: () => Promise<unknown> | undefined
+  /**
+   * The app runs elsewhere (a preview's own machine, preview-machine.ts): the local port each of
+   * its ports is forwarded to; undefined until it is.
+   */
+  forward?: (port: number) => number | undefined
 }
 
 /** A Set-Cookie value a browser keeps in a cross-site frame: Secure, SameSite=None, partitioned, host-only. */
@@ -118,23 +138,44 @@ export class PreviewProxy {
   async listen(from: number, avoid: number[]) {
     for (let port = from; port < from + 100 && port <= 65535; port++) {
       if (avoid.includes(port)) continue
-      const ok = await new Promise<boolean>((done) => {
-        const fail = () => done(false)
-        this.server.once('error', fail)
-        this.server.listen(port, this.options.bind ?? '0.0.0.0', () => {
-          this.server.off('error', fail)
-          done(true)
-        })
-      })
-      if (ok) return port
+      if (await this.tryListen(port)) return port
     }
     throw new Error(`No free port for the preview's proxy from ${from}`)
+  }
+
+  /**
+   * Listen on this very port, where the proxy of the runner before this one was (an update handed
+   * its preview over): tried again while that one lets go of it, for `waitMs` at most.
+   */
+  async listenAt(port: number, waitMs = 5000) {
+    const deadline = Date.now() + waitMs
+    while (!(await this.tryListen(port))) {
+      if (Date.now() > deadline) throw new Error(`Port ${port} of the preview's proxy is taken`)
+      await new Promise((done) => setTimeout(done, 100))
+    }
+    return port
+  }
+
+  private tryListen(port: number) {
+    return new Promise<boolean>((done) => {
+      const fail = () => done(false)
+      this.server.once('error', fail)
+      this.server.listen(port, this.options.bind ?? '0.0.0.0', () => {
+        this.server.off('error', fail)
+        done(true)
+      })
+    })
   }
 
   close() {
     this.server.close()
     for (const socket of this.sockets) socket.destroy()
     this.agent.destroy()
+  }
+
+  /** Where the app's port is reached here: itself, or where it is forwarded (port 1, closed, until it is). */
+  private portOf(port: number) {
+    return this.options.forward ? (this.options.forward(port) ?? 1) : port
   }
 
   private used() {
@@ -146,24 +187,49 @@ export class PreviewProxy {
   }
 
   private request(req: http.IncomingMessage, res: http.ServerResponse) {
+    const path = req.url?.split('?')[0]
+    if (path === SELECT_SCRIPT_PATH || path === SCREENSHOT_SCRIPT_PATH)
+      return void res
+        .writeHead(200, {
+          'content-type': 'text/javascript; charset=utf-8',
+          'cache-control': 'no-cache',
+        })
+        .end(path === SELECT_SCRIPT_PATH ? SELECT_SCRIPT : screenshotScript())
     this.used()
     const target = route(req.url ?? '/', this.options)
     if (!target)
       return void res.writeHead(404, { 'content-type': 'text/plain' }).end('No such port')
+    // A page gets the select script: asked for uncompressed, to add its tag on the way.
+    const page = req.method === 'GET' && isNavigation(req)
     const upstream = http.request(
       {
         host: this.options.host ?? '127.0.0.1',
-        port: target.port,
+        port: this.portOf(target.port),
         path: target.path,
         method: req.method,
         headers: {
           ...withoutHopHeaders(req.headers),
+          ...(this.options.publicHost && {
+            host: this.options.publicHost,
+            'x-forwarded-host': this.options.publicHost,
+          }),
           ...(target.prefix && { 'x-forwarded-prefix': target.prefix }),
+          ...(page && { 'accept-encoding': 'identity' }),
         },
         agent: this.agent,
       },
       (response) => {
+        // The browser left before the app answered (a reload, a page left): nobody to answer.
+        // Piping to it now would throw (Node 24), out of any handler, and stop the runner.
+        if (res.destroyed) return void response.destroy()
         const headers = withoutHopHeaders(response.headers)
+        const tagged =
+          page &&
+          /^text\/html/i.test(headers['content-type'] ?? '') &&
+          (headers['content-encoding'] ?? 'identity') === 'identity' &&
+          response.statusCode !== 204 &&
+          response.statusCode !== 304
+        if (tagged) delete headers['content-length']
         if (this.options.crossSiteCookies && headers['set-cookie'])
           headers['set-cookie'] = headers['set-cookie'].map(crossSiteCookie)
         // A redirect to the app's own path stays under its prefix.
@@ -171,7 +237,8 @@ export class PreviewProxy {
         if (target.prefix && location?.startsWith('/') && !location.startsWith('//'))
           headers.location = target.prefix + location
         res.writeHead(response.statusCode ?? 502, headers)
-        response.pipe(res)
+        if (tagged) pipeline(response, withSelectScript(), res, () => undefined)
+        else response.pipe(res)
       },
     )
     upstream.on('error', () => {
@@ -193,10 +260,20 @@ export class PreviewProxy {
     this.used()
     const target = route(req.url ?? '/', this.options)
     if (!target) return void socket.destroy()
-    const upstream = net.connect(target.port, this.options.host ?? '127.0.0.1', () => {
+    const upstream = net.connect(this.portOf(target.port), this.options.host ?? '127.0.0.1', () => {
       const lines = [`${req.method} ${target.path} HTTP/${req.httpVersion}`]
-      for (let i = 0; i < req.rawHeaders.length; i += 2)
-        lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`)
+      const publicHost = this.options.publicHost
+      // The preview gateway sends a WebSocket with the provider's origin, which refuses any
+      // other: the page's, at the public host, is what the app checks (Next's dev origins).
+      const providerOrigin = `https://${req.headers.host}`
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        const name = req.rawHeaders[i]!
+        let value = req.rawHeaders[i + 1]!
+        if (publicHost && /^(host|x-forwarded-host)$/i.test(name)) value = publicHost
+        else if (publicHost && /^origin$/i.test(name) && value === providerOrigin)
+          value = `https://${publicHost}`
+        lines.push(`${name}: ${value}`)
+      }
       upstream.write(`${lines.join('\r\n')}\r\n\r\n`)
       if (head.length) upstream.write(head)
       upstream.pipe(socket).pipe(upstream)

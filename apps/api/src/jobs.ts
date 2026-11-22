@@ -1,41 +1,305 @@
-// The API's background work: timers that run for as long as the API does.
-// Started by each entry (src/index.ts on Node, src/worker.ts on Workers), never
-// while modules load: Workers allow no timers in the global scope.
+// The API's background work (docs/workspace-hubs-plan.md, Phase 3). Each job says which
+// workspaces have work due, with cheap queries, and does it for one workspace; a job that is no
+// workspace's runs once for all. Every one is safe to run twice, and in any order (deployment-plan
+// Phase 2): each step claims its row first.
+//
+// - On Node, and on Cloudflare until the JOBS queue is bound, timers run them for as long as the
+//   process does (startJobs), each workspace's in turn.
+// - On Cloudflare with the JOBS queue, the Worker's cron puts one message per workspace and job on
+//   it each minute (dueMessages), and its consumer runs each alone (runJob, src/worker.ts): one
+//   workspace's failing job is tried again, then dead-lettered, without holding back any other's.
+//
+// A job's message carries ids only, never what it works on: a message is at most 128 KB.
+import { duePasses, runDuePasses } from './chief-pass.js'
 import { sweepAssets } from './assets.js'
 import { sweepUploads } from './attachments.js'
-import { watchIdle } from './cloud.js'
-import { offerRunnerUpdates, pingBrowsers, watchRunners } from './hub.js'
+import { cloudMinute, dueCloud } from './cloud.js'
+import { driveReplacements, dueReplacements } from './cloud-replace.js'
+import { dueColdEvents, keepEventsCold } from './cold-events.js'
+import { dueHeldCalls, settleHeldCalls } from './held-calls.js'
+import { processDueInbound, processInbound, sweepInbound } from './inbound.js'
 import { sweepTrash } from './library-history.js'
-import { watchNotifications } from './notifications.js'
-import { watchMerges } from './pull-requests.js'
-import { watchSchedules } from './schedules.js'
-import { sweepDoneTasks } from './tasks.js'
-import { watchSubscriptions } from './subscriptions/index.js'
-import { watchWakeups } from './wakeups.js'
+import { dueGmailSends, sendDueGmail } from './mail/gmail-outbound.js'
+import { dueMail, mailMinute, retryMail, sweepMail } from './mail/jobs.js'
+import { processMail } from './mail/inbound.js'
+import { sweep as sweepNotifications } from './notifications.js'
+import { noteFailure } from './ops/failures.js'
+import { sweepPreviewMachines } from './preview-machines.js'
+import { advanceMerges, dueMerges } from './pull-requests.js'
+import { redeliverFailed } from './routes/github-webhook.js'
+import { dueCommands, giveUp, resendCommands, sweepCommands } from './runner-commands.js'
+import { dueSchedules, fireDueSchedules } from './schedules.js'
+import { sweepSpecParts } from './spec-parts.js'
+import { dueSubscriptions, readSubscriptions } from './subscriptions/index.js'
+import { sweepListMerges } from './lists.js'
+import { sweepSpecMerges } from './decisions.js'
+import { repairStaleBytes } from './library.js'
+import { sweepLibraryObjects, sweepOrphanLibraryObjects } from './library-objects.js'
+import { sweepDeletedThreadFiles } from './thread-delete.js'
+import { sweepDeliveries } from './triggers.js'
+import { sweepFileUploads } from './uploads.js'
+import { reconcileVmRuns } from './vm-costs.js'
+import { dueWakeups, fireDueWakeups } from './wakeups.js'
+import { dueSnoozes, wakeDueSnoozes } from './later.js'
+import { dueGoals, measureDueGoals } from './goals.js'
+import { dueActions, runDueActions } from './initiatives.js'
+import { sendAdConversions } from './google-ads.js'
+import { sweepIdleGuests } from './guests.js'
+import { sealMcpClients } from './connectors/mcp.js'
+import { dueWorkspaceCleanups, sweepDeletedWorkspaces } from './workspace-delete.js'
+
+/** One run of a job: for a workspace, for one row (an event a webhook kept), or for all (null). */
+export type JobMessage = { job: string; key: string | null }
+
+type Job = {
+  /**
+   * How often it runs, in seconds; none: only when asked for (enqueue), for one row. A job
+   * that runs each minute or more often starts on the minute: a 07:00 schedule fires at 07:00.
+   */
+  every?: 30 | 60 | 600 | 3600
+  /** Workspaces with work due now. Absent: the job is no workspace's, and runs once for all. */
+  due?: (now: Date) => Promise<string[]>
+  run: (key: string | null, now: Date) => Promise<unknown>
+}
+
+/** A workspace's, or every workspace's when run for all. */
+const ws = (key: string | null) => key ?? undefined
+
+export const JOBS = {
+  // Each workspace's, each minute.
+  schedules: { every: 60, due: dueSchedules, run: (key) => fireDueSchedules(ws(key)) },
+  wakeups: { every: 60, due: dueWakeups, run: (key) => fireDueWakeups(ws(key)) },
+  // Snoozed threads at their time: back in their member's list, unread (src/later.ts).
+  snoozes: { every: 60, due: dueSnoozes, run: (key, now) => wakeDueSnoozes(ws(key), now) },
+  // Goals under way (src/goals.ts): measured between turns, and ended once over, as due.
+  goals: { every: 60, due: () => dueGoals(), run: (key) => measureDueGoals(ws(key)) },
+  // Missions' planned actions (src/initiatives.ts): drafts past their deadline expire, actions due run.
+  missions: {
+    every: 60,
+    due: (now) => dueActions(now),
+    run: (key, now) => runDueActions(ws(key), now),
+  },
+  // Chief's daily pass for the members who have it on, in their morning (src/chief-pass.ts).
+  'chief-pass': { every: 60, due: duePasses, run: (key, now) => runDuePasses(ws(key), now) },
+  subscriptions: { every: 60, due: dueSubscriptions, run: (key) => readSubscriptions(ws(key)) },
+  merges: { every: 60, due: dueMerges, run: (key) => advanceMerges(ws(key)) },
+  // Its cloud computer: shut down without a plan, stopped once idle, kept alive meanwhile.
+  cloud: { every: 60, due: dueCloud, run: (key) => cloudMinute(ws(key)) },
+  mail: { every: 60, due: dueMail, run: (key) => retryMail(ws(key)) },
+  // Gmail's email held for its window to cancel it, or until its time: sent once due.
+  'gmail-outbound': {
+    every: 30,
+    due: dueGmailSends,
+    run: (key, now) => sendDueGmail(now, ws(key)),
+  },
+  'held-calls': {
+    every: 60,
+    due: (now) => dueHeldCalls(now.getTime()),
+    run: (key, now) => settleHeldCalls(now.getTime(), ws(key)),
+  },
+  'runner-commands': {
+    every: 60,
+    due: dueCommands,
+    run: (key, now) => resendCommands(now.getTime(), ws(key)),
+  },
+  'cloud-replace': { every: 60, due: dueReplacements, run: (key) => driveReplacements(ws(key)) },
+  // A deleted workspace's bucket folder, emptied a batch a minute until nothing is left: each
+  // workspace's run alone, as a run deletes at most SWEEP_DELETES objects (Workers' requests).
+  'deleted-workspace-sweep': {
+    every: 60,
+    due: dueWorkspaceCleanups,
+    run: (key) => sweepDeletedWorkspaces(ws(key)),
+  },
+  // Every 10 minutes: the events of its threads quiet for a month go to the bucket, 20 seconds'
+  // worth at a time (src/cold-events.ts); what one run leaves waits for the next.
+  'cold-events': {
+    every: 600,
+    due: dueColdEvents,
+    run: (key, now) => keepEventsCold(ws(key), now).then(() => {}),
+  },
+
+  // No workspace's.
+  notifications: { every: 30, run: (_key, now) => sweepNotifications(now) },
+  'mail-outbound': { every: 60, run: () => mailMinute() },
+  inbound: { every: 60, run: () => processDueInbound() },
+  'runner-commands-given-up': { every: 60, run: (_key, now) => giveUp(now.getTime()) },
+  // Preview machines (src/preview-machines.ts): destroyed once their thread is gone or they slept
+  // long enough, stopped when their runner forgot them.
+  'preview-machines': { every: 60, run: (_key, now) => sweepPreviewMachines(now) },
+  // What VMs ran (src/vm-costs.ts): runs settled against the provider's own list of its VMs.
+  'vm-runs': { every: 60, run: (_key, now) => reconcileVmRuns(now) },
+  'github-redeliver': { every: 600, run: () => redeliverFailed() },
+  // Every 10 minutes: sign-ups and subscriptions of people who came from a Google ad, to Google
+  // Ads (src/google-ads.ts). Nothing without its settings.
+  'ad-conversions': { every: 600, run: (_key, now) => sendAdConversions(now) },
+  // Hourly: uploads abandoned mid-way or never sent with a message; files no document refers
+  // to; library files in the trash long enough; images a runner uploaded after their thread was
+  // deleted; finished rows of the work kept in the database; mail left in its box past its time.
+  'upload-sweep': { every: 3600, run: () => sweepUploads() },
+  'asset-sweep': { every: 3600, run: () => sweepAssets() },
+  'file-upload-sweep': { every: 3600, run: () => sweepFileUploads() },
+  'trash-sweep': { every: 3600, run: () => sweepTrash() },
+  // Every 10 minutes: list items a merged pull request closes, not ticked yet (src/lists.ts).
+  'list-merge-sweep': { every: 600, run: () => sweepListMerges() },
+  // Every 10 minutes: specs and designs a merged pull request ships, not marked yet (src/decisions.ts).
+  'spec-merge-sweep': { every: 600, run: () => sweepSpecMerges() },
+  // Each minute: library files at their legacy key whose bytes a save past its lease may have
+  // overwritten. Every 10 minutes: library objects no file or version points to (an hour on);
+  // hourly, bytes in the library objects folder that no object's row names.
+  'library-bytes-repair': { every: 60, run: () => repairStaleBytes() },
+  'library-object-sweep': {
+    every: 600,
+    run: (_key, now) => sweepLibraryObjects(now).then(() => {}),
+  },
+  'library-orphan-sweep': { every: 3600, run: () => sweepOrphanLibraryObjects().then(() => {}) },
+  'deleted-thread-sweep': { every: 3600, run: () => sweepDeletedThreadFiles() },
+  'runner-command-sweep': { every: 3600, run: () => sweepCommands() },
+  'spec-part-sweep': { every: 3600, run: () => sweepSpecParts() },
+  'inbound-event-sweep': { every: 3600, run: () => sweepInbound() },
+  'trigger-delivery-sweep': { every: 3600, run: () => sweepDeliveries() },
+  'mail-sweep': { every: 3600, run: () => sweepMail() },
+  // Hourly: guests left unsaved and unused for two weeks, with their projects (src/guests.ts),
+  // a few a run: each is a whole account's deletion.
+  'guest-sweep': { every: 3600, run: (_key, now) => sweepIdleGuests(now).then(() => {}) },
+  // Hourly: MCP servers' client secrets left in plain text, sealed and cleared
+  // (src/connectors/mcp.ts).
+  'mcp-client-seal': { every: 3600, run: () => sealMcpClients().then(() => {}) },
+
+  // One row each, when asked for (enqueue): a webhook's event kept, a received mail kept.
+  'inbound-event': { run: (key) => (key ? processInbound(key) : Promise.resolve()) },
+  'received-mail': { run: (key) => (key ? processMail(key) : Promise.resolve()) },
+} satisfies Record<string, Job>
+
+export type JobName = keyof typeof JOBS
+
+const isJob = (name: string): name is JobName => name in JOBS
+
+/**
+ * How long one message's job may run before it counts as failed, and is tried again later. The
+ * queue's consumer runs a batch's messages in turn, and the queue starts no other consumer while
+ * one is busy: a job that waited 10 minutes on a provider that never answered (a cloud
+ * computer's keep-alive, Oct 30 and 31) held every job of every workspace behind it, past
+ * JOBS_LATE_MS (src/ops/checks.ts). What it started may still finish: each job is safe twice.
+ */
+export const JOB_DEADLINE_MS = 2 * 60_000
+
+/**
+ * How long the queue's consumer runs a batch's messages: those not started by then go back on the
+ * queue at once, for a consumer of their own. With JOB_DEADLINE_MS, a batch lasts at most both.
+ */
+export const BATCH_BUDGET_MS = 4 * 60_000
+
+export class JobTimeout extends Error {
+  constructor(job: string, ms: number) {
+    super(`${job} still running after ${Math.round(ms / 1000)} s: given up, tried again later`)
+    this.name = 'JobTimeout'
+  }
+}
+
+/** The job's run, or a JobTimeout once it has run `ms`. */
+function within<T>(run: Promise<T>, job: string, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new JobTimeout(job, ms)), ms)
+  })
+  return Promise.race([run, late]).finally(() => clearTimeout(timer))
+}
+
+/** Run one message's job. Throws when it failed, after counting it for the ops checks. */
+export async function runJob(message: JobMessage, now = new Date(), deadlineMs = JOB_DEADLINE_MS) {
+  if (!isJob(message.job)) {
+    console.warn(`no job ${message.job}: dropped`)
+    return
+  }
+  const job: Job = JOBS[message.job]
+  // Every module that registers a handler as it loads (inbound events, ticket decisions, scoped
+  // writes' hooks), as in the Api object: a fresh queue consumer has loaded none of them.
+  await import('./app.js')
+  try {
+    await within(job.run(message.key, now), message.job, deadlineMs)
+  } catch (error) {
+    const where = message.key ? ` (${message.key})` : ''
+    console.warn(`${message.job}${where} failed: ${String(error)}`)
+    noteFailure(`job:${message.job}`, error)
+    throw error
+  }
+}
+
+/**
+ * The messages due at this minute (the cron's, on Cloudflare): each workspace's for each job due
+ * now, and once each job that is no workspace's. `minute`: minutes since the epoch.
+ */
+export async function dueMessages(now = new Date()) {
+  const minute = Math.floor(now.getTime() / 60_000)
+  const messages: { body: JobMessage; delaySeconds?: number }[] = []
+  for (const [name, job] of Object.entries(JOBS) as [JobName, Job][]) {
+    if (!job.every) continue
+    if (job.every > 60 && minute % (job.every / 60) !== 0) continue
+    const keys = job.due
+      ? [...new Set(await job.due(now).catch((error: unknown) => failedDue(name, error)))]
+      : [null]
+    for (const key of keys) {
+      messages.push({ body: { job: name, key } })
+      // More often than each minute: again, later in the minute.
+      if (job.every === 30) messages.push({ body: { job: name, key }, delaySeconds: 30 })
+    }
+  }
+  return messages
+}
+
+function failedDue(name: string, error: unknown): string[] {
+  console.warn(`${name}: what is due could not be read: ${String(error)}`)
+  noteFailure(`job:${name}`, error)
+  return []
+}
+
+/** Jobs running now, in this process (Node's timers): one run of each at a time. */
+const running = new Set<string>()
+
+/** Run a job now, for each workspace with work due, or once for all. */
+async function runDue(name: JobName) {
+  if (running.has(name)) return
+  running.add(name)
+  try {
+    const now = new Date()
+    const job: Job = JOBS[name]
+    const keys = job.due ? [...new Set(await job.due(now))] : [null]
+    // Each workspace in turn: one that fails is counted, and the next goes on.
+    for (const key of keys) await runJob({ job: name, key }, now).catch(() => undefined)
+  } catch (error) {
+    noteFailure(`job:${name}`, error)
+  } finally {
+    running.delete(name)
+  }
+}
 
 let started = false
 
-export function startJobs() {
+/**
+ * Timers that run every job, for as long as the process does: on Node, and in the Api object
+ * until the JOBS queue is bound. Started by each entry (src/index.ts, src/worker.ts), never while
+ * modules load: Workers allow no timers in the global scope. With them, the hubs of this process
+ * are watched (src/hub/jobs.ts), and the ops checks run (src/ops/checks.ts).
+ */
+export async function startJobs() {
   if (started) return
   started = true
-  watchSubscriptions()
-  watchMerges()
-  watchNotifications()
-  watchSchedules()
-  watchWakeups()
-  watchIdle()
-  offerRunnerUpdates()
-  pingBrowsers()
-  watchRunners()
-
-  // Uploads abandoned mid-way or never sent with a message; files no document refers to;
-  // library files in the trash long enough; tasks done long enough, off the board.
-  const sweep = () => {
-    void sweepUploads().catch((error) => console.warn(`upload sweep failed: ${String(error)}`))
-    void sweepAssets().catch((error) => console.warn(`asset sweep failed: ${String(error)}`))
-    void sweepTrash().catch((error) => console.warn(`trash sweep failed: ${String(error)}`))
-    void sweepDoneTasks().catch((error) => console.warn(`done task sweep failed: ${String(error)}`))
+  const [{ watchHubs }, { watchOps }] = await Promise.all([
+    import('./hub/jobs.js'),
+    import('./ops/checks.js'),
+  ])
+  watchHubs()
+  watchOps()
+  for (const [name, job] of Object.entries(JOBS) as [JobName, Job][]) {
+    if (!job.every) continue
+    const everyMs = job.every * 1000
+    const run = () => void runDue(name)
+    // On the minute (or the half), as the cron would: a 07:00 schedule fires at 07:00. Longer
+    // ones a while after the start.
+    const first = everyMs <= 60_000 ? everyMs - (Date.now() % everyMs) + 250 : 60_000
+    setTimeout(() => {
+      run()
+      setInterval(run, everyMs)
+    }, first)
   }
-  setTimeout(sweep, 60_000)
-  setInterval(sweep, 60 * 60_000)
 }

@@ -1,12 +1,17 @@
 'use client'
 // The panel beside a page: a document, a file a thread mentions, a teammate's
 // computer. Fixed to the right on wide screens (the page makes room for it,
-// see globals.css), a sheet from the bottom on narrow ones. Its width is one
-// --desktop-w for all of them: drag the left edge to change it, double-click
-// to reset; remembered in this browser. Escape closes it. Panels open together
+// see globals.css), a sheet from the bottom on narrow ones, and the whole
+// screen on a phone: the page behind holds still, so a glimpse of it is no
+// use. Its width is one --desktop-w for all of them: drag the left edge to
+// change it, double-click to reset; remembered in this browser. Escape closes it. Panels open together
 // share the right edge: the last one opened, or brought forward, is on top.
-// PanelExpandButton in its header lays it over the whole window and back.
+// PanelExpandButton in its header lays it over the whole window and back; not
+// on a phone, where it already is. A document stops at the sidebar instead, so
+// the sidebar still shows (besideSidebar); between a phone and a wide screen,
+// where a sheet from the bottom would leave little of either, it always lies so.
 import { Maximize2, Minimize2 } from 'lucide-react'
+import { usePathname } from 'next/navigation'
 import {
   createContext,
   useCallback,
@@ -22,6 +27,8 @@ import {
   type RefObject,
 } from 'react'
 import { Button } from '@/components/ui/button'
+import { Hint } from '@/components/ui/tooltip'
+import { useMediaQuery } from '@/lib/use-media-query'
 import { cn } from '@/lib/utils'
 
 const WIDTH_KEY = 'brigade:panel-width'
@@ -34,7 +41,7 @@ function maxWidth() {
   return Math.max(MIN_PANEL, (page?.width ?? window.innerWidth) - MIN_PAGE)
 }
 
-function setWidth(px: number | null) {
+function setWidth(px: number | null, max = maxWidth()) {
   const root = document.documentElement.style
   if (px === null) {
     root.removeProperty('--desktop-w')
@@ -43,8 +50,13 @@ function setWidth(px: number | null) {
     } catch {}
     return
   }
-  const width = Math.round(Math.min(maxWidth(), Math.max(MIN_PANEL, px)))
+  const width = Math.round(Math.min(max, Math.max(MIN_PANEL, px)))
   root.setProperty('--desktop-w', `${width}px`)
+  return width
+}
+
+function saveWidth(width: number | undefined) {
+  if (width === undefined) return
   try {
     localStorage.setItem(WIDTH_KEY, String(width))
   } catch {}
@@ -57,7 +69,7 @@ function useSavedWidth() {
     try {
       saved = Number(localStorage.getItem(WIDTH_KEY)) || undefined
     } catch {}
-    if (saved) setWidth(saved)
+    if (saved) saveWidth(setWidth(saved))
   }, [])
 }
 
@@ -75,8 +87,28 @@ export function PanelResizeHandle() {
     const handle = e.currentTarget
     handle.setPointerCapture(e.pointerId)
     document.body.classList.add('select-none', 'cursor-col-resize')
-    const move = (m: PointerEvent) => setWidth(window.innerWidth - m.clientX)
+    // Measured once: reading the layout on each move, right after the last
+    // move changed the width, forced a whole-page layout per pointer event.
+    const max = maxWidth()
+    let x = e.clientX
+    let frame = 0
+    let width: number | undefined
+    // At most one width per frame, however often the pointer reports.
+    const move = (m: PointerEvent) => {
+      x = m.clientX
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0
+          width = setWidth(window.innerWidth - x, max)
+        })
+    }
     const up = () => {
+      if (frame) {
+        cancelAnimationFrame(frame)
+        frame = 0
+        width = setWidth(window.innerWidth - x, max)
+      }
+      saveWidth(width)
       handle.removeEventListener('pointermove', move)
       handle.removeEventListener('pointerup', up)
       handle.removeEventListener('pointercancel', up)
@@ -91,27 +123,28 @@ export function PanelResizeHandle() {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
     e.preventDefault()
     const current = panel.current?.parentElement?.getBoundingClientRect().width ?? MIN_PANEL
-    setWidth(current + (e.key === 'ArrowLeft' ? 32 : -32))
+    saveWidth(setWidth(current + (e.key === 'ArrowLeft' ? 32 : -32)))
   }
 
   return (
-    <div
-      ref={panel}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize panel"
-      title="Drag to resize, double-click to reset"
-      tabIndex={0}
-      onPointerDown={onPointerDown}
-      onDoubleClick={() => setWidth(null)}
-      onKeyDown={onKeyDown}
-      className="group absolute inset-y-0 -left-1.5 z-20 hidden w-3 cursor-col-resize touch-none outline-none xl:block"
-    >
-      <span
-        aria-hidden
-        className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary group-active:bg-primary"
-      />
-    </div>
+    <Hint side="left" label="Drag to resize, double-click to reset">
+      <div
+        ref={panel}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize panel"
+        tabIndex={0}
+        onPointerDown={onPointerDown}
+        onDoubleClick={() => setWidth(null)}
+        onKeyDown={onKeyDown}
+        className="group absolute inset-y-0 -left-1.5 z-20 hidden w-3 cursor-col-resize touch-none outline-none xl:block"
+      >
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary group-active:bg-primary"
+        />
+      </div>
+    </Hint>
   )
 }
 
@@ -221,6 +254,15 @@ const FullContext = createContext<{ full: boolean; setFull: (full: boolean) => v
 const FULL =
   'inset-0 z-50 h-auto rounded-none border-0 xl:inset-0 xl:left-0 xl:z-50 xl:w-auto xl:border-l-0'
 
+/** Whether the panel around it is laid over the whole window (PanelExpandButton). */
+export const usePanelFull = () => useContext(FullContext)?.full ?? false
+
+/** Lays the panel around it back beside the page, when it is laid over the whole window. */
+export function useLeaveFull() {
+  const context = useContext(FullContext)
+  return useCallback(() => context?.setFull(false), [context])
+}
+
 /** For a panel's header: lays it over the whole window, and back. Escape brings it back too. */
 export function PanelExpandButton() {
   const context = useContext(FullContext)
@@ -232,13 +274,61 @@ export function PanelExpandButton() {
       type="button"
       variant="ghost"
       size="icon-sm"
-      title={label}
+      tooltip={label}
       aria-label={label}
+      className="max-md:hidden"
       onClick={() => setFull(!full)}
     >
       {full ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
     </Button>
   )
+}
+
+/** Panels laid over the window, by the key they remember it under: for this tab only. */
+const fullListeners = new Set<() => void>()
+function subscribeFull(listener: () => void) {
+  fullListeners.add(listener)
+  return () => void fullListeners.delete(listener)
+}
+function readFull(key: string) {
+  try {
+    return sessionStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+function writeFull(key: string, full: boolean) {
+  try {
+    if (full) sessionStorage.setItem(key, '1')
+    else sessionStorage.removeItem(key)
+  } catch {}
+  for (const listener of fullListeners) listener()
+}
+
+/**
+ * Where the page beside the sidebar starts, in pixels from the window's left, while `on`:
+ * kept up to date as the sidebar folds, unfolds or the window is resized.
+ */
+function usePageLeft(on: boolean) {
+  const [left, setLeft] = useState<number>()
+  useEffect(() => {
+    if (!on) return setLeft(undefined)
+    const page = document.querySelector('[data-slot="sidebar-inset"]')
+    if (!page) return
+    const measure = () => setLeft(Math.max(0, Math.round(page.getBoundingClientRect().left)))
+    measure()
+    // Folding the sidebar animates its width: the page's left edge moves, not its size alone.
+    const sidebar = document.querySelector('[data-slot="sidebar-gap"]')
+    const observer = new ResizeObserver(measure)
+    observer.observe(page)
+    if (sidebar) observer.observe(sidebar)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [on])
+  return left
 }
 
 /**
@@ -253,6 +343,10 @@ export function SidePanel({
   expanded = false,
   name,
   raiseKey,
+  rememberFull,
+  hidden = false,
+  besideSidebar = false,
+  onPageChange,
   style,
   ...props
 }: ComponentProps<'aside'> & {
@@ -264,35 +358,97 @@ export function SidePanel({
   name?: string
   /** Changes each time what it shows does: it comes in front again. */
   raiseKey?: unknown
+  /**
+   * Opens laid over the window again when it was so as it closed: remembered under
+   * this key for the browser tab (the preview, per thread). Without it, it opens as a panel.
+   */
+  rememberFull?: string
+  /**
+   * Kept but not shown (a thread's preview while another thread shows): out of the stack and
+   * of the page's layout, and what it shows keeps its state. Shown again, it comes in front.
+   */
+  hidden?: boolean
+  /**
+   * Laid over the page only, not the whole window: the sidebar still shows beside it. Going
+   * to another page, from the sidebar or elsewhere, brings it back to the panel, so that page
+   * shows. Between a phone and a wide screen it is always laid so, with no panel to go back
+   * to: going to another page calls onPageChange (the document panel minimizes), as on a phone.
+   */
+  besideSidebar?: boolean
+  /** With besideSidebar: another page shows while it covers the page (below wide screens). */
+  onPageChange?: () => void
 }) {
   const panel = useRef<HTMLElement>(null)
-  const stack = usePanelStack(!expanded, name, raiseKey)
-  const [full, setFull] = useState(false)
-  const over = full && !expanded
-  const back = useCallback(() => setFull(false), [])
-  // Another panel brought in front: it goes back, so it does not hide that one.
+  const stack = usePanelStack(!expanded && !hidden, name, raiseKey)
+  const [own, setOwn] = useState(false)
+  const remembered = useSyncExternalStore(
+    subscribeFull,
+    () => (rememberFull ? readFull(rememberFull) : false),
+    () => false,
+  )
+  const full = rememberFull ? remembered : own
+  const setFull = useCallback(
+    (next: boolean) => (rememberFull ? writeFull(rememberFull, next) : setOwn(next)),
+    [rememberFull],
+  )
+  // Between a phone and a wide screen: no room beside the page, and a sheet hides most of it.
+  const medium = useMediaQuery('(min-width: 768px) and (max-width: 1279.98px)', false)
+  const wide = useMediaQuery('(min-width: 1280px)')
+  const overPage = besideSidebar && medium && !expanded
+  const over = (full && !expanded) || overPage
+  const back = useCallback(() => setFull(false), [setFull])
+  const pageLeft = usePageLeft(over && besideSidebar)
+  const pathname = usePathname()
+  const shownAt = useRef(pathname)
+  const latest = useRef({ covers: !wide && !hidden, onPageChange })
+  latest.current = { covers: !wide && !hidden, onPageChange }
   useEffect(() => {
-    if (!stack.front) setFull(false)
-  }, [stack.front])
+    if (shownAt.current === pathname) return
+    shownAt.current = pathname
+    if (!besideSidebar) return
+    setFull(false)
+    if (latest.current.covers) latest.current.onPageChange?.()
+  }, [pathname, besideSidebar, setFull])
+  // Another panel brought in front: it goes back, so it does not hide that one.
+  // Only once it was in front: as it opens, it is not yet.
+  const wasFront = useRef(false)
+  useEffect(() => {
+    if (wasFront.current && !stack.front && !hidden) setFull(false)
+    wasFront.current = stack.front
+  }, [stack.front, hidden, setFull])
   // Laid over the window, Escape brings it back to the panel first.
-  useEscapeToClose(panel, stack.front ? (over ? back : onClose) : undefined)
+  useEscapeToClose(panel, stack.front ? (over && !overPage ? back : onClose) : undefined)
   return (
-    <FullContext.Provider value={expanded ? null : { full, setFull }}>
+    // Laid over the page for good, it has no panel to go back to: no Expand.
+    <FullContext.Provider value={expanded || overPage ? null : { full, setFull }}>
       <aside
         ref={panel}
-        data-desktop-panel={expanded ? undefined : ''}
+        // The page makes room for it only while it shows (globals.css).
+        data-desktop-panel={expanded || hidden ? undefined : ''}
         data-expanded={expanded || undefined}
+        // Over the whole window: on macOS its first row makes room for the traffic lights (globals.css).
+        data-over-window={(over && !besideSidebar) || undefined}
         className={cn(
           expanded
             ? 'relative flex h-svh min-w-0 flex-col overflow-hidden bg-background'
             : [
                 'fixed inset-x-0 bottom-0 z-(--sheet-z) flex h-[70vh] flex-col overflow-hidden rounded-t-xl border-t bg-card shadow-lg',
+                'max-md:top-0 max-md:h-auto max-md:rounded-none max-md:border-t-0',
                 'xl:inset-y-0 xl:right-0 xl:left-auto xl:z-(--panel-z) xl:h-auto xl:w-(--desktop-w) xl:overflow-visible xl:rounded-none xl:border-t-0 xl:border-l xl:shadow-none',
               ],
           over && FULL,
           className,
+          hidden && 'hidden',
         )}
-        style={expanded ? style : { ...stack.style, ...style }}
+        style={
+          expanded
+            ? style
+            : {
+                ...stack.style,
+                ...(pageLeft !== undefined && { left: pageLeft }),
+                ...style,
+              }
+        }
         {...props}
       >
         {!expanded && !over && <PanelResizeHandle />}

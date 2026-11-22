@@ -1,20 +1,26 @@
 id: brigade/support-bugs
 name: Support and bugs
-version: 1.0.0
+version: 1.4.0
 description: Sorts the support inbox, answers customers, fixes the bugs they report and tells them when it is fixed.
+
+# Two teammates: support reads the customers' mail and answers them; developer fixes the bugs
+# in the code, in the child threads support hands it. The same teammate may hold both.
+teammate: support
 
 apps:
   - { kind: gmail, access: read_write }
-  - { kind: github, access: read_write }
+  - { kind: github, access: read_write, teammate: developer }
   - { kind: stripe, access: read, optional: true }
   - { role: analytics, kinds: [mixpanel, mcp], access: read, optional: true }
 
 settings:
+  - { key: support, type: teammate, ask: 'Which teammate answers the customers?' }
   - { key: product, type: text, ask: 'Which product does this support cover?' }
   - { key: inbox, type: account, app: gmail, ask: 'Which Gmail account receives the support mail?' }
   - { key: address, type: email, ask: 'Which address do customers write to?' }
   - { key: docs, type: url, ask: 'Where is the public documentation?' }
   - { key: repo, type: repository, ask: 'In which repository should bugs be fixed?' }
+  - { key: developer, type: teammate, ask: 'Which teammate fixes the bugs in the code?' }
   - { key: signature, type: text, default: 'The {{product}} team' }
   - {
       key: analytics,
@@ -23,12 +29,28 @@ settings:
       optional: true,
       ask: "Which analytics tool should be checked for a customer's account?",
     }
+  # Where customers' ideas go (file_idea): a list of the library, with a section's heading after #
+  # (else "Ideas"), added at the end of the file when it has none. Unset: ideas.md in the
+  # playbook's project folder.
+  - {
+      key: ideas,
+      type: text,
+      optional: true,
+      ask: "Which list in the library should keep customers' ideas, and under which heading, e.g. Projects/Acme/backlog.md#To approve? Without a heading they go under Ideas. Leave it empty for an ideas list of its own.",
+    }
 
 entries:
   - {
       trigger: gmail.email_received,
       account: '{{inbox}}',
-      options: { query: 'to:{{address}}' },
+      # Gmail's promotions, social and updates tabs (newsletters, notifications, receipts) and
+      # out-of-office replies never start a run. Not forums: a support@ that is a Google Group
+      # files every mail there.
+      options:
+        {
+          query: 'to:{{address}} -category:promotions -category:social -category:updates',
+          automated: skip,
+        },
       label: 'Support mail',
     }
   - {

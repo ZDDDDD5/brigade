@@ -4,12 +4,13 @@
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { env } from '../config.js'
 import { authorisedFetch } from '../connector-calls.js'
-import { isOwnChange, type Event } from '../connectors/google-calendar.js'
+import { changeKeys, type Event } from '../connectors/google-calendar.js'
+import { hubs } from '../hub.js'
 import { json, type ConnectorContext } from '../connectors/types.js'
 import { prisma, scoped, type Scope } from '../db.js'
 import { dispatch } from '../triggers.js'
 import { deleteSecret, openSecret, sealSecret } from '../vault.js'
-import { reachable, serially, SubscribeError, type Target } from './common.js'
+import { reachable, serially, SubscribeError, type Target, retryLater } from './common.js'
 
 const API = 'https://www.googleapis.com/calendar/v3'
 const TTL_S = 7 * 24 * 3600
@@ -144,8 +145,6 @@ function changesOf(e: Event): { id: string; type: string }[] {
   ]
 }
 
-export const retryAt = new Map<string, number>()
-
 /** Read the calendar's changes since the sync token and offer each to the triggers. */
 export const readCalendar = (subscriptionId: string) =>
   serially(`calendar:${subscriptionId}`, async () => {
@@ -154,11 +153,15 @@ export const readCalendar = (subscriptionId: string) =>
       include: { connection: true },
     })
     if (!sub?.cursor || sub.connection.status !== 'active') return
+    // Read again later unless this read finishes (a restart may cut it off).
+    await retryLater(sub.id, Date.now() + RETRY_MS)
     const scope: Scope = { organizationId: sub.organizationId, workspaceId: sub.workspaceId }
     const db = scoped(scope)
     const fetch = await authorisedFetch(db, scope, sub.connection)
-    const save = (data: { cursor: string; error?: string | null }) =>
-      db.subscription.updateMany({ where: { id: sub.id }, data })
+    const save = async (data: { cursor: string; error?: string | null }) => {
+      await retryLater(sub.id, null)
+      return db.subscription.updateMany({ where: { id: sub.id }, data })
+    }
 
     let pageToken: string | undefined
     try {
@@ -174,26 +177,26 @@ export const readCalendar = (subscriptionId: string) =>
         if (response.status === 410)
           return save({ cursor: await freshSyncToken(fetch, sub.resource), error: null })
         const page = await json<Page>(response)
+        // Changes Brigade's own calls made, as the workspace's hub kept them: they trigger nothing.
+        const own = new Set(
+          page.items?.length
+            ? await hubs.get(sub.workspaceId).ownCalendarChanges(page.items.flatMap(changeKeys))
+            : [],
+        )
         for (const event of page.items ?? []) {
-          if (isOwnChange(event)) continue
+          if (changeKeys(event).some((key) => own.has(key))) continue
           for (const change of changesOf(event)) {
             const { failed } = await dispatch(sub.connection, { ...change, payload: event })
             // The token moves only per page: the whole page is offered again, deduped.
-            if (failed) {
-              retryAt.set(sub.id, Date.now() + RETRY_MS)
-              return
-            }
+            if (failed) return
           }
         }
-        if (page.nextSyncToken) {
-          retryAt.delete(sub.id)
-          return save({ cursor: page.nextSyncToken, error: null })
-        }
+        if (page.nextSyncToken) return save({ cursor: page.nextSyncToken, error: null })
         pageToken = page.nextPageToken
-        if (!pageToken) return
+        if (!pageToken) return retryLater(sub.id, null)
       }
     } catch (error) {
-      retryAt.set(sub.id, Date.now() + RETRY_MS)
+      await retryLater(sub.id, Date.now() + RETRY_MS)
       await db.subscription.updateMany({
         where: { id: sub.id },
         data: { error: error instanceof Error ? error.message : String(error) },

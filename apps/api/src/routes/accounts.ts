@@ -1,10 +1,19 @@
-import { AddAccount, SubmitLoginCode, UpdateAccount, type AccountRef } from '@brigade/contracts'
+import {
+  ANTIGRAVITY_PROTOCOL,
+  AddAccount,
+  SubmitLoginCode,
+  UpdateAccount,
+  loginName,
+  type AccountRef,
+  type HarnessId,
+} from '@brigade/contracts'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
+import { isShared, mayManage, usableBy } from '../account-sharing.js'
 import { audit } from '../audit.js'
+import { featuresOfMember, requireFeature } from '../features.js'
 import type { ScopedDb } from '../db.js'
-import { dispatch, isOnline, sendToMember, sendToRunner } from '../hub.js'
-import { beginLogin, endLogin, loginForAccount } from '../logins.js'
+import { hubs } from '../hub.js'
 import {
   parseBody,
   requireUser,
@@ -13,20 +22,25 @@ import {
   type WorkspaceScope,
 } from '../scope.js'
 
-type AccountRow = { id: string; provider: 'claude_code' | 'codex'; source: 'machine' | 'brigade' }
+/** An account row: its provider is a login's CLI, never another harness (Harness has those too). */
+type AccountRow = { id: string; provider: string; source: 'machine' | 'brigade' }
 export const accountRef = (a: AccountRow): AccountRef => ({
   id: a.id,
-  provider: a.provider,
+  provider: loginOfRow(a.provider),
   source: a.source,
 })
 
-const providerName = (provider: string) => (provider === 'codex' ? 'Codex' : 'Claude')
+/** An account row's login: claude_code for any other value, as before Antigravity. */
+const loginOfRow = (provider: string): HarnessId =>
+  provider === 'codex' || provider === 'antigravity' ? provider : 'claude_code'
+
+const providerName = (provider: string) => loginName(loginOfRow(provider))
 
 /**
- * The member's usable accounts for a harness on a computer, best first: the
- * preferred one, then the default, then the rest. Never another member's.
- * Accounts that ran out of usage come last (the preferred one, then soonest
- * reset first): a plan upgraded or a limit lifted early only shows when the
+ * The accounts a member's work may run on for a harness on a computer (src/account-sharing.ts:
+ * their own, and the workspace's shared ones), best first: the preferred one, then their own,
+ * then the default, then the rest. Accounts that ran out of usage come last (the preferred
+ * one, then soonest reset first): a plan upgraded or a limit lifted early only shows when the
  * provider is asked again, so a new message tries them rather than waiting.
  */
 export async function usableAccounts(
@@ -34,14 +48,14 @@ export async function usableAccounts(
   input: {
     memberId: string
     computerId: string
-    provider: 'claude_code' | 'codex'
+    provider: HarnessId
     preferredId?: string | null
   },
 ) {
   const now = new Date()
   const rows = await db.account.findMany({
     where: {
-      memberId: input.memberId,
+      ...usableBy(input.memberId),
       computerId: input.computerId,
       provider: input.provider,
       status: { in: ['ready', 'unverified'] },
@@ -55,54 +69,81 @@ export async function usableAccounts(
     (a, b) =>
       exhausted(a) - exhausted(b) ||
       Number(b.id === input.preferredId) - Number(a.id === input.preferredId) ||
+      Number(b.memberId === input.memberId) - Number(a.memberId === input.memberId) ||
       (exhausted(a) ? a.exhaustedUntil!.getTime() - b.exhaustedUntil!.getTime() : 0),
   )
 }
 
-async function loadOwn(db: ScopedDb, scope: WorkspaceScope, id: string) {
+/** An account the member may see, and may act on as `action` says (src/account-sharing.ts). */
+async function loadManaged(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  id: string,
+  action: 'sign-in' | 'update' | 'remove',
+) {
   const account = await db.account.findFirst({
-    where: { id, memberId: scope.memberId },
+    where: { id, ...usableBy(scope.memberId) },
     include: { computer: true },
   })
   if (!account) throw new HTTPException(404, { message: 'Account not found' })
+  if (!mayManage(account, scope, action))
+    throw new HTTPException(403, {
+      message:
+        action === 'remove'
+          ? 'Only the member who added it, an owner or an admin can remove it'
+          : 'Only the member who added it can change it',
+    })
   return account
 }
 
+/** Run the vendor's sign-in on the account's computer, in its workspace's hub (src/logins.ts). */
 async function startLogin(
   scope: WorkspaceScope,
   account: AccountRow & { computerId: string },
   computer: { id: string; kind: string },
 ) {
-  const login = beginLogin({
-    accountId: account.id,
-    memberId: scope.memberId,
-    computerId: account.computerId,
-    account: accountRef(account),
-  })
-  const sent = await dispatch(computer, {
-    type: 'account.login.start',
-    loginId: login.loginId,
-    account: accountRef(account),
-  })
-  if (sent === 'offline') {
-    endLogin(login.loginId)
-    throw new HTTPException(409, { message: 'That computer is offline' })
-  }
-  sendToMember(scope.memberId, login.last)
-  return login
+  const started = await hubs.get(scope.workspaceId).startLogin(
+    {
+      accountId: account.id,
+      memberId: scope.memberId,
+      computerId: account.computerId,
+      account: accountRef(account),
+    },
+    computer,
+  )
+  if (started === 'offline') throw new HTTPException(409, { message: 'That computer is offline' })
 }
 
 export const accounts = new Hono<AppEnv>()
   .use(requireUser, requireWorkspace)
 
-  /** The signed-in member's own harness accounts. Accounts are never shared. */
+  /**
+   * The harness accounts the signed-in member may run on: their own, and the workspace's shared
+   * ones (src/account-sharing.ts), each saying whether it is theirs and who added it.
+   */
   .get('/', async (c) => {
+    const { scope } = c.var
     const rows = await c.var.db.account.findMany({
-      where: { memberId: c.var.scope.memberId },
-      include: { computer: { select: { id: true, name: true, kind: true } } },
+      where: usableBy(scope.memberId),
+      include: {
+        computer: { select: { id: true, name: true, kind: true } },
+        member: { select: { user: { select: { name: true } } } },
+      },
       orderBy: [{ provider: 'asc' }, { createdAt: 'asc' }],
     })
-    return c.json(rows.map((a) => ({ ...a, login: loginForAccount(a.id)?.last ?? null })))
+    const logins = rows.length
+      ? await hubs.get(scope.workspaceId).loginStates(rows.map((a) => a.id))
+      : {}
+    return c.json(
+      rows.map(({ member, ...a }) => ({
+        ...a,
+        mine: a.memberId === scope.memberId,
+        shared: isShared(a.computer),
+        addedBy: member.user.name,
+        // A login under way shows only to whoever is signing in.
+        login: a.memberId === scope.memberId ? (logins[a.id] ?? null) : null,
+      })),
+    )
   })
 
   /** Add an account by running the vendor's own sign-in on the computer. */
@@ -113,8 +154,27 @@ export const accounts = new Hono<AppEnv>()
     if (!computer || (computer.kind === 'member_machine' && computer.memberId !== scope.memberId)) {
       throw new HTTPException(404, { message: 'Computer not found' })
     }
-    if (computer.kind === 'member_machine' && !isOnline(computer.id)) {
+    if (
+      computer.kind === 'member_machine' &&
+      !(await hubs.get(scope.workspaceId).isOnline(computer.id))
+    ) {
       throw new HTTPException(409, { message: 'That computer is offline' })
+    }
+    // Google accounts for Antigravity: behind its feature, on a runner that signs them in.
+    if (input.provider === 'antigravity') {
+      requireFeature(
+        await featuresOfMember(scope.memberId, scope.workspaceId),
+        'antigravity_harness',
+      )
+      const protocol = await hubs
+        .get(scope.workspaceId)
+        .runnerProtocol(computer.id)
+        .catch(() => undefined)
+      if (protocol !== undefined && protocol < ANTIGRAVITY_PROTOCOL)
+        throw new HTTPException(409, {
+          message:
+            "This computer's Brigade is too old to sign in to Antigravity. It updates by itself after a quiet while; try again then.",
+        })
     }
     const count = await db.account.count({
       where: { memberId: scope.memberId, provider: input.provider },
@@ -147,7 +207,7 @@ export const accounts = new Hono<AppEnv>()
   /** Sign an account in again, e.g. after its login expired. */
   .post('/:id/sign-in', async (c) => {
     const { scope, db } = c.var
-    const account = await loadOwn(db, scope, c.req.param('id'))
+    const account = await loadManaged(db, scope, c.req.param('id'), 'sign-in')
     if (account.source === 'machine') {
       throw new HTTPException(409, {
         message: `Sign in to ${providerName(account.provider)} on ${account.computer.name} itself`,
@@ -164,25 +224,20 @@ export const accounts = new Hono<AppEnv>()
    */
   .post('/:id/code', async (c) => {
     const { scope, db } = c.var
-    const account = await loadOwn(db, scope, c.req.param('id'))
-    const login = loginForAccount(account.id)
-    if (!login || login.memberId !== scope.memberId)
-      throw new HTTPException(409, { message: 'This account is not waiting for a code' })
+    const account = await loadManaged(db, scope, c.req.param('id'), 'sign-in')
     const { code, email } = await parseBody(c.req.raw, SubmitLoginCode)
-    if (email) login.email = email
-    if (
-      !sendToRunner(login.computerId, { type: 'account.login.code', loginId: login.loginId, code })
-    ) {
-      throw new HTTPException(409, { message: 'That computer is offline' })
-    }
-    login.last = { type: 'account.login', accountId: account.id, state: 'verifying' }
-    sendToMember(scope.memberId, login.last)
+    const result = await hubs
+      .get(scope.workspaceId)
+      .submitLoginCode(account.id, scope.memberId, code, email)
+    if (result === 'not-waiting')
+      throw new HTTPException(409, { message: 'This account is not waiting for a code' })
+    if (result === 'offline') throw new HTTPException(409, { message: 'That computer is offline' })
     return c.json({ ok: true })
   })
 
   .patch('/:id', async (c) => {
     const { scope, db } = c.var
-    const account = await loadOwn(db, scope, c.req.param('id'))
+    const account = await loadManaged(db, scope, c.req.param('id'), 'update')
     const input = await parseBody(c.req.raw, UpdateAccount)
     if (input.isDefault) {
       await db.account.updateMany({
@@ -204,15 +259,15 @@ export const accounts = new Hono<AppEnv>()
   /** Sign the account out on its computer and forget it. */
   .delete('/:id', async (c) => {
     const { scope, db } = c.var
-    const account = await loadOwn(db, scope, c.req.param('id'))
-    const login = loginForAccount(account.id)
-    if (login) {
-      sendToRunner(login.computerId, { type: 'account.login.cancel', loginId: login.loginId })
-      endLogin(login.loginId)
-    }
+    const account = await loadManaged(db, scope, c.req.param('id'), 'remove')
+    const hub = hubs.get(scope.workspaceId)
+    await hub.cancelLogin(account.id)
     if (account.source === 'brigade') {
       if (
-        !sendToRunner(account.computerId, { type: 'account.remove', account: accountRef(account) })
+        !(await hub.sendToRunner(account.computerId, {
+          type: 'account.remove',
+          account: accountRef(account),
+        }))
       ) {
         throw new HTTPException(409, {
           message: 'That computer is offline. Start it to remove the login stored there.',

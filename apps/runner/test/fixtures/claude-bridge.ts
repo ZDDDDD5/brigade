@@ -1,0 +1,145 @@
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve, delimiter } from 'node:path'
+import { HarnessAgent } from '@ai-sdk/harness/agent'
+import { createClaudeCode } from '@ai-sdk/harness-claude-code'
+import type { ToolSet } from 'ai'
+import { createLocalSandboxSession, freePort } from '../../src/harness/local-sandbox.js'
+import { toNative, WINDOWS } from '../../src/windows.js'
+
+// Runs of the Claude Code bridge (patched) with a stand-in for the Claude Agent SDK, whose
+// `query` is the module given: what the bridge gives Claude Code, and what it does with what
+// Claude Code sends, without Claude Code. The stand-in writes what it saw to FAKE_SDK_RECORD.
+
+const require = createRequire(import.meta.url)
+const packageDir = (name: string) => dirname(require.resolve(`${name}/package.json`))
+/** The MCP SDK's folder: its exports map `package.json` into its build. */
+const mcpSdkDir = () =>
+  resolve(dirname(require.resolve('@modelcontextprotocol/sdk/server/index.js')), '../../..')
+
+/** What the bootstrap's pnpm install would put there: the bridge's own MCP SDK, ws and zod, a fake Agent SDK. */
+export async function fakeInstall(dir: string, sdk: string) {
+  const modules = join(dir, 'node_modules')
+  await mkdir(join(modules, '@anthropic-ai', 'claude-agent-sdk'), { recursive: true })
+  await writeFile(
+    join(modules, '@anthropic-ai', 'claude-agent-sdk', 'package.json'),
+    JSON.stringify({
+      name: '@anthropic-ai/claude-agent-sdk',
+      type: 'module',
+      exports: './index.mjs',
+    }),
+  )
+  await writeFile(join(modules, '@anthropic-ai', 'claude-agent-sdk', 'index.mjs'), sdk)
+  await mkdir(join(modules, '@modelcontextprotocol'), { recursive: true })
+  // Again over an earlier turn's install, in a home kept from it.
+  const link = async (target: string, path: string) => {
+    await rm(path, { recursive: true, force: true })
+    await symlink(target, path, 'junction')
+  }
+  await link(mcpSdkDir(), join(modules, '@modelcontextprotocol', 'sdk'))
+  await link(packageDir('ws'), join(modules, 'ws'))
+  await link(packageDir('zod'), join(modules, 'zod'))
+}
+
+/** One turn through the bridge: the stream's parts, and the stand-in's record, line by line. */
+export async function bridgeTurn(
+  sdk: string,
+  options: {
+    permissionMode: 'allow-all' | 'allow-reads'
+    env: Record<string, string>
+    /** The session it resumes, as the harness saved it (a side reply's: Claude Code continues). */
+    resumeFrom?: unknown
+    /** The built-in tools it may use, by the harness's names (read, glob…). */
+    activeTools?: string[]
+    /** The host's own tools (Brigade's), and how Claude Code should treat some of them. */
+    tools?: ToolSet
+    toolHints?: Record<string, { readOnly?: boolean; alwaysLoad?: boolean }>
+    /** A home kept from an earlier turn (the caller removes it), for what the bridge keeps there. */
+    home?: string
+    /** The prompts of the session's turns, one after the other (default: one, "hello"). */
+    prompts?: string[]
+    /** MCP servers the harness gives Claude Code besides the host's tools. */
+    mcpServers?: Record<string, unknown>
+  },
+): Promise<{
+  parts: { type: string; [key: string]: unknown }[]
+  record: any[]
+  /** Each turn's parts, in order. */
+  turns: { type: string; [key: string]: unknown }[][]
+}> {
+  const home = options.home ?? (await mkdtemp(join(tmpdir(), 'claude-bridge-')))
+  const record = join(home, 'record.jsonl')
+  const work = join(home, 'work')
+  await rm(record, { force: true })
+  await mkdir(work, { recursive: true })
+  const sandbox = createLocalSandboxSession({
+    id: 'bridge-test',
+    workingDirectory: work,
+    port: await freePort(),
+    env: {
+      // Windows needs its own variables (SystemRoot…) for node to start.
+      ...(WINDOWS ? (process.env as Record<string, string>) : {}),
+      PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH}`,
+      HOME: home,
+      // Node's homedir() on Windows.
+      USERPROFILE: home,
+      FAKE_SDK_RECORD: record,
+      ...options.env,
+    },
+  })
+  // The bootstrap installs nothing: the fake SDK takes its place.
+  const run = sandbox.run
+  const bootstrapRun: typeof run = async (input) => {
+    if (input.command.startsWith('pnpm install')) {
+      await fakeInstall(toNative(input.workingDirectory ?? '.', work), sdk)
+      return { exitCode: 0, stdout: '', stderr: '' }
+    }
+    if (input.command.includes('claude --version'))
+      return { exitCode: 0, stdout: '2.1.319 (Claude Code)', stderr: '' }
+    return run(input)
+  }
+  const restricted = { ...sandbox.restricted(), run: bootstrapRun }
+  const session = { ...sandbox, run: bootstrapRun, restricted: () => restricted }
+  const agent = new HarnessAgent({
+    harness: createClaudeCode({
+      auth: {},
+      ...(options.mcpServers ? { mcpServers: options.mcpServers as never } : {}),
+      ...(options.toolHints ? { toolHints: options.toolHints } : {}),
+    }),
+    permissionMode: options.permissionMode,
+    ...(options.tools
+      ? {
+          tools: options.tools,
+          toolApproval: Object.fromEntries(
+            Object.keys(options.tools).map((name) => [name, 'not-applicable' as const]),
+          ),
+        }
+      : {}),
+    sandboxConfig: { workDir: '.' },
+    ...(options.activeTools ? { activeTools: options.activeTools as never } : {}),
+  })
+  try {
+    const harnessSession = await agent.createSession({
+      sandboxSession: session,
+      ...(options.resumeFrom ? { resumeFrom: options.resumeFrom as never } : {}),
+    })
+    const turns: { type: string; [key: string]: unknown }[][] = []
+    for (const prompt of options.prompts ?? ['hello']) {
+      const result = await agent.stream({ session: harnessSession, prompt })
+      const parts: { type: string; [key: string]: unknown }[] = []
+      for await (const part of result.fullStream) parts.push(part as never)
+      turns.push(parts)
+    }
+    await harnessSession.destroy()
+    const lines = (await readFile(record, 'utf8').catch(() => '')).trim().split('\n')
+    return {
+      parts: turns.flat(),
+      turns,
+      record: lines.filter(Boolean).map((line) => JSON.parse(line)),
+    }
+  } finally {
+    await sandbox.destroy()
+    if (!options.home) await rm(home, { recursive: true, force: true })
+  }
+}

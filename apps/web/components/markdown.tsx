@@ -2,10 +2,19 @@
 // Markdown in the thread: teammates' replies, thinking and questions. Raw HTML
 // is never rendered (react-markdown escapes it), remote images are not loaded
 // (a link instead), an image in a teammate's folder opens over the page,
-// mentions a teammate echoes back show as chips, and code blocks are highlighted
+// mentions a teammate echoes back show as chips (a video or a sound of the library
+// also plays under its paragraph), and code blocks are highlighted
 // (highlight.js's common languages: JSON, YAML, XML/HTML, CSS, JS/TS, Python,
 // shell, SQL, diff and more; colors in globals.css).
-import { MENTION_KINDS, type MentionKind } from '@brigade/contracts'
+import {
+  DESIGN_THUMBNAIL,
+  designName,
+  MENTION_KINDS,
+  STORED_FILE,
+  STORED_FILE_NAME,
+  type LibraryFile,
+  type MentionKind,
+} from '@brigade/contracts'
 import { Check, Copy, ImageIcon } from 'lucide-react'
 import {
   createContext,
@@ -13,20 +22,25 @@ import {
   useContext,
   useState,
   type ComponentProps,
+  type ReactElement,
   type ReactNode,
 } from 'react'
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import rehypeHighlight from 'rehype-highlight'
 import remarkGfm from 'remark-gfm'
 import { MediaPreview } from '@/components/attachments'
+import { useRenewingMedia } from '@/hooks/use-renewing-media'
 import {
   FileLinksProvider,
   looksLikeFile,
   relativeFile,
   useFileLinks,
 } from '@/components/file-links'
-import { MentionChip, MessageText } from '@/components/mention'
-import { threadImageUrl } from '@/lib/api'
+import { MentionChip, MentionIcon, MessageText } from '@/components/mention'
+import { Hint } from '@/components/ui/tooltip'
+import { storedFileUrl, threadImageUrl, useApi } from '@/lib/api'
+import { API_URL } from '@/lib/config'
+import { playedFiles, type PlayedFile } from '@/lib/played-files'
 import { cn } from '@/lib/utils'
 
 const MENTION_HREF = new RegExp(`^(${MENTION_KINDS.join('|')}):([^\\s]+)$`)
@@ -62,26 +76,28 @@ function CodeBlock({ children, ...props }: ComponentProps<'pre'>) {
           {language}
         </span>
       )}
-      <button
-        type="button"
-        onClick={() => {
-          void navigator.clipboard.writeText(textOf(children).replace(/\n$/, '')).then(() => {
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-          })
-        }}
-        className="absolute top-1.5 right-1.5 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity group-hover/code:opacity-100 hover:bg-background hover:text-foreground focus-visible:opacity-100"
-        aria-label={copied ? 'Copied' : 'Copy code'}
-        title={copied ? 'Copied' : 'Copy'}
-      >
-        {copied ? (
-          <Check className="size-3.5" aria-hidden />
-        ) : (
-          <Copy className="size-3.5" aria-hidden />
-        )}
-      </button>
+      <Hint label={copied ? 'Copied' : 'Copy'}>
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard.writeText(textOf(children).replace(/\n$/, '')).then(() => {
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1500)
+            })
+          }}
+          className="absolute top-1.5 right-1.5 rounded-md p-1.5 text-muted-foreground opacity-0 transition-opacity group-hover/code:opacity-100 hover:bg-background hover:text-foreground focus-visible:opacity-100"
+          aria-label={copied ? 'Copied' : 'Copy code'}
+        >
+          {copied ? (
+            <Check className="size-3.5" aria-hidden />
+          ) : (
+            <Copy className="size-3.5" aria-hidden />
+          )}
+        </button>
+      </Hint>
       <pre
         {...props}
+        data-look="code-block"
         className={cn(
           'overflow-x-auto rounded-lg bg-muted px-4 py-3 font-mono text-[0.8125rem] leading-relaxed',
           language && 'pt-7',
@@ -121,24 +137,25 @@ function CopyChip({ text, children }: { text: string; children: ReactNode }) {
       ) : (
         <code className="min-w-0 font-mono text-[0.875em] wrap-anywhere">{children}</code>
       )}
-      <button
-        type="button"
-        onClick={() => {
-          void navigator.clipboard.writeText(text).then(() => {
-            setCopied(true)
-            setTimeout(() => setCopied(false), 1500)
-          })
-        }}
-        className="flex-none self-center rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
-        aria-label={copied ? 'Copied' : `Copy ${text}`}
-        title={copied ? 'Copied' : 'Copy'}
-      >
-        {copied ? (
-          <Check className="size-3" aria-hidden />
-        ) : (
-          <Copy className="size-3" aria-hidden />
-        )}
-      </button>
+      <Hint label={copied ? 'Copied' : 'Copy'}>
+        <button
+          type="button"
+          onClick={() => {
+            void navigator.clipboard.writeText(text).then(() => {
+              setCopied(true)
+              setTimeout(() => setCopied(false), 1500)
+            })
+          }}
+          className="flex-none self-center rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
+          aria-label={copied ? 'Copied' : `Copy ${text}`}
+        >
+          {copied ? (
+            <Check className="size-3" aria-hidden />
+          ) : (
+            <Copy className="size-3" aria-hidden />
+          )}
+        </button>
+      </Hint>
     </span>
   )
 }
@@ -157,23 +174,35 @@ function InlineCode({ className, children, ...props }: ComponentProps<'code'>) {
       </code>
     )
   return (
-    <button
-      type="button"
-      onClick={() => links.open({ path: text, teammateId: links.teammateId })}
-      title={`Open ${text}`}
-      className={cn(
-        codeClass,
-        'cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:bg-primary/15 hover:decoration-primary',
-      )}
-    >
-      {children}
-    </button>
+    <Hint label={`Open ${text}`}>
+      <button
+        type="button"
+        onClick={() => links.open({ path: text, teammateId: links.teammateId })}
+        className={cn(
+          codeClass,
+          'cursor-pointer text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:bg-primary/15 hover:decoration-primary',
+        )}
+      >
+        {children}
+      </button>
+    </Hint>
   )
 }
 
 const linkClass = 'font-medium text-primary underline underline-offset-2 hover:no-underline'
 
 const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i
+
+/**
+ * Where an image the message names shows from: its copy kept with the thread when
+ * there is one (message.images), else the teammate's computer, as it is now.
+ */
+function imageSrc(links: NonNullable<ReturnType<typeof useFileLinks>>, path: string) {
+  const kept = links.images?.[path]
+  const name = kept?.startsWith(STORED_FILE) && kept.slice(STORED_FILE.length)
+  if (name && STORED_FILE_NAME.test(name)) return storedFileUrl(links.threadId!, name)
+  return threadImageUrl(links.threadId!, path, links.teammateId)
+}
 
 /**
  * An image in a teammate's folder, named by a relative link or `![](path)`: it
@@ -186,20 +215,17 @@ function FileImage({ path, children }: { path: string; children: ReactNode }) {
   const name = path.split('/').pop() ?? path
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        title={`Preview ${name}`}
-        className={cn(linkClass, 'inline-flex cursor-zoom-in items-center gap-1')}
-      >
-        {children}
-      </button>
+      <Hint label={`Preview ${name}`}>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className={cn(linkClass, 'inline-flex cursor-zoom-in items-center gap-1')}
+        >
+          {children}
+        </button>
+      </Hint>
       <MediaPreview
-        media={
-          open
-            ? { name, src: threadImageUrl(links.threadId, path, links.teammateId), kind: 'image' }
-            : undefined
-        }
+        media={open ? { name, src: imageSrc(links, path), kind: 'image' } : undefined}
         onClose={() => setOpen(false)}
       />
     </>
@@ -214,14 +240,15 @@ function Anchor({ href, children, ...props }: ComponentProps<'a'>) {
     return <FileImage path={file}>{children}</FileImage>
   if (links && file)
     return (
-      <button
-        type="button"
-        onClick={() => links.open({ path: file, teammateId: links.teammateId })}
-        title={`Open ${file}`}
-        className={cn(linkClass, 'cursor-pointer')}
-      >
-        {children}
-      </button>
+      <Hint label={`Open ${file}`}>
+        <button
+          type="button"
+          onClick={() => links.open({ path: file, teammateId: links.teammateId })}
+          className={cn(linkClass, 'cursor-pointer')}
+        >
+          {children}
+        </button>
+      </Hint>
     )
   return (
     <a
@@ -269,8 +296,186 @@ function MarkdownImage({ src, alt }: { src?: unknown; alt?: string }) {
   )
 }
 
+/**
+ * A video or a sound of the library, played in the thread under the text that names it. Only its
+ * start loads until it plays; the bytes come from the bucket, by ranges. One that cannot load
+ * (gone, or not this person's to read) leaves just its chip; one left open past its signed
+ * address's minutes asks for it again (hooks/use-renewing-media.ts).
+ */
+function LibraryPlayer({ file }: { file: PlayedFile }) {
+  const [failed, setFailed] = useState(false)
+  // Its first frame shows before it plays.
+  const base = `${API_URL}/api/library/${encodeURIComponent(file.id)}/content`
+  const media = useRenewingMedia(file.kind === 'audio' ? base : `${base}#t=0.1`, () =>
+    setFailed(true),
+  )
+  if (failed) return null
+  const name = file.name.split('/').pop() ?? file.name
+  if (file.kind === 'audio')
+    return (
+      <audio
+        {...media}
+        controls
+        preload="metadata"
+        aria-label={name}
+        className="my-2 block w-full max-w-md first:mt-0 last:mb-0"
+      />
+    )
+  return (
+    <span className="my-3 block w-fit max-w-full overflow-hidden rounded-lg border bg-black first:mt-0 last:mb-0">
+      <video
+        {...media}
+        controls
+        playsInline
+        preload="metadata"
+        aria-label={name}
+        // Bounded like an image in a chat: a 16:9 film stays about 36rem wide, a vertical one
+        // about 20rem tall, so a reply never turns into a wall of video. Full screen is a click away.
+        className="block max-h-[min(20rem,50vh)] max-w-[min(100%,36rem)]"
+      />
+    </span>
+  )
+}
+
+const libraryContent = (id: string) => `${API_URL}/api/library/${encodeURIComponent(id)}/content`
+
+/** How many images of one block show as tiles; the last says how many more there are. */
+const IMAGE_TILES = 4
+
+/**
+ * The library images a block mentions, under it. One shows whole, within the same bounds as a
+ * video; several show as a row of tiles. A click opens one over the page. One that cannot load
+ * (gone, or not this person's to read) leaves just its chip.
+ */
+function LibraryImages({ files }: { files: PlayedFile[] }) {
+  const [open, setOpen] = useState<PlayedFile>()
+  const [failed, setFailed] = useState<string[]>([])
+  const shown = files.filter((f) => !failed.includes(f.id))
+  if (shown.length === 0) return null
+  const fail = (id: string) => setFailed((f) => [...f, id])
+  const nameOf = (f: PlayedFile) => f.name.split('/').pop() ?? f.name
+  const single = shown.length === 1
+  const tiles = shown.slice(0, IMAGE_TILES)
+  const more = shown.length - tiles.length
+  return (
+    <span className="my-3 flex flex-wrap gap-2 first:mt-0 last:mb-0">
+      {tiles.map((f, i) => (
+        <Hint key={f.id} label={`Preview ${nameOf(f)}`}>
+          <button
+            type="button"
+            aria-label={`Preview ${nameOf(f)}`}
+            onClick={() => setOpen(f)}
+            className={cn(
+              'relative block cursor-zoom-in overflow-hidden rounded-lg border bg-muted/40',
+              !single && 'size-32',
+            )}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element -- a library file through the API */}
+            <img
+              src={libraryContent(f.id)}
+              alt={nameOf(f)}
+              loading="lazy"
+              onError={() => fail(f.id)}
+              className={cn(
+                'block',
+                single
+                  ? 'max-h-[min(20rem,50vh)] max-w-[min(100%,36rem)]'
+                  : 'size-full object-cover',
+              )}
+            />
+            {more > 0 && i === tiles.length - 1 && (
+              <span className="absolute inset-0 grid place-items-center bg-black/55 text-lg font-semibold text-white">
+                +{more}
+              </span>
+            )}
+          </button>
+        </Hint>
+      ))}
+      <MediaPreview
+        media={
+          open ? { name: nameOf(open), src: libraryContent(open.id), kind: 'image' } : undefined
+        }
+        onClose={() => setOpen(undefined)}
+      />
+    </span>
+  )
+}
+
+/**
+ * The designs a block mentions, under it: a card each with the picture save_design renders and
+ * the design's name; it opens beside the thread. A design without a picture yet shows its name.
+ */
+function LibraryDesigns({ designs }: { designs: PlayedFile[] }) {
+  const links = useFileLinks()
+  const library = useApi<LibraryFile[]>('/library')
+  return (
+    <span className="my-3 flex flex-wrap gap-3 first:mt-0 last:mb-0">
+      {designs.map((d) => {
+        const thumbnail = library.data?.find((f) => f.path === `${d.id}/${DESIGN_THUMBNAIL}`)
+        const name = designName(d.id)
+        const card = (
+          <>
+            <span className="flex aspect-[16/10] items-center justify-center overflow-hidden border-b bg-muted/50">
+              {thumbnail ? (
+                // eslint-disable-next-line @next/next/no-img-element -- a library file through the API
+                <img
+                  src={libraryContent(thumbnail.id)}
+                  alt=""
+                  loading="lazy"
+                  className="size-full object-cover object-top"
+                />
+              ) : (
+                <MentionIcon kind="design" />
+              )}
+            </span>
+            <span className="block truncate px-3 py-2 text-left text-sm font-medium">{name}</span>
+          </>
+        )
+        const box = 'block w-64 max-w-full overflow-hidden rounded-lg border bg-card'
+        return links ? (
+          <Hint key={d.id} label={`Open ${d.id}`}>
+            <button
+              type="button"
+              aria-label={`Open ${name}`}
+              onClick={() => links.open({ path: d.id })}
+              className={cn(box, 'cursor-pointer transition-colors hover:border-primary/50')}
+            >
+              {card}
+            </button>
+          </Hint>
+        ) : (
+          <span key={d.id} className={box}>
+            {card}
+          </span>
+        )
+      })}
+    </span>
+  )
+}
+
+/** A block, then what its text mentions of the library: images, designs, videos and sounds. */
+function withPlayers(node: unknown, block: ReactNode) {
+  const files = playedFiles(node as Parameters<typeof playedFiles>[0])
+  if (files.length === 0) return block
+  const images = files.filter((f) => f.kind === 'image')
+  const designs = files.filter((f) => f.kind === 'design')
+  return (
+    <>
+      {block}
+      {images.length > 0 && <LibraryImages files={images} />}
+      {designs.length > 0 && <LibraryDesigns designs={designs} />}
+      {files
+        .filter((f) => f.kind === 'video' || f.kind === 'audio')
+        .map((file) => (
+          <LibraryPlayer key={file.id} file={file} />
+        ))}
+    </>
+  )
+}
+
 const components: Components = {
-  p: ({ node: _, ...props }) => <p className="my-2 first:mt-0 last:mb-0" {...props} />,
+  p: ({ node, ...props }) =>
+    withPlayers(node, <p className="my-2 first:mt-0 last:mb-0" {...props} />),
   h1: ({ node: _, ...props }) => (
     <h1 className="mt-5 mb-2 text-xl font-bold first:mt-0" {...props} />
   ),
@@ -301,8 +506,11 @@ const components: Components = {
       {...props}
     />
   ),
-  li: ({ node: _, ...props }) => (
-    <li className="pl-1 [&>input]:mr-2 [&>input]:align-middle [&>ol]:my-1 [&>ul]:my-1" {...props} />
+  // A tight list's item holds its text itself: its players go inside it, after the text.
+  li: ({ node, children, ...props }) => (
+    <li className="pl-1 [&>input]:mr-2 [&>input]:align-middle [&>ol]:my-1 [&>ul]:my-1" {...props}>
+      {withPlayers(node, children)}
+    </li>
   ),
   blockquote: ({ node: _, ...props }) => (
     <blockquote
@@ -335,42 +543,110 @@ const components: Components = {
       </CopyInline.Provider>
     </FileLinksProvider>
   ),
+  // The reply wraps long words anywhere (wrap-anywhere), which lets a column shrink to one
+  // letter wide: a table wraps between words only, and scrolls sideways when it is too wide.
   table: ({ node: _, ...props }) => (
     <div className="my-3 overflow-x-auto first:mt-0 last:mb-0">
-      <table className="w-full border-collapse text-sm" {...props} />
+      <table className="w-full border-collapse text-sm wrap-break-word" {...props} />
     </div>
   ),
   th: ({ node: _, ...props }) => (
-    <th className="border border-border bg-muted px-3 py-1.5 text-left font-semibold" {...props} />
+    <th
+      className="border border-border bg-muted px-2 py-1.5 text-left font-semibold sm:px-3"
+      {...props}
+    />
   ),
   td: ({ node: _, ...props }) => (
-    <td className="border border-border px-3 py-1.5 align-top" {...props} />
+    <td className="border border-border px-2 py-1.5 align-top sm:px-3" {...props} />
   ),
 }
 
 // Only fenced blocks that name their language: guessing is slow and often wrong.
+type HastNode = {
+  type: string
+  tagName?: string
+  value?: string
+  children?: HastNode[]
+  properties?: Record<string, unknown>
+}
+
+/**
+ * Each word of a reply streaming in, in a span that fades in as it mounts (.stream-word): the
+ * words already shown keep theirs, so only the new ones fade. Not inside code, which shows as
+ * it comes.
+ */
+function rehypeStreamWords() {
+  const wrap = (node: HastNode) => {
+    if (!node.children || node.tagName === 'code' || node.tagName === 'pre') return
+    node.children = node.children.flatMap((child): HastNode[] => {
+      if (child.type !== 'text') {
+        wrap(child)
+        return [child]
+      }
+      return (child.value?.match(/\s+|\S+\s*/g) ?? []).map((word) =>
+        /^\s+$/.test(word)
+          ? { type: 'text', value: word }
+          : {
+              type: 'element',
+              tagName: 'span',
+              properties: { className: ['stream-word'] },
+              children: [{ type: 'text', value: word }],
+            },
+      )
+    })
+  }
+  return (tree: HastNode) => wrap(tree)
+}
+
 const rehypePlugins = [
   [rehypeHighlight, { plainText: ['text', 'txt', 'plain'] }],
 ] satisfies ComponentProps<typeof ReactMarkdown>['rehypePlugins']
+const streamingPlugins = [...rehypePlugins, rehypeStreamWords] satisfies ComponentProps<
+  typeof ReactMarkdown
+>['rehypePlugins']
+
+/**
+ * Each text's elements once parsed, the least recently used going first: a thread opened again
+ * shows its replies without parsing and highlighting them all again, most of what opening a
+ * long thread cost. Not while streaming, when each render's text is new.
+ */
+const parsed = new Map<string, ReactElement>()
+const PARSED_KEPT = 500
+
+function markdownTree(source: string, streaming: boolean) {
+  const render = () =>
+    ReactMarkdown({
+      children: source,
+      remarkPlugins,
+      rehypePlugins: streaming ? streamingPlugins : rehypePlugins,
+      components,
+      urlTransform,
+    })
+  if (streaming) return render()
+  let tree = parsed.get(source)
+  if (tree) parsed.delete(source)
+  else tree = render()
+  parsed.set(source, tree)
+  if (parsed.size > PARSED_KEPT) parsed.delete(parsed.keys().next().value!)
+  return tree
+}
+
+const remarkPlugins = [remarkGfm]
 
 /** Markdown text, styled with the theme. Memoised: streaming re-renders only the message that grows. */
 export const Markdown = memo(function Markdown({
   text,
   className,
+  streaming = false,
 }: {
   text: string
   className?: string
+  /** Still coming in: its new words fade in as they show. */
+  streaming?: boolean
 }) {
   return (
     <div className={cn('min-w-0 leading-relaxed wrap-anywhere', className)}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={rehypePlugins}
-        components={components}
-        urlTransform={urlTransform}
-      >
-        {text.replace(MENTION, '[$1]($2)')}
-      </ReactMarkdown>
+      {markdownTree(text.replace(MENTION, '[$1]($2)'), streaming)}
     </div>
   )
 })

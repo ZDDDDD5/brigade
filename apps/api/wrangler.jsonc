@@ -9,10 +9,34 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  // Its own isolates (the cron, the jobs' consumer, the reads the front sends here) run next to
+  // the database, as the Api object does: each request makes about ten queries.
+  "placement": { "region": "aws:eu-central-1" },
+  // Api runs the API, and the hubs of workspaces whose hubMode is 'api'; WorkspaceHubObject is one
+  // workspace's hub of its own, by its id (src/hub-object.ts, docs/workspace-hubs-plan.md).
   "durable_objects": {
-    "bindings": [{ "name": "API", "class_name": "Api" }],
+    "bindings": [
+      { "name": "API", "class_name": "Api" },
+      { "name": "HUBS", "class_name": "WorkspaceHubObject" },
+    ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Api"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Api"] },
+    { "tag": "v2", "new_sqlite_classes": ["WorkspaceHubObject"] },
+  ],
+  // Hub objects, the cron and the jobs' consumer connect again each time they wake or run: through
+  // Hyperdrive, which keeps connections to Neon open, rather than a new one each time (300 to 500
+  // ms). Its cache is off: it would serve reads older than the latest writes. Made with
+  // `wrangler hyperdrive create brigade-hubs --connection-string=<Neon's direct, not pooled,
+  // address> --caching-disabled`. The Api object does not use it (src/db.ts). Remove this to go
+  // back to direct connections. localConnectionString: for `wrangler dev`, the local database.
+  "hyperdrive": [
+    {
+      "binding": "DB_HYPERDRIVE",
+      "id": "f28736549efe40d2ac7b50c6655308ee",
+      "localConnectionString": "postgresql://brigade:brigade@localhost:5433/brigade",
+    },
+  ],
   // The same source as on Node, with these modules swapped for their Workers versions
   // (import paths, matched exactly). Prisma's Workers client comes from `prisma generate`;
   // jsdom (for @blocknote/server-util, in src/collab.ts) does not run on Workers.
@@ -25,8 +49,38 @@
   // The runner bundle, served by GET /runner/bundle.tgz; nothing is served from here directly.
   "assets": { "directory": "dist-worker/assets", "binding": "ASSETS", "run_worker_first": true },
   "triggers": { "crons": ["* * * * *"] },
+  // Background jobs (src/jobs.ts), one message per workspace and job, put on brigade-jobs by the
+  // cron each minute; one that fails every try waits in brigade-jobs-dlq, and operators hear of it.
+  // Used while JOBS_ON_QUEUE is "1" (vars below); with "0", the Api object runs them on timers.
+  // The queues were made once, with `wrangler queues create brigade-jobs` and
+  // `wrangler queues create brigade-jobs-dlq`.
+  "queues": {
+    "producers": [
+      { "binding": "JOBS", "queue": "brigade-jobs" },
+      { "binding": "JOBS_DEAD", "queue": "brigade-jobs-dlq" },
+    ],
+    "consumers": [
+      {
+        "queue": "brigade-jobs",
+        "max_batch_size": 5,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "max_concurrency": 10,
+        "dead_letter_queue": "brigade-jobs-dlq",
+      },
+    ],
+  },
   "limits": { "cpu_ms": 60000 },
-  "vars": { "NODE_ENV": "production" },
+  // PREVIEW_GATEWAY_URL: the previews' own site (apps/preview-gateway). Its secret is
+  // PREVIEW_GATEWAY_SECRET here, the same as SECRET there: change both together.
+  "vars": {
+    "NODE_ENV": "production",
+    "PREVIEW_GATEWAY_URL": "https://brigade.surf",
+    // "1": the jobs go through their queue (above); "0": the Api object's timers run them.
+    "JOBS_ON_QUEUE": "1",
+  },
+  // Which version runs: the Api object tells its restarts from a deploy's (src/ops/restarts.ts).
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "observability": { "enabled": true },
   "upload_source_maps": true,
 }

@@ -1,0 +1,154 @@
+/* The landing's "Brigade is built by Brigade" section (built-by.tsx), on the theme's own
+ * variables, inside the landing's page wrapper (its .wrap, .h2 and .lead). Titles and
+ * branches too long for their column fade out with `truncate` (globals.css). */
+
+/* The repository link: small and grey, the text colour on hover. */
+.gh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  transition: color 150ms ease;
+}
+.gh:hover {
+  color: var(--foreground);
+}
+.gh svg {
+  width: 13px;
+  height: 13px;
+}
+
+.b-head {
+  max-width: 900px;
+  margin-bottom: 44px;
+}
+/* The GitHub numbers said as one line under the claim, at subtitle size: the figures in
+ * the text colour, the words grey. */
+.b-stats {
+  margin-top: 18px;
+  font-size: clamp(24px, 2.7vw, 36px);
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+  color: var(--muted-foreground);
+}
+.b-stats b {
+  font-weight: 600;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+/* The repository link under the terminal, on its right edge. */
+.b-after {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+.b-term {
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: oklch(0.17 0.006 271);
+  color: oklch(0.92 0 0);
+  overflow: hidden;
+}
+.b-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-bottom: 1px solid oklch(1 0 0 / 0.07);
+}
+.b-bar i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+.b-bar i:nth-of-type(1) {
+  background: #ff5f57;
+}
+.b-bar i:nth-of-type(2) {
+  background: #febc2e;
+}
+.b-bar i:nth-of-type(3) {
+  background: #28c840;
+}
+.b-bar span {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font: 12px var(--font-mono);
+  letter-spacing: 0;
+  color: oklch(0.62 0 0);
+}
+.b-body {
+  display: grid;
+  gap: 2px;
+  padding: 18px 20px 20px;
+  font: 13.5px/1.7 var(--font-mono);
+  letter-spacing: 0;
+}
+.b-cmd {
+  color: oklch(0.92 0 0);
+}
+.b-ps {
+  color: oklch(0.72 0.16 156);
+}
+.b-line {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) minmax(0, 0.3fr) 52px;
+  gap: 24px;
+  padding: 2px 6px;
+  margin: 0 -6px;
+  border-radius: 6px;
+  color: oklch(0.86 0 0);
+  transition: background-color 150ms ease;
+}
+.b-line:hover {
+  background: oklch(1 0 0 / 0.05);
+}
+.b-no {
+  color: oklch(0.72 0.16 156);
+}
+.b-br,
+.b-d {
+  color: oklch(0.58 0 0);
+}
+.b-d {
+  text-align: right;
+  white-space: nowrap;
+}
+.b-cursor {
+  margin-top: 6px;
+}
+.b-caret {
+  display: inline-block;
+  width: 8px;
+  height: 15px;
+  vertical-align: -2px;
+  background: oklch(0.92 0 0);
+  animation: blink 1.1s steps(1) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (max-width: 760px) {
+  .b-line {
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 12px;
+  }
+  .b-br,
+  .b-d {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .b-caret {
+    animation: none;
+  }
+}

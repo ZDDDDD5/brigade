@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- The setup checklist (src-tauri/src/setup.rs): each step checked live, with what fixes it. -->
+<!-- The setup window (src/setup.ts): the steps as a road of teammates who wake up as each one is
+     done, the action that fixes the current one, then "Your team has moved in!". -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -8,13 +9,97 @@
     <script src="setup.js" defer></script>
   </head>
   <body>
-    <header>
-      <h1>Get this Mac ready for your teammates</h1>
-      <p id="summary">Checking this Mac…</p>
+    <header class="bar">
+      <img src="logo.svg" alt="" />
+      <span>Brigade</span>
     </header>
-    <ol id="steps"></ol>
+
+    <main id="moving">
+      <h1>Your team is moving in</h1>
+      <p id="summary" class="sub">Checking…</p>
+      <div class="road">
+        <svg id="path" aria-hidden="true"></svg>
+        <ol id="steps"></ol>
+      </div>
+      <section id="current" class="card" aria-live="polite">
+        <div class="text">
+          <div class="title"></div>
+          <div class="detail"></div>
+          <div class="error" hidden></div>
+        </div>
+        <button class="primary" hidden></button>
+      </section>
+    </main>
+
+    <main id="ready" hidden>
+      <div class="party" aria-hidden="true">
+        <svg class="lights" viewBox="0 0 600 60" preserveAspectRatio="none">
+          <path d="M-10 6 Q150 44 300 18 T610 12" />
+        </svg>
+        <i class="bulb" style="--x: 60px; --y: 22px; --c: var(--yellow)"></i>
+        <i class="bulb" style="--x: 150px; --y: 31px; --c: var(--pink)"></i>
+        <i class="bulb" style="--x: 240px; --y: 25px; --c: var(--green)"></i>
+        <i class="bulb" style="--x: 330px; --y: 16px; --c: var(--blue)"></i>
+        <i class="bulb" style="--x: 420px; --y: 12px; --c: var(--orange)"></i>
+        <i class="bulb" style="--x: 510px; --y: 12px; --c: var(--purple)"></i>
+        <div class="pb happy" style="--s: 44px; --c: var(--pink); left: 44px; top: 160px">
+          <i class="l"></i><i class="r"></i>
+        </div>
+        <div class="pb happy" style="--s: 64px; --c: var(--green); left: 96px; top: 108px">
+          <i class="l"></i><i class="r"></i>
+        </div>
+        <div
+          class="pb happy"
+          style="
+            --s: 70px;
+            --c: var(--blue);
+            left: 170px;
+            top: 68px;
+            --r: 45% 55% 52% 48% / 60% 45% 55% 40%;
+          "
+        >
+          <i class="l"></i><i class="r"></i>
+        </div>
+        <div class="pb happy bob" style="--s: 104px; --c: var(--purple); left: 248px; top: 54px">
+          <i class="l"></i><i class="r"></i>
+        </div>
+        <div
+          class="pb happy"
+          style="
+            --s: 70px;
+            --c: var(--orange);
+            left: 364px;
+            top: 74px;
+            --r: 52% 48% 58% 42% / 50% 56% 44% 50%;
+          "
+        >
+          <i class="l"></i><i class="r"></i>
+        </div>
+        <div class="pb happy" style="--s: 60px; --c: var(--yellow); left: 442px; top: 110px">
+          <i class="l"></i><i class="r"></i>
+        </div>
+        <b class="bit" style="left: 140px; top: 60px; --c: var(--yellow); --a: 30deg"></b>
+        <b class="bit" style="left: 226px; top: 40px; --c: var(--green); --a: -30deg"></b>
+        <b class="bit" style="left: 372px; top: 42px; --c: var(--pink); --a: 55deg"></b>
+        <b class="bit" style="left: 462px; top: 70px; --c: var(--blue); --a: -15deg"></b>
+        <b class="bit" style="left: 520px; top: 140px; --c: var(--purple); --a: 40deg"></b>
+        <b class="bit" style="left: 80px; top: 90px; --c: var(--orange); --a: -50deg"></b>
+      </div>
+      <h1>Your team has moved in!</h1>
+      <p id="ready-text" class="sub"></p>
+      <div class="actions">
+        <button id="later-ai" class="quiet" hidden>Later</button>
+        <button id="connect-ai" class="primary" hidden>Connect Claude or ChatGPT</button>
+        <button id="open" class="primary" hidden>Open Brigade</button>
+      </div>
+    </main>
+
     <footer>
-      <button id="close" class="primary" hidden>Done</button>
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <path d="m9 12 2 2 4-4" />
+      </svg>
+      <p id="note">Everything goes in your own user folder. No administrator needed.</p>
       <button id="later" class="quiet">Finish later</button>
     </footer>
   </body>

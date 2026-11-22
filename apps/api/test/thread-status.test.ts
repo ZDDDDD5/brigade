@@ -1,0 +1,121 @@
+import assert from 'node:assert/strict'
+import { test } from 'node:test'
+import type { AgentEvent } from '@brigade/contracts'
+
+// A thread's status from its events (statusAfter): what a takeover and its hand back leave.
+process.env.DATABASE_URL ??= 'postgresql://test@127.0.0.1:1/none'
+process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
+process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
+const { statusAfter } = await import('../src/hub/thread-events.js')
+
+const at = new Date().toISOString()
+const control = (controller: 'human' | 'teammate', waiting?: boolean): AgentEvent => ({
+  at,
+  type: 'control.changed',
+  controller,
+  memberId: 'm1',
+  ...(waiting ? { waiting } : {}),
+})
+const note = (waiting?: boolean): AgentEvent => ({
+  at,
+  type: 'message.user',
+  text: 'A person took over this thread and has now handed it back to you.',
+  memberId: 'm1',
+  ...(waiting ? { waiting } : {}),
+})
+const fold = (events: AgentEvent[], from: Parameters<typeof statusAfter>[0]) =>
+  events.reduce(statusAfter, from)
+
+test('a hand back while the teammate still waits on its ticket leaves it waiting', () => {
+  assert.equal(
+    fold([control('human'), control('teammate', true), note(true)], 'waiting'),
+    'waiting',
+  )
+})
+
+test('a hand back once it waits on nobody leaves it idle', () => {
+  assert.equal(fold([control('human'), control('teammate')], 'idle'), 'idle')
+})
+
+test('a hand back before the turn ends leaves it running', () => {
+  assert.equal(fold([control('teammate')], 'running'), 'running')
+})
+
+test("a person's message still starts a turn", () => {
+  assert.equal(fold([note()], 'idle'), 'running')
+})
+
+test('a message answered while its ticket stays open leaves the thread waiting on a person', () => {
+  const opened: AgentEvent = {
+    at,
+    type: 'ticket.opened',
+    requestId: 't1',
+    title: 'Hyperdrive permission',
+    asks: [{ id: 'perm', type: 'action', title: 'Add Hyperdrive: Edit' }],
+  }
+  const answered = (waiting?: boolean): AgentEvent => ({
+    at,
+    type: 'turn.completed',
+    finishReason: 'stop',
+    ...(waiting ? { waiting } : {}),
+  })
+  assert.equal(fold([opened, note(), answered(true)], 'running'), 'waiting')
+  // Its answer, once given, comes as a message: the turn that reads it ends the wait.
+  assert.equal(fold([opened, note(), answered(true), note(), answered()], 'running'), 'idle')
+})
+
+test('an answer kept while the teammate waits on an approval leaves the thread waiting', () => {
+  const requested: AgentEvent = {
+    at,
+    type: 'approval.requested',
+    approvalId: 'a1',
+    toolCallId: 'c1',
+    toolName: 'Bash',
+    input: {},
+  }
+  const answered = (waiting?: boolean): AgentEvent => ({
+    at,
+    type: 'ticket.answered',
+    requestId: 't1',
+    answer: { action: 'answered', replies: {} },
+    memberId: 'm1',
+    ...(waiting ? { waiting } : {}),
+  })
+  assert.equal(fold([requested, answered(true)], 'running'), 'waiting')
+  assert.equal(fold([answered()], 'waiting'), 'running')
+})
+
+test('a message settled by its side reply leaves the thread as its turn left it', () => {
+  const side: AgentEvent = {
+    at,
+    type: 'message.user',
+    text: 'Where was the bug?',
+    memberId: 'm1',
+    messageId: 'msg1',
+    side: { text: 'In exportRows.', route: 'answer' },
+  }
+  // The turn it came during ended first: the thread stays done, and does not look busy.
+  assert.equal(fold([side], 'idle'), 'idle')
+  assert.equal(fold([side], 'running'), 'running')
+  // A message the teammate reads starts work, as before, one steered from its aside too.
+  assert.equal(fold([{ ...side, side: undefined }], 'idle'), 'running')
+  assert.equal(
+    fold([{ ...side, steered: true, side: { text: 'Noted.', route: 'steer' } }], 'idle'),
+    'running',
+  )
+})
+
+test('a turn that moves to another account once its own ran out runs again, not failed', () => {
+  const limit: AgentEvent = { at, type: 'error', message: "You've hit your 5-hour limit" }
+  const switched = (toAccountId: string | null): AgentEvent => ({
+    at,
+    type: 'account.switched',
+    fromAccountId: 'a1',
+    toAccountId,
+    reason: 'usage_limit',
+    resetsAt: null,
+  })
+  assert.equal(fold([limit, switched('a2')], 'running'), 'running')
+  // No account left: it pauses, as before.
+  assert.equal(fold([limit, switched(null)], 'running'), 'paused')
+})

@@ -54,7 +54,7 @@ export function takeHandOver(): Set<number> {
         const group = handed.get(pgid)
         if (!group) continue
         console.log(`stopping a harness handed over that no thread took up (${pgid})`)
-        stopGroup(pgid, group.runAs)
+        void stopGroup(pgid, group.runAs)
         handed.delete(pgid)
       }
     }, UNCLAIMED_MS).unref()

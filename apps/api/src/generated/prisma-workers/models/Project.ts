@@ -35,6 +35,7 @@ export type ProjectMinAggregateOutputType = {
   url: string | null
   brief: string | null
   folder: string | null
+  reviewPolicy: $Enums.ReviewPolicy | null
   archivedAt: Date | null
   createdAt: Date | null
   updatedAt: Date | null
@@ -50,6 +51,7 @@ export type ProjectMaxAggregateOutputType = {
   url: string | null
   brief: string | null
   folder: string | null
+  reviewPolicy: $Enums.ReviewPolicy | null
   archivedAt: Date | null
   createdAt: Date | null
   updatedAt: Date | null
@@ -66,6 +68,7 @@ export type ProjectCountAggregateOutputType = {
   brief: number
   folder: number
   preferredConnectionIds: number
+  reviewPolicy: number
   archivedAt: number
   createdAt: number
   updatedAt: number
@@ -83,6 +86,7 @@ export type ProjectMinAggregateInputType = {
   url?: true
   brief?: true
   folder?: true
+  reviewPolicy?: true
   archivedAt?: true
   createdAt?: true
   updatedAt?: true
@@ -98,6 +102,7 @@ export type ProjectMaxAggregateInputType = {
   url?: true
   brief?: true
   folder?: true
+  reviewPolicy?: true
   archivedAt?: true
   createdAt?: true
   updatedAt?: true
@@ -114,6 +119,7 @@ export type ProjectCountAggregateInputType = {
   brief?: true
   folder?: true
   preferredConnectionIds?: true
+  reviewPolicy?: true
   archivedAt?: true
   createdAt?: true
   updatedAt?: true
@@ -203,6 +209,7 @@ export type ProjectGroupByOutputType = {
   brief: string
   folder: string | null
   preferredConnectionIds: string[]
+  reviewPolicy: $Enums.ReviewPolicy
   archivedAt: Date | null
   createdAt: Date
   updatedAt: Date
@@ -240,6 +247,7 @@ export type ProjectWhereInput = {
   brief?: Prisma.StringFilter<"Project"> | string
   folder?: Prisma.StringNullableFilter<"Project"> | string | null
   preferredConnectionIds?: Prisma.StringNullableListFilter<"Project">
+  reviewPolicy?: Prisma.EnumReviewPolicyFilter<"Project"> | $Enums.ReviewPolicy
   archivedAt?: Prisma.DateTimeNullableFilter<"Project"> | Date | string | null
   createdAt?: Prisma.DateTimeFilter<"Project"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Project"> | Date | string
@@ -251,6 +259,8 @@ export type ProjectWhereInput = {
   triggers?: Prisma.TriggerListRelationFilter
   documents?: Prisma.DocumentListRelationFilter
   playbookInstallations?: Prisma.PlaybookInstallationListRelationFilter
+  mailProject?: Prisma.XOR<Prisma.MailProjectNullableScalarRelationFilter, Prisma.MailProjectWhereInput> | null
+  initiatives?: Prisma.InitiativeListRelationFilter
 }
 
 export type ProjectOrderByWithRelationInput = {
@@ -264,6 +274,7 @@ export type ProjectOrderByWithRelationInput = {
   brief?: Prisma.SortOrder
   folder?: Prisma.SortOrderInput | Prisma.SortOrder
   preferredConnectionIds?: Prisma.SortOrder
+  reviewPolicy?: Prisma.SortOrder
   archivedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -275,6 +286,8 @@ export type ProjectOrderByWithRelationInput = {
   triggers?: Prisma.TriggerOrderByRelationAggregateInput
   documents?: Prisma.DocumentOrderByRelationAggregateInput
   playbookInstallations?: Prisma.PlaybookInstallationOrderByRelationAggregateInput
+  mailProject?: Prisma.MailProjectOrderByWithRelationInput
+  initiatives?: Prisma.InitiativeOrderByRelationAggregateInput
 }
 
 export type ProjectWhereUniqueInput = Prisma.AtLeast<{
@@ -292,6 +305,7 @@ export type ProjectWhereUniqueInput = Prisma.AtLeast<{
   brief?: Prisma.StringFilter<"Project"> | string
   folder?: Prisma.StringNullableFilter<"Project"> | string | null
   preferredConnectionIds?: Prisma.StringNullableListFilter<"Project">
+  reviewPolicy?: Prisma.EnumReviewPolicyFilter<"Project"> | $Enums.ReviewPolicy
   archivedAt?: Prisma.DateTimeNullableFilter<"Project"> | Date | string | null
   createdAt?: Prisma.DateTimeFilter<"Project"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Project"> | Date | string
@@ -303,6 +317,8 @@ export type ProjectWhereUniqueInput = Prisma.AtLeast<{
   triggers?: Prisma.TriggerListRelationFilter
   documents?: Prisma.DocumentListRelationFilter
   playbookInstallations?: Prisma.PlaybookInstallationListRelationFilter
+  mailProject?: Prisma.XOR<Prisma.MailProjectNullableScalarRelationFilter, Prisma.MailProjectWhereInput> | null
+  initiatives?: Prisma.InitiativeListRelationFilter
 }, "id" | "workspaceId_name">
 
 export type ProjectOrderByWithAggregationInput = {
@@ -316,6 +332,7 @@ export type ProjectOrderByWithAggregationInput = {
   brief?: Prisma.SortOrder
   folder?: Prisma.SortOrderInput | Prisma.SortOrder
   preferredConnectionIds?: Prisma.SortOrder
+  reviewPolicy?: Prisma.SortOrder
   archivedAt?: Prisma.SortOrderInput | Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -338,6 +355,7 @@ export type ProjectScalarWhereWithAggregatesInput = {
   brief?: Prisma.StringWithAggregatesFilter<"Project"> | string
   folder?: Prisma.StringNullableWithAggregatesFilter<"Project"> | string | null
   preferredConnectionIds?: Prisma.StringNullableListFilter<"Project">
+  reviewPolicy?: Prisma.EnumReviewPolicyWithAggregatesFilter<"Project"> | $Enums.ReviewPolicy
   archivedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"Project"> | Date | string | null
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"Project"> | Date | string
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"Project"> | Date | string
@@ -353,6 +371,7 @@ export type ProjectCreateInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -364,6 +383,8 @@ export type ProjectCreateInput = {
   triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateInput = {
@@ -377,6 +398,7 @@ export type ProjectUncheckedCreateInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -387,6 +409,8 @@ export type ProjectUncheckedCreateInput = {
   triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUpdateInput = {
@@ -399,6 +423,7 @@ export type ProjectUpdateInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -410,6 +435,8 @@ export type ProjectUpdateInput = {
   triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateInput = {
@@ -423,6 +450,7 @@ export type ProjectUncheckedUpdateInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -433,6 +461,8 @@ export type ProjectUncheckedUpdateInput = {
   triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectCreateManyInput = {
@@ -446,6 +476,7 @@ export type ProjectCreateManyInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -461,6 +492,7 @@ export type ProjectUpdateManyMutationInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -477,6 +509,7 @@ export type ProjectUncheckedUpdateManyInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -513,6 +546,7 @@ export type ProjectCountOrderByAggregateInput = {
   brief?: Prisma.SortOrder
   folder?: Prisma.SortOrder
   preferredConnectionIds?: Prisma.SortOrder
+  reviewPolicy?: Prisma.SortOrder
   archivedAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -528,6 +562,7 @@ export type ProjectMaxOrderByAggregateInput = {
   url?: Prisma.SortOrder
   brief?: Prisma.SortOrder
   folder?: Prisma.SortOrder
+  reviewPolicy?: Prisma.SortOrder
   archivedAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -543,6 +578,7 @@ export type ProjectMinOrderByAggregateInput = {
   url?: Prisma.SortOrder
   brief?: Prisma.SortOrder
   folder?: Prisma.SortOrder
+  reviewPolicy?: Prisma.SortOrder
   archivedAt?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
@@ -684,6 +720,10 @@ export type ProjectUpdatepreferredConnectionIdsInput = {
   push?: string | string[]
 }
 
+export type EnumReviewPolicyFieldUpdateOperationsInput = {
+  set?: $Enums.ReviewPolicy
+}
+
 export type ProjectCreateNestedOneWithoutRepositoriesInput = {
   create?: Prisma.XOR<Prisma.ProjectCreateWithoutRepositoriesInput, Prisma.ProjectUncheckedCreateWithoutRepositoriesInput>
   connectOrCreate?: Prisma.ProjectCreateOrConnectWithoutRepositoriesInput
@@ -714,6 +754,38 @@ export type ProjectUpdateOneWithoutPlaybookInstallationsNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.ProjectUpdateToOneWithWhereWithoutPlaybookInstallationsInput, Prisma.ProjectUpdateWithoutPlaybookInstallationsInput>, Prisma.ProjectUncheckedUpdateWithoutPlaybookInstallationsInput>
 }
 
+export type ProjectCreateNestedOneWithoutMailProjectInput = {
+  create?: Prisma.XOR<Prisma.ProjectCreateWithoutMailProjectInput, Prisma.ProjectUncheckedCreateWithoutMailProjectInput>
+  connectOrCreate?: Prisma.ProjectCreateOrConnectWithoutMailProjectInput
+  connect?: Prisma.ProjectWhereUniqueInput
+}
+
+export type ProjectUpdateOneWithoutMailProjectNestedInput = {
+  create?: Prisma.XOR<Prisma.ProjectCreateWithoutMailProjectInput, Prisma.ProjectUncheckedCreateWithoutMailProjectInput>
+  connectOrCreate?: Prisma.ProjectCreateOrConnectWithoutMailProjectInput
+  upsert?: Prisma.ProjectUpsertWithoutMailProjectInput
+  disconnect?: Prisma.ProjectWhereInput | boolean
+  delete?: Prisma.ProjectWhereInput | boolean
+  connect?: Prisma.ProjectWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.ProjectUpdateToOneWithWhereWithoutMailProjectInput, Prisma.ProjectUpdateWithoutMailProjectInput>, Prisma.ProjectUncheckedUpdateWithoutMailProjectInput>
+}
+
+export type ProjectCreateNestedOneWithoutInitiativesInput = {
+  create?: Prisma.XOR<Prisma.ProjectCreateWithoutInitiativesInput, Prisma.ProjectUncheckedCreateWithoutInitiativesInput>
+  connectOrCreate?: Prisma.ProjectCreateOrConnectWithoutInitiativesInput
+  connect?: Prisma.ProjectWhereUniqueInput
+}
+
+export type ProjectUpdateOneWithoutInitiativesNestedInput = {
+  create?: Prisma.XOR<Prisma.ProjectCreateWithoutInitiativesInput, Prisma.ProjectUncheckedCreateWithoutInitiativesInput>
+  connectOrCreate?: Prisma.ProjectCreateOrConnectWithoutInitiativesInput
+  upsert?: Prisma.ProjectUpsertWithoutInitiativesInput
+  disconnect?: Prisma.ProjectWhereInput | boolean
+  delete?: Prisma.ProjectWhereInput | boolean
+  connect?: Prisma.ProjectWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.ProjectUpdateToOneWithWhereWithoutInitiativesInput, Prisma.ProjectUpdateWithoutInitiativesInput>, Prisma.ProjectUncheckedUpdateWithoutInitiativesInput>
+}
+
 export type ProjectCreateWithoutWorkspaceInput = {
   id?: string
   organizationId: string
@@ -724,6 +796,7 @@ export type ProjectCreateWithoutWorkspaceInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -734,6 +807,8 @@ export type ProjectCreateWithoutWorkspaceInput = {
   triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutWorkspaceInput = {
@@ -746,6 +821,7 @@ export type ProjectUncheckedCreateWithoutWorkspaceInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -756,6 +832,8 @@ export type ProjectUncheckedCreateWithoutWorkspaceInput = {
   triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutWorkspaceInput = {
@@ -798,6 +876,7 @@ export type ProjectScalarWhereInput = {
   brief?: Prisma.StringFilter<"Project"> | string
   folder?: Prisma.StringNullableFilter<"Project"> | string | null
   preferredConnectionIds?: Prisma.StringNullableListFilter<"Project">
+  reviewPolicy?: Prisma.EnumReviewPolicyFilter<"Project"> | $Enums.ReviewPolicy
   archivedAt?: Prisma.DateTimeNullableFilter<"Project"> | Date | string | null
   createdAt?: Prisma.DateTimeFilter<"Project"> | Date | string
   updatedAt?: Prisma.DateTimeFilter<"Project"> | Date | string
@@ -813,6 +892,7 @@ export type ProjectCreateWithoutSessionsInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -823,6 +903,8 @@ export type ProjectCreateWithoutSessionsInput = {
   triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutSessionsInput = {
@@ -836,6 +918,7 @@ export type ProjectUncheckedCreateWithoutSessionsInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -845,6 +928,8 @@ export type ProjectUncheckedCreateWithoutSessionsInput = {
   triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutSessionsInput = {
@@ -873,6 +958,7 @@ export type ProjectUpdateWithoutSessionsInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -883,6 +969,8 @@ export type ProjectUpdateWithoutSessionsInput = {
   triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutSessionsInput = {
@@ -896,6 +984,7 @@ export type ProjectUncheckedUpdateWithoutSessionsInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -905,6 +994,8 @@ export type ProjectUncheckedUpdateWithoutSessionsInput = {
   triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectCreateWithoutTasksInput = {
@@ -917,6 +1008,7 @@ export type ProjectCreateWithoutTasksInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -927,6 +1019,8 @@ export type ProjectCreateWithoutTasksInput = {
   triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutTasksInput = {
@@ -940,6 +1034,7 @@ export type ProjectUncheckedCreateWithoutTasksInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -949,6 +1044,8 @@ export type ProjectUncheckedCreateWithoutTasksInput = {
   triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutTasksInput = {
@@ -977,6 +1074,7 @@ export type ProjectUpdateWithoutTasksInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -987,6 +1085,8 @@ export type ProjectUpdateWithoutTasksInput = {
   triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutTasksInput = {
@@ -1000,6 +1100,7 @@ export type ProjectUncheckedUpdateWithoutTasksInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1009,6 +1110,8 @@ export type ProjectUncheckedUpdateWithoutTasksInput = {
   triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectCreateWithoutSchedulesInput = {
@@ -1021,6 +1124,7 @@ export type ProjectCreateWithoutSchedulesInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1031,6 +1135,8 @@ export type ProjectCreateWithoutSchedulesInput = {
   triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutSchedulesInput = {
@@ -1044,6 +1150,7 @@ export type ProjectUncheckedCreateWithoutSchedulesInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1053,6 +1160,8 @@ export type ProjectUncheckedCreateWithoutSchedulesInput = {
   triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutSchedulesInput = {
@@ -1081,6 +1190,7 @@ export type ProjectUpdateWithoutSchedulesInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1091,6 +1201,8 @@ export type ProjectUpdateWithoutSchedulesInput = {
   triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutSchedulesInput = {
@@ -1104,6 +1216,7 @@ export type ProjectUncheckedUpdateWithoutSchedulesInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1113,6 +1226,8 @@ export type ProjectUncheckedUpdateWithoutSchedulesInput = {
   triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectCreateWithoutTriggersInput = {
@@ -1125,6 +1240,7 @@ export type ProjectCreateWithoutTriggersInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1135,6 +1251,8 @@ export type ProjectCreateWithoutTriggersInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutTriggersInput = {
@@ -1148,6 +1266,7 @@ export type ProjectUncheckedCreateWithoutTriggersInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1157,6 +1276,8 @@ export type ProjectUncheckedCreateWithoutTriggersInput = {
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutTriggersInput = {
@@ -1185,6 +1306,7 @@ export type ProjectUpdateWithoutTriggersInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1195,6 +1317,8 @@ export type ProjectUpdateWithoutTriggersInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutTriggersInput = {
@@ -1208,6 +1332,7 @@ export type ProjectUncheckedUpdateWithoutTriggersInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1217,6 +1342,8 @@ export type ProjectUncheckedUpdateWithoutTriggersInput = {
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectCreateWithoutDocumentsInput = {
@@ -1229,6 +1356,7 @@ export type ProjectCreateWithoutDocumentsInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1239,6 +1367,8 @@ export type ProjectCreateWithoutDocumentsInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutProjectInput
   triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutDocumentsInput = {
@@ -1252,6 +1382,7 @@ export type ProjectUncheckedCreateWithoutDocumentsInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1261,6 +1392,8 @@ export type ProjectUncheckedCreateWithoutDocumentsInput = {
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutProjectInput
   triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutDocumentsInput = {
@@ -1289,6 +1422,7 @@ export type ProjectUpdateWithoutDocumentsInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1299,6 +1433,8 @@ export type ProjectUpdateWithoutDocumentsInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutProjectNestedInput
   triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutDocumentsInput = {
@@ -1312,6 +1448,7 @@ export type ProjectUncheckedUpdateWithoutDocumentsInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1321,6 +1458,8 @@ export type ProjectUncheckedUpdateWithoutDocumentsInput = {
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutProjectNestedInput
   triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectCreateWithoutRepositoriesInput = {
@@ -1333,6 +1472,7 @@ export type ProjectCreateWithoutRepositoriesInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1343,6 +1483,8 @@ export type ProjectCreateWithoutRepositoriesInput = {
   triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutRepositoriesInput = {
@@ -1356,6 +1498,7 @@ export type ProjectUncheckedCreateWithoutRepositoriesInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1365,6 +1508,8 @@ export type ProjectUncheckedCreateWithoutRepositoriesInput = {
   triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutRepositoriesInput = {
@@ -1393,6 +1538,7 @@ export type ProjectUpdateWithoutRepositoriesInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1403,6 +1549,8 @@ export type ProjectUpdateWithoutRepositoriesInput = {
   triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutRepositoriesInput = {
@@ -1416,6 +1564,7 @@ export type ProjectUncheckedUpdateWithoutRepositoriesInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1425,6 +1574,8 @@ export type ProjectUncheckedUpdateWithoutRepositoriesInput = {
   triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectCreateWithoutPlaybookInstallationsInput = {
@@ -1437,6 +1588,7 @@ export type ProjectCreateWithoutPlaybookInstallationsInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1447,6 +1599,8 @@ export type ProjectCreateWithoutPlaybookInstallationsInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutProjectInput
   triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectUncheckedCreateWithoutPlaybookInstallationsInput = {
@@ -1460,6 +1614,7 @@ export type ProjectUncheckedCreateWithoutPlaybookInstallationsInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1469,6 +1624,8 @@ export type ProjectUncheckedCreateWithoutPlaybookInstallationsInput = {
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutProjectInput
   triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
   documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
 }
 
 export type ProjectCreateOrConnectWithoutPlaybookInstallationsInput = {
@@ -1497,6 +1654,7 @@ export type ProjectUpdateWithoutPlaybookInstallationsInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1507,6 +1665,8 @@ export type ProjectUpdateWithoutPlaybookInstallationsInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutProjectNestedInput
   triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutPlaybookInstallationsInput = {
@@ -1520,6 +1680,7 @@ export type ProjectUncheckedUpdateWithoutPlaybookInstallationsInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1529,6 +1690,240 @@ export type ProjectUncheckedUpdateWithoutPlaybookInstallationsInput = {
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutProjectNestedInput
   triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
+}
+
+export type ProjectCreateWithoutMailProjectInput = {
+  id?: string
+  organizationId: string
+  name: string
+  icon?: string | null
+  logo?: string | null
+  url?: string | null
+  brief?: string
+  folder?: string | null
+  preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
+  archivedAt?: Date | string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  workspace: Prisma.WorkspaceCreateNestedOneWithoutProjectsInput
+  repositories?: Prisma.ProjectRepositoryCreateNestedManyWithoutProjectInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutProjectInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutProjectInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutProjectInput
+  triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
+  documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  initiatives?: Prisma.InitiativeCreateNestedManyWithoutProjectInput
+}
+
+export type ProjectUncheckedCreateWithoutMailProjectInput = {
+  id?: string
+  organizationId: string
+  workspaceId: string
+  name: string
+  icon?: string | null
+  logo?: string | null
+  url?: string | null
+  brief?: string
+  folder?: string | null
+  preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
+  archivedAt?: Date | string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  repositories?: Prisma.ProjectRepositoryUncheckedCreateNestedManyWithoutProjectInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutProjectInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutProjectInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutProjectInput
+  triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
+  documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  initiatives?: Prisma.InitiativeUncheckedCreateNestedManyWithoutProjectInput
+}
+
+export type ProjectCreateOrConnectWithoutMailProjectInput = {
+  where: Prisma.ProjectWhereUniqueInput
+  create: Prisma.XOR<Prisma.ProjectCreateWithoutMailProjectInput, Prisma.ProjectUncheckedCreateWithoutMailProjectInput>
+}
+
+export type ProjectUpsertWithoutMailProjectInput = {
+  update: Prisma.XOR<Prisma.ProjectUpdateWithoutMailProjectInput, Prisma.ProjectUncheckedUpdateWithoutMailProjectInput>
+  create: Prisma.XOR<Prisma.ProjectCreateWithoutMailProjectInput, Prisma.ProjectUncheckedCreateWithoutMailProjectInput>
+  where?: Prisma.ProjectWhereInput
+}
+
+export type ProjectUpdateToOneWithWhereWithoutMailProjectInput = {
+  where?: Prisma.ProjectWhereInput
+  data: Prisma.XOR<Prisma.ProjectUpdateWithoutMailProjectInput, Prisma.ProjectUncheckedUpdateWithoutMailProjectInput>
+}
+
+export type ProjectUpdateWithoutMailProjectInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  icon?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  logo?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  brief?: Prisma.StringFieldUpdateOperationsInput | string
+  folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
+  archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  workspace?: Prisma.WorkspaceUpdateOneRequiredWithoutProjectsNestedInput
+  repositories?: Prisma.ProjectRepositoryUpdateManyWithoutProjectNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutProjectNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutProjectNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutProjectNestedInput
+  triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
+  documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
+}
+
+export type ProjectUncheckedUpdateWithoutMailProjectInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  workspaceId?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  icon?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  logo?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  brief?: Prisma.StringFieldUpdateOperationsInput | string
+  folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
+  archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  repositories?: Prisma.ProjectRepositoryUncheckedUpdateManyWithoutProjectNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutProjectNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutProjectNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutProjectNestedInput
+  triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
+  documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
+}
+
+export type ProjectCreateWithoutInitiativesInput = {
+  id?: string
+  organizationId: string
+  name: string
+  icon?: string | null
+  logo?: string | null
+  url?: string | null
+  brief?: string
+  folder?: string | null
+  preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
+  archivedAt?: Date | string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  workspace: Prisma.WorkspaceCreateNestedOneWithoutProjectsInput
+  repositories?: Prisma.ProjectRepositoryCreateNestedManyWithoutProjectInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutProjectInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutProjectInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutProjectInput
+  triggers?: Prisma.TriggerCreateNestedManyWithoutProjectInput
+  documents?: Prisma.DocumentCreateNestedManyWithoutProjectInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectCreateNestedOneWithoutProjectInput
+}
+
+export type ProjectUncheckedCreateWithoutInitiativesInput = {
+  id?: string
+  organizationId: string
+  workspaceId: string
+  name: string
+  icon?: string | null
+  logo?: string | null
+  url?: string | null
+  brief?: string
+  folder?: string | null
+  preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
+  archivedAt?: Date | string | null
+  createdAt?: Date | string
+  updatedAt?: Date | string
+  repositories?: Prisma.ProjectRepositoryUncheckedCreateNestedManyWithoutProjectInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutProjectInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutProjectInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutProjectInput
+  triggers?: Prisma.TriggerUncheckedCreateNestedManyWithoutProjectInput
+  documents?: Prisma.DocumentUncheckedCreateNestedManyWithoutProjectInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutProjectInput
+  mailProject?: Prisma.MailProjectUncheckedCreateNestedOneWithoutProjectInput
+}
+
+export type ProjectCreateOrConnectWithoutInitiativesInput = {
+  where: Prisma.ProjectWhereUniqueInput
+  create: Prisma.XOR<Prisma.ProjectCreateWithoutInitiativesInput, Prisma.ProjectUncheckedCreateWithoutInitiativesInput>
+}
+
+export type ProjectUpsertWithoutInitiativesInput = {
+  update: Prisma.XOR<Prisma.ProjectUpdateWithoutInitiativesInput, Prisma.ProjectUncheckedUpdateWithoutInitiativesInput>
+  create: Prisma.XOR<Prisma.ProjectCreateWithoutInitiativesInput, Prisma.ProjectUncheckedCreateWithoutInitiativesInput>
+  where?: Prisma.ProjectWhereInput
+}
+
+export type ProjectUpdateToOneWithWhereWithoutInitiativesInput = {
+  where?: Prisma.ProjectWhereInput
+  data: Prisma.XOR<Prisma.ProjectUpdateWithoutInitiativesInput, Prisma.ProjectUncheckedUpdateWithoutInitiativesInput>
+}
+
+export type ProjectUpdateWithoutInitiativesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  icon?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  logo?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  brief?: Prisma.StringFieldUpdateOperationsInput | string
+  folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
+  archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  workspace?: Prisma.WorkspaceUpdateOneRequiredWithoutProjectsNestedInput
+  repositories?: Prisma.ProjectRepositoryUpdateManyWithoutProjectNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutProjectNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutProjectNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutProjectNestedInput
+  triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
+  documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+}
+
+export type ProjectUncheckedUpdateWithoutInitiativesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  workspaceId?: Prisma.StringFieldUpdateOperationsInput | string
+  name?: Prisma.StringFieldUpdateOperationsInput | string
+  icon?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  logo?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  url?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  brief?: Prisma.StringFieldUpdateOperationsInput | string
+  folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
+  archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  repositories?: Prisma.ProjectRepositoryUncheckedUpdateManyWithoutProjectNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutProjectNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutProjectNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutProjectNestedInput
+  triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
+  documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
 }
 
 export type ProjectCreateManyWorkspaceInput = {
@@ -1541,6 +1936,7 @@ export type ProjectCreateManyWorkspaceInput = {
   brief?: string
   folder?: string | null
   preferredConnectionIds?: Prisma.ProjectCreatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: $Enums.ReviewPolicy
   archivedAt?: Date | string | null
   createdAt?: Date | string
   updatedAt?: Date | string
@@ -1556,6 +1952,7 @@ export type ProjectUpdateWithoutWorkspaceInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1566,6 +1963,8 @@ export type ProjectUpdateWithoutWorkspaceInput = {
   triggers?: Prisma.TriggerUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateWithoutWorkspaceInput = {
@@ -1578,6 +1977,7 @@ export type ProjectUncheckedUpdateWithoutWorkspaceInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1588,6 +1988,8 @@ export type ProjectUncheckedUpdateWithoutWorkspaceInput = {
   triggers?: Prisma.TriggerUncheckedUpdateManyWithoutProjectNestedInput
   documents?: Prisma.DocumentUncheckedUpdateManyWithoutProjectNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutProjectNestedInput
+  mailProject?: Prisma.MailProjectUncheckedUpdateOneWithoutProjectNestedInput
+  initiatives?: Prisma.InitiativeUncheckedUpdateManyWithoutProjectNestedInput
 }
 
 export type ProjectUncheckedUpdateManyWithoutWorkspaceInput = {
@@ -1600,6 +2002,7 @@ export type ProjectUncheckedUpdateManyWithoutWorkspaceInput = {
   brief?: Prisma.StringFieldUpdateOperationsInput | string
   folder?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   preferredConnectionIds?: Prisma.ProjectUpdatepreferredConnectionIdsInput | string[]
+  reviewPolicy?: Prisma.EnumReviewPolicyFieldUpdateOperationsInput | $Enums.ReviewPolicy
   archivedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
@@ -1618,6 +2021,7 @@ export type ProjectCountOutputType = {
   triggers: number
   documents: number
   playbookInstallations: number
+  initiatives: number
 }
 
 export type ProjectCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -1628,6 +2032,7 @@ export type ProjectCountOutputTypeSelect<ExtArgs extends runtime.Types.Extension
   triggers?: boolean | ProjectCountOutputTypeCountTriggersArgs
   documents?: boolean | ProjectCountOutputTypeCountDocumentsArgs
   playbookInstallations?: boolean | ProjectCountOutputTypeCountPlaybookInstallationsArgs
+  initiatives?: boolean | ProjectCountOutputTypeCountInitiativesArgs
 }
 
 /**
@@ -1689,6 +2094,13 @@ export type ProjectCountOutputTypeCountPlaybookInstallationsArgs<ExtArgs extends
   where?: Prisma.PlaybookInstallationWhereInput
 }
 
+/**
+ * ProjectCountOutputType without action
+ */
+export type ProjectCountOutputTypeCountInitiativesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.InitiativeWhereInput
+}
+
 
 export type ProjectSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -1701,6 +2113,7 @@ export type ProjectSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   brief?: boolean
   folder?: boolean
   preferredConnectionIds?: boolean
+  reviewPolicy?: boolean
   archivedAt?: boolean
   createdAt?: boolean
   updatedAt?: boolean
@@ -1712,6 +2125,8 @@ export type ProjectSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   triggers?: boolean | Prisma.Project$triggersArgs<ExtArgs>
   documents?: boolean | Prisma.Project$documentsArgs<ExtArgs>
   playbookInstallations?: boolean | Prisma.Project$playbookInstallationsArgs<ExtArgs>
+  mailProject?: boolean | Prisma.Project$mailProjectArgs<ExtArgs>
+  initiatives?: boolean | Prisma.Project$initiativesArgs<ExtArgs>
   _count?: boolean | Prisma.ProjectCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["project"]>
 
@@ -1726,6 +2141,7 @@ export type ProjectSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Exten
   brief?: boolean
   folder?: boolean
   preferredConnectionIds?: boolean
+  reviewPolicy?: boolean
   archivedAt?: boolean
   createdAt?: boolean
   updatedAt?: boolean
@@ -1743,6 +2159,7 @@ export type ProjectSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Exten
   brief?: boolean
   folder?: boolean
   preferredConnectionIds?: boolean
+  reviewPolicy?: boolean
   archivedAt?: boolean
   createdAt?: boolean
   updatedAt?: boolean
@@ -1760,12 +2177,13 @@ export type ProjectSelectScalar = {
   brief?: boolean
   folder?: boolean
   preferredConnectionIds?: boolean
+  reviewPolicy?: boolean
   archivedAt?: boolean
   createdAt?: boolean
   updatedAt?: boolean
 }
 
-export type ProjectOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "organizationId" | "workspaceId" | "name" | "icon" | "logo" | "url" | "brief" | "folder" | "preferredConnectionIds" | "archivedAt" | "createdAt" | "updatedAt", ExtArgs["result"]["project"]>
+export type ProjectOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "organizationId" | "workspaceId" | "name" | "icon" | "logo" | "url" | "brief" | "folder" | "preferredConnectionIds" | "reviewPolicy" | "archivedAt" | "createdAt" | "updatedAt", ExtArgs["result"]["project"]>
 export type ProjectInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   repositories?: boolean | Prisma.Project$repositoriesArgs<ExtArgs>
@@ -1775,6 +2193,8 @@ export type ProjectInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs
   triggers?: boolean | Prisma.Project$triggersArgs<ExtArgs>
   documents?: boolean | Prisma.Project$documentsArgs<ExtArgs>
   playbookInstallations?: boolean | Prisma.Project$playbookInstallationsArgs<ExtArgs>
+  mailProject?: boolean | Prisma.Project$mailProjectArgs<ExtArgs>
+  initiatives?: boolean | Prisma.Project$initiativesArgs<ExtArgs>
   _count?: boolean | Prisma.ProjectCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type ProjectIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -1795,6 +2215,11 @@ export type $ProjectPayload<ExtArgs extends runtime.Types.Extensions.InternalArg
     triggers: Prisma.$TriggerPayload<ExtArgs>[]
     documents: Prisma.$DocumentPayload<ExtArgs>[]
     playbookInstallations: Prisma.$PlaybookInstallationPayload<ExtArgs>[]
+    /**
+     * Its name in its agents' addresses (riley.<slug>@), once one was used.
+     */
+    mailProject: Prisma.$MailProjectPayload<ExtArgs> | null
+    initiatives: Prisma.$InitiativePayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -1826,6 +2251,10 @@ export type $ProjectPayload<ExtArgs extends runtime.Types.Extensions.InternalArg
      * Connections its threads should use when several could do. A hint, not a grant.
      */
     preferredConnectionIds: string[]
+    /**
+     * Whether its pull requests get a review by another teammate.
+     */
+    reviewPolicy: $Enums.ReviewPolicy
     archivedAt: Date | null
     createdAt: Date
     updatedAt: Date
@@ -2231,6 +2660,8 @@ export interface Prisma__ProjectClient<T, Null = never, ExtArgs extends runtime.
   triggers<T extends Prisma.Project$triggersArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Project$triggersArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$TriggerPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   documents<T extends Prisma.Project$documentsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Project$documentsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$DocumentPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   playbookInstallations<T extends Prisma.Project$playbookInstallationsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Project$playbookInstallationsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$PlaybookInstallationPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  mailProject<T extends Prisma.Project$mailProjectArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Project$mailProjectArgs<ExtArgs>>): Prisma.Prisma__MailProjectClient<runtime.Types.Result.GetResult<Prisma.$MailProjectPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
+  initiatives<T extends Prisma.Project$initiativesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Project$initiativesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$InitiativePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -2270,6 +2701,7 @@ export interface ProjectFieldRefs {
   readonly brief: Prisma.FieldRef<"Project", 'String'>
   readonly folder: Prisma.FieldRef<"Project", 'String'>
   readonly preferredConnectionIds: Prisma.FieldRef<"Project", 'String[]'>
+  readonly reviewPolicy: Prisma.FieldRef<"Project", 'ReviewPolicy'>
   readonly archivedAt: Prisma.FieldRef<"Project", 'DateTime'>
   readonly createdAt: Prisma.FieldRef<"Project", 'DateTime'>
   readonly updatedAt: Prisma.FieldRef<"Project", 'DateTime'>
@@ -2839,6 +3271,49 @@ export type Project$playbookInstallationsArgs<ExtArgs extends runtime.Types.Exte
   take?: number
   skip?: number
   distinct?: Prisma.PlaybookInstallationScalarFieldEnum | Prisma.PlaybookInstallationScalarFieldEnum[]
+}
+
+/**
+ * Project.mailProject
+ */
+export type Project$mailProjectArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the MailProject
+   */
+  select?: Prisma.MailProjectSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the MailProject
+   */
+  omit?: Prisma.MailProjectOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.MailProjectInclude<ExtArgs> | null
+  where?: Prisma.MailProjectWhereInput
+}
+
+/**
+ * Project.initiatives
+ */
+export type Project$initiativesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the Initiative
+   */
+  select?: Prisma.InitiativeSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the Initiative
+   */
+  omit?: Prisma.InitiativeOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.InitiativeInclude<ExtArgs> | null
+  where?: Prisma.InitiativeWhereInput
+  orderBy?: Prisma.InitiativeOrderByWithRelationInput | Prisma.InitiativeOrderByWithRelationInput[]
+  cursor?: Prisma.InitiativeWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.InitiativeScalarFieldEnum | Prisma.InitiativeScalarFieldEnum[]
 }
 
 /**

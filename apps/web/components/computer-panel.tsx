@@ -12,15 +12,19 @@ import { CloseButton } from '@/components/close-button'
 import type { SequencedEvent } from '@brigade/contracts'
 import { MediaPreview } from '@/components/attachments'
 import { StatusBadge, TeammateAvatar, timeAgo } from '@/components/dashboard'
+import { TeammateTitle } from '@/components/teammate-title'
 import { DesktopScreen } from '@/components/desktop-preview'
 import type { OpenFile } from '@/components/file-links'
 import { describeCron } from '@/components/schedules'
 import { Terminal } from '@/components/terminal'
 import { ThreadMenu } from '@/components/thread-menu'
-import { ThreadOutputs, type ThreadOutput } from '@/components/thread-outputs'
+import { ThreadOutputs, type ChangedFiles, type ThreadOutput } from '@/components/thread-outputs'
+import { ProviderLogo } from '@/components/provider-logo'
+import { wakeTime } from '@/components/wakeup-icon'
 import { PanelResizeHandle, useEscapeToClose, usePanelStack } from '@/components/side-panel'
 import { ChildrenList } from '@/components/thread-children'
 import { Button } from '@/components/ui/button'
+import { Hint } from '@/components/ui/tooltip'
 import {
   api,
   teammateModelLabel,
@@ -31,6 +35,8 @@ import {
   type Thread,
   type ThreadSummary,
 } from '@/lib/api'
+import { changeControl, useControlError, useControlPending } from '@/lib/control'
+import { savedReplies } from '@/lib/ticket-replies'
 
 function Section({
   title,
@@ -65,7 +71,7 @@ function Frame({
   onEscape = onClose,
   children,
 }: {
-  teammate: Pick<Teammate, 'id' | 'name' | 'harness'>
+  teammate: Pick<Teammate, 'id' | 'name' | 'title' | 'harness'>
   subtitle: string
   onClose: () => void
   /** What Escape does: closes it, as it does the other panels beside a page, unless told else. */
@@ -88,7 +94,10 @@ function Frame({
       <div className="flex h-14 shrink-0 flex-nowrap items-center gap-3 px-4">
         <TeammateAvatar teammate={teammate} className="size-7" />
         <div className="min-w-0 flex-1 leading-tight">
-          <strong className="block truncate text-sm font-semibold">{teammate.name}</strong>
+          <span className="flex min-w-0 items-center gap-2">
+            <strong className="truncate text-sm font-semibold">{teammate.name}</strong>
+            <TeammateTitle title={teammate.title} className="px-1.5 py-0 text-[11px]" />
+          </span>
           <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
         </div>
         <CloseButton label={`Close ${teammate.name}'s panel`} title="Close" onClick={onClose} />
@@ -224,49 +233,61 @@ export function TeammatePanel({
   )
 }
 
-/** Taking over the computer and handing it back, for the panel and the open computer. */
-function useControl(thread: Thread, memberId: string, status: string, onChange: () => void) {
+/**
+ * Taking over the computer and handing it back, for the panel and the open computer: shown at
+ * once (lib/control.ts), the buttons held until the API has it.
+ */
+function useControl(thread: Thread, memberId: string, onChange: () => void) {
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string>()
+  const [browserError, setBrowserError] = useState<string>()
+  // Undone, a change of control says why wherever the thread shows.
+  const controlError = useControlError(thread.id)
+  // Asked anywhere (the hand back card, a ticket), a change of control holds these too.
+  const pending = useControlPending(thread.id)
   const mine = !!memberId && thread.controlledByMemberId === memberId
-  const working = status === 'running' || status === 'starting'
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true)
-    setError(undefined)
+    setBrowserError(undefined)
     try {
       await fn()
       onChange()
     } catch (e) {
-      setError((e as Error).message)
+      setBrowserError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function control(to: string | null, request: () => Promise<unknown>) {
+    setBusy(true)
+    setBrowserError(undefined)
+    try {
+      await changeControl(thread.id, to, request)
+      onChange()
+    } catch {
+      // Its error is controlError.
     } finally {
       setBusy(false)
     }
   }
 
   return {
-    busy,
-    error,
+    busy: busy || pending,
+    error: browserError ?? controlError,
     mine,
-    working,
-    takeOver: (interrupt: boolean) =>
-      void act(() => api(`/threads/${thread.id}/takeover`, { body: { interrupt } })),
+    takeOver: () =>
+      void control(memberId, () =>
+        api(`/threads/${thread.id}/takeover`, { body: { interrupt: false } }),
+      ),
     // No note from here: the thread's own hand back, below the conversation, takes one.
-    handBack: () => void act(() => api(`/threads/${thread.id}/handback`, { body: { note: '' } })),
+    handBack: () =>
+      void control(null, () =>
+        api(`/threads/${thread.id}/handback`, { body: { note: '', replies: savedReplies() } }),
+      ),
     openBrowser: () =>
       void act(() => api(`/teammates/${thread.teammate.id}/browser`, { body: {} })),
   }
-}
-
-/** "14:30" today, else with its day: "Fri 16 Oct, 09:00". */
-const wakeTime = (at: string) => {
-  const date = new Date(at)
-  const today = date.toDateString() === new Date().toDateString()
-  return date.toLocaleString(undefined, {
-    ...(today ? {} : { weekday: 'short', day: 'numeric', month: 'short' }),
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 /** When the thread's teammates will be prompted here again, to check on something. */
@@ -432,6 +453,168 @@ function MacScreenView({
   )
 }
 
+/** Emails a teammate sent from the thread: a reply in their conversation wakes it. */
+function AwaitedReplies({ thread, onChange }: { thread: Thread; onChange: () => void }) {
+  const [busy, setBusy] = useState<string>()
+  const [error, setError] = useState<string>()
+  const stop = async (id: string) => {
+    setBusy(id)
+    setError(undefined)
+    try {
+      await api(`/threads/${thread.id}/replies/${id}`, { method: 'DELETE' })
+      onChange()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+  const names = new Map(thread.teammates.map((t) => [t.teammate.id, t.teammate.name]))
+  return (
+    <Section title="Waiting for replies">
+      <ul className="flex flex-col">
+        {thread.replyWatches.map((w) => (
+          <li key={w.id} className="flex items-center gap-3 rounded-md px-2 py-1.5">
+            <ProviderLogo kind={w.connection.kind} className="size-4 flex-none" />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm font-medium" title={w.subject}>
+                {w.subject}
+              </span>
+              <Hint label={`Sent from ${w.connection.externalAccount ?? w.connection.label}`}>
+                <span className="truncate text-xs text-muted-foreground">
+                  {names.size > 1 && `${names.get(w.teammateId) ?? 'A teammate'} · `}
+                  To {w.to} · until <time dateTime={w.until}>{wakeTime(w.until)}</time>
+                </span>
+              </Hint>
+            </span>
+            {thread.mayPrompt && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={busy === w.id}
+                onClick={() => void stop(w.id)}
+              >
+                Stop
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </Section>
+  )
+}
+
+/** Sign-up addresses the thread made (Email App): their mail comes to it alone, for now. */
+function AwaitedMail({ thread }: { thread: Thread }) {
+  return (
+    <Section title="Waiting for email">
+      <ul className="flex flex-col">
+        {thread.mailAliases.map((a) => (
+          <li key={a.id} className="flex items-center gap-3 rounded-md px-2 py-1.5">
+            <ProviderLogo kind="email" className="size-4 flex-none" />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="truncate text-sm font-medium" title={a.purpose}>
+                {a.purpose || 'Sign-up'}
+              </span>
+              <span className="truncate text-xs text-muted-foreground" title={a.address}>
+                {a.address} · until <time dateTime={a.waitUntil}>{wakeTime(a.waitUntil)}</time>
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </Section>
+  )
+}
+
+const SENT_STATUS: Record<string, string> = {
+  scheduled: 'Leaving soon',
+  sent: 'Sent',
+  delivered: 'Delivered',
+  bounced: 'Not delivered',
+  cancelled: 'Cancelled',
+}
+
+/** Emails the thread sent from Brigade's addresses; one still in its window can be cancelled. */
+function SentMail({ thread, onChange }: { thread: Thread; onChange: () => void }) {
+  const [busy, setBusy] = useState<string>()
+  const [error, setError] = useState<string>()
+  // The window closes on its own: redrawn each second while one is open.
+  const [now, setNow] = useState(() => Date.now())
+  const open = thread.mailMessages.some(
+    (m) => m.status === 'scheduled' && m.sendAt && Date.parse(m.sendAt) > now,
+  )
+  useEffect(() => {
+    if (!open) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [open])
+  const cancel = async (id: string) => {
+    setBusy(id)
+    setError(undefined)
+    try {
+      await api(`/email/messages/${id}/cancel`, { method: 'POST' })
+      onChange()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(undefined)
+    }
+  }
+  return (
+    <Section title="Emails sent">
+      <ul className="flex flex-col">
+        {thread.mailMessages.map((m) => {
+          const left =
+            m.status === 'scheduled' && m.sendAt
+              ? Math.ceil((Date.parse(m.sendAt) - now) / 1000)
+              : 0
+          return (
+            <li key={m.id} className="flex items-center gap-3 rounded-md px-2 py-1.5">
+              <ProviderLogo
+                kind={m.connectionId ? 'gmail' : 'email'}
+                className="size-4 flex-none"
+              />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm font-medium" title={m.subject}>
+                  {m.subject || '(no subject)'}
+                </span>
+                <Hint label={m.error ?? `From ${m.fromAddress}`}>
+                  <span
+                    className={`truncate text-xs ${m.status === 'bounced' ? 'text-destructive' : 'text-muted-foreground'}`}
+                  >
+                    To {m.to.join(', ')} ·{' '}
+                    {left > 120
+                      ? // Set to leave later: its day and time.
+                        `Leaves ${new Date(m.sendAt!).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                      : left > 0
+                        ? `Leaves in ${left} s`
+                        : (SENT_STATUS[m.status] ?? (m.status === 'scheduled' ? 'Sent' : m.status))}
+                  </span>
+                </Hint>
+              </span>
+              {left > 0 && thread.mayPrompt && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy === m.id}
+                  onClick={() => void cancel(m.id)}
+                >
+                  Cancel
+                </Button>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+    </Section>
+  )
+}
+
 /**
  * Beside an expanded thread, everything that is not the conversation: its
  * computer (a thumbnail of the screen that opens it, Preview, the shell, the run
@@ -444,8 +627,8 @@ export function ComputerPanel({
   onClose,
   outputs,
   onOpenFile,
+  changes,
   details,
-  actions,
   onChange,
   screen,
   turnId,
@@ -462,10 +645,10 @@ export function ComputerPanel({
   /** What the thread made, newest first. */
   outputs: ThreadOutput[]
   onOpenFile: OpenFile
+  /** The files changed in the code it checked out, first among its outputs; unset: none checked out. */
+  changes?: ChangedFiles
   /** The thread's details, below its computer: who is in it, its project and task, who started it. */
   details: ReactNode
-  /** Below the computer: Preview, the shell, the run log. */
-  actions: ReactNode
   /** Something here changed the thread (a wake-up cancelled): fetch it again. */
   onChange: () => void
 }) {
@@ -510,7 +693,6 @@ export function ComputerPanel({
             screen, what it sees shows here.
           </p>
         )}
-        {actions}
       </Section>
 
       {/* The thread's own: pin, rename, archive or delete it here too, as it may be out of the
@@ -521,15 +703,21 @@ export function ComputerPanel({
 
       {thread.wakeups.length > 0 && <Wakeups thread={thread} onChange={onChange} />}
 
+      {thread.replyWatches.length > 0 && <AwaitedReplies thread={thread} onChange={onChange} />}
+
+      {thread.mailAliases?.length > 0 && <AwaitedMail thread={thread} />}
+
+      {thread.mailMessages?.length > 0 && <SentMail thread={thread} onChange={onChange} />}
+
       {thread.children.length > 0 && (
-        <Section title={`Child threads · ${thread.children.length}`}>
+        <Section title={`Sub-threads · ${thread.children.length}`}>
           <ChildrenList children={thread.children} />
         </Section>
       )}
 
-      {outputs.length > 0 && (
-        <Section title={`Outputs · ${outputs.length}`}>
-          <ThreadOutputs outputs={outputs} onOpen={onOpenFile} />
+      {(outputs.length > 0 || changes) && (
+        <Section title={outputs.length ? `Outputs · ${outputs.length}` : 'Outputs'}>
+          <ThreadOutputs outputs={outputs} onOpen={onOpenFile} changes={changes} />
         </Section>
       )}
       {/* The teammate's routines and settings are beside its thread list, not each thread. */}
@@ -545,20 +733,21 @@ export function ComputerPanel({
 export function ComputerScreen({
   thread,
   memberId,
-  status,
   shell,
   onShell,
   onChange,
+  onCollapse,
 }: {
   thread: Thread
   memberId: string
-  status: string
   shell: boolean
   onShell: (open: boolean) => void
   onChange: () => void
+  /** Back to the conversation, once closed beside the screen. */
+  onCollapse?: () => void
 }) {
   const teammate = thread.teammate
-  const control = useControl(thread, memberId, status, onChange)
+  const control = useControl(thread, memberId, onChange)
   const { busy, mine } = control
   // The shell needs control: handing back closes it.
   const shellOpen = shell && mine
@@ -574,7 +763,7 @@ export function ComputerScreen({
       className="aria-pressed:bg-accent aria-pressed:text-accent-foreground"
       onClick={() => onShell(!shellOpen)}
       aria-label={shellOpen ? 'Close the shell' : 'Shell'}
-      title={shellOpen ? 'Close the shell' : `A shell on the computer, as ${teammate.name}`}
+      tooltip={shellOpen ? 'Close the shell' : `A shell on the computer, as ${teammate.name}`}
     >
       <SquareTerminal aria-hidden />
     </Button>
@@ -585,7 +774,7 @@ export function ComputerScreen({
         size="sm"
         disabled={busy}
         onClick={control.handBack}
-        title={`Give the computer back to ${teammate.name}`}
+        tooltip={`Give the computer back to ${teammate.name}`}
       >
         <Hand aria-hidden />
         Hand back
@@ -597,7 +786,7 @@ export function ComputerScreen({
         disabled={busy}
         onClick={control.openBrowser}
         aria-label={`Open ${teammate.name}'s browser`}
-        title={`Open ${teammate.name}'s browser`}
+        tooltip={`Open ${teammate.name}'s browser`}
       >
         <Globe aria-hidden />
       </Button>
@@ -610,22 +799,11 @@ export function ComputerScreen({
       <Button
         size="sm"
         disabled={busy}
-        onClick={() => control.takeOver(false)}
-        title={`Use the mouse and keyboard. ${teammate.name} waits until you hand back`}
+        onClick={control.takeOver}
+        tooltip={`Use the mouse and keyboard. ${teammate.name} waits until you hand back`}
       >
         Take control
       </Button>
-      {control.working && (
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={busy}
-          onClick={() => control.takeOver(true)}
-          title={`Stop ${teammate.name}'s current turn first`}
-        >
-          Stop and take control
-        </Button>
-      )}
     </>
   )
 
@@ -638,6 +816,7 @@ export function ComputerScreen({
           control={mine}
           mode="open"
           toolbar={toolbar}
+          onCollapse={onCollapse}
         />
         {control.error && (
           <p className="absolute top-3 left-1/2 -translate-x-1/2 rounded-lg border bg-background px-3 py-1.5 text-sm text-destructive-text shadow-md">
@@ -661,7 +840,7 @@ export function ComputerScreen({
                 size="icon-sm"
                 onClick={() => onShell(false)}
                 aria-label="Close the shell"
-                title="Close the shell"
+                tooltip="Close the shell"
               >
                 <X aria-hidden />
               </Button>
@@ -684,13 +863,11 @@ export function ComputerScreen({
 export function ExpandedComputer({
   thread,
   memberId,
-  status,
   onChange,
   onClose,
 }: {
   thread: Thread
   memberId: string
-  status: string
   onChange: () => void
   onClose: () => void
 }) {
@@ -710,7 +887,6 @@ export function ExpandedComputer({
       <ComputerScreen
         thread={thread}
         memberId={memberId}
-        status={status}
         shell={shell}
         onShell={setShell}
         onChange={onChange}

@@ -1,42 +1,72 @@
 // Runs threads on this computer: one harness session per teammate in a thread,
 // turns of a thread in order (several teammates answer one after another), and
-// at most `concurrency` turns at once across threads. A member's message that
+// at most `concurrency` turns at once across threads; where the runner reads the
+// computer's memory, that memory decides how many below it (waitForMemory,
+// stoppedForMemory). A member's message that
 // comes in while the thread is busy waits in its queue, shown as queued, until
 // its turn starts; meanwhile it can be steered into the running turn, and cancelled or
 // edited when a person wrote it.
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, statfs, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import {
+  ANSWER_MESSAGE_TOOL,
+  loginOf,
+  runModel,
   ASIDE_TOOLS,
   attachmentLines,
   bareToolName,
   commandPrompt,
+  handbackMessage,
   mayChangeQueued,
+  memoryFilePath,
+  MEMORY_STOPPED,
   mentionedIds,
   MessageAttachment,
+  parseSideReply,
+  PASSING_ERROR,
+  RETRY_AFTER_MS as RETRY_DEFAULTS,
+  SIDE_REPLY_TIMEOUT_MS,
+  sideNote,
+  sidePrompt,
+  STEER_DELAY_MS,
+  withSideContext,
+  type SideExchange,
+  type SideRoute,
   THREAD_NOTE_SOURCE,
+  TURN_MEMORY_SOURCE,
+  TURN_NEXT_SOURCE,
+  TURN_PREPARING_SOURCE,
+  TURN_WAITING_SOURCE,
   turnAnswer,
   visibleChars,
   type AgentEvent,
+  type BackgroundWork,
   type ApiToRunner,
   type RunnerToApi,
   type ThreadAttachmentRef,
+  type TurnWaitingMemory,
   type ReplyTo,
   type ThreadPrompt,
   type ThreadSpec,
   type TurnEntry,
+  type TurnNext,
+  type TurnPreparing,
+  type TurnWaiting,
 } from '@brigade/contracts'
 import type { Attachments, Folder } from './attachments.js'
 import type { Folders } from './folders.js'
 import type { HandedOver } from './hand-over.js'
+import type { MachineRuns } from './machine-runs.js'
 import type { Previews } from './previews.js'
-import { memoryPrompt, parseMemory } from './memory.js'
-import { MARKS_RULE, said, type LogEntry } from './said.js'
-import { beyondShown, pickLines, recalledBlock } from './recall.js'
-import { MEMORY_CHARS, memoryBody } from './instructions.js'
+import { memoryRun } from './memory.js'
+import { memoryNews, threadMemory } from './memory-layers.js'
+import { tidyRun, type TidyFile } from './memory-tidy.js'
+import { MARKS_RULE, missedLines, ownReports, type Indexed, type LogEntry } from './said.js'
 import { parseTitle, TITLE_MODEL, titlePrompt } from './title.js'
+import { keepReplyImages, type StoreImage } from './reply-images.js'
+import { backgroundTasks, backgroundWait } from './harness/background.js'
 import { CLOUD, paths } from './config.js'
 import { teammateHome, teammateUser } from './teammates.js'
 import {
@@ -49,10 +79,73 @@ import {
 } from './harness/index.js'
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/
+
+/** How long a message its side reply passes on waits for its sender to keep it (tests set less). */
+const STEER_DELAY = process.env.BRIGADE_SIDE_STEER_MS
+  ? Number(process.env.BRIGADE_SIDE_STEER_MS)
+  : STEER_DELAY_MS
+
+/** Resolves once the signal aborts. */
+const aborted = (signal: AbortSignal) =>
+  new Promise<void>((resolve) =>
+    signal.aborted ? resolve() : signal.addEventListener('abort', () => resolve(), { once: true }),
+  )
+/**
+ * A person's message to the teammate whose turn runs goes into that turn at its next step, as in
+ * a chat, and as Claude Code does in a terminal: the turn's reply covers every message written
+ * during it, rather than the turn answering only the first while the others wait for turns of
+ * their own (Nov 4: the member compared it with a chat bot, which answers them together). Side
+ * replies, which answered such a message on the side instead, only with BRIGADE_SIDE_REPLIES=1.
+ */
+const SIDE_REPLIES = process.env.BRIGADE_SIDE_REPLIES === '1'
+/**
+ * A message as its teammate's running turn reads it: a person's says it came during the work, and
+ * that a question it can answer for sure now gets its answer at once, in a line, as in a chat,
+ * rather than once the work is done (Nov 4: "what's my name?" waited 36 s for research to end).
+ * That answer goes through answer_message, which says it answers this message: written as text
+ * between steps, it folded away with them once the turn ended (Nov 4, a step between the message
+ * and its answer), or could reach the person only as the server's summary of it (narration).
+ */
+export const steeredText = (text: string, fromPerson: boolean) =>
+  fromPerson
+    ? `${text}\n\n(Written while you work. If it asks what you can answer for sure now, answer it ` +
+      `in a line at once with ${ANSWER_MESSAGE_TOOL}, then go on with the work; don't repeat that ` +
+      'answer at the end.)'
+    : text
+
+/** How long a message waits for its teammate's turn to take it, the turn's session starting. */
+const AUTO_STEER_WAIT_MS = Number(process.env.BRIGADE_AUTO_STEER_WAIT_MS) || 60_000
 /** Park an idle harness session after this long; the next message resumes it. */
 const PARK_AFTER_MS = 5 * 60_000
+/**
+ * Idle harness sessions kept running at most, the latest to have answered: the others park now.
+ * A kept Claude Code session holds its process (250 to 430 MB) besides its bridge, for its next
+ * turn to start at once; a computer short of memory parks them all (coolDown).
+ */
+const WARM_SEATS = Number.isFinite(Number(process.env.BRIGADE_WARM_SEATS))
+  ? Number(process.env.BRIGADE_WARM_SEATS || 3)
+  : 3
+/** A background thread's idle session parks this soon: nobody waits on its next turn. */
+const BACKGROUND_PARK_MS = Number(process.env.BRIGADE_BACKGROUND_PARK_MS) || 10_000
+/**
+ * Work nobody is waiting on as it runs: a child thread's (sub-threads, reviews), a schedule's or
+ * a trigger's run, a playbook's. Its turns wait while the computer is short of memory, and its
+ * session is not kept warm; a person's turns go first.
+ */
+const inBackground = (spec: ThreadSpec) =>
+  !!spec.parent || !!spec.playbook || spec.origin === 'schedule' || spec.origin === 'trigger'
 /** How much of what others said a teammate is told at the start of its turn. */
-const CATCH_UP_CHARS = 40_000
+const CATCH_UP_CHARS = 100_000
+/**
+ * The most text queued messages read together in one turn have (joinQueued): half of what a
+ * turn is told, so what others said since its last turn still fits beside them.
+ */
+const JOIN_CHARS = CATCH_UP_CHARS / 2
+/**
+ * The most queued messages read together in one turn: well under LOG_ENTRIES, which the log
+ * keeps, so showing them all never drops the first before its turn is told it.
+ */
+const JOIN_MESSAGES = 20
 const LOG_ENTRIES = 200
 /** Teammates handing the thread to one another stop after this many handoffs without a member. */
 const MAX_HANDOFFS = 40
@@ -60,6 +153,12 @@ const MAX_HANDOFFS = 40
 const QUIET_AFTER_MS = Number(process.env.BRIGADE_QUIET_MS) || PARK_AFTER_MS
 /** Longest a memory run may take. */
 const MEMORY_RUN_MS = 4 * 60_000
+/** Longest a tidy run may take: it reads and lays out a whole memory file, beside the thread. */
+const TIDY_RUN_MS = 15 * 60_000
+/** A file whose tidy run failed is not tried again on this computer before this. */
+const TIDY_RETRY_MS = 60 * 60_000
+/** Nor one this computer just tidied, as memory-tidy.ts's own gap. */
+const TIDY_RESEND_MS = 6 * 60 * 60_000
 /** When the runner stops, how long it waits for the turns it froze to come back out. */
 const STOP_GRACE_MS = 10_000
 /** Longest a title run may take: past that, the thread keeps its first line. */
@@ -75,6 +174,74 @@ const OUT_OF_TURN = new Set<AgentEvent['type']>([
   'account.switched',
 ])
 
+// Errors that pass (PASSING_ERROR, in @brigade/contracts with the waits between tries, which the
+// API reads too): a turn that failed on one is tried again on its own, after RETRY_AFTER_MS.
+// Out of usage is not one of them: that turn moves to another account, or pauses
+// (HarnessThread.run).
+/** A full disk: tried again only once this much is free on it. */
+const DISK_ERROR = /ENOSPC|no space left/i
+const FREE_BYTES = 1024 ** 3
+/** How long before each try of a turn that failed on a passing error; then a person tries again. */
+const RETRY_AFTER_MS = Number(process.env.BRIGADE_RETRY_MS)
+  ? Array<number>(RETRY_DEFAULTS.length).fill(Number(process.env.BRIGADE_RETRY_MS))
+  : RETRY_DEFAULTS
+/** What a turn's error says once the memory guard stopped it (stoppedForMemory): MEMORY_STOPPED. */
+const memoryStopped = (why: string) => `Stopped to give the computer memory back: ${why}.`
+/**
+ * How long a turn waits for the computer to have memory for it (memoryRoom) before it starts
+ * anyway, when fewer than TURNS_ALWAYS run: none of them may end soon to give memory back.
+ */
+const MEMORY_WAIT_MS = 5 * 60_000
+/** How often background work waiting for memory checks it again (backgroundRoom). */
+const BACKGROUND_ROOM_CHECK_MS = Number(process.env.BRIGADE_BACKGROUND_ROOM_MS) || 5_000
+/**
+ * A turn kept waiting for memory says so only past this: most waits end within a minute (a peak
+ * of swapping passes), and a note for each would worry people for nothing.
+ */
+const MEMORY_NOTICE_MS = Number(process.env.BRIGADE_MEMORY_NOTICE_MS) || 60_000
+/**
+ * Turns that start without waiting on one another, and the fewest a computer runs at once
+ * after the memory guard stopped one (stoppedForMemory).
+ */
+const TURNS_ALWAYS = 4
+/**
+ * Past TURNS_ALWAYS, turns start one at a time, this long apart: the memory a turn takes shows
+ * only once it has started, and turns let in together would all see the same room.
+ */
+const SETTLE_MS = Number(process.env.BRIGADE_TURN_SETTLE_MS) || 3_000
+/** After the memory guard stopped a turn, one more turn at once each time this goes by without another stop. */
+const RAISE_MS = Number(process.env.BRIGADE_TURN_RAISE_MS) || 5 * 60_000
+/** What a teammate is told when its turn is tried again after it failed. */
+const retried = (error: string, background: BackgroundWork[] = []) =>
+  `Your last turn in this thread stopped on an error: ${error.slice(0, 2_000)}\n\n` +
+  (MEMORY_STOPPED.test(error)
+    ? 'Run heavy commands (tests, typechecks, builds) one at a time, and only those you need.\n\n'
+    : '') +
+  stoppedBackground(background) +
+  'Before you redo anything, check what is already done (files, commands you ran, messages you sent), then carry on where you left off.'
+
+/**
+ * What the failed turn ran in the background, stopped with it. A sub-agent's transcript is kept:
+ * Claude Code names each stopped one with its id, and SendMessage to that id has it go on from
+ * where it was, rather than start over.
+ */
+function stoppedBackground(background: BackgroundWork[]) {
+  if (background.length === 0) return ''
+  const agents = background.some((work) => work.kind === 'agent')
+  return (
+    'This was running in the background, and stopped with it:\n' +
+    background.map((work) => `- ${work.kind}: ${work.description}`).join('\n') +
+    '\n\n' +
+    (agents
+      ? "Your sub-agents' work so far is kept: resume each one with SendMessage to its id (Claude Code names them), rather than starting it over. "
+      : '') +
+    'Start again the commands you still need.\n\n'
+  )
+}
+
+/** A queued message's note while a person has control of its thread. */
+const HELD_FOR_HANDBACK = 'A person has control of this thread. It runs once they hand it back.'
+
 /** Events that end a turn: one still on its way to the API says the turn was over. */
 const TURN_ENDED = new Set<AgentEvent['type']>(['turn.completed', 'error'])
 
@@ -84,6 +251,9 @@ const TURN_ENDED = new Set<AgentEvent['type']>(['turn.completed', 'error'])
  * to the API say its turn was over.
  */
 type Lost = { kind: 'lost'; running: boolean; ended: boolean }
+
+/** A failed turn tried again: the teammate is told the error, and what was said since. */
+type Retry = { kind: 'retry'; error: string; background?: BackgroundWork[] }
 
 type Command = Extract<
   ApiToRunner,
@@ -96,26 +266,40 @@ type Command = Extract<
       | 'thread.interrupt'
       | 'thread.computer.stop'
       | 'thread.queued'
+      | 'thread.retry'
   }
 >
 
 type Seat = {
   harness: HarnessThread
   folder: Folder
+  /**
+   * The files given to its folder so far, by path: its turns' (the thread's) and those its calls
+   * brought. Its commands on the thread's machine find them there too (machine-files.ts).
+   */
+  files?: Map<string, ThreadAttachmentRef>
   parkTimer: NodeJS.Timeout | undefined
+  /** When its last turn ended idle, while its session stays running for the next (coolDown). */
+  idleSince?: number
   /** The running turn's messages and steps: its answer is what hands it on (handOn). */
   turn: (TurnEntry & { text?: string })[]
+  /** The running turn's spec: the teammates its answer may hand on to. */
+  spec?: ThreadSpec
   /** The running turn only waits on work started in the background: a new message goes straight in. */
   waiting: boolean
-  /** Memory lines already brought into this harness session (recall.ts). */
-  recalled: Set<string>
+  /** Memory lines learned since the session started that it was told (memoryNews). */
+  told: Set<string>
+  /** What the running turn runs in the background now: shells, Monitors, agents. */
+  background: BackgroundWork[]
 }
 
-/** The bridge's word on whether the turn only waits on background work, from a harness event. */
-function backgroundWait(event: AgentEvent): boolean | undefined {
-  if (event.type !== 'raw' || event.source !== 'harness') return
-  const value = event.value as { type?: unknown; subtype?: unknown; waiting?: unknown } | null
-  if (value?.type === 'system' && value.subtype === 'brigade_waiting') return value.waiting === true
+export { backgroundTasks }
+
+/** Files given to a seat's folder: the latest of each path is the one its machine gets. */
+function given(seat: Seat, refs: ThreadAttachmentRef[] | undefined) {
+  if (!refs?.length) return
+  const files = (seat.files ??= new Map())
+  for (const ref of refs) files.set(ref.path, ref)
 }
 
 /** A turn's answer as the thread shows it (turnAnswer), joined. */
@@ -126,9 +310,12 @@ const answerOf = (turn: Seat['turn']) =>
 
 /**
  * A member's message, from when it comes in until a teammate reads it. queued:
- * waits for the turns before it. held: its teammate waits on a person (an
- * approval, a question, a ticket); it runs once they answer. steering: being
- * given to the running turn. Then it is shown (its turn started), steered or cancelled.
+ * waits for the turns before it. held: its teammate's call waits on a person's
+ * decision (an approval); it runs once they decide. A ticket or question the
+ * teammate asked holds nothing: it reads the message now (harness/aside.ts).
+ * steering: being given to the running turn. Then it is shown (its turn started),
+ * steered or cancelled; or answered, when its side reply settled it (sideReply). A person who
+ * wants one settled run after all sends it again (ThreadPrompt's `settled`).
  */
 type Message = {
   id: string
@@ -139,11 +326,21 @@ type Message = {
   attachments: ThreadAttachmentRef[]
   /** The earlier message it replies to. */
   replyTo?: ReplyTo
-  state: 'queued' | 'held' | 'steering' | 'shown' | 'steered' | 'cancelled'
+  state: 'queued' | 'held' | 'steering' | 'shown' | 'steered' | 'cancelled' | 'answered'
   /** Settles when a steer in progress is done, either way. */
   steering?: Promise<void>
+  /** Its side reply under way (sideReply): `stop` ends it, `done` settles once it ended. */
+  side?: { stop: AbortController; done: Promise<void> }
+  /** What its side reply said, and the route it took or a person gave it since. */
+  reply?: { text: string; route: SideRoute }
+  /** Its side reply passes it to the running turn when this fires, unless its sender keeps it. */
+  steerTimer?: NodeJS.Timeout
   /** The log's end just after it, once shown. */
   upTo?: Promise<number>
+  /** Held while a person had control: only the hand back releases it (releaseAllHeld). */
+  takenOver?: boolean
+  /** Read in the turn of a message queued before it (joinQueued): no turn of its own. */
+  joined?: boolean
 }
 
 /** Who said what in a thread, so each teammate can be told what it missed. Never a credential. */
@@ -153,9 +350,30 @@ type Log = {
   entries: LogEntry[]
   /** Per teammate: the index up to which it has been told. */
   seen: Record<string, number>
+  /** The first thing a person said, kept once the entries are dropped past it. */
+  ask?: Indexed
   /** The index up to which memory was taken, and the thread's summary then. */
   memorized?: number
   summary?: string
+}
+
+/** The first thing a person said in the thread, when the log still knows it. */
+function firstAsk(log: Log): Indexed | undefined {
+  if (log.ask || log.start > 0) return log.ask
+  // A message Brigade wrote to a teammate can be it: a sub-thread's brief, a routine's run.
+  const i = log.entries.findIndex((e) => e.by === null && (!e.note || !!e.to))
+  return i < 0 ? undefined : { ...log.entries[i]!, at: i }
+}
+
+/** Add to the log, dropping its oldest entries past LOG_ENTRIES but keeping the first ask. */
+function push(log: Log, entry: LogEntry) {
+  log.entries.push(entry)
+  const drop = log.entries.length - LOG_ENTRIES
+  if (drop > 0) {
+    log.ask = firstAsk(log)
+    log.entries.splice(0, drop)
+    log.start += drop
+  }
 }
 
 type Thread = {
@@ -165,28 +383,91 @@ type Thread = {
   controller: AbortController | undefined
   /** The turn running now, and whose. */
   running?: { teammateId: string; turnId: string }
+  /** Whose turn waits for a free slot on this computer, all its turns being taken. */
+  slotWait?: TurnWaiting
   /** Messages not yet read: queued, held or being steered, by id. */
   messages: Map<string, Message>
+  /** Side replies, one after another: each forks the conversation as the turn left it. */
+  sides: Promise<void>
+  /** Messages going into the running turn on their own (autoSteer), one after the other, in order. */
+  steers: Promise<void>
+  /**
+   * Per teammate, what its side replies said during its running turn, which that turn has not
+   * heard: the next side reply, and a message passed to the turn, are told it. Its next turn
+   * starts with it as notes (sideNote), so it starts empty again.
+   */
+  sideLog: Map<string, (SideExchange & { messageId: string })[]>
   /** A memory run is queued or running: a new message waits for it. */
   memorizing: boolean
   /** Set while a person holds control: no teammate acts in the thread. */
-  takeover?: { memberId: string; since: number }
+  /**
+   * A person has control. `paused` once its teammate stopped for them (control.changed), with
+   * whether it waited on a person's answer then; handed back before, its turn went on.
+   */
+  takeover?: {
+    memberId: string
+    since: number
+    teammateId: string
+    paused?: { waiting: boolean }
+  }
   log: Promise<Log>
   /** Turns queued and not yet started, by teammate id. */
   waiting: Map<string, number>
+  /**
+   * Teammates whose turns wait to answer after another teammate's (a handoff, a message to
+   * several), in the order they answer; with the list the thread was told last (TURN_NEXT_SOURCE).
+   */
+  next: string[]
+  toldNext: string
+  /** Answers a person gave to a teammate's ask (a ticket, a question, an approval), by teammate id. */
+  answers: Map<string, number>
   /** Handoffs since a member last wrote. */
   handoffs: number
   /** Fires when the thread goes quiet, to take its memory. */
   quietTimer?: NodeJS.Timeout
   /** The latest turn's spec: the account and teammates a memory run uses. */
   lastSpec?: ThreadSpec
+  /**
+   * The latest turn failed: whose, on what error, and how many times it was tried again on
+   * its own since a person last asked; with the timer of the next try (failed).
+   */
+  failed?: {
+    spec: ThreadSpec
+    error: string
+    tries: number
+    /** What its turn ran in the background, stopped with it: the next try is told (retried). */
+    background?: BackgroundWork[]
+    timer?: NodeJS.Timeout
+    /** Its next try waits for the computer to have memory, said in the thread (tryAgain). */
+    shortOfMemory?: boolean
+  }
+  /** The memory guard stopped its running turn, and why (stoppedForMemory). */
+  memoryStop?: string
 }
 
 export class Threads {
   private threads = new Map<string, Thread>()
+  /** Threads whose memory run waits for the computer to have memory (memorize). */
+  private readonly memoryRunWaits = new Set<string>()
+  /** Slots taken, by turns (waiting for memory or running) and memory runs. */
   private running = 0
+  /** Turns started, past waitForMemory; and turns in it. */
+  private started = 0
+  private entering = 0
+  /** Fewer turns at once than `concurrency`, for a while after the memory guard stopped one. */
+  private lowered: number | undefined
+  private raiseTimer: NodeJS.Timeout | undefined
+  /** Resolves when the turn let in last has settled (SETTLE_MS): the next may check memory. */
+  private admission = Promise.resolve()
+  /** Turns waiting for memory now, and how each behind them in admission says it waits too. */
+  private memoryWaits = 0
+  private behindAdmission = new Set<() => void>()
   /** Turns queued or running, across threads. */
   private pending = 0
+  /** Memory files a tidy run is laying out now, by path; when one last failed, and when one was last sent. */
+  private readonly tidying = new Set<string>()
+  private readonly tidyFailed = new Map<string, number>()
+  private readonly tidySent = new Map<string, number>()
   private waiters: Array<() => void> = []
   /** The runner is stopping (stop): nothing new starts. */
   private stopping = false
@@ -197,6 +478,8 @@ export class Threads {
     private readonly options: {
       concurrency: number
       emit: (sessionId: string, event: AgentEvent) => void
+      /** A teammate's stream in a thread ended: what it spent is in its harness's log (usage-logs.ts). */
+      streamEnded?: (teammateId: string, sessionId: string, workDir: string) => void
       callConnector: (
         sessionId: string,
         teammateId: string,
@@ -212,21 +495,32 @@ export class Threads {
       /** A teammate's reply mentioned others in the thread: ask the API to have them answer next. */
       handoff: (sessionId: string, fromTeammateId: string, teammateIds: string[]) => void
       /** The library and memory threads reach. */
-      context: Omit<ThreadContext, 'callLibrary' | 'callTask' | 'callSchedule' | 'preview'>
+      context: Omit<ThreadContext, 'callLibrary' | 'callSchedule' | 'preview' | 'machine'>
       /** Apps teammates run for people to try, one per thread. */
       previews: Previews
+      /** Commands teammates run on their thread's machine (machine-runs.ts), on a cloud computer. */
+      machineRuns?: MachineRuns
+      /** Put an image a reply shows in its thread's bucket folder (reply-images.ts). */
+      storeImage: StoreImage
+      /**
+       * Whether the computer has memory for a turn now (memory-guard.ts): a turn waits for it
+       * before it starts, and a turn the guard stopped is tried again only once it does.
+       */
+      memoryRoom?: () => Promise<boolean>
       /** Thread folders archived to free disk, or moved here: put back before a turn. */
       folders: Pick<Folders, 'ready' | 'takeNote' | 'touch' | 'arrive' | 'release'>
+      /**
+       * On a computer that replaces another: resolves once what the old one had is put back
+       * (computer-backups.ts), before any turn; and what a teammate is told of what did not come back.
+       */
+      restored?: {
+        ready: () => Promise<void>
+        takeNote: (teammateId: string) => Promise<string | undefined>
+      }
       callLibrary: (
         sessionId: string,
         teammateId: string,
         call: Parameters<ThreadContext['callLibrary']>[0],
-      ) => Promise<unknown>
-      /** A teammate's task tools: create a task from the thread, or complete its task. */
-      callTask: (
-        sessionId: string,
-        teammateId: string,
-        call: Parameters<ThreadContext['callTask']>[0],
       ) => Promise<unknown>
       /** A teammate's schedule tools: create, list or change its schedules. */
       callSchedule: (
@@ -236,6 +530,8 @@ export class Threads {
       ) => Promise<unknown>
       /** What a quiet thread leaves in memory. */
       memoryUpdate: (update: Extract<RunnerToApi, { type: 'memory.update' }>) => void
+      /** A memory file laid out again by a tidy run. */
+      memoryTidy: (tidy: Extract<RunnerToApi, { type: 'memory.tidy' }>) => void
       /** A title for a new thread. */
       title: (update: Extract<RunnerToApi, { type: 'thread.title' }>) => void
     },
@@ -247,6 +543,8 @@ export class Threads {
       // An interrupt meant for a turn that already ended does not stop the next one.
       if (thread && (!command.turnId || thread.running?.turnId === command.turnId))
         thread.controller?.abort()
+      // Stopped, a failed turn is not tried again on its own either.
+      if (thread) this.settleFailure(thread)
       return
     }
     if (command.type === 'thread.computer.stop') {
@@ -275,13 +573,21 @@ export class Threads {
       else this.options.emit(spec.sessionId, { at, type: 'raw', source: 'runner', value: reason })
       return
     }
+    // Someone wrote, or a person asked: what goes on now is theirs, not a try planned before.
+    if (command.type === 'thread.prompt') this.settleFailure(this.thread(spec.sessionId))
+    if (command.type === 'thread.retry') return this.retry(spec, command.error)
     if (command.type === 'thread.prompt' && command.handoff) {
       // Nobody wrote anything: each is told what was said since its last turn.
-      for (const next of specs) this.enqueue(next, 'prompt')
+      for (const next of specs) this.enqueue(next, 'prompt', undefined, undefined, true)
+      // A turn answered already only waits on Claude Code's guess: the next ones need not.
+      const thread = this.thread(spec.sessionId)
+      if (thread.running) void thread.harnesses.get(thread.running.teammateId)?.harness.stopDrain()
       return
     }
     if (command.type === 'thread.prompt') {
       const thread = this.thread(spec.sessionId)
+      // Sent twice (a person's second click to run a settled message): it waits here already.
+      if (command.messageId && thread.messages.has(command.messageId)) return
       thread.handoffs = 0
       const message: Message = {
         id: command.messageId ?? randomUUID(),
@@ -298,18 +604,37 @@ export class Threads {
         thread.messages.set(message.id, message)
         this.emitQueued(spec.sessionId, message)
       }
+      // A turn answered already only waits on Claude Code's guess, which no longer matters.
+      if (thread.running) void thread.harnesses.get(thread.running.teammateId)?.harness.stopDrain()
       this.enqueueMessage(thread, message)
       // A turn that only waits on its background work takes it at once, as if steered,
       // unless one is already in it: then it waits its turn (steerQueued).
       if (message.state === 'queued') {
         if (command.steer) void this.steer(thread, message)
         else if (this.waiting(thread, message)) this.steerQueued(thread, spec.teammate.id)
+        // Its teammate is busy with its turn: the turn takes it at its next step (AUTO_STEER),
+        // or with side replies on, a copy of its conversation answers now, unless one did
+        // already and its sender wants it run after all.
+        else if (!command.settled && SIDE_REPLIES && this.sides(thread, message))
+          void this.sideReply(thread, message)
+        else if (!command.settled && !SIDE_REPLIES && this.autoSteers(thread, message))
+          thread.steers = thread.steers.then(() => this.autoSteer(thread, message))
       }
       if (command.nameThread !== undefined) void this.name(spec, command.text, command.nameThread)
       return
     }
     let input: ThreadInput
+    const thread = this.thread(spec.sessionId)
+    // An answer to an ask set aside while, nothing running, its teammate waits on a decision:
+    // kept until that is made (keepsAnswer), the thread still waits on a person meanwhile.
+    const kept = (answer: Extract<ThreadInput, { kind: 'answer' | 'ticket' }>) =>
+      !thread.running &&
+      ![...thread.waiting.values()].some((n) => n > 0) &&
+      this.harness(thread, spec).harness.holdsAnswer(answer)
+        ? { waiting: true }
+        : {}
     if (command.type === 'thread.answer') {
+      input = { kind: 'answer', questionId: command.questionId, answer: command.answer }
       this.options.emit(spec.sessionId, {
         at,
         type: 'question.answered',
@@ -317,9 +642,10 @@ export class Threads {
         questionId: command.questionId,
         answer: command.answer,
         memberId: command.memberId,
+        ...kept(input),
       })
-      input = { kind: 'answer', questionId: command.questionId, answer: command.answer }
     } else if (command.type === 'thread.ticket') {
+      input = { kind: 'ticket', requestId: command.requestId, answer: command.answer }
       this.options.emit(spec.sessionId, {
         at,
         type: 'ticket.answered',
@@ -327,9 +653,16 @@ export class Threads {
         requestId: command.requestId,
         answer: command.answer,
         memberId: command.memberId,
+        ...kept(input),
       })
-      input = { kind: 'ticket', requestId: command.requestId, answer: command.answer }
     } else {
+      // A decision on an approval no turn here waits on (one made twice) changes nothing: the
+      // thread does not show it, nor go back to running for it.
+      const seat = this.harness(thread, spec)
+      if (seat.harness.decidesNothing(command.approvalId)) {
+        console.warn(`thread ${spec.sessionId}: no turn waits on approval ${command.approvalId}`)
+        return
+      }
       this.options.emit(spec.sessionId, {
         at,
         type: 'approval.resolved',
@@ -346,6 +679,7 @@ export class Threads {
         ...(command.reason ? { reason: command.reason } : {}),
       }
     }
+    thread.answers.set(spec.teammate.id, (thread.answers.get(spec.teammate.id) ?? 0) + 1)
     this.enqueue(spec, input)
   }
 
@@ -380,6 +714,14 @@ export class Threads {
    * go on is closed as interrupted. Null: no turn now.
    */
   private async pickUp(spec: ThreadSpec, seat: Seat, lost: Lost): Promise<ThreadInput | null> {
+    const turn = await this.lostTurn(spec, seat, lost)
+    // Answers kept for a decision made before the runner stopped: given now, rather than once
+    // someone writes. After a turn, they are given as after any.
+    if (!turn) for (const answer of await seat.harness.answersToGive()) this.enqueue(spec, answer)
+    return turn
+  }
+
+  private async lostTurn(spec: ThreadSpec, seat: Seat, lost: Lost): Promise<ThreadInput | null> {
     if (lost.ended) return null
     if (await seat.harness.cutOff())
       return { kind: 'resume', text: await this.catchUp(spec, undefined, true) }
@@ -451,25 +793,41 @@ export class Threads {
     this.options.emit(sessionId, { at, type: 'turn.completed', finishReason: 'interrupted' })
   }
 
+  /** The teammates of the threads a person has control of now, by id. */
+  controlledTeammates() {
+    return new Set([...this.threads.values()].flatMap((t) => t.takeover?.teammateId ?? []))
+  }
+
   /** A person takes control: the teammate stops now, or after its current turn. */
   takeover(spec: ThreadSpec, memberId: string, interrupt: boolean) {
     const thread = this.thread(spec.sessionId)
     if (thread.takeover) return
-    thread.takeover = { memberId, since: Date.now() }
+    const takeover: NonNullable<Thread['takeover']> = {
+      memberId,
+      since: Date.now(),
+      teammateId: spec.teammate.id,
+    }
+    thread.takeover = takeover
+    this.settleFailure(thread)
     void this.options.previews.threadBusy(spec.sessionId)
     if (interrupt) thread.controller?.abort()
-    // Queued messages do not run while a person has control: say so, rather than drop them silently.
-    for (const message of thread.messages.values())
-      if (message.state !== 'steering')
-        this.cancel(
-          spec.sessionId,
-          thread,
-          message,
-          null,
-          'A person took over the thread before it ran.',
-        )
-    // Wait for the current turn to end, then record the change of control.
-    thread.queue = thread.queue.then(() => {
+    // Queued messages wait while a person has control, as wake-ups do: they run once handed back.
+    for (const message of thread.messages.values()) {
+      if (message.state === 'queued') {
+        message.state = 'held'
+        this.emitQueued(spec.sessionId, message, HELD_FOR_HANDBACK)
+      }
+      if (message.state === 'held') message.takenOver = true
+    }
+    // Wait for the current turn to end, then record the change of control: unless it was
+    // handed back meanwhile, which would leave the thread paused with nobody in control.
+    thread.queue = thread.queue.then(async () => {
+      if (thread.takeover !== takeover) return
+      const waiting = await this.harness(thread, spec)
+        .harness.awaitingPerson()
+        .catch(() => false)
+      if (thread.takeover !== takeover) return
+      takeover.paused = { waiting }
       this.options.emit(spec.sessionId, {
         at: new Date().toISOString(),
         type: 'control.changed',
@@ -491,28 +849,49 @@ export class Threads {
     if (!takeover) return
     // Control returns at once: a ticket answered with the handback comes right behind it.
     thread.takeover = undefined
+    const answers = thread.answers.get(spec.teammate.id) ?? 0
     this.options.emit(spec.sessionId, {
       at: new Date().toISOString(),
       type: 'control.changed',
       controller: 'teammate',
       memberId,
+      // Still waiting on what it asked: the thread waits on a person again, rather than idle.
+      ...(takeover.paused?.waiting ? { waiting: true } : {}),
     })
-    const files = await changedFiles(takeover.since).catch(() => [])
-    const at = new Date().toISOString()
-    if (!note.trim() && files.length === 0) return
-    const text = [
-      'A person took over this thread and has now handed it back to you.',
-      note.trim() && `Their note: ${note.trim()}`,
-      files.length > 0
-        ? `Files changed while they had control:\n${files.map((f) => `- ${f}`).join('\n')}`
-        : 'They changed no files in this directory.',
-    ]
-      .filter(Boolean)
-      .join('\n\n')
-    this.options.emit(spec.sessionId, { at, type: 'message.user', text, memberId })
-    thread.handoffs = 0
-    const upTo = this.note(spec, null, 'A member', text)
-    this.enqueue(spec, 'prompt', () => upTo)
+    // In the queue at once, ahead of a ticket answered with the hand back: it runs first,
+    // while its teammate still waits on that person, and then starts no turn, which would
+    // only fail. The teammate reads the message with its next turn.
+    this.enqueue(spec, 'prompt', async () => {
+      const waiting = await this.harness(thread, spec).harness.awaitingPerson()
+      // The messages held while the person had control queue behind this turn, each teammate's
+      // once it waits on nobody (releaseHeld). Here, every turn queued before is over.
+      await this.releaseAllHeld(thread)
+      const files = await changedFiles(takeover.since).catch(() => [])
+      if (!note.trim() && files.length === 0) return null
+      const text = handbackMessage({ note, files })
+      const at = new Date().toISOString()
+      // Still waiting on that person, and not answered since the hand back (a ticket answered
+      // with it, whose turn reads it): nothing runs until they answer. A message sent
+      // meanwhile is no answer, and is held too.
+      const held = waiting && (thread.answers.get(spec.teammate.id) ?? 0) === answers
+      this.options.emit(spec.sessionId, {
+        at,
+        type: 'message.user',
+        text,
+        memberId,
+        ...(held ? { waiting: true } : {}),
+      })
+      if (held)
+        this.options.emit(spec.sessionId, {
+          at,
+          type: 'raw',
+          source: 'runner',
+          value: `${spec.teammate.name} reads this once the pending request is answered.`,
+        })
+      thread.handoffs = 0
+      const upTo = await this.note(spec, null, 'A member', text)
+      return waiting ? null : upTo
+    })
   }
 
   /**
@@ -541,6 +920,19 @@ export class Threads {
    * control, or a harness session not yet parked (one waiting for an approval,
    * say). Its checkouts stay.
    */
+  /** What a teammate's turn in the thread runs in the background now. */
+  background(sessionId: string, teammateId: string): BackgroundWork[] {
+    return this.threads.get(sessionId)?.harnesses.get(teammateId)?.background ?? []
+  }
+
+  /**
+   * The files given to a teammate's folder in the thread so far: its commands on the thread's
+   * machine find them at the same place there (machine-files.ts).
+   */
+  attachmentsFor(sessionId: string, teammateId: string): ThreadAttachmentRef[] {
+    return [...(this.threads.get(sessionId)?.harnesses.get(teammateId)?.files?.values() ?? [])]
+  }
+
   inUse(sessionId: string) {
     const thread = this.threads.get(sessionId)
     if (!thread) return false
@@ -561,6 +953,7 @@ export class Threads {
     if (thread && this.inUse(sessionId)) return
     if (thread) {
       clearTimeout(thread.quietTimer)
+      this.settleFailure(thread)
       for (const seat of thread.harnesses.values()) clearTimeout(seat.parkTimer)
       this.threads.delete(sessionId)
     }
@@ -581,6 +974,7 @@ export class Threads {
       if (thread.takeover) throw new Error('A person has control of this thread')
       await thread.queue.catch(() => undefined)
       clearTimeout(thread.quietTimer)
+      this.settleFailure(thread)
       for (const seat of thread.harnesses.values()) {
         clearTimeout(seat.parkTimer)
         await seat.harness.park().catch(() => undefined)
@@ -659,6 +1053,20 @@ export class Threads {
       await Promise.all([...this.threads.values()].map((t) => t.queue.catch(() => undefined)))
   }
 
+  /**
+   * Stop the harness sessions running on an account that is being removed, keeping saved state:
+   * none goes on with a login it no longer has (an Antigravity one keeps it in memory).
+   */
+  async parkAccount(accountId: string) {
+    await Promise.all(
+      [...this.threads.values()].flatMap((t) =>
+        [...t.harnesses.values()]
+          .filter((h) => h.harness.liveAccountId === accountId)
+          .map((h) => h.harness.park().catch(() => undefined)),
+      ),
+    )
+  }
+
   /** Stop every harness session, keeping saved state. */
   private async parkAll() {
     await Promise.all(
@@ -673,47 +1081,103 @@ export class Threads {
    * worked out when its turn comes, so it sees the replies of those before it.
    * Lost: a thread the API had in progress when this runner connected (see pickUp).
    * `prepare` runs when the turn is about to start: it gives the log's end to
-   * tell up to, or null when the turn no longer happens.
+   * tell up to, or null when the turn no longer happens; with the spec to run on
+   * when messages queued after this one go into its turn (joinQueued). `moot`
+   * says, before the turn waits for a slot or memory, that it no longer happens. `follows`:
+   * it answers after another teammate's turn, and the thread says it is next until it starts.
    */
   private enqueue(
     spec: ThreadSpec,
-    input: ThreadInput | 'prompt' | Lost,
-    prepare?: () => Promise<number | undefined | null>,
+    input: ThreadInput | 'prompt' | Lost | Retry,
+    prepare?: () => Promise<number | undefined | null | { upTo: number; spec: ThreadSpec }>,
+    moot?: () => boolean,
+    follows = false,
   ) {
     const thread = this.thread(spec.sessionId)
     const seat = this.harness(thread, spec)
     clearTimeout(seat.parkTimer)
     seat.parkTimer = undefined
+    seat.idleSince = undefined
     clearTimeout(thread.quietTimer)
     this.pending++
     const me = spec.teammate.id
     thread.waiting.set(me, (thread.waiting.get(me) ?? 0) + 1)
+    if (follows) {
+      thread.next.push(me)
+      this.tellNext(thread, spec.sessionId)
+    }
     thread.queue = thread.queue.then(async () => {
       let queued = true
       const started = () => {
         if (queued) thread.waiting.set(me, thread.waiting.get(me)! - 1)
+        if (queued && follows) {
+          const at = thread.next.indexOf(me)
+          if (at >= 0) thread.next.splice(at, 1)
+          this.tellNext(thread, spec.sessionId)
+        }
         queued = false
       }
       let acquired = false
+      let counted = false
       const turnId = randomUUID()
+      // Told it gets its files ready (preparing, below), and whether a turn followed.
+      let told = false
+      let turnStarted = false
       try {
         // Taken over while waiting in the queue: the turn does not happen.
         if (thread.takeover) return
-        await this.acquire()
+        // Its message was read in an earlier turn: nothing to wait for.
+        if (moot?.()) return
+        // Every slot taken: the thread shows its teammate waiting, with how many turns run.
+        await this.acquire((running) => {
+          thread.slotWait = { teammateId: me, running }
+          this.options.emit(spec.sessionId, {
+            at: new Date().toISOString(),
+            type: 'raw',
+            source: TURN_WAITING_SOURCE,
+            value: thread.slotWait,
+          })
+        })
+        thread.slotWait = undefined
         acquired = true
+        // Stopped, or taken over, while it waited for memory: the turn does not happen.
+        counted = await this.waitForMemory(thread, spec)
+        if (!counted || thread.takeover) return
         // The runner is stopping: the API still has the turn, and gives it to the next runner.
         if (this.stopping) return
-        const upTo = prepare ? await prepare() : undefined
+        const prepared = prepare ? await prepare() : undefined
         started()
-        if (upTo === null) return
+        if (prepared === null) return
+        // Messages queued after its own go in too: it runs on the spec of the last of them,
+        // which has the thread as it is now, every file sent with them included.
+        const upTo = typeof prepared === 'object' ? prepared.upTo : prepared
+        if (typeof prepared === 'object') spec = prepared.spec
+        // Set when the turn before it ended, after this one was queued: it would park this one.
+        clearTimeout(seat.parkTimer)
+        seat.parkTimer = undefined
+        seat.idleSince = undefined
         const controller = new AbortController()
         thread.controller = controller
         thread.running = { teammateId: me, turnId }
+        // What was said on the side during its last turn, it is told now: the next starts afresh.
+        thread.sideLog.delete(me)
         seat.waiting = false
         const name = { sessionId: spec.sessionId, teammateId: me }
+        // Files to fetch before it starts (a move, a folder put away): the thread says so, once.
+        const preparing = () => {
+          if (told) return
+          told = true
+          this.options.emit(spec.sessionId, {
+            at: new Date().toISOString(),
+            type: 'raw',
+            source: TURN_PREPARING_SOURCE,
+            value: { teammateId: me } satisfies TurnPreparing,
+          })
+        }
         try {
-          if (spec.moved) await this.options.folders.arrive(name, spec.moved)
-          await this.options.folders.ready(name)
+          await this.options.restored?.ready()
+          if (spec.moved) await this.options.folders.arrive(name, spec.moved, preparing)
+          await this.options.folders.ready(name, preparing)
           // A frozen preview, and the containers it paused: the turn may use them.
           await this.options.previews.threadBusy(spec.sessionId)
         } catch (error) {
@@ -725,30 +1189,77 @@ export class Threads {
           })
           return
         }
-        await this.placeFiles(spec, seat.folder)
+        await this.placeFiles(spec, seat, preparing)
         const turn =
           input === 'prompt'
             ? {
                 kind: 'prompt' as const,
                 text: await (async () => {
                   const note = await this.options.folders.takeNote(name, spec.git)
+                  const lost = await this.options.restored?.takeNote(me)
                   const told = await this.catchUp(spec, upTo)
-                  return [note, this.recall(spec, seat, told), told].filter(Boolean).join('\n\n')
+                  return [note, lost, this.memoryNews(spec, seat), told]
+                    .filter(Boolean)
+                    .join('\n\n')
                 })(),
               }
             : input.kind === 'lost'
               ? await this.pickUp(spec, seat, input)
-              : input
+              : input.kind === 'retry'
+                ? {
+                    kind: 'prompt' as const,
+                    retry: true,
+                    text: [
+                      retried(input.error, input.background),
+                      await this.catchUp(spec, undefined, true),
+                    ]
+                      .filter(Boolean)
+                      .join('\n\n'),
+                  }
+                : input
         if (!turn || this.stopping) return
+        // A decision on an approval its turn does not wait on (one made twice) starts nothing:
+        // continued with it, the turn would sit on whatever it waits on as though it ran.
+        if (turn.kind === 'approval' && !(await seat.harness.awaitsApproval(turn.approvalId))) {
+          console.warn(`thread ${spec.sessionId}: no turn waits on approval ${turn.approvalId}`)
+          return
+        }
+        // An answer that comes as a message while messages wait on a decision: kept until it is
+        // made, then given (answersToGive, below).
+        if (
+          (turn.kind === 'answer' || turn.kind === 'ticket') &&
+          (await seat.harness.keepsAnswer(turn))
+        )
+          return
+        turnStarted = true
         this.options.emit(spec.sessionId, {
           at: new Date().toISOString(),
           type: 'turn.started',
           teammateId: spec.teammate.id,
           accountId: spec.account.id,
           turnId,
+          // What the harness benchmark compares turns by (docs/harnesses.md).
+          harness: spec.teammate.harness,
+          model: runModel(spec.teammate.harness, spec.teammate.model),
         })
         seat.turn = []
+        seat.spec = spec
+        thread.memoryStop = undefined
         const outcome = await seat.harness.run(turn, spec, controller.signal)
+        const memoryStop = thread.memoryStop
+        thread.memoryStop = undefined
+        // Its background work stopped with its process: the next try hears what it was.
+        const stopped = seat.background
+        seat.background = []
+        if (outcome.status === 'failed' && !controller.signal.aborted)
+          this.failed(
+            thread,
+            spec,
+            memoryStop ? memoryStopped(memoryStop) : (outcome.error ?? ''),
+            false,
+            stopped.length ? stopped : undefined,
+          )
+        else this.settleFailure(thread)
         if (outcome.status === 'waiting' && outcome.error) {
           this.options.emit(spec.sessionId, {
             at: new Date().toISOString(),
@@ -759,13 +1270,13 @@ export class Threads {
         }
         if (outcome.status === 'idle') {
           // Quiet: park the harness, then put what it has not pushed on GitHub.
-          seat.parkTimer = setTimeout(() => {
-            seat.parkTimer = undefined
-            void seat.harness
-              .park()
-              .then(() => seat.harness.backup())
-              .catch(console.error)
-          }, PARK_AFTER_MS)
+          // Kept warm for a person's next message; work in the background gives its memory back.
+          const background = inBackground(spec)
+          seat.parkTimer = setTimeout(
+            () => this.parkNow(seat),
+            background ? BACKGROUND_PARK_MS : PARK_AFTER_MS,
+          )
+          if (!background) seat.idleSince = Date.now()
           thread.lastSpec = spec
           clearTimeout(thread.quietTimer)
           thread.quietTimer = setTimeout(() => this.memorize(spec.sessionId), QUIET_AFTER_MS)
@@ -775,63 +1286,289 @@ export class Threads {
         // A person answered: the messages that waited on them go now.
         if (turn.kind !== 'prompt' && turn.kind !== 'resume')
           await this.releaseHeld(thread, spec, seat)
+        // Answers kept while it waited on a decision go now that it waits on none.
+        for (const answer of await seat.harness.answersToGive()) this.enqueue(spec, answer)
       } catch (error) {
         console.error(`thread ${spec.sessionId}: turn failed`, error)
       } finally {
         started()
+        // Its files are ready, and no turn follows (a thread taken back after a restart that
+        // waits on a person, say): the thread stops showing them got ready.
+        if (told && !turnStarted)
+          this.options.emit(spec.sessionId, {
+            at: new Date().toISOString(),
+            type: 'raw',
+            source: TURN_PREPARING_SOURCE,
+            value: { teammateId: me, done: true } satisfies TurnPreparing,
+          })
         this.options.folders.touch({ sessionId: spec.sessionId, teammateId: me })
         if (thread.running?.turnId === turnId) {
           thread.running = undefined
           thread.controller = undefined
         }
+        // Ended idle, its session stays for the next turn: past the latest few, the oldest park.
+        if (seat.idleSince !== undefined) this.coolDown()
         this.pending--
+        thread.slotWait = undefined
+        if (counted) this.started--
         if (acquired) this.release()
       }
     })
   }
 
-  /** Nothing runs, waits or is queued in the thread: a message can show at once. */
+  /** Who answers next in the thread, once it changed: the dashboard says so under its last reply. */
+  private tellNext(thread: Thread, sessionId: string) {
+    const teammateIds = [...new Set(thread.next)]
+    const told = teammateIds.join(',')
+    if (told === thread.toldNext) return
+    thread.toldNext = told
+    this.options.emit(sessionId, {
+      at: new Date().toISOString(),
+      type: 'raw',
+      source: TURN_NEXT_SOURCE,
+      value: { teammateIds } satisfies TurnNext,
+    })
+  }
+
+  /**
+   * A turn failed (its error shows in the thread). On a passing error (PASSING_ERROR) it is
+   * tried again on its own, after RETRY_AFTER_MS, a few times; a full disk is tried again
+   * once there is room on it. Else, and after those tries, a person tries it again
+   * (thread.retry) or writes.
+   */
+  private failed(
+    thread: Thread,
+    spec: ThreadSpec,
+    error: string,
+    diskFull = false,
+    background = thread.failed?.background ?? [],
+  ) {
+    const tries = thread.failed?.tries ?? 0
+    clearTimeout(thread.failed?.timer)
+    thread.failed = { spec, error, tries, ...(background.length ? { background } : {}) }
+    const memory = MEMORY_STOPPED.test(error)
+    if (!(memory || PASSING_ERROR.test(error)) || this.stopping || thread.takeover) return
+    const name = spec.teammate.name
+    const wait = RETRY_AFTER_MS[tries]
+    if (wait === undefined)
+      return this.say(
+        spec.sessionId,
+        `${name} tried again ${tries} times and the error came back. Try again once it is fixed.`,
+      )
+    const why = diskFull ? "The computer's disk is still full. " : ''
+    this.say(
+      spec.sessionId,
+      memory
+        ? `${why}${name} goes on once the computer has memory again, in ${minutes(wait)} at the earliest.`
+        : `${why}${name} tries again in ${minutes(wait)}.`,
+    )
+    thread.failed.timer = setTimeout(() => void this.tryAgain(thread, tries + 1), wait)
+  }
+
+  /**
+   * A turn that fails on this error is tried again on its own (failed): stopped for memory or on a
+   * passing error, with tries left, the runner going on and nobody having control of the thread.
+   */
+  private retriesOnItsOwn(thread: Thread, error: string) {
+    return (
+      (MEMORY_STOPPED.test(error) || PASSING_ERROR.test(error)) &&
+      !this.stopping &&
+      !thread.takeover &&
+      RETRY_AFTER_MS[thread.failed?.tries ?? 0] !== undefined
+    )
+  }
+
+  /** A harness's event as the thread gets it: an error says what the runner does about it. */
+  private harnessEvent(thread: Thread, event: AgentEvent): AgentEvent {
+    if (event.type !== 'error') return event
+    // Its harness's process gone when the memory guard stopped it: the error says so.
+    const message = thread.memoryStop ? memoryStopped(thread.memoryStop) : event.message
+    // Tried again on its own (failed): the turn is not over, and a child's report waits.
+    return {
+      ...event,
+      message,
+      ...(this.retriesOnItsOwn(thread, message) ? { retrying: true } : {}),
+    }
+  }
+
+  /** A try of a failed turn, on its own (failed). */
+  private async tryAgain(thread: Thread, tries: number) {
+    const failed = thread.failed
+    if (!failed || this.stopping || thread.takeover) return
+    failed.timer = undefined
+    // Stopped for memory, while the computer is still short of it: checked again later, without
+    // counting as a try, since the turn did not run. Said once.
+    if (
+      MEMORY_STOPPED.test(failed.error) &&
+      !(await (this.options.memoryRoom?.() ?? Promise.resolve(true)))
+    ) {
+      if (thread.failed !== failed || failed.timer || this.stopping || thread.takeover) return
+      if (!failed.shortOfMemory)
+        this.say(
+          failed.spec.sessionId,
+          `The computer is still short of memory. ${failed.spec.teammate.name} goes on once it has some again.`,
+        )
+      failed.shortOfMemory = true
+      failed.timer = setTimeout(() => void this.tryAgain(thread, tries), RETRY_AFTER_MS[0])
+      return
+    }
+    failed.tries = tries
+    if (DISK_ERROR.test(failed.error) && !(await roomOnDisk()))
+      return this.failed(thread, failed.spec, failed.error, true)
+    this.retryTurn(thread, failed)
+  }
+
+  /** A person asks to try the failed turn again now: the tries on its own start over. */
+  private retry(spec: ThreadSpec, error: string | undefined) {
+    const thread = this.thread(spec.sessionId)
+    clearTimeout(thread.failed?.timer)
+    const background = thread.failed?.background
+    thread.failed = {
+      spec,
+      error: error ?? thread.failed?.error ?? 'unknown error',
+      tries: 0,
+      ...(background ? { background } : {}),
+    }
+    this.retryTurn(thread, thread.failed)
+  }
+
+  private retryTurn(thread: Thread, failed: NonNullable<Thread['failed']>) {
+    // Busy again (a message came, another turn runs or waits): that goes on instead.
+    if (
+      thread.controller ||
+      thread.messages.size > 0 ||
+      [...thread.waiting.values()].some((n) => n > 0)
+    )
+      return
+    this.enqueue(failed.spec, {
+      kind: 'retry',
+      error: failed.error,
+      ...(failed.background ? { background: failed.background } : {}),
+    })
+  }
+
+  /** No failed turn to try again any more: it went on, or someone wrote or stopped it. */
+  private settleFailure(thread: Thread) {
+    clearTimeout(thread.failed?.timer)
+    thread.failed = undefined
+  }
+
+  private say(sessionId: string, value: string) {
+    this.options.emit(sessionId, {
+      at: new Date().toISOString(),
+      type: 'raw',
+      source: 'runner',
+      value,
+    })
+  }
+
+  /**
+   * Nothing runs (but a turn answered already), waits or is queued in the thread: a message
+   * can show at once.
+   */
   private quiet(thread: Thread) {
     return (
-      !thread.controller &&
+      (!thread.controller || this.answered(thread)) &&
       !thread.memorizing &&
       thread.messages.size === 0 &&
       ![...thread.waiting.values()].some((n) => n > 0)
     )
   }
 
+  /** The running turn is answered: only Claude Code's guess at the person's next message is left. */
+  private answered(thread: Thread) {
+    return !!thread.running && !!thread.harnesses.get(thread.running.teammateId)?.harness.answered
+  }
+
   /** Queue the turns that answer a message: its first teammate's, then the others'. */
   private enqueueMessage(thread: Thread, message: Message) {
     const [first, ...then] = message.specs
     const sessionId = first!.sessionId
-    this.enqueue(first!, 'prompt', async () => {
-      await message.steering
-      if (message.state !== 'queued' && message.state !== 'shown') return null
-      // Its teammate waits on a person: the message runs once they answer (releaseHeld).
-      if (await this.harness(thread, first!).harness.awaitingPerson()) {
-        const shown = message.state === 'shown'
-        message.state = 'held'
-        thread.messages.set(message.id, message)
-        if (!shown) this.emitQueued(sessionId, message)
-        else
-          this.options.emit(sessionId, {
-            at: new Date().toISOString(),
-            type: 'raw',
-            source: 'runner',
-            value: `${first!.teammate.name} reads this message once the pending request is answered.`,
-          })
-        return null
-      }
-      if (!message.upTo) return this.show(thread, message)
-      message.state = 'shown'
-      thread.messages.delete(message.id)
-      return message.upTo
-    })
+    this.enqueue(
+      first!,
+      'prompt',
+      async () => {
+        await message.steering
+        // Its turn came: the teammate answers it itself, rather than a copy on the side.
+        await this.endSide(thread, message)
+        // Settled on the side: no turn of its own.
+        if (message.state !== 'queued' && message.state !== 'shown') return null
+        // Its teammate waits on a person's approval: the message runs once they decide
+        // (releaseHeld). Waiting only on its own ticket or question, it reads the message now.
+        if (await this.harness(thread, first!).harness.holdsMessages()) {
+          const shown = message.state === 'shown'
+          message.state = 'held'
+          thread.messages.set(message.id, message)
+          if (!shown) this.emitQueued(sessionId, message)
+          else
+            this.options.emit(sessionId, {
+              at: new Date().toISOString(),
+              type: 'raw',
+              source: 'runner',
+              value: `${first!.teammate.name} reads this message once the pending request is answered.`,
+            })
+          return null
+        }
+        if (!message.upTo) await this.show(thread, message)
+        else {
+          message.state = 'shown'
+          thread.messages.delete(message.id)
+        }
+        const upTo = await message.upTo!
+        // The messages queued right behind it for the same teammate are read with it.
+        const joined = await this.joinQueued(thread, message)
+        return joined ?? upTo
+      },
+      () =>
+        // Read already: in an earlier turn, steered into one, answered on the side or cancelled.
+        message.joined === true ||
+        message.state === 'steered' ||
+        message.state === 'answered' ||
+        message.state === 'cancelled',
+    )
     // Each teammate after it is told what was said since its last turn, its predecessors' replies too.
     for (const next of then)
-      this.enqueue(next, 'prompt', async () =>
-        message.state === 'held' || message.state === 'cancelled' ? null : undefined,
+      this.enqueue(
+        next,
+        'prompt',
+        async () => (message.state === 'held' || message.state === 'cancelled' ? null : undefined),
+        undefined,
+        true,
       )
+  }
+
+  /**
+   * The messages queued right behind this one, for the same teammate, go into its turn: shown
+   * now, in order, and read together, rather than each in a turn of its own after the other.
+   * Stops at the first that cannot, so the thread keeps the order they were written in:
+   * another teammate's, one held for a person, one being steered or already in the turn. Never
+   * past a message to several teammates: the next ones answer it before this one reads more.
+   * Never past JOIN_CHARS together, nor JOIN_MESSAGES: the turn is told the thread within
+   * CATCH_UP_CHARS, from a log of LOG_ENTRIES, either of which would drop the earliest of them
+   * (one too long goes in a turn of its own, as before).
+   * Gives the log's end after the last, with its spec (the thread as it is now), or nothing.
+   */
+  private async joinQueued(thread: Thread, message: Message) {
+    if (message.specs.length > 1) return undefined
+    const spec = message.specs[0]!
+    const teammateId = spec.teammate.id
+    let chars = this.promptText(message, spec).length
+    let count = 1
+    let last: { upTo: number; spec: ThreadSpec } | undefined
+    for (const next of [...thread.messages.values()]) {
+      if (next === message || next.joined) continue
+      if (next.state !== 'queued' || next.specs[0]!.teammate.id !== teammateId) break
+      chars += this.promptText(next, next.specs[0]!).length
+      if (chars > JOIN_CHARS || ++count > JOIN_MESSAGES) break
+      // A side reply under way, or about to pass it to the turn, ends: the turn reads it.
+      await this.endSide(thread, next)
+      // Cancelled, or settled on the side, meanwhile.
+      if (next.state !== 'queued') continue
+      next.joined = true
+      last = { upTo: await this.show(thread, next), spec: next.specs[0]! }
+      if (next.specs.length > 1) break
+    }
+    return last
   }
 
   /**
@@ -849,12 +1586,26 @@ export class Threads {
       memberId: message.memberId,
       messageId: message.id,
       ...(steered ? { steered: true } : {}),
+      // Given to the turn from its side reply: a page of the thread starting here still shows it.
+      ...(steered && message.reply
+        ? { side: { text: message.reply.text, route: 'steer' as const } }
+        : {}),
       ...(message.replyTo ? { replyTo: message.replyTo } : {}),
       ...(message.attachments.length
         ? { attachments: message.attachments.map((a) => MessageAttachment.parse(a)) }
         : {}),
     })
-    message.upTo = this.note(spec, null, 'A member', this.promptText(message, spec))
+    // Nobody typed it: Brigade wrote it to this teammate (a report, a wake-up, a routine's run).
+    message.upTo =
+      message.memberId === null
+        ? this.note(
+            spec,
+            null,
+            `Brigade, to ${spec.teammate.name}`,
+            this.promptText(message, spec),
+            spec.teammate.id,
+          )
+        : this.note(spec, null, 'A member', this.promptText(message, spec))
     return message.upTo
   }
 
@@ -899,6 +1650,7 @@ export class Threads {
   ) {
     message.state = 'cancelled'
     thread.messages.delete(message.id)
+    void this.endSide(thread, message)
     this.options.emit(sessionId, {
       at: new Date().toISOString(),
       type: 'message.cancelled',
@@ -908,7 +1660,11 @@ export class Threads {
     })
   }
 
-  /** A person acts on a queued message: cancel it, change its text, or steer it. */
+  /**
+   * A person acts on a queued message: cancel it, change its text, or steer it. On one its
+   * side reply passes to the running turn, keep leaves it for after the turn. (One its side
+   * reply settled is no longer queued: the API sends it again to have it run.)
+   */
   private queued(command: Extract<Command, { type: 'thread.queued' }>) {
     const thread = this.threads.get(command.sessionId)
     const message = thread?.messages.get(command.messageId)
@@ -916,59 +1672,330 @@ export class Threads {
     if (!thread || !message || message.state === 'steering') return
     // Brigade's own (a child's report, a wake-up) goes to the teammate as it was.
     if (!mayChangeQueued(message.memberId, command.action)) return
+    if (command.action === 'queue') return
+    if (command.action === 'keep') {
+      if (!message.steerTimer || !message.reply) return
+      clearTimeout(message.steerTimer)
+      message.steerTimer = undefined
+      message.reply.route = 'queue'
+      return this.emitSide(message, { status: 'answered', ...message.reply })
+    }
     if (command.action === 'cancel')
       return this.cancel(command.sessionId, thread, message, command.memberId)
     if (command.action === 'edit') {
       if (!command.text?.trim()) return
       message.text = command.text
+      // A side reply to what it said before no longer fits.
+      void this.endSide(thread, message)
       return this.emitQueued(command.sessionId, message)
     }
     void this.steer(thread, message)
   }
 
   /**
-   * Give a queued message to its teammate's running turn, which reads it at its
-   * next step. When that cannot be done it stays queued, with why.
+   * Whether a message gets a side reply: a person's, to one teammate, written while that
+   * teammate's turn runs (one that only waits on its background work takes it at once), in a
+   * session a copy can be made of, on a computer with memory to spare.
    */
-  private async steer(thread: Thread, message: Message) {
+  private sides(thread: Thread, message: Message) {
+    const spec = message.specs[0]!
+    return (
+      message.memberId !== null &&
+      message.specs.length === 1 &&
+      !thread.takeover &&
+      thread.running?.teammateId === spec.teammate.id &&
+      thread.slotWait?.teammateId !== spec.teammate.id &&
+      this.harness(thread, spec).harness.forkable
+    )
+  }
+
+  /**
+   * A copy of the teammate's conversation answers a person's message during its turn, which
+   * goes on untouched, and says what becomes of the message (side-replies.ts). Short of memory,
+   * or if it fails, the message just waits its turn, as before.
+   */
+  private async sideReply(thread: Thread, message: Message) {
+    const spec = message.specs[0]!
+    const stop = new AbortController()
+    const timer = setTimeout(() => stop.abort(), SIDE_REPLY_TIMEOUT_MS)
+    timer.unref?.()
+    let settle!: () => void
+    const done = new Promise<void>((resolve) => (settle = resolve))
+    message.side = { stop, done }
+    // One at a time: each answers from the conversation as the turn has it by then. The next
+    // waits for this one and every one before it, even when this one stops before its turn.
+    const before = thread.sides
+    thread.sides = Promise.all([before, done]).then(() => undefined)
+    let reply: { text: string; route: SideRoute } | null = null
+    let started = false
+    try {
+      // Stopped while it waits (its turn came, it was cancelled): it does not keep its turn waiting.
+      await Promise.race([before, aborted(stop.signal)])
+      if (stop.signal.aborted) return
+      if (!(await (this.options.memoryRoom?.() ?? Promise.resolve(true)))) return
+      if (
+        stop.signal.aborted ||
+        message.state !== 'queued' ||
+        thread.running?.teammateId !== spec.teammate.id
+      )
+        return
+      // Its teammate's seat: the turn running in it is the one a copy is made of.
+      const seat = this.harness(thread, spec)
+      if (!seat.harness.forkable) return
+      this.emitSide(message, { status: 'answering' })
+      started = true
+      // The files that came with it are in the teammate's folder before the copy reads where they are.
+      await this.placeFiles(spec, seat)
+      const text = await seat.harness.sideReply(
+        sidePrompt({
+          name: 'A member',
+          text: this.promptText(message, spec),
+          earlier: thread.sideLog.get(spec.teammate.id) ?? [],
+        }),
+        stop.signal,
+      )
+      const parsed = parseSideReply(text)
+      if (parsed.text && !stop.signal.aborted) reply = parsed
+    } catch (error) {
+      if (!stop.signal.aborted)
+        console.warn(`thread ${spec.sessionId}: no side reply: ${String(error)}`)
+    } finally {
+      clearTimeout(timer)
+      message.side = undefined
+      if (started) this.sideAnswered(thread, message, reply)
+      settle()
+    }
+  }
+
+  /** What a side reply said becomes of its message, or nothing when none came. */
+  private sideAnswered(
+    thread: Thread,
+    message: Message,
+    reply: { text: string; route: SideRoute } | null,
+  ) {
+    const spec = message.specs[0]!
+    // Cancelled, edited, or its turn came meanwhile: it is read as any message would be.
+    if (!reply || message.state !== 'queued') return this.emitSide(message, { status: 'failed' })
+    message.reply = reply
+    // What a later message may build on, until the turn hears it.
+    const teammateId = spec.teammate.id
+    thread.sideLog.set(teammateId, [
+      ...(thread.sideLog.get(teammateId) ?? []),
+      { messageId: message.id, text: message.text, reply: reply.text },
+    ])
+    if (reply.route === 'answer') {
+      message.state = 'answered'
+      thread.messages.delete(message.id)
+      this.emitSide(message, { status: 'answered', ...reply })
+      // Read: no turn of its own. The thread already shows it, with its side reply.
+      this.options.emit(spec.sessionId, {
+        at: new Date().toISOString(),
+        type: 'message.user',
+        text: message.text,
+        memberId: message.memberId,
+        messageId: message.id,
+        side: { text: reply.text, route: 'answer' },
+        ...(message.replyTo ? { replyTo: message.replyTo } : {}),
+        ...(message.attachments.length
+          ? { attachments: message.attachments.map((a) => MessageAttachment.parse(a)) }
+          : {}),
+      })
+      // The teammate hears of it when its next turn starts: what it was asked, and said.
+      const note = sideNote({ name: 'A member', text: message.text, reply: reply.text })
+      thread.log = thread.log.then((log) => {
+        push(log, { by: null, name: 'Brigade', text: note, note: true })
+        return log
+      })
+      void this.saveLog(spec.sessionId)
+      return
+    }
+    if (reply.route === 'steer') {
+      const at = Date.now() + STEER_DELAY
+      message.steerTimer = setTimeout(() => {
+        message.steerTimer = undefined
+        if (message.state === 'queued') void this.steer(thread, message)
+      }, STEER_DELAY)
+      return this.emitSide(message, {
+        status: 'answered',
+        ...reply,
+        steerAt: new Date(at).toISOString(),
+      })
+    }
+    this.emitSide(message, { status: 'answered', ...reply })
+  }
+
+  /** Its side reply, if one is under way or waits to pass it on, ends here: the message is read as is. */
+  private async endSide(thread: Thread, message: Message) {
+    if (message.steerTimer) {
+      clearTimeout(message.steerTimer)
+      message.steerTimer = undefined
+      // Its turn came, or a person steered it now: it is no longer to be passed on later.
+      if (message.reply?.route === 'steer' && message.state === 'queued') {
+        message.reply.route = 'queue'
+        this.emitSide(message, { status: 'answered', ...message.reply })
+      }
+    }
+    const side = message.side
+    if (!side) return
+    side.stop.abort()
+    await side.done
+  }
+
+  private emitSide(
+    message: Message,
+    side: {
+      status: 'answering' | 'answered' | 'failed'
+      text?: string
+      route?: SideRoute
+      steerAt?: string
+    },
+  ) {
+    const spec = message.specs[0]!
+    this.options.emit(spec.sessionId, {
+      at: new Date().toISOString(),
+      type: 'message.side',
+      teammateId: spec.teammate.id,
+      messageId: message.id,
+      status: side.status,
+      ...(side.text !== undefined ? { text: side.text } : {}),
+      ...(side.route ? { route: side.route } : {}),
+      ...(side.steerAt ? { steerAt: side.steerAt } : {}),
+    })
+  }
+
+  /**
+   * Whether a message goes into its teammate's running turn on its own (SIDE_REPLIES off): a
+   * person's, to one teammate, whose turn runs on this computer now (not waiting for a slot),
+   * nobody else having control of the thread.
+   */
+  private autoSteers(thread: Thread, message: Message) {
+    const spec = message.specs[0]!
+    return (
+      message.memberId !== null &&
+      message.specs.length === 1 &&
+      !thread.takeover &&
+      thread.running?.teammateId === spec.teammate.id &&
+      thread.slotWait?.teammateId !== spec.teammate.id
+    )
+  }
+
+  /**
+   * A person's message goes into the running turn as soon as it can take one: its session may
+   * still be starting, or its prompt on its way. Until AUTO_STEER_WAIT_MS has gone by, the turn
+   * ended, or the message was read, cancelled or steered meanwhile; then it simply waits for the
+   * next turn, which reads it with the others queued (joinQueued). Nothing is said of it. Never
+   * ahead of a message the thread got before it and has not read (aheadOf): a correction does
+   * not reach the turn before what it corrects.
+   */
+  private async autoSteer(thread: Thread, message: Message) {
+    const spec = message.specs[0]!
+    const turnId = thread.running?.turnId
+    const seat = this.harness(thread, spec)
+    const until = Date.now() + AUTO_STEER_WAIT_MS
+    // A session that can take messages but refuses this one a few times won't take it.
+    let refused = 0
+    for (;;) {
+      if (message.state !== 'queued' || thread.running?.turnId !== turnId || Date.now() >= until)
+        return
+      const ahead = this.aheadOf(thread, message)
+      // One before it waits for a turn: this one waits with it, and is read after it.
+      if (ahead === 'waiting') return
+      if (ahead === 'clear' && seat.harness.forkable) {
+        if (await this.steer(thread, message, true)) return
+        if (++refused >= 5) return
+      }
+      await sleep(refused ? 1_000 : 250)
+    }
+  }
+
+  /**
+   * What the messages the thread got before this one and has not read yet do: none (`clear`),
+   * one going into the turn now (`steering`), or one waiting for a turn, queued or held
+   * (`waiting`). A thread's unread messages are kept in the order they came (Thread.messages).
+   */
+  private aheadOf(thread: Thread, message: Message): 'clear' | 'steering' | 'waiting' {
+    let steering = false
+    for (const m of thread.messages.values()) {
+      if (m === message) break
+      if (m.state === 'steering') steering = true
+      else return 'waiting'
+    }
+    return steering ? 'steering' : 'clear'
+  }
+
+  /**
+   * Give a queued message to its teammate's running turn, which reads it at its
+   * next step. When that cannot be done it stays queued, with why; `quietly`
+   * (autoSteer), without a word, to be tried again. Resolves to whether it went in.
+   */
+  private async steer(thread: Thread, message: Message, quietly = false): Promise<boolean> {
     const spec = message.specs[0]!
     const name = spec.teammate.name
+    // Given to the turn now: a side reply still under way has nothing left to answer.
+    if (message.side || message.steerTimer) await this.endSide(thread, message)
     if (message.state !== 'queued') {
+      if (quietly) return false
       if (message.state === 'held' && !message.upTo)
         this.emitQueued(
           spec.sessionId,
           message,
-          `${name} is waiting for an answer. It runs once someone answers.`,
+          thread.takeover
+            ? HELD_FOR_HANDBACK
+            : `${name} is waiting for an answer. It runs once someone answers.`,
         )
-      return
+      return false
     }
-    if (thread.running?.teammateId !== spec.teammate.id)
-      return this.emitQueued(
-        spec.sessionId,
-        message,
-        `${name} is not working on a turn right now, so it runs when its turn comes.`,
-      )
+    if (thread.slotWait?.teammateId === spec.teammate.id) {
+      if (!quietly)
+        this.emitQueued(
+          spec.sessionId,
+          message,
+          `${name} is waiting for ${turnsRunning(thread.slotWait.running)} to end, so it runs when its turn comes.`,
+        )
+      return false
+    }
+    if (thread.running?.teammateId !== spec.teammate.id) {
+      if (!quietly)
+        this.emitQueued(
+          spec.sessionId,
+          message,
+          `${name} is not working on a turn right now, so it runs when its turn comes.`,
+        )
+      return false
+    }
     const seat = this.harness(thread, spec)
     message.state = 'steering'
     let done!: () => void
     message.steering = new Promise<void>((resolve) => (done = resolve))
     try {
       // The files that came with it are in the teammate's folder before it reads where they are.
-      await this.placeFiles(spec, seat.folder)
-      await seat.harness.steer(this.promptText(message, spec))
+      await this.placeFiles(spec, seat)
+      // What was said on the side before it, which the turn never heard: it may build on it.
+      const earlier = (thread.sideLog.get(spec.teammate.id) ?? []).filter(
+        (e) => e.messageId !== message.id,
+      )
+      // With side replies on, its aside answered it already.
+      const answer = message.memberId !== null && !SIDE_REPLIES
+      await seat.harness.steer(
+        steeredText(withSideContext('A member', earlier, this.promptText(message, spec)), answer),
+        answer ? message.id : undefined,
+      )
       const end = await this.show(thread, message, true)
       // It read the message in this turn: its next turn does not tell it again.
       const log = await thread.log
       log.seen[spec.teammate.id] = Math.max(log.seen[spec.teammate.id] ?? 0, end)
       void this.saveLog(spec.sessionId)
+      return true
     } catch (error) {
       message.state = 'queued'
+      if (quietly) return false
       console.warn(`thread ${spec.sessionId}: could not steer: ${String(error)}`)
       this.emitQueued(
         spec.sessionId,
         message,
         `${name} could not take it during this turn, so it runs after it.`,
       )
+      return false
     } finally {
       message.steering = undefined
       done()
@@ -1002,10 +2029,12 @@ export class Threads {
   /** The teammate no longer waits on a person: the messages held for that are queued again. */
   private async releaseHeld(thread: Thread, spec: ThreadSpec, seat: Seat) {
     const held = [...thread.messages.values()].filter(
-      (m) => m.state === 'held' && m.specs[0]!.teammate.id === spec.teammate.id,
+      (m) => m.state === 'held' && !m.takenOver && m.specs[0]!.teammate.id === spec.teammate.id,
     )
-    if (held.length === 0 || thread.takeover || (await seat.harness.awaitingPerson())) return
+    if (held.length === 0 || thread.takeover || (await seat.harness.holdsMessages())) return
     for (const message of held) {
+      // Released meanwhile, or cancelled.
+      if (message.state !== 'held') continue
       message.state = 'queued'
       // One already in the thread runs without showing as queued again.
       if (message.upTo) message.state = 'shown'
@@ -1014,10 +2043,27 @@ export class Threads {
     }
   }
 
+  /**
+   * The hand back's turn comes: releaseHeld, for each teammate with messages held. Turns that
+   * ended before it (a ticket's answered as the person handed back, say) left those held while
+   * a person had control, so they run after the hand back's note, and once.
+   */
+  private async releaseAllHeld(thread: Thread) {
+    const held = new Map<string, ThreadSpec>()
+    for (const message of thread.messages.values())
+      if (message.state === 'held') {
+        message.takenOver = false
+        held.set(message.specs[0]!.teammate.id, message.specs[0]!)
+      }
+    for (const spec of held.values())
+      await this.releaseHeld(thread, spec, this.harness(thread, spec))
+  }
+
   /** Put the thread's files in the teammate's folder; say in the thread which could not be. */
-  private async placeFiles(spec: ThreadSpec, folder: Folder) {
+  private async placeFiles(spec: ThreadSpec, seat: Seat, fetching?: () => void) {
+    given(seat, spec.attachments)
     const failed = await this.options.attachments
-      .deliver(spec.attachments, folder)
+      .deliver(spec.attachments, seat.folder, fetching)
       .catch((error: unknown) => [String(error)])
     if (failed.length === 0) return
     this.options.emit(spec.sessionId, {
@@ -1057,10 +2103,23 @@ export class Threads {
    * taught, for the memory files. Only what was said since the last time.
    */
   private memorize(sessionId: string) {
+    // Its run waits for memory first, outside the thread's queue: a person's next message there
+    // must not wait behind it (backgroundRoom). One wait per thread at a time.
+    if (this.memoryRunWaits.has(sessionId)) return
+    this.memoryRunWaits.add(sessionId)
+    void this.backgroundRoom()
+      .then((room) => room && this.memorizeNow(sessionId))
+      .finally(() => this.memoryRunWaits.delete(sessionId))
+  }
+
+  private memorizeNow(sessionId: string) {
     const thread = this.threads.get(sessionId)
     const spec = thread?.lastSpec
     if (!thread || !spec || thread.takeover || [...thread.waiting.values()].some((n) => n > 0))
       return
+    // Chief's daily pass for a person (docs/chief-answers.md) teaches nothing of its own: Brigade
+    // keeps what it did, and what the person made of it, itself.
+    if (spec.pass) return
     this.pending++
     thread.memorizing = true
     thread.queue = thread.queue.then(async () => {
@@ -1076,24 +2135,27 @@ export class Threads {
           // Taken from the same log by the next runner, when the thread goes quiet there.
           if (this.stopping) return
           const speakers = spec.teammates.filter((t) => fresh.some((e) => e.by === t.id))
+          const run = memoryRun({
+            spec,
+            entries: fresh,
+            summary: log.summary,
+            memory: this.options.context.memoryFor,
+            speakers,
+          })
           const text = await runOnce({
             spec,
             ...this.memoryWorkDir(spec),
-            prompt: memoryPrompt({
-              spec,
-              entries: fresh,
-              summary: log.summary,
-              memory: this.options.context.memoryFor,
-              speakers,
-            }),
+            prompt: run.prompt,
+            usage: { kind: 'memory', sessionId, teammateId: spec.teammate.id },
             signal: AbortSignal.any([AbortSignal.timeout(MEMORY_RUN_MS), this.stopped.signal]),
           })
-          const update = parseMemory(text, spec, speakers)
+          const update = run.parse(text)
           if (!update) return console.warn(`thread ${sessionId}: memory run gave no usable answer`)
           this.options.memoryUpdate({ type: 'memory.update', sessionId, ...update })
           log.memorized = end
           log.summary = update.summary
           await this.saveLog(sessionId)
+          for (const file of run.tidyAfter(update)) this.tidy(spec, file)
         } finally {
           this.release()
         }
@@ -1107,17 +2169,73 @@ export class Threads {
   }
 
   /**
+   * Lay a memory file out again (memory-tidy.ts), on the account of the thread
+   * that went quiet, beside it rather than in its queue: a tidy may take a few
+   * minutes and the thread's next message should not wait for it. One at a time
+   * per file on this computer; after a failure, not again for a while.
+   */
+  private tidy(spec: ThreadSpec, file: TidyFile) {
+    const path = memoryFilePath(file.ref)
+    const failed = this.tidyFailed.get(path)
+    // The manifest may not say yet that this computer just tidied it.
+    const sent = this.tidySent.get(path)
+    // One at a time on this computer, and outside the turns' slots: a tidy waits, a turn does not.
+    if (
+      this.stopping ||
+      this.tidying.size > 0 ||
+      (failed && Date.now() - failed < TIDY_RETRY_MS) ||
+      (sent && Date.now() - sent < TIDY_RESEND_MS)
+    )
+      return
+    this.tidying.add(path)
+    void (async () => {
+      try {
+        if (!(await this.backgroundRoom())) return
+        const run = tidyRun(file)
+        const text = await runOnce({
+          spec,
+          ...this.memoryWorkDir(spec, 'tidy-runs'),
+          prompt: run.prompt,
+          usage: { kind: 'tidy', sessionId: spec.sessionId, teammateId: spec.teammate.id },
+          signal: AbortSignal.any([AbortSignal.timeout(TIDY_RUN_MS), this.stopped.signal]),
+        })
+        const layout = run.parse(text)
+        if (!layout) {
+          this.tidyFailed.set(path, Date.now())
+          return console.warn(`memory ${path}: tidy run gave no usable layout`)
+        }
+        this.tidyFailed.delete(path)
+        this.tidySent.set(path, Date.now())
+        this.options.memoryTidy({
+          type: 'memory.tidy',
+          sessionId: spec.sessionId,
+          file: file.ref,
+          lastTidied: file.lastTidied,
+          layout,
+        })
+      } catch (error) {
+        this.tidyFailed.set(path, Date.now())
+        console.warn(`memory ${path}: tidy run failed: ${String(error)}`)
+      } finally {
+        this.tidying.delete(path)
+      }
+    })()
+  }
+
+  /**
    * A new thread: a short run on its first message, beside its first turn,
    * names it with the harness's small model. On failure it keeps its first line.
    */
   private async name(spec: ThreadSpec, text: string, from: string) {
     try {
+      if (!(await this.backgroundRoom())) return
       const answer = await runOnce({
         spec,
         ...this.memoryWorkDir(spec, 'title-runs'),
         prompt: titlePrompt(text),
-        model: TITLE_MODEL[spec.teammate.harness],
+        model: TITLE_MODEL[loginOf(spec.teammate.harness, spec.teammate.model)],
         purpose: 'title',
+        usage: { kind: 'title', sessionId: spec.sessionId, teammateId: spec.teammate.id },
         signal: AbortSignal.timeout(TITLE_RUN_MS),
       })
       const title = parseTitle(answer)
@@ -1147,9 +2265,11 @@ export class Threads {
     const log = await thread.log
     const me = spec.teammate.id
     const known = me in log.seen
+    const told = log.seen[me] ?? 0
     const end = Math.min(upTo ?? Infinity, log.start + log.entries.length)
     const from = Math.max(log.seen[me] ?? 0, log.start)
     const unseen = log.entries
+      .map((e, i) => ({ ...e, at: log.start + i }))
       .slice(Math.max(0, from - log.start), Math.max(0, end - log.start))
       .filter((e) => e.by !== me)
     log.seen[me] = Math.max(log.seen[me] ?? 0, end)
@@ -1157,24 +2277,29 @@ export class Threads {
     if (onlyNew && unseen.length === 0) return ''
     const others = spec.teammates.filter((t) => t.id !== me).map((t) => t.name)
     const last = unseen.at(-1)
-    // A person's message alone, to a teammate that knows the thread: as they wrote it.
-    if ((known || others.length === 0) && unseen.length === 1 && last?.by === null && !last.note)
+    // A person's message alone, to a teammate that knows the thread: as they wrote it. So is
+    // one Brigade wrote to this teammate.
+    if (
+      (known || others.length === 0) &&
+      unseen.length === 1 &&
+      last?.by === null &&
+      (!last.note || last.to === me)
+    )
       return last.text
 
-    let budget = CATCH_UP_CHARS
-    const lines: string[] = []
-    for (const e of [...unseen].reverse()) {
-      const clipped = e.text.length > budget ? { ...e, text: `${e.text.slice(0, budget)}…` } : e
-      if (lines.length > 0 && e.text.length > budget) break
-      lines.unshift(said(clipped))
-      budget -= e.text.length
-    }
+    const ask = firstAsk(log)
+    const lines = missedLines(
+      unseen,
+      CATCH_UP_CHARS,
+      ask && ask.at >= told && ask.at < end ? ask : undefined,
+    )
     return [
       others.length > 0 &&
         `You are ${spec.teammate.name}, one of the AI teammates in this thread, with ${others.join(', ')}. Each of you works in your own session and directory; here is what was said since your last turn. ` +
           `To have a teammate answer after you, mention them as @Name in your reply; mention one only when you need them to act now.`,
       lines.length > 0 && MARKS_RULE,
       lines.length > 0 && lines.join('\n\n'),
+      ownReports(unseen, spec.teammate),
       `Reply to the latest message as ${spec.teammate.name}.`,
     ]
       .filter(Boolean)
@@ -1183,17 +2308,12 @@ export class Threads {
 
   /**
    * Remember what was said in the thread, for the teammates that did not see
-   * it. Resolves to the log's end just after it.
+   * it. Resolves to the log's end just after it. `to`: Brigade wrote it, to that teammate.
    */
-  private note(spec: ThreadSpec, by: string | null, name: string, text: string) {
+  private note(spec: ThreadSpec, by: string | null, name: string, text: string, to?: string) {
     const thread = this.thread(spec.sessionId)
     const log = thread.log.then((log) => {
-      log.entries.push({ by, name, text })
-      const drop = log.entries.length - LOG_ENTRIES
-      if (drop > 0) {
-        log.entries.splice(0, drop)
-        log.start += drop
-      }
+      push(log, to ? { by, name, text, note: true, to } : { by, name, text })
       // What the speaker has seen moves only when it is told (catchUp): a message
       // that came in while it was replying is still unseen. Its own lines are skipped there.
       if (by && !(by in log.seen)) log.seen[by] = log.start + log.entries.length
@@ -1205,21 +2325,36 @@ export class Threads {
   }
 
   /**
-   * Memory the instructions file had no room for, picked for this turn's message.
-   * Nothing while every memory fits there.
+   * What memory learned since the teammate's session started, told once at the
+   * start of a turn. A parked session loads all of it when it resumes: nothing to tell.
    */
-  private recall(spec: ThreadSpec, seat: Seat, message: string) {
-    const memory = this.options.context.memoryFor(spec.teammate.id)
-    const left = [memory.workspace, spec.project?.memory ?? '', memory.teammate].flatMap((text) =>
-      beyondShown(memoryBody(text), MEMORY_CHARS),
-    )
-    return left.length ? recalledBlock(pickLines(left, message, seat.recalled)) : ''
+  private memoryNews(spec: ThreadSpec, seat: Seat) {
+    const loaded = seat.harness.memoryLoaded
+    if (!loaded) return ''
+    const memory = threadMemory(spec, this.options.context.memoryFor(spec.teammate.id), '')
+    return memoryNews(memory, loaded, seat.told)
   }
 
   /**
    * Something that happened outside a turn (thread.note): a line in the thread,
    * and what each teammate is told at the start of its next turn.
    */
+  /**
+   * A held call decided once no tool here waited on it: its approval shows decided. No turn
+   * starts for it; the thread hears the result as a message of its own.
+   */
+  settleApproval(command: Extract<ApiToRunner, { type: 'thread.settle' }>) {
+    if (!SAFE_ID.test(command.sessionId)) throw new Error('Invalid thread id')
+    this.options.emit(command.sessionId, {
+      at: new Date().toISOString(),
+      type: 'approval.resolved',
+      teammateId: command.teammateId,
+      approvalId: command.approvalId,
+      approved: command.approved,
+      memberId: command.memberId,
+    })
+  }
+
   async noteFromOutside(sessionId: string, text: string) {
     this.options.emit(sessionId, {
       at: new Date().toISOString(),
@@ -1229,12 +2364,7 @@ export class Threads {
     })
     const thread = this.thread(sessionId)
     thread.log = thread.log.then((log) => {
-      log.entries.push({ by: null, name: 'Brigade', text, note: true })
-      const drop = log.entries.length - LOG_ENTRIES
-      if (drop > 0) {
-        log.entries.splice(0, drop)
-        log.start += drop
-      }
+      push(log, { by: null, name: 'Brigade', text, note: true })
       return log
     })
     await this.saveLog(sessionId)
@@ -1261,8 +2391,14 @@ export class Threads {
         queue: Promise.resolve(),
         controller: undefined,
         messages: new Map(),
+        sides: Promise.resolve(),
+        steers: Promise.resolve(),
+        sideLog: new Map(),
         memorizing: false,
         waiting: new Map(),
+        next: [],
+        toldNext: '',
+        answers: new Map(),
         handoffs: 0,
         log: readFile(this.logFile(sessionId), 'utf8').then(
           (text) => JSON.parse(text) as Log,
@@ -1286,18 +2422,52 @@ export class Threads {
         folder.workDir,
         paths.state,
         (event) => {
+          event = this.harnessEvent(thread, event)
           // In a thread with several teammates, each event says whose it is.
           this.options.emit(spec.sessionId, { ...event, teammateId })
+          // A stream that ended, or a turn cut short: its log has what it spent.
+          if (
+            (event.type === 'usage.updated' && event.inputTokens !== undefined) ||
+            event.type === 'turn.completed' ||
+            event.type === 'error'
+          )
+            this.options.streamEnded?.(teammateId, spec.sessionId, folder.workDir)
           if (event.type === 'message.done' && event.text.trim()) {
             this.note(spec, teammateId, spec.teammate.name, event.text)
             seat!.turn.push({ kind: 'message', chars: visibleChars(event.text), text: event.text })
+            // The images it shows, kept with the thread: a file in /tmp is gone by tomorrow.
+            void keepReplyImages(event.text, folder, spec.sessionId, this.options.storeImage).then(
+              (images) =>
+                Object.keys(images).length > 0 &&
+                this.options.emit(spec.sessionId, {
+                  at: new Date().toISOString(),
+                  type: 'message.images',
+                  id: event.id,
+                  images,
+                  teammateId,
+                }),
+              (error: unknown) =>
+                console.warn(`could not read the images of a reply: ${String(error)}`),
+            )
           }
+          const background = backgroundTasks(event)
+          if (background) seat!.background = background
           const waiting = backgroundWait(event)
           if (waiting !== undefined) {
             seat!.waiting = waiting
             if (waiting) this.steerQueued(thread, teammateId)
           }
-          if (event.type === 'turn.completed') seat!.waiting = false
+          if (event.type === 'turn.completed') {
+            seat!.waiting = false
+            seat!.background = []
+          }
+          // Answered, and others answer next: they start now (guessMoot).
+          if (
+            event.type === 'turn.completed' &&
+            seat!.harness.answered &&
+            guessMoot(thread.waiting, answerOf(seat!.turn), seat!.spec ?? spec, teammateId)
+          )
+            void seat!.harness.stopDrain()
           if (event.type === 'tool.started')
             seat!.turn.push({
               kind: ASIDE_TOOLS.has(bareToolName(event.toolName)) ? 'other' : 'step',
@@ -1320,6 +2490,7 @@ export class Threads {
             teammateId,
             call,
           )
+          given(seat!, attachments)
           const failed = await this.options.attachments.deliver(attachments, folder)
           if (failed.length > 0)
             throw new Error(`Could not put the file here: ${failed.join('; ')}`)
@@ -1329,7 +2500,6 @@ export class Threads {
         {
           ...this.options.context,
           callLibrary: (call) => this.options.callLibrary(spec.sessionId, teammateId, call),
-          callTask: (call) => this.options.callTask(spec.sessionId, teammateId, call),
           callSchedule: (call) => this.options.callSchedule(spec.sessionId, teammateId, call),
           preview: this.options.previews.forSeat({
             sessionId: spec.sessionId,
@@ -1337,6 +2507,16 @@ export class Threads {
             workDir: folder.workDir,
             ...(user ? { runAs: user } : {}),
           }),
+          ...(this.options.machineRuns
+            ? {
+                machine: this.options.machineRuns.forSeat({
+                  sessionId: spec.sessionId,
+                  teammateId,
+                  workDir: folder.workDir,
+                  ...(user ? { runAs: user } : {}),
+                }),
+              }
+            : {}),
         },
         user,
       )
@@ -1346,23 +2526,215 @@ export class Threads {
         parkTimer: undefined,
         turn: [],
         waiting: false,
-        recalled: new Set(),
+        told: new Set(),
+        background: [],
       }
       thread.harnesses.set(teammateId, seat)
     }
     return seat
   }
 
-  private async acquire() {
-    if (this.running < this.options.concurrency) {
+  /**
+   * The memory guard is about to stop the turn running in this thread: it fails, and is
+   * tried again on its own once the computer has memory again (failed).
+   */
+  stoppedForMemory(sessionId: string, why: string) {
+    const thread = this.threads.get(sessionId)
+    if (thread?.running) thread.memoryStop = why
+    // So many turns were too many for this computer: one fewer for a while (raiseLater).
+    const floor = Math.min(TURNS_ALWAYS, this.options.concurrency)
+    this.lowered = Math.max(floor, Math.min(this.limit, this.started - 1))
+    this.raiseLater()
+  }
+
+  /** Turns this computer may run at once now. */
+  private get limit() {
+    return this.lowered ?? this.options.concurrency
+  }
+
+  /** One more turn at once each RAISE_MS without another stop, back up to `concurrency`. */
+  private raiseLater() {
+    clearTimeout(this.raiseTimer)
+    this.raiseTimer = setTimeout(() => {
+      if (this.lowered === undefined) return
+      this.lowered = this.lowered + 1 < this.options.concurrency ? this.lowered + 1 : undefined
+      while (this.waiters.length && this.running < this.limit) {
+        this.running++
+        this.waiters.shift()!()
+      }
+      if (this.lowered !== undefined) this.raiseLater()
+    }, RAISE_MS)
+    this.raiseTimer.unref()
+  }
+
+  /**
+   * Work in the background that starts a harness of its own (a title, a memory or tidy run) waits
+   * while the computer is short of memory, checked every 5 s, up to MEMORY_WAIT_MS. False when
+   * the runner stops meanwhile.
+   */
+  private async backgroundRoom() {
+    const room = this.options.memoryRoom
+    if (!room) return !this.stopping
+    const until = Date.now() + MEMORY_WAIT_MS
+    while (!this.stopping) {
+      if (await room().catch(() => true)) return true
+      if (Date.now() >= until) return true
+      await sleep(BACKGROUND_ROOM_CHECK_MS, undefined, { ref: false })
+    }
+    return false
+  }
+
+  /** Park an idle seat's session now, then put what it has not pushed on GitHub. */
+  private parkNow(seat: Seat) {
+    clearTimeout(seat.parkTimer)
+    seat.parkTimer = undefined
+    seat.idleSince = undefined
+    void seat.harness
+      .park()
+      .then(() => seat.harness.backup())
+      .catch(console.error)
+  }
+
+  /**
+   * Idle sessions past the WARM_SEATS latest park now; all of them when the computer is short
+   * of memory (`short`), but those of the thread about to run (`keep`).
+   */
+  private coolDown(short = false, keep?: string) {
+    const idle = [...this.threads.entries()]
+      .filter(([sessionId, t]) => !t.running && sessionId !== keep)
+      .flatMap(([, t]) => [...t.harnesses.values()])
+      .filter((seat) => seat.parkTimer !== undefined && seat.idleSince !== undefined)
+      .sort((a, b) => b.idleSince! - a.idleSince!)
+    for (const seat of idle.slice(short ? 0 : Math.max(0, WARM_SEATS))) this.parkNow(seat)
+  }
+
+  /**
+   * Before a turn starts, the computer has memory for it: else it would only push the memory
+   * guard to stop another turn. Fewer than TURNS_ALWAYS turns start at once, unless the guard
+   * stopped one lately or the turn is work in the background (inBackground), which a person's
+   * turns go before. Past that, they check one at a time, SETTLE_MS apart. It waits, said once
+   * in its thread, until there is room, or MEMORY_WAIT_MS when fewer than TURNS_ALWAYS run.
+   */
+  private async waitForMemory(thread: Thread, spec: ThreadSpec) {
+    const room = this.options.memoryRoom
+    // Short of memory, the sessions only kept for their next turn give theirs back first.
+    if (room)
+      void room().then(
+        (enough) => !enough && this.coolDown(true, spec.sessionId),
+        () => undefined,
+      )
+    // Counted as started at once, before any await: turns that come together see one another.
+    if (!room) {
+      this.started++
+      return true
+    }
+    const queue = this.started + this.entering >= TURNS_ALWAYS
+    // Fewer than TURNS_ALWAYS run, and the guard has stopped none lately (lowered): the turn starts
+    // now. A computer whose own services hold most of its memory reads short of it at most times,
+    // and holding the few turns it runs only kept people waiting (a try after a stop for memory
+    // still waits for it, in tryAgain).
+    if (!queue && this.lowered === undefined && !inBackground(spec)) {
+      this.started++
+      // It holds the next back until it has settled, as one let in after reading memory.
+      const settled = new Promise<void>((resolve) => setTimeout(resolve, SETTLE_MS).unref())
+      this.admission = Promise.all([this.admission, settled]).then(() => undefined)
+      return true
+    }
+    this.entering++
+    // Stop, or a person taking control, ends the wait, as they would end the turn.
+    const controller = new AbortController()
+    thread.controller = controller
+    const aborted = new Promise<void>((resolve) =>
+      controller.signal.addEventListener('abort', () => resolve(), { once: true }),
+    )
+    // Each turn let in holds the next back until it has settled; past the first few, they wait.
+    const before = this.admission
+    let pass!: () => void
+    this.admission = new Promise<void>((resolve) => (pass = resolve))
+    let admitted = false
+    // The thread shows it waits for memory at once, where it would show it reads the message:
+    // a wait of 24 s read as a slow teammate (Nov 4). Its note comes later (MEMORY_NOTICE_MS).
+    let shown = false
+    const showWait = () => {
+      if (shown) return
+      shown = true
+      this.options.emit(spec.sessionId, {
+        at: new Date().toISOString(),
+        type: 'raw',
+        source: TURN_MEMORY_SOURCE,
+        value: { teammateId: spec.teammate.id } satisfies TurnWaitingMemory,
+      })
+    }
+    let short = false
+    try {
+      if (queue) {
+        // Behind a turn that waits for memory, it waits for that memory too: said now, or as
+        // soon as the one ahead finds there is none.
+        if (this.memoryWaits > 0) showWait()
+        this.behindAdmission.add(showWait)
+        try {
+          await Promise.race([before, aborted])
+        } finally {
+          this.behindAdmission.delete(showWait)
+        }
+      }
+      if (controller.signal.aborted) return false
+      // Slots are taken before this wait: a cap lowered meanwhile (stoppedForMemory) is checked here.
+      const fits = () => this.started < this.limit
+      const waiting = Date.now()
+      const until = waiting + MEMORY_WAIT_MS
+      let told = false
+      while (!this.stopping && !controller.signal.aborted) {
+        // Fits again after reading memory: the guard may lower the cap meanwhile.
+        if (fits() && (await room()) && fits()) break
+        // Long enough, with few turns running: none may end soon to give memory back.
+        if (fits() && Date.now() >= until && this.started < TURNS_ALWAYS) break
+        if (fits() && !short) {
+          short = true
+          this.memoryWaits++
+          showWait()
+          for (const behind of this.behindAdmission) behind()
+        }
+        if (fits() && !told && Date.now() - waiting >= MEMORY_NOTICE_MS) {
+          told = true
+          this.options.emit(spec.sessionId, {
+            at: new Date().toISOString(),
+            type: 'raw',
+            source: 'runner',
+            value: `The computer is short of memory: ${spec.teammate.name} starts once it has some again.`,
+          })
+        }
+        // Held by the cap, a turn ending frees a place soon: checked more often.
+        await sleep(fits() ? 5_000 : 1_000, undefined, { signal: controller.signal }).catch(
+          () => undefined,
+        )
+      }
+      admitted = !this.stopping && !controller.signal.aborted
+      if (admitted) this.started++
+      return admitted
+    } finally {
+      if (short) this.memoryWaits--
+      this.entering--
+      if (thread.controller === controller) thread.controller = undefined
+      // Not let in: the next waits for those before this one still.
+      if (admitted) setTimeout(pass, SETTLE_MS).unref()
+      else void before.then(pass)
+    }
+  }
+
+  /** A slot for a turn or a memory run; `waits` is told when there is none free now. */
+  private async acquire(waits?: (running: number) => void) {
+    if (this.running < this.limit) {
       this.running++
       return
     }
+    waits?.(this.running)
     await new Promise<void>((resolve) => this.waiters.push(resolve))
   }
 
+  /** A slot given back: to the next waiting for one, unless the computer now runs fewer at once. */
   private release() {
-    const next = this.waiters.shift()
+    const next = this.running <= this.limit ? this.waiters.shift() : undefined
     if (next) next()
     else this.running--
   }
@@ -1376,6 +2748,24 @@ export function threadFolder(teammateId: string, sessionId: string) {
     : { workDir: paths.threadDir(teammateId, sessionId) }
 }
 
+/** "the turn running on this computer", "one of the 4 turns running on this computer". */
+export const turnsRunning = (n: number) =>
+  n === 1 ? 'the turn running on this computer' : `one of the ${n} turns running on this computer`
+
+const minutes = (ms: number) =>
+  ms < 60_000
+    ? `${Math.round(ms / 1000)} seconds`
+    : ms < 120_000
+      ? '1 minute'
+      : `${Math.round(ms / 60_000)} minutes`
+
+/** Room on this computer's disk for a turn that failed on a full one. */
+const roomOnDisk = () =>
+  statfs(paths.state).then(
+    (s) => s.bavail * s.bsize >= FREE_BYTES,
+    () => true,
+  )
+
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 /**
@@ -1383,6 +2773,22 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
  * or as plain @Name (teammates write that). Longer names first, so "@Cody 2"
  * is not read as "@Cody".
  */
+/**
+ * A turn is answered, and only Claude Code's guess at the member's next message is left: it is
+ * moot when the thread goes on without the member, with turns queued behind it (another teammate
+ * the same message or handoff asked, a message sent meanwhile) or with the teammates its reply
+ * hands on to (handOn). They start now, rather than wait on a guess their answers replace.
+ */
+export function guessMoot(
+  waiting: ReadonlyMap<string, number>,
+  reply: string | undefined,
+  spec: ThreadSpec,
+  me: string,
+) {
+  if ([...waiting.values()].some((n) => n > 0)) return true
+  return !!reply && mentionedTeammates(reply, spec).some((id) => id !== me)
+}
+
 export function mentionedTeammates(text: string, spec: ThreadSpec) {
   // The chief may also bring in any teammate of the workspace.
   const reachable =

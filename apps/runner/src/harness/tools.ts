@@ -1,11 +1,17 @@
 // Connector tools: AI SDK tools whose execute forwards the call to the API,
 // which checks the grant, asks for approval if needed, and makes the request.
-import { asSchema, jsonSchema, tool, type Tool } from 'ai'
+import { resolve } from 'node:path'
+import { setTimeout as wait } from 'node:timers/promises'
+import { jsonSchema, tool, type JSONSchema7, type Tool } from 'ai'
 import {
+  ATTACHMENT_MAX,
   CHILD_WAIT_MAX_MINUTES,
   CHILD_WAIT_MINUTES,
   CHILDREN_AT_WORK,
   CHIEF_NAME,
+  COMPLETE_THREAD_TOOL,
+  DONE_SUMMARY_MAX,
+  DoneSummary,
   FOLLOWERS_PER_THREAD,
   isChiefName,
   DESIGN_ENTRY,
@@ -17,11 +23,21 @@ import {
   DESIGN_SYSTEM_README,
   DESIGN_SYSTEM_TOKENS,
   DESIGN_THUMBNAIL,
+  TOOL_ENTRY,
+  TOOL_FILES_MAX,
+  TOOL_MANIFEST,
+  TOOL_SUFFIX,
+  ToolManifest,
   designFolderOf,
   DesignManifest,
+  formatMention,
   parseSkillMarkdown,
   PROPOSE_SKILL_TOOL,
+  REPORT_FILES_MAX,
+  REPORT_MAX,
   SKILL_ENTRY,
+  SKILL_FILE_MAX,
+  SKILL_TOTAL_MAX,
   SkillContent,
   TeamProposal,
   TRASH_DAYS,
@@ -34,12 +50,14 @@ import {
   WAKEUPS_PER_THREAD,
   type ConnectorGrant,
   type DesignPersonEdit,
-  type TeammateDesignSystem,
   type ScheduleOperation,
-  type SkillProposal,
-  type TaskOperation,
+  GoalContractInput,
 } from '@brigade/contracts'
-import { errorMessage } from './events.js'
+import { ComputerUseError, Line, type RequestOptions } from '../computer-use.js'
+import type { AppInput } from './desktop-tools.js'
+import type { LibraryOperation, StagedFile } from '../uploads.js'
+import type { Arrivals, Cut } from './arrivals.js'
+import { answerText, errorMessage } from './events.js'
 import { WIDGET_GUIDE } from './widget-guide.js'
 
 export type ConnectorCaller = (call: {
@@ -65,45 +83,496 @@ const slug = (text: string) =>
 const NAMESPACE = 'x-codex-namespace'
 
 /**
- * Marks a tool's input schema so the Claude Code bridge (patched) never defers it
- * behind tool search: a card comes right before the answer, with no tool load between.
+ * An App whose operations' schemas weigh more than this goes behind a catalog (catalogTools)
+ * rather than a tool per operation: PostHog's 250 operations, 2.6 MB of schemas, held about
+ * 100 MB in each Claude Code process and its bridge, and their names alone ~17k tokens of each
+ * request. The others stay tools of their own.
  */
-export function alwaysLoaded(t: Tool): Tool {
-  const schema = asSchema(t.inputSchema).jsonSchema as Parameters<typeof jsonSchema>[0] & object
-  return { ...t, inputSchema: jsonSchema({ ...schema, 'x-claude-always-load': true }) }
+const CATALOG_MIN_CHARS = Number(process.env.BRIGADE_CATALOG_MIN_CHARS) || 300_000
+/** Apps the dashboard shows cards for by tool name (pull requests, emails): never catalogued. */
+const CARD_KINDS = new Set(['github', 'gmail', 'email'])
+/** The catalog tools of an App, always loaded in Claude Code: they are small (CATALOG_TOOL). */
+export const CATALOG_TOOL = Symbol('catalog tool')
+/**
+ * The most a search answers, its operations together, and the start of each one's description
+ * it gives. Claude Code moves a tool result past 25,000 tokens into a file, which the teammate
+ * must then read in pieces: on Nov 4 a search for a PostHog trend came to 133k characters, its
+ * operations' descriptions alone up to 15k each, and the schema of one to 100k.
+ */
+const FOUND_CHARS = 30_000
+const FOUND_DESCRIPTION_CHARS = 600
+const FOUND_MAX = 12
+/**
+ * The most one operation's description and schema take when described. Past it, the schema
+ * keeps its descriptions only near its top (SCHEMA_NOTES_DEPTH), then none: its shape stays
+ * whole, and the operation's own description keeps its start (DESCRIBED_DESCRIPTION_CHARS).
+ */
+const DESCRIBED_CHARS = 60_000
+const DESCRIBED_DESCRIPTION_CHARS = 4_000
+const SCHEMA_NOTES_DEPTH = 2
+
+/**
+ * JSON Schema's keywords whose value is a schema (or, for `items`, a list of them), a list of
+ * schemas, or a map of names to schemas (`dependencies` maps a name to a schema or to a list of
+ * names). Every other keyword's value is data (`const`, `enum`, `default`, `examples`,
+ * `required`, `dependentRequired`…), kept as it is: a key named `description` there is a value.
+ */
+const SCHEMA_KEYWORDS = new Set([
+  'items',
+  'additionalItems',
+  'additionalProperties',
+  'contains',
+  'propertyNames',
+  'not',
+  'if',
+  'then',
+  'else',
+  'unevaluatedItems',
+  'unevaluatedProperties',
+  'contentSchema',
+])
+const SCHEMA_LISTS = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems'])
+const SCHEMA_MAPS = new Set([
+  'properties',
+  'patternProperties',
+  '$defs',
+  'definitions',
+  'dependentSchemas',
+  'dependencies',
+])
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value)
+
+/**
+ * A JSON schema without the notes (`description`) of its subschemas deeper than `depth` (every
+ * one when below zero): what it accepts stays the same. Only schemas are walked, through the
+ * keywords that hold them; data in it stays whole.
+ */
+export function withoutDeepNotes(schema: unknown, depth: number, level = 0): unknown {
+  if (!isRecord(schema)) return schema
+  const sub = (value: unknown) => withoutDeepNotes(value, depth, level + 1)
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === 'description' && level > depth) continue
+    if (SCHEMA_KEYWORDS.has(key)) out[key] = Array.isArray(value) ? value.map(sub) : sub(value)
+    else if (SCHEMA_LISTS.has(key) && Array.isArray(value)) out[key] = value.map(sub)
+    else if (SCHEMA_MAPS.has(key) && isRecord(value))
+      out[key] = Object.fromEntries(
+        Object.entries(value).map(([name, v]) => [name, Array.isArray(v) ? v : sub(v)]),
+      )
+    else out[key] = value
+  }
+  return out
 }
 
+const charsOf = (value: unknown) => JSON.stringify(value ?? {}).length
+
+const catalogued = (kind: string, grants: ConnectorGrant[]) => {
+  if (CARD_KINDS.has(kind)) return false
+  const seen = new Set<string>()
+  let chars = 0
+  for (const grant of grants)
+    for (const operation of grant.operations) {
+      if (seen.has(operation.name)) continue
+      seen.add(operation.name)
+      chars += JSON.stringify(operation.inputSchema ?? {}).length + operation.description.length
+    }
+  return chars > CATALOG_MIN_CHARS
+}
+
+/**
+ * A big App's operations behind three tools: `<app>_find` searches them (each found one with its
+ * description, and its input schema while they fit), `<app>_describe` gives one's schema, and
+ * `<app>_run` calls one, on an account when the thread has several. Like a tool search, then its
+ * call: a thread holds a few KB instead of megabytes, and reads a schema only when it uses it.
+ * The API still checks each call by its operation (scope, approvals).
+ */
+function catalogTools(
+  kind: string,
+  grants: ConnectorGrant[],
+  call: ConnectorCaller,
+  options: { defer?: boolean },
+): Record<string, Tool> {
+  const label = grants[0]!.label
+  const accountOf = (grant: ConnectorGrant) => grant.externalAccount ?? grant.label
+  const accounts = grants.map(accountOf)
+  const several = grants.length > 1
+  /**
+   * Each operation as its accounts have it: one variant for those whose grant gives it the same
+   * description and schema, another for each that differs.
+   */
+  type Variant = {
+    name: string
+    description: string
+    write: boolean
+    inputSchema: unknown
+    grants: ConnectorGrant[]
+  }
+  const operations = new Map<string, Variant[]>()
+  for (const grant of grants)
+    for (const operation of grant.operations) {
+      const variants = operations.get(operation.name) ?? []
+      const same = variants.find(
+        (v) =>
+          v.write === !!operation.write &&
+          v.description === operation.description &&
+          JSON.stringify(v.inputSchema) === JSON.stringify(operation.inputSchema),
+      )
+      if (same) same.grants.push(grant)
+      else variants.push({ ...operation, write: !!operation.write, grants: [grant] })
+      operations.set(operation.name, variants)
+    }
+  const where = several
+    ? `${label}, the account in \`account\`: ${accounts.join(', ')}`
+    : `${label}: ${accounts[0]}`
+  const namespace = { name: kind, description: `${label}: ${accounts.join(', ')}` }
+  const schema = (value: JSONSchema7) =>
+    jsonSchema<any>({
+      ...value,
+      ...(options.defer ? { [NAMESPACE]: namespace } : {}),
+    } as JSONSchema7)
+  /** An operation as told: the start of its description when it is long (`shortened`). */
+  const entry = (v: Variant, descriptionChars = Infinity) => ({
+    operation: v.name,
+    description: v.description.slice(0, descriptionChars),
+    ...(v.description.length > descriptionChars ? { shortened: true } : {}),
+    ...(v.write ? { write: true } : {}),
+    ...(several ? { accounts: v.grants.map(accountOf) } : {}),
+  })
+  /**
+   * An operation described: whole while it fits DESCRIBED_CHARS, else its schema without the
+   * notes deep in it, then without any, and the start of its description.
+   */
+  const described = (v: Variant) => {
+    const whole = { ...entry(v), inputSchema: v.inputSchema }
+    if (charsOf(whole) <= DESCRIBED_CHARS) return whole
+    const short = entry(v, DESCRIBED_DESCRIPTION_CHARS)
+    const condensed = {
+      ...short,
+      inputSchema: withoutDeepNotes(v.inputSchema, SCHEMA_NOTES_DEPTH),
+      condensed: 'Notes deep in the schema are left out; what it accepts is whole.',
+    }
+    if (charsOf(condensed) <= DESCRIBED_CHARS) return condensed
+    return {
+      ...short,
+      inputSchema: withoutDeepNotes(v.inputSchema, -1),
+      condensed: "The schema's notes are left out; what it accepts is whole.",
+    }
+  }
+  const words = (text: string) =>
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean)
+  const find = `${kind}_find`
+  const describe = `${kind}_describe`
+  const run = `${kind}_run`
+  const unknownOperation = (operation: string) =>
+    new Error(`${label} has no operation ${operation}: ${find} finds them`)
+  /** The variant of an operation an account has, or an error saying which accounts do. */
+  const variantFor = (operation: string, account: string | undefined, describing = false) => {
+    const variants = operations.get(operation)
+    if (!variants) throw unknownOperation(operation)
+    // Described without an account, an operation all its accounts have alike.
+    if (describing && account === undefined && variants.length === 1) return variants[0]!
+    const variant = several
+      ? variants.find((v) => v.grants.some((g) => accountOf(g) === account))
+      : variants[0]
+    if (!variant)
+      throw new Error(
+        `${operation} has no ${label} account "${String(account)}": use one of ${variants
+          .flatMap((v) => v.grants.map(accountOf))
+          .join(', ')}`,
+      )
+    return variant
+  }
+  const accountParam: Record<string, JSONSchema7> = several
+    ? {
+        account: {
+          type: 'string',
+          enum: accounts,
+          description: `The ${label} account to use`,
+        },
+      }
+    : {}
+  const tools: Record<string, Tool> = {
+    [find]: tool({
+      description:
+        `Find ${label}'s operations for a task, by words of what you want to do (empty: all of them, by name). ` +
+        `Each comes with its description (its start when long)${several ? ', the accounts that have it' : ''}, and ` +
+        `its input schema while they fit; call ${describe} for one without, then ${run} to call it. [${where}]`,
+      inputSchema: schema({
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'What you want to do, in a few words' },
+        },
+        required: ['query'],
+      }),
+      execute: async (input: { query?: string }) => {
+        const wanted = words(input.query ?? '')
+        if (wanted.length === 0) return { operations: [...operations.keys()] }
+        const scored = [...operations.values()]
+          .flat()
+          .map((v) => {
+            const name = words(v.name)
+            const text = words(v.description)
+            const score = wanted.reduce(
+              (sum, w) =>
+                sum +
+                (name.some((n) => n === w)
+                  ? 4
+                  : name.some((n) => n.startsWith(w) || w.startsWith(n))
+                    ? 2
+                    : 0) +
+                (text.includes(w) ? 1 : 0),
+              0,
+            )
+            return { v, score }
+          })
+          .filter((x) => x.score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, FOUND_MAX)
+        // The best first: each takes its share of FOUND_CHARS, its schema while that fits too;
+        // past it, the others come by name.
+        let budget = FOUND_CHARS
+        return {
+          operations: scored.map(({ v }) => {
+            const told = entry(v, FOUND_DESCRIPTION_CHARS)
+            const size = charsOf(told)
+            if (size > budget) return { operation: v.name }
+            budget -= size
+            const schemaSize = charsOf(v.inputSchema)
+            if (schemaSize > budget) return told
+            budget -= schemaSize
+            return { ...told, inputSchema: v.inputSchema }
+          }),
+        }
+      },
+    }),
+    [describe]: tool({
+      description:
+        `The description and input schema of one of ${label}'s operations (${find} finds them)` +
+        `${several ? ', as the account given has it (needed when its accounts have it differently)' : ''}; ` +
+        `a very long one comes condensed, what its schema accepts whole. [${where}]`,
+      inputSchema: schema({
+        type: 'object',
+        properties: {
+          operation: { type: 'string', description: 'The operation, as found' },
+          ...accountParam,
+        },
+        required: ['operation'],
+      }),
+      execute: async (input: { operation: string; account?: string }) =>
+        described(variantFor(input.operation, input.account, true)),
+    }),
+    [run]: tool({
+      description:
+        `Call one of ${label}'s operations with its input, as its schema says (${describe}). ` +
+        `An operation that makes a change may need a person's approval. [${where}]`,
+      inputSchema: schema({
+        type: 'object',
+        properties: {
+          operation: { type: 'string', description: 'The operation, as found' },
+          ...accountParam,
+          input: { type: 'object', description: "The operation's input, as its schema says" },
+        },
+        required: ['operation', ...(several ? ['account'] : []), 'input'],
+      }),
+      execute: async (
+        input: { operation: string; account?: string; input?: unknown },
+        { toolCallId },
+      ) => {
+        const variant = variantFor(input.operation, input.account)
+        const grant = several
+          ? variant.grants.find((g) => accountOf(g) === input.account)!
+          : variant.grants[0]!
+        return call({
+          connectionId: grant.connectionId,
+          operation: variant.name,
+          input: input.input ?? {},
+          toolCallId,
+          toolName: run,
+        })
+      },
+    }),
+  }
+  for (const t of Object.values(tools))
+    (t as unknown as Record<symbol, boolean>)[CATALOG_TOOL] = true
+  return tools
+}
+
+/** The parameter naming the account, on an App tool shared by its accounts (connectorTools). */
+const ACCOUNT_PARAM = 'account'
+
+const isObjectSchema = (schema: unknown): schema is JSONSchema7 =>
+  typeof schema === 'object' &&
+  schema !== null &&
+  (schema as JSONSchema7).type === 'object' &&
+  !('oneOf' in schema || 'anyOf' in schema || 'allOf' in schema || '$ref' in schema)
+
+/** The Apps an access ask may name (open_ticket's app.kind): an MCP server added by its URL is mcp. */
+export const TICKET_APP_KINDS = [
+  'gmail',
+  'google_calendar',
+  'google_drive',
+  'google_docs',
+  'google_sheets',
+  'google_search_console',
+  'google_analytics',
+  'google_ads',
+  'meta_ads',
+  'stripe',
+  'github',
+  'cloudflare',
+  'google_cloud',
+  'google_drive_mcp',
+  'google_docs_mcp',
+  'google_sheets_mcp',
+  'neon',
+  'supabase',
+  'atlassian',
+  'notion',
+  'linear',
+  'mixpanel',
+  'resend',
+  'replicate',
+  'openrouter',
+  'posthog',
+  'dataforseo',
+  'ahrefs',
+  'revenuecat',
+  'expo',
+  'vercel',
+  'mcp',
+] as const
+
+/**
+ * The tools of the Apps granted to a thread. An App with one account: one tool per operation.
+ * With several, one tool per operation all the same, whose `account` parameter picks the account
+ * among those whose grant has the operation (a read-only grant has no writes): its schema, often
+ * the biggest part of a thread's tools (PostHog's run to 100 KB), is sent once rather than once
+ * per account. An operation whose schemas differ between accounts, or that takes an `account` of
+ * its own, keeps a tool per account, its name suffixed with the account's.
+ */
 export function connectorTools(
   grants: ConnectorGrant[],
   call: ConnectorCaller,
   options: { defer?: boolean } = {},
 ): Record<string, Tool> {
   const tools: Record<string, Tool> = {}
-  for (const grant of grants) {
-    // Several connections of one kind get distinct tool names.
-    const several = grants.filter((g) => g.kind === grant.kind).length > 1
-    const account = grant.externalAccount ?? grant.label
-    const namespace = {
-      name: several ? `${grant.kind}_${slug(account)}` : grant.kind,
-      description: `${grant.label}: ${account}`,
+  const write = ' makes a change, a person may need to approve it'
+  const accountOf = (grant: ConnectorGrant) => grant.externalAccount ?? grant.label
+  const make = (
+    name: string,
+    description: string,
+    schema: JSONSchema7,
+    namespace: { name: string; description: string },
+    route: (input: unknown) => { grant: ConnectorGrant; input: unknown },
+    operation: string,
+  ) =>
+    (tools[name] = tool({
+      description,
+      inputSchema: jsonSchema({
+        ...schema,
+        ...(options.defer ? { [NAMESPACE]: namespace } : {}),
+      } as JSONSchema7),
+      execute: async (input, { toolCallId }) => {
+        const to = route(input)
+        return call({
+          connectionId: to.grant.connectionId,
+          operation,
+          input: to.input,
+          toolCallId,
+          toolName: name,
+        })
+      },
+    }))
+  const kinds = [...new Set(grants.map((g) => g.kind))]
+  for (const kind of kinds) {
+    const ofKind = grants.filter((g) => g.kind === kind)
+    if (catalogued(kind, ofKind)) {
+      Object.assign(tools, catalogTools(kind, ofKind, call, options))
+      continue
     }
-    for (const operation of grant.operations) {
-      const name = several ? `${operation.name}_${slug(account)}`.slice(0, 64) : operation.name
-      tools[name] = tool({
-        description: `${operation.description} [${grant.label}: ${account}${operation.write ? '; makes a change, a person may need to approve it' : ''}]`,
-        inputSchema: jsonSchema({
-          ...(operation.inputSchema as Parameters<typeof jsonSchema>[0] & object),
-          ...(options.defer ? { [NAMESPACE]: namespace } : {}),
-        }),
-        execute: (input, { toolCallId }) =>
-          call({
-            connectionId: grant.connectionId,
-            operation: operation.name,
-            input,
-            toolCallId,
-            toolName: name,
-          }),
+    if (ofKind.length === 1) {
+      const grant = ofKind[0]!
+      const account = accountOf(grant)
+      const namespace = { name: kind, description: `${grant.label}: ${account}` }
+      for (const operation of grant.operations)
+        make(
+          operation.name,
+          `${operation.description} [${grant.label}: ${account}${operation.write ? `;${write}` : ''}]`,
+          operation.inputSchema as JSONSchema7,
+          namespace,
+          (input) => ({ grant, input }),
+          operation.name,
+        )
+      continue
+    }
+    const label = ofKind[0]!.label
+    const names = [...new Set(ofKind.flatMap((g) => g.operations.map((o) => o.name)))]
+    for (const operationName of names) {
+      const having = ofKind.flatMap((grant) => {
+        const operation = grant.operations.find((o) => o.name === operationName)
+        return operation ? [{ grant, operation }] : []
       })
+      const first = having[0]!.operation
+      const same = having.every(
+        ({ operation }) =>
+          operation.write === first.write &&
+          operation.description === first.description &&
+          JSON.stringify(operation.inputSchema) === JSON.stringify(first.inputSchema),
+      )
+      const schema = first.inputSchema as JSONSchema7
+      const accounts = having.map(({ grant }) => accountOf(grant))
+      const shared =
+        same &&
+        new Set(accounts).size === accounts.length &&
+        isObjectSchema(schema) &&
+        !(schema.properties && ACCOUNT_PARAM in schema.properties)
+      if (!shared) {
+        // A tool per account, as before.
+        for (const { grant, operation } of having) {
+          const account = accountOf(grant)
+          make(
+            `${operation.name}_${slug(account)}`.slice(0, 64),
+            `${operation.description} [${grant.label}: ${account}${operation.write ? `;${write}` : ''}]`,
+            operation.inputSchema as JSONSchema7,
+            { name: `${kind}_${slug(account)}`, description: `${grant.label}: ${account}` },
+            (input) => ({ grant, input }),
+            operation.name,
+          )
+        }
+        continue
+      }
+      make(
+        operationName,
+        `${first.description} [${label}, the account in \`${ACCOUNT_PARAM}\`: ${accounts.join(', ')}${first.write ? `;${write}` : ''}]`,
+        {
+          ...schema,
+          properties: {
+            [ACCOUNT_PARAM]: {
+              type: 'string',
+              enum: accounts,
+              description: `The ${label} account to use`,
+            },
+            ...schema.properties,
+          },
+          required: [ACCOUNT_PARAM, ...(schema.required ?? [])],
+        },
+        { name: kind, description: `${label}: ${accounts.join(', ')}` },
+        (input) => {
+          const { [ACCOUNT_PARAM]: account, ...rest } = (input ?? {}) as Record<string, unknown>
+          const to = having.find(({ grant }) => accountOf(grant) === account)
+          if (!to)
+            throw new Error(
+              `${operationName} has no ${label} account "${String(account)}": use one of ${accounts.join(', ')}`,
+            )
+          return { grant: to.grant, input: rest }
+        },
+        operationName,
+      )
     }
   }
   return tools
@@ -171,8 +640,10 @@ export const OPEN_TICKET_TOOL = 'open_ticket'
 
 export const openTicketTool = tool({
   description:
-    'Open a ticket for a person and wait until they answer it. Brigade does not ask a person before your actions, ' +
-    'so open one when you judge a person should decide first: sign-off on a draft or plan before you send or apply it ' +
+    'Open a ticket for a person and wait until they answer it. Brigade asks a person by itself only where a ' +
+    "tool says so (an App write that may need a person's approval, saving a credential, a trigger), and never " +
+    'needs a ticket of yours to approve that same call. Elsewhere nothing waits for a person, so open one when ' +
+    'you judge a person should decide first: sign-off on a draft or plan before you send or apply it ' +
     '(approval), a choice (decision), a connection or credential you lack (access), something only a person can do ' +
     'such as a phone call (action), or information only they have (input). Put several asks in one ticket rather than ' +
     'opening several. When a website stops you with a human check (a CAPTCHA, a "verify you are human" box, a ' +
@@ -238,43 +709,38 @@ export const openTicketTool = tool({
             app: {
               type: 'object',
               description:
-                'access to an App (kind connection): which, and the access you need. The person grants it from the ticket, or connects the App there first. Ask read_write only when you must send or change something there. For an MCP server, such as one the person gives you a URL for, use kind mcp with its url: they add it and sign in from the ticket. For an MCP server already added, such as one a message mentions as an App, use kind mcp and put its name in what; the url can be left out',
+                'access to an App (kind connection): which, and the access you need. The person grants it from the ticket, or connects the App there first. Ask read_write only when you must send or change something there. For an MCP server, such as one the person gives you a URL for, use kind mcp with its url: they add it and sign in from the ticket. For an MCP server already added, such as one a message mentions as an App, use kind mcp and put its name in what, and its server id when list_apps gives one; the url can be left out',
               properties: {
-                kind: {
-                  type: 'string',
-                  enum: [
-                    'gmail',
-                    'google_calendar',
-                    'google_drive',
-                    'google_docs',
-                    'google_sheets',
-                    'google_search_console',
-                    'google_analytics',
-                    'stripe',
-                    'github',
-                    'cloudflare',
-                    'google_cloud',
-                    'neon',
-                    'supabase',
-                    'atlassian',
-                    'notion',
-                    'linear',
-                    'mixpanel',
-                    'resend',
-                    'replicate',
-                    'openrouter',
-                    'mcp',
-                  ],
-                },
+                kind: { type: 'string', enum: [...TICKET_APP_KINDS] },
                 scope: { type: 'string', enum: ['read', 'read_write'] },
                 url: {
                   type: 'string',
                   description: 'kind mcp: the MCP server URL, e.g. https://mcp.example.com/mcp',
                 },
+                server: {
+                  type: 'string',
+                  description:
+                    'kind mcp: a server already added, by its id as list_apps gives it (app.server): the ticket finds that one, whatever its name',
+                },
                 repository: {
                   type: 'string',
                   description:
                     'kind github: the repository you need, as owner/name (e.g. acme/web), such as one checkout_repository could not reach. The person installs the GitHub app on it, or adds it, from the ticket',
+                },
+                account: {
+                  type: 'string',
+                  description:
+                    'The account you mean, as its row shows it (e.g. the Gmail address), when you know which: the ticket picks it first',
+                },
+                permission: {
+                  type: 'string',
+                  description:
+                    'A permission an account you already have lacks, which the person allows on the provider\'s consent page as they sign in to it again, e.g. "Account API Tokens: Write" on Cloudflare\'s. The ticket offers to reconnect the account: never write steps for that',
+                },
+                teammate: {
+                  type: 'string',
+                  description:
+                    'The teammate the access is for, by name, when it is not you: e.g. the one a playbook you install hands this App to',
                 },
               },
               required: ['kind', 'scope'],
@@ -369,13 +835,15 @@ export const showWidgetTool = tool({
   description:
     'Draw a visual in the thread: options side by side, a diagram, a chart of data you have. For seeing ' +
     `something now, not for keeping (that is a design). Call ${WIDGET_GUIDE_TOOL} once before your first widget ` +
-    'in a thread. To let the person pick among options it shows, end your reply with a choices block.',
+    'in a thread. To let the person pick among options it shows, end your reply with a choices block. ' +
+    "Write its title and text in the language of the person's latest message; only the product's own interface " +
+    'drawn in it stays as the product has it.',
   inputSchema: jsonSchema<Widget>({
     type: 'object',
     properties: {
       title: {
         type: 'string',
-        description: 'What it shows, a few words, e.g. "Six ways to show the shortcut"',
+        description: `What it shows, a few words in the person's language, e.g. "Six ways to show the shortcut"`,
       },
       html: {
         type: 'string',
@@ -394,6 +862,31 @@ export const showWidgetTool = tool({
         'If it shows options, end your reply with a choices block, labels numbered and named as in the widget ("3 · Small square caps"): ' +
         'other teammates see the pick, never the widget.',
     }
+  },
+})
+
+/**
+ * A teammate's answer, at once, to a person's message given to its running turn: a question it
+ * can answer now. Brigade shows it as the teammate's message under theirs, word for word, and
+ * keeps it in sight once the turn ends, where text written between steps can fold away with them
+ * or reach the person only as the server's summary of it (narration). EventMapper records the
+ * call as that message (answerText); the call itself shows nothing.
+ */
+export const answerMessageTool = tool({
+  description:
+    'Answer at once a message a person wrote while you work (it says so), in a line or two, then go on with ' +
+    'the work. It shows as your message, word for word, under theirs, and stays there once your turn ends. ' +
+    "Only for such a message: your turn's reply is still text, at its end, without that answer again.",
+  inputSchema: jsonSchema<{ text: string }>({
+    type: 'object',
+    properties: {
+      text: { type: 'string', description: 'Your answer, as you would write it to them' },
+    },
+    required: ['text'],
+  }),
+  execute: async (input) => {
+    if (!answerText(input)) throw new Error('Give your answer as text')
+    return { shown: true, next: 'Shown under their message. Go on with the work.' }
   },
 })
 
@@ -492,12 +985,14 @@ type Credentials = {
   env: (
     credentialId: string,
     call: Call,
+    /** Why the teammate needs it: shown to the person asked to allow it. */
+    purpose?: string,
   ) => Promise<{
     file: string
     variables: string[]
     credential: { name: string; details: unknown }
   }>
-  fill: (credentialId: string, submit: boolean, call: Call) => Promise<unknown>
+  fill: (credentialId: string, submit: boolean, call: Call, purpose?: string) => Promise<unknown>
   save: (input: SaveInput, call: Call) => Promise<unknown>
 }
 type SaveInput =
@@ -516,6 +1011,17 @@ const MENTIONS =
   'One not shared with you needs its creator or an admin to allow it. ' +
   'For one the vault lacks, open a ticket with an access ask of kind credential: the person saves it from the ticket.'
 
+/** Why the teammate needs a credential: shown to the person asked to allow it. */
+const PURPOSE = {
+  type: 'string',
+  description:
+    'Why you need it now, in a few words a person reads before allowing it, e.g. "To count sign-ups in the production database"',
+} as const
+
+/** A purpose as the API takes it: trimmed, at most 300 characters, none when empty. */
+export const purposeOf = (purpose: unknown) =>
+  typeof purpose === 'string' && purpose.trim() ? purpose.trim().slice(0, 300) : undefined
+
 /** The vault's credentials, as tools. Their secrets never appear in a tool result. */
 export function credentialTools(credentials: Credentials): Record<string, Tool> {
   const tools: Record<string, Tool> = {
@@ -531,17 +1037,17 @@ export function credentialTools(credentials: Credentials): Record<string, Tool> 
         `Returns the file and its variable names (e.g. DATABASE_URL, PGPASSWORD, API_KEY), not the values. ` +
         `Load it only in the command that needs it, e.g. \`set -a; . <file>; set +a; psql "$DATABASE_URL"\`. ` +
         `Never print, copy or commit the file or its values. ${MENTIONS}`,
-      inputSchema: jsonSchema<{ credentialId: string }>({
+      inputSchema: jsonSchema<{ credentialId: string; purpose?: string }>({
         type: 'object',
-        properties: { credentialId: { type: 'string' } },
+        properties: { credentialId: { type: 'string' }, purpose: PURPOSE },
         required: ['credentialId'],
       }),
       execute: async (input, { toolCallId }) => {
-        const result = await credentials.env(input.credentialId, {
-          toolCallId,
-          toolName: 'use_credential',
-          input,
-        })
+        const result = await credentials.env(
+          input.credentialId,
+          { toolCallId, toolName: 'use_credential', input },
+          purposeOf(input.purpose),
+        )
         return {
           credential: result.credential.name,
           details: result.credential.details,
@@ -661,33 +1167,29 @@ export function credentialTools(credentials: Credentials): Record<string, Tool> 
         `(which must be on the credential's own domain) and presses Enter, so you never see the password. ` +
         `Open the sign-in page in your browser first. On a two-step sign-in, call it again on the password page. ` +
         `Never read the password back from the page. ${MENTIONS}`,
-      inputSchema: jsonSchema<{ credentialId: string; submit?: boolean }>({
+      inputSchema: jsonSchema<{ credentialId: string; submit?: boolean; purpose?: string }>({
         type: 'object',
         properties: {
           credentialId: { type: 'string' },
           submit: { type: 'boolean', description: 'Press Enter after filling (default true)' },
+          purpose: PURPOSE,
         },
         required: ['credentialId'],
       }),
       execute: (input, { toolCallId }) =>
-        credentials.fill(input.credentialId, input.submit ?? true, {
-          toolCallId,
-          toolName: 'fill_credential',
-          input,
-        }),
+        credentials.fill(
+          input.credentialId,
+          input.submit ?? true,
+          { toolCallId, toolName: 'fill_credential', input },
+          purposeOf(input.purpose),
+        ),
     })
   return tools
 }
 
 export type LibraryCaller = (call: {
-  operation:
-    | { name: 'search'; query: string; limit: number }
-    | { name: 'save'; path: string; content: string }
-    | { name: 'move'; path: string; to: string }
-    | { name: 'delete'; path: string }
-    | { name: 'design_system'; designSystem: TeammateDesignSystem }
-    | { name: 'design_edits'; path: string }
-    | { name: 'skill_proposal'; proposal: SkillProposal }
+  /** A save's bytes and a proposal's files are uploaded to the bucket before the hub hears of them. */
+  operation: LibraryOperation
   toolCallId: string
   toolName: string
   input: unknown
@@ -706,6 +1208,8 @@ export function libraryTools(options: {
   call: LibraryCaller
   /** Reads a file the teammate wrote on this computer, as the teammate. */
   readFile: (path: string) => Promise<Buffer>
+  /** Copies a file the teammate wrote, as the teammate, to be sent as it streams (save_to_library). */
+  stageFile: (path: string) => Promise<StagedFile>
   /** The files in a folder on this computer, as the teammate: paths relative to it. */
   listFiles: (folder: string) => Promise<string[]>
   /** Render a design folder with this computer's Chrome: screenshots and the page's errors. */
@@ -713,6 +1217,8 @@ export function libraryTools(options: {
     folder: string,
     options: { viewports?: string[]; shots?: boolean; thumbnail?: boolean },
   ) => Promise<{ screenshots: string[]; errors: string[]; thumbnail?: string }>
+  /** Tools (docs/tools.md): the thread's starter has them. */
+  tools?: boolean
 }): Record<string, Tool> {
   /** A folder's files on this computer, as paths relative to it, without dotfiles and node_modules. */
   const folderFiles = async (folder: string) =>
@@ -730,6 +1236,7 @@ export function libraryTools(options: {
     files: string[],
     designs: string[],
     call: { toolCallId: string; toolName: string; input: unknown },
+    onSaved?: (file: string, output: unknown) => void,
   ) => {
     const sources = new Map(files.map((f) => [f, `${folder}/${f}`]))
     for (const design of designs) {
@@ -744,10 +1251,11 @@ export function libraryTools(options: {
     for (const [file, source] of sources) {
       const bytes = await options.readFile(source)
       try {
-        await options.call({
+        const output = await options.call({
           ...call,
-          operation: { name: 'save', path: `${path}/${file}`, content: bytes.toString('base64') },
+          operation: { name: 'save', path: `${path}/${file}`, bytes },
         })
+        onSaved?.(file, output)
       } catch (error) {
         throw new Error(
           `Saved ${saved.length} of ${sources.size} files, then ${file} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -761,7 +1269,9 @@ export function libraryTools(options: {
     search_workspace: tool({
       description:
         `Search the workspace's shared knowledge by keywords: its document library (mirrored read-only at ${options.libraryDir}), ` +
-        `the workspace and teammate memory, and summaries of past threads. Use it before asking a person something the team may already know.`,
+        `the workspace, project and teammate memory, lines removed from memory (with why), and summaries of past threads, ` +
+        "each with the thread's mention, to name it by in a reply. " +
+        'Use it before asking a person something the team may already know.',
       inputSchema: jsonSchema<{ query: string; limit?: number }>({
         type: 'object',
         properties: {
@@ -779,9 +1289,21 @@ export function libraryTools(options: {
           toolCallId,
           toolName: 'search_workspace',
           input,
-        })) as { kind: string; path: string }[]
+        })) as { kind: string; path: string; sessionId?: string | null; title?: string }[]
         return hits.map((hit) =>
-          hit.kind === 'library' ? { ...hit, file: `${options.libraryDir}/${hit.path}` } : hit,
+          hit.kind === 'library'
+            ? { ...hit, file: `${options.libraryDir}/${hit.path}` }
+            : // A thread named by its mention is a link people open in the dashboard.
+              hit.kind === 'thread_summary' && hit.sessionId
+              ? {
+                  ...hit,
+                  mention: formatMention({
+                    kind: 'thread',
+                    id: hit.sessionId,
+                    label: hit.title?.replace(/^Thread: /, '') || hit.sessionId,
+                  }),
+                }
+              : hit,
         )
       },
     }),
@@ -830,19 +1352,26 @@ export function libraryTools(options: {
       const entry = text(await options.readFile(`${folder}/${SKILL_ENTRY}`))
       if (entry === null) throw new Error(`${SKILL_ENTRY} is not text`)
       const parsed = parseSkillMarkdown(entry)
-      const files: { path: string; content: string }[] = []
+      const files: { path: string; content: string; bytes: Buffer }[] = []
       const skipped: string[] = []
       for (const path of paths) {
         if (path === SKILL_ENTRY) continue
-        const content = text(await options.readFile(`${folder}/${path}`))
+        const bytes = await options.readFile(`${folder}/${path}`)
+        const content = text(bytes)
         if (content === null) skipped.push(path)
-        else files.push({ path, content })
+        else if (bytes.length > SKILL_FILE_MAX)
+          throw new Error(
+            `${path} is too large: a skill's file can be up to ${SKILL_FILE_MAX / 1024 / 1024} MB`,
+          )
+        else files.push({ path, content, bytes })
       }
+      if (files.reduce((sum, f) => sum + f.bytes.length, 0) > SKILL_TOTAL_MAX)
+        throw new Error(`The skill is too large: up to ${SKILL_TOTAL_MAX / 1024 / 1024} MB in all`)
       const skill = SkillContent.safeParse({
         name: parsed.name ?? '',
         description: parsed.description ?? '',
         instructions: parsed.instructions,
-        files,
+        files: files.map(({ path, content }) => ({ path, content })),
       })
       if (!skill.success)
         throw new Error(
@@ -851,11 +1380,13 @@ export function libraryTools(options: {
       const result = (await options.call({
         operation: {
           name: 'skill_proposal',
+          // Its files go to the bucket first; the proposal names them by their SHA-256.
           proposal: {
-            skill: skill.data,
+            skill: { ...skill.data, files: [] },
             reason: input.reason?.trim().slice(0, 1000) ?? '',
             teammateOnly: input.onlyMe === true,
           },
+          files: files.map(({ path, bytes }) => ({ path, bytes })),
         },
         toolCallId,
         toolName: PROPOSE_SKILL_TOOL,
@@ -892,9 +1423,9 @@ export function libraryTools(options: {
         required: ['file', 'path'],
       }),
       execute: async (input, { toolCallId }) => {
-        const bytes = await options.readFile(input.file)
+        const file = await options.stageFile(input.file)
         return options.call({
-          operation: { name: 'save', path: input.path, content: bytes.toString('base64') },
+          operation: { name: 'save', path: input.path, file },
           toolCallId,
           toolName: 'save_to_library',
           input,
@@ -1107,9 +1638,103 @@ export function libraryTools(options: {
         }
       },
     })
+    if (options.tools) {
+      tools.save_tool = tool({
+        description:
+          'Save a tool (a small web app people use in Brigade: a dashboard, a review board, a tracker) to the library. ' +
+          `Make it in a folder on this computer with ${TOOL_ENTRY} and ${TOOL_MANIFEST} at its top, then pass the folder. ` +
+          'Every file in it is saved; saving again replaces them. Read the `brigade-tools` skill first.',
+        inputSchema: jsonSchema<{ folder: string; path: string }>({
+          type: 'object',
+          properties: {
+            folder: {
+              type: 'string',
+              description:
+                'The folder on this computer (absolute, or relative to your working directory)',
+            },
+            path: {
+              type: 'string',
+              description: `Where it goes in the library, ending in "${TOOL_SUFFIX}", e.g. "acme/clip-review${TOOL_SUFFIX}"`,
+            },
+          },
+          required: ['folder', 'path'],
+        }),
+        execute: async (input, { toolCallId }) => {
+          const path = input.path.replace(/\/+$/, '')
+          if (!path.endsWith(TOOL_SUFFIX) || path.split('/').pop() === TOOL_SUFFIX)
+            throw new Error(`The library path must end in "<name>${TOOL_SUFFIX}"`)
+          const files = await folderFiles(input.folder)
+          for (const needed of [TOOL_ENTRY, TOOL_MANIFEST])
+            if (!files.includes(needed)) throw new Error(`The folder has no ${needed} at its top`)
+          if (files.length > TOOL_FILES_MAX)
+            throw new Error(
+              `A tool can have up to ${TOOL_FILES_MAX} files; this folder has ${files.length}`,
+            )
+          const folder = input.folder.replace(/\/+$/, '')
+          const manifest = await options
+            .readFile(`${folder}/${TOOL_MANIFEST}`)
+            .then((bytes) => ToolManifest.safeParse(JSON.parse(bytes.toString('utf8'))))
+            .catch((error: unknown) => ({ success: false as const, error }))
+          if (!manifest.success)
+            throw new Error(
+              `${TOOL_MANIFEST} is not valid: ${errorMessage(manifest.error)}. Nothing was saved.`,
+            )
+          let mention: string | undefined
+          const saved = await saveFolder(
+            folder,
+            path,
+            files,
+            [''],
+            { toolCallId, toolName: 'save_tool', input },
+            (file, output) => {
+              // Its page's mention, labelled with the tool: it opens the tool from your reply.
+              const id = /\(document:([^)\s]+)\)/.exec(
+                String((output as { mention?: unknown } | null)?.mention ?? ''),
+              )?.[1]
+              if (file === TOOL_ENTRY && id) mention = `@[${path}](document:${id})`
+            },
+          )
+          const apps = manifest.data.apps ?? []
+          return {
+            path,
+            files: saved,
+            ...(mention ? { mention } : {}),
+            ...(apps.length
+              ? {
+                  accounts:
+                    `It asks for ${apps.map((a) => a.kind).join(', ')}: a person attaches an account of each from the tool's ` +
+                    'Accounts button. Its calls to an account wait until then, and again after each save that changes it.',
+                }
+              : {}),
+          }
+        },
+      })
+      tools.read_tool_state = tool({
+        description:
+          'Read the state a tool in the library keeps: its shared keys, and the own keys of the person this thread works for ' +
+          '(what they picked, rated or noted in it). Read only.',
+        inputSchema: jsonSchema<{ path: string }>({
+          type: 'object',
+          properties: {
+            path: {
+              type: 'string',
+              description: `The tool's library path, ending in "${TOOL_SUFFIX}"`,
+            },
+          },
+          required: ['path'],
+        }),
+        execute: (input, { toolCallId }) =>
+          options.call({
+            operation: { name: 'tool_state', path: input.path.replace(/\/+$/, '') },
+            toolCallId,
+            toolName: 'read_tool_state',
+            input,
+          }),
+      })
+    }
     tools.check_design = tool({
       description:
-        'Render a design folder on this computer with Chrome, before you hand it over: screenshots at its viewports ' +
+        'Render a design (or tool) folder on this computer with Chrome, before you hand it over: screenshots at its viewports ' +
         '(one per slide for a deck) and the errors its page logged (scripts, files that failed to load). ' +
         'Open the screenshots to look at them, fix what is off, and check again.',
       inputSchema: jsonSchema<{ folder: string; viewports?: ('desktop' | 'tablet' | 'mobile')[] }>({
@@ -1142,315 +1767,112 @@ export function libraryTools(options: {
   return tools
 }
 
-export type TaskCaller = (call: {
-  operation: TaskOperation
-  toolCallId: string
-  toolName: string
-  input: unknown
-}) => Promise<unknown>
-
 /**
- * Tasks on the board: create, list, comment on, change, assign, move and
- * complete them. The API checks every call. There is no tool to assign a
- * person or move a task to Needs you: a ticket (ask) does that.
- *
- * A playbook's run gets none that starts or prompts a thread outside the run (create_task for a
- * teammate, assign_task, message_thread to a task, move_task, complete_task): what started it is
- * untrusted, and a thread outside the run has none of its limits. A live run may still file an
- * idea in Backlog and add to a Backlog task, which start nothing; a dry run changes nothing.
+ * Threads it starts at the top, and writes in later (docs/hand-offs.md): start_thread hands a goal
+ * of its own, or work another teammate carries through, to a thread in the sidebar; message_thread
+ * writes in one it started, or in one of its children. The API checks every call. A playbook's run
+ * starts none outside it: what started it is untrusted, and a thread outside the run has none of
+ * its limits. It writes only in its own children.
  */
-export function taskTools(call: TaskCaller, playbook?: { dryRun: boolean }): Record<string, Tool> {
-  const all = boardTools(call)
-  if (!playbook) return all
-  const send = (toolName: string, operation: TaskOperation, input: unknown, toolCallId: string) =>
-    call({ operation, toolCallId, toolName, input })
-  const threadOnly = tool({
-    description:
-      'Write in one of your child threads (threadId, from list_children), which carries on and reports to you ' +
-      'again. Nowhere else.',
-    inputSchema: jsonSchema<{ threadId: string; text: string }>({
-      type: 'object',
-      properties: {
-        threadId: { type: 'string', description: 'One of your child threads' },
-        text: { type: 'string', description: 'The message, in Markdown' },
-      },
-      required: ['threadId', 'text'],
-    }),
-    execute: (input, { toolCallId }) =>
-      send(
-        'message_thread',
-        { name: 'comment', threadId: input.threadId, text: input.text },
-        input,
-        toolCallId,
-      ),
-  })
-  if (playbook.dryRun) return { list_tasks: all.list_tasks!, message_thread: threadOnly }
-  const backlog = tool({
-    description:
-      "Put a task in the Tasks board's Backlog, assigned to nobody, for a person to pick up: e.g. a customer's " +
-      'idea. It starts no thread. Look at list_tasks first: when one already covers it, add to it with ' +
-      'update_task instead.',
-    inputSchema: jsonSchema<{
-      title: string
-      description: string
-      priority?: 'low' | 'medium' | 'high' | 'urgent'
-    }>({
-      type: 'object',
-      properties: {
-        title: { type: 'string', description: 'Short and imperative' },
-        description: { type: 'string', description: 'What is asked, and by whom, in a few lines' },
-        priority: { type: 'string', enum: ['low', 'medium', 'high', 'urgent'] },
-      },
-      required: ['title', 'description'],
-    }),
-    execute: (input, { toolCallId }) =>
-      send(
-        'create_task',
-        {
-          name: 'create',
-          title: input.title,
-          description: input.description,
-          priority: input.priority ?? 'medium',
-          assignee: 'none',
+export function startedThreadTools(
+  call: ScheduleCaller,
+  options: { playbook: boolean },
+): Record<string, Tool> {
+  const message = (description: string, threadId: string) =>
+    tool({
+      description,
+      inputSchema: jsonSchema<{ threadId: string; text: string }>({
+        type: 'object',
+        properties: {
+          threadId: { type: 'string', description: threadId },
+          text: { type: 'string', description: 'The message, in Markdown' },
         },
-        input,
-        toolCallId,
+        required: ['threadId', 'text'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: { name: 'message_thread', threadId: input.threadId, text: input.text },
+          toolCallId,
+          toolName: 'message_thread',
+          input,
+        }),
+    })
+  if (options.playbook)
+    return {
+      message_thread: message(
+        'Write in one of your child threads (threadId, from list_children), which carries on and reports to you ' +
+          'again. Nowhere else.',
+        'One of your child threads',
       ),
-  })
+    }
   return {
-    create_task: backlog,
-    list_tasks: all.list_tasks!,
-    update_task: all.update_task!,
-    message_thread: threadOnly,
-  }
-}
-
-function boardTools(call: TaskCaller): Record<string, Tool> {
-  const send = (toolName: string, operation: TaskOperation, input: unknown, toolCallId: string) =>
-    call({ operation, toolCallId, toolName, input })
-  const priority = { type: 'string', enum: ['low', 'medium', 'high', 'urgent'] } as const
-  const taskId = { type: 'string', description: 'The task id, from list_tasks' } as const
-  return {
-    create_task: tool({
+    start_thread: tool({
       description:
-        "Create a task on the workspace's Tasks board. Work lives in threads, so only when the person asks to " +
-        'track something on the board, or to start work in a thread of its own: your own name as assignee for a ' +
-        'goal of yours that came up while talking about something else, another teammate (id or name) to hand ' +
-        'them work. Either starts at once in its own thread. "none" puts it in Backlog; "self" makes this thread ' +
-        'the task. One goal is one task and one deliverable, however big: keep its parts off the board. It goes in ' +
-        "this thread's project unless you set `project`: set it when the task belongs to another project than this " +
-        'thread (a Brigade fix that came up in a Lovarank thread goes in Brigade).',
+        'Start work in a thread of its own, at the top: in the sidebar, on this computer and the accounts of the ' +
+        'person in this thread, for whoever asked here. For a goal of yours that came up here but is not this ' +
+        "thread's work (leave teammate out), or work another teammate takes on and carries through (teammate). " +
+        'Not for work whose result must come back here: that is start_child. The thread does not see this ' +
+        'conversation: write a brief that stands alone (the goal, what done looks like, where the specs are). ' +
+        'With lines of a list (list and items), it works on them, as when a person hands lines over. One goal is ' +
+        'one thread and one deliverable, however big: never a thread per step. It goes in the project you set, ' +
+        "else the list's, else this thread's.",
       inputSchema: jsonSchema<{
         title: string
-        description: string
-        priority?: 'low' | 'medium' | 'high' | 'urgent'
-        assignee?: string
-        mission?: string
+        brief: string
+        teammate?: string
         project?: string
+        list?: string
+        items?: string[]
       }>({
         type: 'object',
         properties: {
           title: {
             type: 'string',
-            description: 'Short and imperative, e.g. "Add CSV export to billing"',
+            description: 'Short and plain, e.g. "Add CSV export to billing"',
           },
-          description: { type: 'string', description: 'What done looks like, in a few lines' },
-          priority,
-          assignee: {
+          brief: { type: 'string', description: 'The work, standing alone' },
+          teammate: {
             type: 'string',
-            description:
-              '"self" (default): this thread is the task. "none": Backlog. Else a teammate id or name, never a ' +
-              'person; your own name starts it in a new thread of yours.',
-          },
-          mission: {
-            type: 'string',
-            description:
-              'The id of the mission it belongs to, from list_tasks or the create_task that made it. It takes the ' +
-              "mission's project. Unset: a task of its own.",
+            description: 'Who does it: a teammate id or name, never a person. Unset: you.',
           },
           project: {
             type: 'string',
             description:
-              'The project it belongs to: its id (or name) from your instructions, or "none" for no project. ' +
-              "Unset: this thread's project. Leave it out with a mission, which gives its own project.",
+              'The project it belongs to: its id or name from your instructions, or "none" for no project.',
           },
-        },
-        required: ['title', 'description'],
-      }),
-      execute: (input, { toolCallId }) =>
-        send(
-          'create_task',
-          {
-            name: 'create',
-            title: input.title,
-            description: input.description,
-            priority: input.priority ?? 'medium',
-            assignee: input.assignee || 'self',
-            ...(input.mission ? { mission: input.mission } : {}),
-            ...(input.project ? { project: input.project === 'none' ? null : input.project } : {}),
-          },
-          input,
-          toolCallId,
-        ),
-    }),
-    list_tasks: tool({
-      description:
-        "The tasks on the board (Backlog, Needs you, Doing, Done) with their ids, and the workspace's teammates " +
-        'you can assign them to.',
-      inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
-      execute: (input, { toolCallId }) => send('list_tasks', { name: 'list' }, input, toolCallId),
-    }),
-    message_thread: tool({
-      description:
-        "Write in another thread: a started task's thread (taskId), where its teammate reads it and answers there, " +
-        'or one of your child threads (threadId, from list_children), which carries on and reports to you again. ' +
-        'Nowhere else. To talk to a person, open a ticket instead.',
-      inputSchema: jsonSchema<{ taskId?: string; threadId?: string; text: string }>({
-        type: 'object',
-        properties: {
-          taskId: { ...taskId, description: 'A started task, from list_tasks. Or threadId.' },
-          threadId: { type: 'string', description: 'One of your child threads. Or taskId.' },
-          text: { type: 'string', description: 'The message, in Markdown' },
-        },
-        required: ['text'],
-      }),
-      execute: (input, { toolCallId }) =>
-        send(
-          'message_thread',
-          {
-            name: 'comment',
-            ...(input.taskId ? { taskId: input.taskId } : {}),
-            ...(input.threadId ? { threadId: input.threadId } : {}),
-            text: input.text,
-          },
-          input,
-          toolCallId,
-        ),
-    }),
-    update_task: tool({
-      description:
-        "Change a task's title, description or priority, move it into or out of a mission, or move it to another " +
-        "project, such as a task created in the wrong one. A task in a mission is in the mission's project: move " +
-        "the mission, or take the task out of it first. A task's thread moves with it.",
-      inputSchema: jsonSchema<{
-        taskId: string
-        title?: string
-        description?: string
-        priority?: 'low' | 'medium' | 'high' | 'urgent'
-        mission?: string
-        project?: string
-      }>({
-        type: 'object',
-        properties: {
-          taskId,
-          title: { type: 'string' },
-          description: { type: 'string' },
-          priority,
-          mission: {
-            type: 'string',
-            description: 'A mission id to move it into, or "none" to take it out of its mission',
-          },
-          project: {
-            type: 'string',
-            description:
-              'A project id (or name) from your instructions to move it to, or "none" to take it out of its project',
-          },
-        },
-        required: ['taskId'],
-      }),
-      execute: ({ mission, project, ...input }, { toolCallId }) =>
-        send(
-          'update_task',
-          {
-            name: 'update',
-            ...input,
-            ...(mission ? { mission: mission === 'none' ? null : mission } : {}),
-            ...(project ? { project: project === 'none' ? null : project } : {}),
-          },
-          { ...input, mission, project },
-          toolCallId,
-        ),
-    }),
-    assign_task: tool({
-      description:
-        'Give a task to a teammate (never a person). A Backlog task starts at once in its own thread; a started ' +
-        'one changes hands: the teammate joins its thread and is told why.',
-      inputSchema: jsonSchema<{ taskId: string; teammate: string; reason?: string }>({
-        type: 'object',
-        properties: {
-          taskId,
-          teammate: { type: 'string', description: 'A teammate id or name, from list_tasks' },
-          reason: { type: 'string', description: 'Why, for the teammate taking it over' },
-        },
-        required: ['taskId', 'teammate'],
-      }),
-      execute: (input, { toolCallId }) =>
-        send(
-          'assign_task',
-          {
-            name: 'assign',
-            taskId: input.taskId,
-            teammateId: input.teammate,
-            reason: input.reason ?? '',
-          },
-          input,
-          toolCallId,
-        ),
-    }),
-    move_task: tool({
-      description:
-        'Move a task: "doing" reopens a done, archived or trashed task; "archived" puts a done task away; ' +
-        '"trash" takes any task off the board (it can be restored). To mark one done, use complete_task. ' +
-        'Needs you is not a place you move tasks to: open a ticket when you need a person.',
-      inputSchema: jsonSchema<{ taskId: string; to: 'doing' | 'archived' | 'trash' }>({
-        type: 'object',
-        properties: { taskId, to: { type: 'string', enum: ['doing', 'archived', 'trash'] } },
-        required: ['taskId', 'to'],
-      }),
-      execute: (input, { toolCallId }) =>
-        send('move_task', { name: 'move', ...input }, input, toolCallId),
-    }),
-    complete_task: tool({
-      description:
-        "Mark a task done once the work is finished and delivered: this thread's task by default, or another by " +
-        'its id. Give a short summary of what was done and links to what was produced (pull request, document, ' +
-        'file) so a person or another teammate can find it.',
-      inputSchema: jsonSchema<{
-        taskId?: string
-        summary: string
-        deliverables?: { label: string; url: string }[]
-      }>({
-        type: 'object',
-        properties: {
-          taskId: { type: 'string', description: "Unset: this thread's task" },
-          summary: { type: 'string', description: 'What was done, in a few lines' },
-          deliverables: {
+          list: { type: 'string', description: "A list's library path, with items" },
+          items: {
             type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                label: { type: 'string', description: 'e.g. "Pull request acme/web#42"' },
-                url: { type: 'string', description: 'An https link' },
-              },
-              required: ['label', 'url'],
-            },
+            items: { type: 'string' },
+            description:
+              "Lines of the list it works on: each line's id, or its text (all of it, or enough of its start to be the only one)",
           },
         },
-        required: ['summary'],
+        required: ['title', 'brief'],
       }),
       execute: (input, { toolCallId }) =>
-        send(
-          'complete_task',
-          {
-            name: 'complete',
-            ...(input.taskId ? { taskId: input.taskId } : {}),
-            summary: input.summary,
-            deliverables: input.deliverables ?? [],
+        call({
+          operation: {
+            name: 'start_thread',
+            title: input.title,
+            brief: input.brief,
+            ...(input.teammate ? { teammate: input.teammate } : {}),
+            ...(input.project ? { project: input.project === 'none' ? null : input.project } : {}),
+            ...(input.list ? { list: input.list } : {}),
+            ...(input.items?.length ? { items: input.items } : {}),
           },
-          input,
           toolCallId,
-        ),
+          toolName: 'start_thread',
+          input,
+        }),
     }),
+    message_thread: message(
+      'Write in another thread: one you started (start_thread) or another thread you work in (one a person gave ' +
+        'you, such as a thread a message or search_workspace names), where its teammate reads it and answers ' +
+        'there; or one of your child threads (from list_children), which carries on and reports to you again. ' +
+        'Nowhere else. To talk to a person, open a ticket instead.',
+      'A thread you started, another thread you work in, or one of your child threads',
+    ),
   }
 }
 
@@ -1466,6 +1888,326 @@ const CRON =
   '"30 7 * * 1" for 07:30 on Mondays, "0 */2 * * *" every two hours. Runs at least 5 minutes apart.'
 const TIMEZONE =
   'IANA timezone the hours are in, e.g. "Europe/Paris". Use the person\'s if you know it.'
+
+/**
+ * Chief for the person (docs/chief-answers.md). In its daily pass, the thread Brigade starts for
+ * it: answer a question in the person's name, try a failed thread again, and report what is left
+ * to them. Elsewhere: their rules, written with them.
+ */
+export function chiefTools(
+  call: ScheduleCaller,
+  options: { pass: boolean; acts?: boolean },
+): Record<string, Tool> {
+  if (!options.pass)
+    return {
+      chief_rules: tool({
+        description:
+          "Save the person's rules for their teammates, whole, once they agreed to them: short lines in their words " +
+          'that settle what they would otherwise be asked. Every teammate working for them reads them. An empty text ' +
+          'clears them.',
+        inputSchema: jsonSchema<{ rules: string }>({
+          type: 'object',
+          properties: {
+            rules: {
+              type: 'string',
+              description: 'The rules, whole, one per line (at most 4000 characters)',
+            },
+          },
+          required: ['rules'],
+        }),
+        execute: (input, { toolCallId }) =>
+          call({
+            operation: { name: 'chief_rules', rules: input.rules },
+            toolCallId,
+            toolName: 'chief_rules',
+            input,
+          }),
+      }),
+    }
+  const pass = {
+    chief_answer: tool({
+      description:
+        "Answer a question item of your brief in the person's name, when one of their rules plainly settles it: the " +
+        'teammate gets the answer as their click, with why and the rule.',
+      inputSchema: jsonSchema<{ item: number; option: number; reason: string; rule: string }>({
+        type: 'object',
+        properties: {
+          item: { type: 'number', description: 'The question, by its number in your brief' },
+          option: { type: 'number', description: 'The answer, by its number (1 for the first)' },
+          reason: { type: 'string', description: 'Why, in a line the person reads' },
+          rule: { type: 'string', description: 'Their rule that settles it, in their words' },
+        },
+        required: ['item', 'option', 'reason', 'rule'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'chief_answer',
+            item: Math.round(input.item),
+            option: Math.round(input.option),
+            reason: input.reason,
+            rule: input.rule,
+          },
+          toolCallId,
+          toolName: 'chief_answer',
+          input,
+        }),
+    }),
+    chief_retry: tool({
+      description:
+        "Try a failed item's turn again, when its error looks passing (a timeout, a lost connection, a limit since reset).",
+      inputSchema: jsonSchema<{ item: number; reason: string }>({
+        type: 'object',
+        properties: {
+          item: { type: 'number', description: 'The failed thread, by its number in your brief' },
+          reason: { type: 'string', description: 'Why it may go through now, in a line' },
+        },
+        required: ['item', 'reason'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: { name: 'chief_retry', item: Math.round(input.item), reason: input.reason },
+          toolCallId,
+          toolName: 'chief_retry',
+          input,
+        }),
+    }),
+    chief_report: tool({
+      description:
+        'Once, last: what is still theirs (each with what you would do), what you noticed across their threads, and ' +
+        'new rules worth proposing from their recent answers. Then end your turn without a reply.',
+      inputSchema: jsonSchema<{
+        decisions?: { item: number; recommendation: string; option?: number; rule?: string }[]
+        notes?: { item?: number; text: string }[]
+        rules?: { line: string; why: string }[]
+      }>({
+        type: 'object',
+        properties: {
+          decisions: {
+            type: 'array',
+            description: 'What is still theirs to decide',
+            items: {
+              type: 'object',
+              properties: {
+                item: { type: 'number', description: 'By its number in your brief' },
+                recommendation: { type: 'string', description: 'What you would do, in a line' },
+                option: {
+                  type: 'number',
+                  description: 'For a question: the answer you would pick, by its number',
+                },
+                rule: {
+                  type: 'string',
+                  description:
+                    'For a question: their rule your pick goes by, in their words; leave it out when none settles it',
+                },
+              },
+              required: ['item', 'recommendation'],
+            },
+          },
+          notes: {
+            type: 'array',
+            description: 'What you see across their threads that they would want to know',
+            items: {
+              type: 'object',
+              properties: {
+                item: { type: 'number', description: 'The item it is about, if one' },
+                text: { type: 'string', description: 'In a line or two' },
+              },
+              required: ['text'],
+            },
+          },
+          rules: {
+            type: 'array',
+            description: 'At most three new rules from their recent answers',
+            items: {
+              type: 'object',
+              properties: {
+                line: {
+                  type: 'string',
+                  description: 'The rule, one line, in their language and words',
+                },
+                why: { type: 'string', description: 'The answers it comes from, in a line' },
+              },
+              required: ['line', 'why'],
+            },
+          },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'chief_report',
+            decisions: (input.decisions ?? []).map((d) => ({
+              item: Math.round(d.item),
+              recommendation: d.recommendation,
+              ...(d.option !== undefined ? { option: Math.round(d.option) } : {}),
+              ...(d.rule?.trim() ? { rule: d.rule.trim() } : {}),
+            })),
+            notes: (input.notes ?? []).map((n) => ({
+              ...(n.item !== undefined ? { item: Math.round(n.item) } : {}),
+              text: n.text,
+            })),
+            rules: input.rules ?? [],
+          },
+          toolCallId,
+          toolName: 'chief_report',
+          input,
+        }),
+    }),
+  }
+  // While it only recommends (no chief_acts), its report is its one way out.
+  return options.acts ? pass : { chief_report: pass.chief_report }
+}
+
+/**
+ * Lists (docs/lists.md): checklist lines of library Markdown files that work is attached to.
+ * A line work is attached to has an id, in a marker at its end (`<!-- item:<id> -->`); the API
+ * changes the file itself, credited to this thread, within the teammate's library access.
+ */
+export function listTools(call: ScheduleCaller): Record<string, Tool> {
+  const item = {
+    type: 'string',
+    description: "A line's id, or its text (all of it, or enough of its start to be the only one)",
+  } as const
+  return {
+    list_items: tool({
+      description:
+        'Read a list: the checklist lines of a Markdown file of the library, each ticked or not, with its id when ' +
+        'work is attached to it, the threads and pull requests on it, and the library paths of the files under it. ' +
+        'Without a path: the items this thread works on.',
+      inputSchema: jsonSchema<{ path?: string }>({
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: 'The file\'s library path, e.g. "Projects/Acme/launch.md"',
+          },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: { name: 'list_items', ...(input.path ? { path: input.path } : {}) },
+          toolCallId,
+          toolName: 'list_items',
+          input,
+        }),
+    }),
+    link_items: tool({
+      description:
+        'Attach lines of a list to this thread, as the items you work on: they show this thread on their line, ' +
+        'and you get their ids for complete_item and for the items of the pull request you open. Use it when you ' +
+        'take on lines the person named that are not yet your items.',
+      inputSchema: jsonSchema<{ path: string; items: string[] }>({
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: "The list's library path" },
+          items: { type: 'array', items: item, minItems: 1 },
+        },
+        required: ['path', 'items'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: { name: 'link_items', path: input.path, items: input.items },
+          toolCallId,
+          toolName: 'link_items',
+          input,
+        }),
+    }),
+    complete_item: tool({
+      description:
+        'Tick a line of a list once its work is really done: each point of what done means for it checked, ' +
+        'with what shows it in the note after it (e.g. "Sitemap read by Google, 7 URLs, 31 Oct"). Brigade ' +
+        'changes the file, credited to you. For work a pull request finishes, name the item in that pull ' +
+        "request's items.closes instead: it is ticked when merged. When whether it is done is a matter of " +
+        'judgment (a video, copy, a design), do not tick it: show it to the person and let them tick it. Never ' +
+        'tick what is only partly done: add_item what remains of it (remainsOf) instead.',
+      inputSchema: jsonSchema<{ item: string; path?: string; note: string }>({
+        type: 'object',
+        properties: {
+          item,
+          path: {
+            type: 'string',
+            description: "The list's library path; needed when naming the line by its text",
+          },
+          note: {
+            type: 'string',
+            description:
+              'What shows it is done, in a few words after the line, e.g. "Neon PITR set to 7 days, 29 Oct"',
+          },
+        },
+        required: ['item', 'note'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'complete_item',
+            item: input.item,
+            ...(input.path ? { path: input.path } : {}),
+            note: input.note,
+          },
+          toolCallId,
+          toolName: 'complete_item',
+          input,
+        }),
+    }),
+    add_item: tool({
+      description:
+        'Add a line to a list, attached to this thread: what remains of an item (remainsOf: nested under it, ' +
+        'which Brigade ticks once all its remaining lines are ticked), or a follow-up the work showed (after a ' +
+        'line, nested under it with nested: true, at the end of a section by its heading, or at the end of the ' +
+        "file). Write it as the list's other lines are written, in their language.",
+      inputSchema: jsonSchema<{
+        path: string
+        text: string
+        after?: string
+        nested?: boolean
+        section?: string
+        remainsOf?: string
+      }>({
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: "The list's library path" },
+          text: { type: 'string', description: 'The line, without its checkbox' },
+          after: { ...item, description: `The line it follows. ${item.description}` },
+          nested: { type: 'boolean', description: 'Under the line `after`, as part of it' },
+          section: {
+            type: 'string',
+            description: 'A heading of the file, to add it at the end of that section',
+          },
+          remainsOf: {
+            ...item,
+            description: `The item this line is what remains of, in the same list. ${item.description}`,
+          },
+        },
+        required: ['path', 'text'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'add_item',
+            path: input.path,
+            text: input.text,
+            ...(input.after ? { after: input.after } : {}),
+            ...(input.nested ? { nested: true } : {}),
+            ...(input.section ? { section: input.section } : {}),
+            ...(input.remainsOf ? { remainsOf: input.remainsOf } : {}),
+          },
+          toolCallId,
+          toolName: 'add_item',
+          input,
+        }),
+    }),
+  }
+}
+
+/**
+ * Wake-ups alone, in a child thread a teammate started (wakesInChild): it checks on something
+ * later, and reports from the turn one brings. The API checks the thread too (mayWake).
+ */
+export function wakeupTools(call: ScheduleCaller): Record<string, Tool> {
+  const { set_wakeup, list_wakeups, cancel_wakeup } = scheduleTools(call)
+  return { set_wakeup: set_wakeup!, list_wakeups: list_wakeups!, cancel_wakeup: cancel_wakeup! }
+}
 
 /**
  * Schedules: the teammate prompted with the same instructions on a cron
@@ -1523,7 +2265,8 @@ export function scheduleTools(call: ScheduleCaller): Record<string, Tool> {
     }),
     list_schedules: tool({
       description:
-        'List your schedules: id, title, cron, timezone, whether paused, and the next runs.',
+        'List your schedules on the accounts of the person in this thread: id, title, cron, timezone, ' +
+        'whether paused, the next runs.',
       inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
       execute: (input, { toolCallId }) =>
         call({ operation: { name: 'list' }, toolCallId, toolName: 'list_schedules', input }),
@@ -1560,15 +2303,102 @@ export function scheduleTools(call: ScheduleCaller): Record<string, Tool> {
           input,
         }),
     }),
+    list_triggers: tool({
+      description:
+        "List what can start a thread for you on its own: each App account's events (connectionId, event, " +
+        'options), and your triggers with their URLs and instructions.',
+      inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: { name: 'list_triggers' },
+          toolCallId,
+          toolName: 'list_triggers',
+          input,
+        }),
+    }),
+    create_trigger: tool({
+      description:
+        "Make an outside event start a thread for you, on the accounts of the person in this thread: an App's " +
+        'event from list_triggers (connectionId, event, options), or any service that can send a webhook as a ' +
+        'new custom app (customApp, event "received"), which gets a URL of its own. Use it when the person asks ' +
+        'for work to start when something happens ("each failed payment", "every new Sentry error"). Each event ' +
+        'starts a fresh thread with your instructions first, then the event: write them to stand alone. An owner ' +
+        'or admin approves it first and the call waits for their decision; then it returns the URL, and a custom ' +
+        "app's signing secret as a credential only you may use. Set up the sender yourself when you can reach it.",
+      inputSchema: jsonSchema<{
+        connectionId?: string
+        customApp?: string
+        event: string
+        options?: Record<string, string>
+        label: string
+        instructions: string
+        verification?: 'hmac' | 'none'
+        reason?: string
+      }>({
+        type: 'object',
+        properties: {
+          connectionId: { type: 'string', description: 'An App account, from list_triggers' },
+          customApp: {
+            type: 'string',
+            description: 'Instead of connectionId: the name of a new custom app, e.g. "Sentry"',
+          },
+          event: {
+            type: 'string',
+            description: 'The event, from list_triggers; "received" for a custom app',
+          },
+          options: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+            description: "The event's options by name, from list_triggers",
+          },
+          label: { type: 'string', description: 'Short, e.g. "Failed payments"' },
+          instructions: {
+            type: 'string',
+            description: 'What to do with each event, standing alone',
+          },
+          verification: {
+            type: 'string',
+            enum: ['hmac', 'none'],
+            description:
+              'Custom apps only: hmac when the sender can sign its body with a secret (code you write), none when it cannot (most SaaS webhooks)',
+          },
+          reason: {
+            type: 'string',
+            description: 'For the person who approves: what the person here asked for',
+          },
+        },
+        required: ['event', 'label', 'instructions'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'create_trigger',
+            ...(input.connectionId ? { connectionId: input.connectionId } : {}),
+            ...(input.customApp ? { customApp: input.customApp } : {}),
+            event: input.event,
+            options: input.options ?? {},
+            label: input.label,
+            instructions: input.instructions,
+            ...(input.verification ? { verification: input.verification } : {}),
+            ...(input.reason ? { reason: input.reason } : {}),
+          },
+          toolCallId,
+          toolName: 'create_trigger',
+          input,
+        }),
+    }),
     set_wakeup: tool({
       description:
         'Be prompted again in this thread later, with this conversation, to check on something that is not ' +
-        'ready yet: a deploy, a CI run, a reply, a site coming up ("check again in 10 minutes"). Give minutes ' +
+        'ready yet: a deploy, a CI run, a site coming up ("check again in 10 minutes"). A reply to an email you ' +
+        'sent from this thread (Gmail, or email_send) and mail to a sign-up address you made wake you by ' +
+        'themselves; set one for those only as a deadline. Give minutes ' +
         `or at (${WAKEUP_MIN_MINUTES} minute to ${WAKEUP_MAX_DAYS} days ahead) and a note saying what to check; ` +
         'the note is the prompt you get back. Then end your turn: never sleep or poll in a loop to wait. ' +
-        "Prefer what notifies you by itself (a pull request's review loop, a ticket) when there is one. " +
+        "Prefer what notifies you by itself (a child thread's report, such as a pull request's review, or a ticket) when there is one. " +
         `At most ${WAKEUPS_PER_THREAD} pending per thread, and ${WAKEUPS_IN_A_ROW} in a row without a word ` +
-        'from a person. Only in a thread a person started.',
+        'from a person. Only in a thread a person started, or in a child thread, whose report waits for ' +
+        'the turn it brings.',
       inputSchema: jsonSchema<{ minutes?: number; at?: string; note: string }>({
         type: 'object',
         properties: {
@@ -1620,6 +2450,98 @@ export function scheduleTools(call: ScheduleCaller): Record<string, Tool> {
           toolName: 'cancel_wakeup',
           input,
         }),
+    }),
+  }
+}
+
+/** What list_apps says on an API from before it, which cannot read the call. */
+const LIST_APPS_UNKNOWN =
+  "Brigade's server does not have list_apps yet: it is older than this computer's runner. Until it updates, " +
+  "ask for an App with open_ticket's access ask, whose app.kind names every App you can ask for."
+
+/**
+ * The Apps a teammate can suggest from what a person needs: its accounts here, the workspace's
+ * it may ask for, and those a person may connect (src/app-calls.ts in the API). Names only; an
+ * account's tools still come with its grant. None in a playbook's run, which has only the Apps
+ * the playbook declares (the API refuses it too).
+ */
+export function appTools(
+  call: ScheduleCaller,
+  options: { playbook: boolean },
+): Record<string, Tool> {
+  if (options.playbook) return {}
+  return {
+    list_apps: tool({
+      description:
+        'List the Apps, one line each: the accounts you use here, the accounts of the workspace not granted to you, ' +
+        'and the Apps nobody has connected for you yet, each with the app.kind an open_ticket access ask takes. ' +
+        'Call it when a person wants to use a service you have no account for ("track my Google rankings", ' +
+        '"connect my Gmail"), then propose granting or connecting one with a ticket.',
+      inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
+      execute: (input, { toolCallId }) =>
+        call({ operation: { name: 'list_apps' }, toolCallId, toolName: 'list_apps', input }).catch(
+          (error: unknown) => {
+            // An API from before it answers that it cannot read the call (hub/runner-messages.ts).
+            if (errorMessage(error).includes('could not read this call'))
+              throw new Error(LIST_APPS_UNKNOWN)
+            throw error
+          },
+        ),
+    }),
+  }
+}
+
+/** What complete_thread says on an API from before it, which cannot read the call. */
+const COMPLETE_THREAD_UNKNOWN =
+  "Brigade's server does not have complete_thread yet: it is older than this computer's runner. Until it " +
+  'updates, say in your reply, in a line, what was delivered; a person marks the thread done.'
+
+/**
+ * Done (docs/board.md): the teammate declares the work asked in its thread delivered, with a line
+ * on what was. Only in a thread a person talks to: a child reports, and a playbook's run ends with
+ * its report (the API refuses them too, and a schedule's run, which the spec does not tell). A
+ * done block at the end of the reply is the way its instructions give (declaredDone); the call
+ * stays for a teammate used to it, never loaded up front.
+ */
+export function doneTools(
+  call: ScheduleCaller,
+  options: { child: boolean; playbook: boolean; scheduled?: boolean },
+): Record<string, Tool> {
+  if (options.child || options.playbook || options.scheduled) return {}
+  return {
+    [COMPLETE_THREAD_TOOL]: tool({
+      description:
+        'Declare this thread done, when the Done section of your instructions says: the work asked here is ' +
+        'delivered and nothing is pending. A `done` block at the end of your reply does the same as your turn ' +
+        'ends, with no call to wait on: prefer it. Brigade refuses it while something is still open here, and ' +
+        'lists what.',
+      inputSchema: jsonSchema<{ summary: string }>({
+        type: 'object',
+        properties: {
+          summary: {
+            type: 'string',
+            description: `One line on what was delivered, at most ${DONE_SUMMARY_MAX} characters, e.g. "CSV export merged (#412) and live"`,
+          },
+        },
+        required: ['summary'],
+      }),
+      execute: async (input, { toolCallId }) => {
+        // Checked here, so that the API's "could not read this call" means only that it is older.
+        const summary = DoneSummary.safeParse(input.summary)
+        if (!summary.success)
+          throw new Error(summary.error.issues[0]?.message ?? 'Say in a line what was delivered')
+        return call({
+          operation: { name: COMPLETE_THREAD_TOOL, summary: summary.data },
+          toolCallId,
+          toolName: COMPLETE_THREAD_TOOL,
+          input,
+        }).catch((error: unknown) => {
+          // An API from before it answers that it cannot read the call (hub/runner-messages.ts).
+          if (errorMessage(error).includes('could not read this call'))
+            throw new Error(COMPLETE_THREAD_UNKNOWN)
+          throw error
+        })
+      },
     }),
   }
 }
@@ -1679,6 +2601,28 @@ export function playbookTools(call: ScheduleCaller): Record<string, Tool> {
           },
           toolCallId,
           toolName: 'playbook_report',
+          input,
+        }),
+    }),
+    file_idea: tool({
+      description:
+        "Keep an idea for the team, such as a customer's feature request: one line added to the playbook's " +
+        'ideas list in the library, where a person decides what to do with it. It starts nothing.',
+      inputSchema: jsonSchema<{ text: string }>({
+        type: 'object',
+        properties: {
+          text: {
+            type: 'string',
+            description: 'What is asked, why, and who asked (their company), in one line',
+          },
+        },
+        required: ['text'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: { name: 'file_idea', text: input.text },
+          toolCallId,
+          toolName: 'file_idea',
           input,
         }),
     }),
@@ -1830,12 +2774,108 @@ export function playbookInstallTools(call: ScheduleCaller): Record<string, Tool>
           input,
         ),
     }),
+    update_playbook: tool({
+      description:
+        "Move an installed playbook to its template's newer version, in place: its runs, numbers, action levels " +
+        'and history are kept, and autonomy never grows. Without apply, it says what changes and which new ' +
+        'settings need an answer; with apply: true and those answers, it updates (or says what is still missing). ' +
+        'Give its installationId, or its playbookKey when only one is installed.',
+      inputSchema: jsonSchema<{
+        installationId?: string
+        playbookKey?: string
+        settings?: Record<string, string | number>
+        replaceSkills?: string[]
+        apply?: boolean
+      }>({
+        type: 'object',
+        properties: {
+          installationId: { type: 'string', description: 'The installed playbook' },
+          playbookKey: { type: 'string', description: 'e.g. brigade/support-bugs' },
+          settings: {
+            type: 'object',
+            description: 'Answers to its new settings by key, e.g. { "developer": "Sam" }',
+            additionalProperties: { type: ['string', 'number'] },
+          },
+          replaceSkills: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Skills the workspace edited that should take the new version anyway, by name',
+          },
+          apply: {
+            type: 'boolean',
+            description: 'Update it now; leave out to see what changes first',
+          },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        send(
+          {
+            name: 'update_playbook',
+            ...(input.installationId ? { installationId: input.installationId } : {}),
+            ...(input.playbookKey ? { playbookKey: input.playbookKey } : {}),
+            settings: input.settings ?? {},
+            ...(input.replaceSkills?.length ? { replaceSkills: input.replaceSkills } : {}),
+            apply: input.apply ?? false,
+          },
+          toolCallId,
+          'update_playbook',
+          input,
+        ),
+    }),
+  }
+}
+
+/**
+ * Reviews: another teammate reviews a pull request of this thread's, or of one of its
+ * children's, in a child thread of the thread that opened it, which Brigade starts with a
+ * brief of its own (src/reviews.ts in the API). Its report wakes that thread: this one, or the
+ * child, which reports here once it is done. Through the schedule calls; the API checks the
+ * pull request is this thread's or its child's.
+ */
+export function reviewTools(call: ScheduleCaller): Record<string, Tool> {
+  return {
+    request_review: tool({
+      description:
+        'Have another teammate review a pull request this thread (or one of its child threads) opened, in a ' +
+        'child thread of the one that opened it, which Brigade starts with a brief of its own: the pull request, ' +
+        'how that thread started, and whether the repository runs checks. You are woken here with its report; ' +
+        "for a child thread's pull request, that child is, and reports here once the review is done. Use it when " +
+        'the person asks for a review, or where the Code section of your instructions says to; for a pull ' +
+        "request you open, github_create_pull_request's `review` says whether it gets one.",
+      inputSchema: jsonSchema<{ repository: string; number: number; reviewer?: string }>({
+        type: 'object',
+        properties: {
+          repository: { type: 'string', description: 'owner/name, e.g. acme/web' },
+          number: { type: 'number', description: 'The pull request number' },
+          reviewer: {
+            type: 'string',
+            description:
+              'A teammate id or name, when the person named one. Unset: Brigade picks one, on another model when it can.',
+          },
+        },
+        required: ['repository', 'number'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'request_review',
+            repository: input.repository,
+            number: Math.round(input.number),
+            ...(input.reviewer ? { reviewer: input.reviewer } : {}),
+          },
+          toolCallId,
+          toolName: 'request_review',
+          input,
+        }),
+    }),
   }
 }
 
 /**
  * Child threads: work started beside this thread, in a fresh context, whose report
- * comes back here. A child reports with `report` and starts no children of its own.
+ * comes back here. A child reports with `report` and starts no children of its own: the
+ * review of a pull request it opens is the one thread under it, which it lists and reads.
  * A playbook's run may also follow another run's child (follow_thread, `follow`).
  * They go through the schedule calls; the API checks the thread and its children.
  */
@@ -1844,29 +2884,87 @@ export function childTools(
   options: { child: boolean; follow?: boolean },
 ): Record<string, Tool> {
   const threadId = { type: 'string', description: 'A child thread, from list_children' } as const
+  const list_children = tool({
+    description:
+      "This thread's child threads, newest first: who, status, whether you wait for it, and its report once in." +
+      (options.child
+        ? ' Here, the reviews of the pull requests you opened.'
+        : options.follow
+          ? " Also fromOtherRuns: the child threads of this playbook's other runs from the last week " +
+            '(e.g. the fix of a bug another customer reported), which follow_thread can follow.'
+          : ''),
+    inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
+    execute: (input, { toolCallId }) =>
+      call({
+        operation: { name: 'list_children' },
+        toolCallId,
+        toolName: 'list_children',
+        input,
+      }),
+  })
+  const read_child = tool({
+    description:
+      "A child thread's full report, the files it sent (in your working folder), its last message and the pull " +
+      'requests it opened' +
+      (options.follow ? ', or those of a thread you follow (follow_thread).' : '.'),
+    inputSchema: jsonSchema<{ threadId: string }>({
+      type: 'object',
+      properties: { threadId },
+      required: ['threadId'],
+    }),
+    execute: (input, { toolCallId }) =>
+      call({
+        operation: { name: 'read_child', threadId: input.threadId },
+        toolCallId,
+        toolName: 'read_child',
+        input,
+      }),
+  })
   if (options.child)
     return {
+      list_children,
+      read_child,
       report: tool({
         description:
           'Report to the thread that started this one, once, when your work is done, then end your turn. ' +
           'status: report when you have something to tell (what you found or did, with links), nothing when there is ' +
-          'nothing new (a scheduled check that found nothing: it wakes nobody), needs_person when you opened a ticket ' +
-          'and wait on a person, failed when you could not do it (say why). The summary is what the parent reads ' +
-          'first: a few lines, the answer first. Without a report, your last message stands for it.',
+          'nothing new (a scheduled check that found nothing: it wakes nobody), needs_person when the work cannot ' +
+          'go on without a person and you leave it to them (say what they must do), failed when you could not do it (say why). That thread cannot see your files, ' +
+          '/tmp included: never point it to one. Put all it needs in the summary, and send the files it needs ' +
+          '(reproduction scripts, logs, screenshots) in files: Brigade puts them in its working folder. Without a ' +
+          'report, your last message stands for it. Not while a review of a pull request you opened runs: end your ' +
+          'turn instead, and report once it is done.',
         inputSchema: jsonSchema<{
           status: 'report' | 'nothing' | 'needs_person' | 'failed'
           summary: string
+          files?: string[]
         }>({
           type: 'object',
           properties: {
             status: { type: 'string', enum: ['report', 'nothing', 'needs_person', 'failed'] },
-            summary: { type: 'string', description: 'At most a few lines, the answer first' },
+            summary: {
+              type: 'string',
+              description:
+                'The answer first, in a few lines (its note shows the start), then everything the parent needs in ' +
+                `full, such as each finding with file:line and how to reproduce it. At most ${REPORT_MAX} characters.`,
+            },
+            files: {
+              type: 'array',
+              items: { type: 'string' },
+              description: `Paths of files to send, in your folder or /tmp: at most ${REPORT_FILES_MAX}, ${ATTACHMENT_MAX / (1024 * 1024)} MB each`,
+            },
           },
           required: ['status', 'summary'],
         }),
         execute: (input, { toolCallId }) =>
           call({
-            operation: { name: 'report', status: input.status, summary: input.summary },
+            operation: {
+              name: 'report',
+              status: input.status,
+              summary: input.summary,
+              // Paths here: the harness sends the files first, and the report carries their ids.
+              ...(input.files?.length ? { files: input.files } : {}),
+            },
             toolCallId,
             toolName: 'report',
             input,
@@ -1881,8 +2979,9 @@ export function childTools(
         'another teammate (teammate), or may need a person; otherwise do the work yourself, with your own ' +
         'sub-agents for parallel parts if you have them. The child does not see this ' +
         'conversation: write instructions that stand alone (the goal, inputs by name, where the result goes, what ' +
-        'done looks like). With wait (default), you are woken here once, with one note, when every child you wait ' +
-        'for has reported: start them all, then end your turn; never wait or poll. ' +
+        'done looks like). Its files are not visible from here: its report brings back what it found, and the ' +
+        'files it sends with it come to your working folder. With wait (default), you are woken here once, with ' +
+        'one note, when every child you wait for has reported: start them all, then end your turn; never wait or poll. ' +
         `At most ${CHILDREN_AT_WORK} at work at once.`,
       inputSchema: jsonSchema<{
         title: string
@@ -1897,7 +2996,8 @@ export function childTools(
           instructions: { type: 'string', description: 'The work, standing alone' },
           teammate: {
             type: 'string',
-            description: 'Who does it: a teammate id or name (list_tasks lists them). Unset: you.',
+            description:
+              "Who does it: a teammate id or name. In a playbook's thread, one of its teammates by its key (e.g. developer). Unset: you.",
           },
           wait: {
             type: 'boolean',
@@ -1926,39 +3026,8 @@ export function childTools(
           input,
         }),
     }),
-    list_children: tool({
-      description:
-        "This thread's child threads, newest first: who, status, whether you wait for it, and its report once in." +
-        (options.follow
-          ? " Also fromOtherRuns: the child threads of this playbook's other runs from the last week " +
-            '(e.g. the fix of a bug another customer reported), which follow_thread can follow.'
-          : ''),
-      inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
-      execute: (input, { toolCallId }) =>
-        call({
-          operation: { name: 'list_children' },
-          toolCallId,
-          toolName: 'list_children',
-          input,
-        }),
-    }),
-    read_child: tool({
-      description:
-        "A child thread's full report, its last message and the pull requests it opened" +
-        (options.follow ? ', or those of a thread you follow (follow_thread).' : '.'),
-      inputSchema: jsonSchema<{ threadId: string }>({
-        type: 'object',
-        properties: { threadId },
-        required: ['threadId'],
-      }),
-      execute: (input, { toolCallId }) =>
-        call({
-          operation: { name: 'read_child', threadId: input.threadId },
-          toolCallId,
-          toolName: 'read_child',
-          input,
-        }),
-    }),
+    list_children,
+    read_child,
     cancel_child: tool({
       description:
         'Stop a child thread that is no longer needed. You stop waiting for it; the others you wait for still count.',
@@ -2061,6 +3130,7 @@ export type PreviewTools = {
   ): Promise<{
     status: string
     origins: Record<number, string>
+    open?: string
     reason?: string
     logs?: string
     variables?: string[]
@@ -2113,7 +3183,12 @@ export type PreviewTools = {
   /** Setups the repository's checkout has for other tools (orca.yaml, …). */
   otherSetups(repository: string): Promise<string[]>
   stop(): Promise<{ stopped: boolean }>
-  logs(lines?: number): { status: string; origins?: Record<number, string>; logs: string }
+  logs(lines?: number): Promise<{
+    status: string
+    origins?: Record<number, string>
+    open?: string
+    logs: string
+  }>
 }
 
 type PreviewInput = {
@@ -2173,15 +3248,18 @@ export function previewTools(
         'checkout; save yours with save_preview once its check passes. ' +
         'The app must listen on HOST and `port` (PORT), both set: HOST is 0.0.0.0 on a cloud computer and 127.0.0.1 ' +
         "on a member's own, where nobody else on its network should reach it. " +
-        'Write the command with $PORT (e.g. "pnpm dev --port $PORT"): when another preview has `port`, it gets a free one. ' +
+        'Write the command with $PORT and $HOST (e.g. "pnpm dev --port $PORT --host $HOST"): when another preview has `port`, it gets a free one. ' +
         'People reach it through a proxy at one public address, in BRIGADE_PREVIEW_URL; the other `ports` are paths on it ' +
         "(/__ports/<port>/), each port's address in BRIGADE_PREVIEW_URL_<port>. Put what the app needs in `env`, " +
         'where ${BRIGADE_PREVIEW_URL} and ${BRIGADE_PREVIEW_URL_<port>} become the addresses (e.g. NEXTAUTH_URL, ' +
         'NEXT_PUBLIC_API_URL, auth callback URLs, allowed origins), and `envFile` if the app reads only its file. ' +
+        'On a cloud computer that address lets in only browsers that came from Brigade (or opened `open`, in the ' +
+        "result): the app's server must call itself at localhost, not there. " +
         "The repository's preview variables, which people set (ask with a variables ask in open_ticket), come on " +
         'top of `env`; the result lists their names. ' +
         "The proxy makes the app's cookies work in the dashboard's frame, shows a waiting page while the app starts, " +
-        'and starts it again if it stops. Dev servers that check the Host header need the preview host allowed ' +
+        'and starts it again if it stops. Dev servers that check the Host header need the preview host (the one in ' +
+        'BRIGADE_PREVIEW_URL) allowed ' +
         '(Vite: server.allowedHosts; Next.js: allowedDevOrigins). Use this instead of starting a server in the ' +
         'background yourself: those stop when your turn ends.',
       inputSchema: jsonSchema<PreviewInput>({
@@ -2220,7 +3298,8 @@ export function previewTools(
             type: 'object',
             additionalProperties: { type: 'string' },
             description:
-              'Settings for setup and the app, not secrets: e.g. {"NEXTAUTH_URL": "${BRIGADE_PREVIEW_URL}", "DATABASE_URL": "postgres://…localhost…"}',
+              'Settings for setup and the app, e.g. {"NEXTAUTH_URL": "${BRIGADE_PREVIEW_URL}", "DATABASE_URL": "postgres://…localhost…"}. ' +
+              'A secret the app only needs locally may be a random value here; one only a person has is a preview variable, never here.',
           },
           envFile: {
             type: 'string',
@@ -2358,8 +3437,9 @@ export function previewTools(
         "Save how this thread's preview starts (setup, env, credentials, command, ports, pages to check, archive) as its " +
         "repository's preview, so a later thread starts it in one step with start_preview({ repository }). " +
         'Only once its check passes, unless what it found is expected: then look at the screenshots and give the ' +
-        '`reason` (e.g. "/admin redirects to sign-in"). Saving again replaces it. Secrets go in the repository\'s ' +
-        'preview variables (a variables ask in open_ticket), never in env: they are kept beside it, not in it. ' +
+        '`reason` (e.g. "/admin redirects to sign-in"). Saving again replaces it. Secrets only a person has go in ' +
+        "the repository's preview variables (a variables ask in open_ticket), never in env: they are kept beside it, " +
+        'not in it. A random value for a secret the app only needs locally may stay in env. ' +
         'It is saved in Brigade and written to .brigade/settings.toml in the checkout, so each branch has its own ' +
         "and people review it as code: commit it. When the repository's people want none of Brigade's files in it, " +
         'save with `inRepository: false`: kept in Brigade only, for later saves too.',
@@ -2406,12 +3486,309 @@ export function previewTools(
       description:
         "The latest output of this thread's preview (its dev server's console), e.g. to see why a page fails, " +
         'and, while it runs, its address by port (`origins`): test in your browser there rather than starting ' +
-        'a copy of your own.',
+        'a copy of your own. On a cloud computer, open `open` first: the preview lets in only a browser that ' +
+        'came with its token (for 5 minutes, then for the run), and answers 403 otherwise, also to requests ' +
+        "the app's server makes to its own public address (use localhost there).",
       inputSchema: jsonSchema<{ lines?: number }>({
         type: 'object',
         properties: { lines: { type: 'number', description: 'How many lines (default 100)' } },
       }),
       execute: (input) => previews.logs(input.lines ?? 100),
+    }),
+  }
+}
+
+/** A command on the thread's machine, as machineTools give it back (see machine-runs.ts). */
+export type MachineRunResult = {
+  id: string
+  command: string
+  cwd: string
+  status: 'starting' | 'running' | 'succeeded' | 'failed' | 'stopped' | 'timed_out'
+  exitCode?: number
+  startedAt: string
+  endedAt?: string
+  seconds: number
+  output?: string
+  files?: string[]
+  library?: { file: string; path: string; size: string; mention?: string }[]
+  notes: string[]
+}
+
+/** A teammate's commands on its thread's machine of its own: what machineTools reach. */
+export type MachineRunTools = {
+  run(
+    input: {
+      command: string
+      cwd?: string
+      outputs?: string[]
+      library?: { from: string; to: string }[]
+      env?: Record<string, string>
+      envFiles?: string[]
+      timeoutMs?: number
+    },
+    waitMs: number,
+    signal?: AbortSignal,
+  ): Promise<MachineRunResult>
+  get(id: string, waitMs: number, lines?: number, signal?: AbortSignal): Promise<MachineRunResult>
+  stop(id: string): Promise<MachineRunResult>
+  list(): Omit<MachineRunResult, 'output'>[]
+}
+
+/** How long a call waits for a command on the machine, unless it says, and at most. */
+const MACHINE_WAIT_MINUTES = 10
+const MACHINE_WAIT_MAX_MINUTES = 30
+
+/** What to do next, by how the command stands. */
+function machineNote(result: MachineRunResult) {
+  switch (result.status) {
+    case 'starting':
+    case 'running':
+      return (
+        'Still running on the machine, where it goes on without this call. Wait for it with ' +
+        `machine_run({ id: "${result.id}" }), or set a wake-up and end your turn; its outputs come back when it ends.`
+      )
+    case 'succeeded': {
+      const said = ['Done.']
+      if (result.files?.length)
+        said.push(`Its outputs are in your folder: ${result.files.join(', ')}.`)
+      if (result.library?.length)
+        said.push(
+          `Saved to the library from the machine: ${result.library
+            .map((file) => file.mention ?? file.path)
+            .join(', ')}. Name each by its mention in your reply.`,
+        )
+      return said.join(' ')
+    }
+    case 'stopped':
+      return 'Stopped.'
+    default:
+      return (
+        'It did not succeed: read its output and notes. machine_run with `lines` gives more of its output ' +
+        '(up to 2000 lines).'
+      )
+  }
+}
+
+const withNote = (result: MachineRunResult) => ({ ...result, note: machineNote(result) })
+
+/**
+ * Why the wait ended before the command did (arrivals.ts), and what to do: the command goes on
+ * on the machine either way. Once it ended meanwhile, the call says so as ever.
+ */
+function cutShort(result: ReturnType<typeof withNote>, cut: Cut) {
+  if (result.status !== 'starting' && result.status !== 'running') return result
+  const again = `machine_run({ id: "${result.id}" })`
+  return {
+    ...result,
+    note:
+      cut === 'message'
+        ? 'A message came in while you waited: it comes with this result. Read it, and answer it if ' +
+          `it asks something; the command goes on on the machine. Then wait again with ${again}, or ` +
+          'set a wake-up and end your turn.'
+        : "Brigade's runner is updating, which ended this wait: the command is still running on the " +
+          `machine (id ${result.id}). Wait for it again with ${again}.`,
+  }
+}
+
+/**
+ * Runs a wait of a machine tool, cut short by a message that comes in or a hand-over to the
+ * next runner (or by the call's own abort): the turn reads the message now, and an update
+ * takes the turn over at once rather than stop it.
+ */
+async function cutWait(
+  arrivals: Arrivals | undefined,
+  abortSignal: AbortSignal | undefined,
+  wait: (signal: AbortSignal | undefined) => Promise<MachineRunResult>,
+) {
+  if (!arrivals) return withNote(await wait(abortSignal))
+  const watch = arrivals.watch(abortSignal)
+  try {
+    const result = withNote(await wait(watch.signal))
+    return watch.cut ? cutShort(result, watch.cut) : result
+  } finally {
+    watch.release()
+  }
+}
+
+/** Minutes a call waits, within bounds. */
+const waitMs = (minutes: number | undefined) =>
+  Math.min(Math.max(minutes ?? MACHINE_WAIT_MINUTES, 0), MACHINE_WAIT_MAX_MINUTES) * 60_000
+
+/** Heavy commands on the thread's machine of its own: run, wait, read, stop. */
+export function machineTools(
+  runs: MachineRunTools,
+  credentials: Pick<Credentials, 'env'>,
+  arrivals?: Arrivals,
+  /** The teammate may save to the library (somewhere in it): its commands may too, from there. */
+  options: { library?: boolean } = {},
+): Record<string, Tool> {
+  const library = {
+    type: 'array' as const,
+    items: {
+      type: 'object' as const,
+      properties: {
+        from: { type: 'string' as const, description: 'A file it makes, relative to cwd' },
+        to: {
+          type: 'string' as const,
+          description: 'Its library path, e.g. "Projects/X/videos/video.mp4"',
+        },
+      },
+      required: ['from', 'to'],
+    },
+    maxItems: 20,
+    description:
+      'Files it makes to save to the library straight from the machine once it succeeded, as save_to_library ' +
+      'would (same access, size and checks), e.g. [{"from": "renders/video.mp4", "to": "Projects/X/videos/video.mp4"}]. ' +
+      'Each one’s mention comes back; the file itself does not, unless also in `outputs`',
+  }
+  return {
+    run_on_machine: tool({
+      description:
+        "Run a shell command on this thread's machine of its own (8 vCPU, 16 GB) instead of this computer, which " +
+        'every teammate of the workspace shares: for work it cannot take without slowing everyone, a render or ' +
+        'encode of video or audio, a transcription, a model run on video or images, Docker. Not for code work ' +
+        '(installs, builds, a typecheck, lint, the tests of a change: here, since starting the machine takes ' +
+        "longer; a whole suite: the repository's checks) nor quick commands (git, reading or searching files, " +
+        'small scripts). ' +
+        'The folder in `cwd` goes to the machine first: the whole checkout it is in, without .git, node_modules, ' +
+        'what git ignores (.env files aside) and files over 2 GB, or the folder alone outside a checkout. Your ' +
+        'copy there stays between commands, with what they installed: the next ones send only what changed. ' +
+        "The thread's attached files are there too, whatever their size, at the same path relative to your " +
+        'working directory as here (from a checkout in it, ../attachments/x.mov), as given to the thread: a ' +
+        'copy you edited or removed here does not change them, except in a command run in the attachments ' +
+        'folder, which goes as it is. ' +
+        'It runs Ubuntu with Node.js, pnpm, Docker, Python, ffmpeg and Chrome, and sudo for anything else ' +
+        "(apt-get), but none of this computer's environment, services or credentials: the command installs " +
+        'what it needs (e.g. "pip install faster-whisper && python transcribe.py"), with settings in `env` and vault ' +
+        'credentials in `credentials`; what it installs stays on its disk. ' +
+        'Name in `outputs` the files or folders it makes that you need here (' +
+        (options.library ? '' : 'a video, ') +
+        'frames to look at, a transcript), relative to cwd: they come back to the same place in your folder ' +
+        'once it ends, whether it succeeded or not. ' +
+        (options.library
+          ? 'A file for the library (a render, a video) goes there from the machine with `library` instead, never ' +
+            'through this computer: do not bring it back to save it. '
+          : '') +
+        'Waits up to `waitMinutes` for it to end, or until a message comes in or Brigade updates; a longer ' +
+        'one keeps running there: wait again with machine_run.',
+      inputSchema: jsonSchema<{
+        command: string
+        cwd?: string
+        outputs?: string[]
+        library?: { from: string; to: string }[]
+        env?: Record<string, string>
+        credentials?: string[]
+        timeoutMinutes?: number
+        waitMinutes?: number
+      }>({
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description:
+              'Run with bash in cwd on the machine, e.g. "npx hyperframes render --quality looks -o renders/video.mp4"',
+          },
+          cwd: {
+            type: 'string',
+            description:
+              'The folder it runs in, relative to your working directory: a checkout, a folder of one, or a ' +
+              "project's folder (not your whole working directory)",
+          },
+          outputs: {
+            type: 'array',
+            items: { type: 'string' },
+            maxItems: 20,
+            description:
+              'Files or folders it makes, relative to cwd, brought back here once it ends, e.g. ["renders/frames"]',
+          },
+          ...(options.library ? { library } : {}),
+          env: {
+            type: 'object',
+            additionalProperties: { type: 'string' },
+            description: 'Settings it gets, e.g. {"NODE_OPTIONS": "--max-old-space-size=8192"}',
+          },
+          credentials: {
+            type: 'array',
+            items: { type: 'string' },
+            maxItems: 10,
+            description:
+              'Vault credentials (by id) whose variables it gets; their values are hidden in its output',
+          },
+          timeoutMinutes: {
+            type: 'number',
+            description: 'Stopped past this long (default 60, up to 360)',
+          },
+          waitMinutes: {
+            type: 'number',
+            description: `How long this call waits for it to end (default ${MACHINE_WAIT_MINUTES}, up to ${MACHINE_WAIT_MAX_MINUTES}; 0 to start it and go on)`,
+          },
+        },
+        required: ['command'],
+      }),
+      execute: async (input, { abortSignal, toolCallId }) => {
+        if (input.library?.length && !options.library)
+          throw new Error(
+            'You may not save to the library: name the files in `outputs` to bring them back instead',
+          )
+        const envFiles: string[] = []
+        for (const credentialId of input.credentials ?? []) {
+          const released = await credentials.env(credentialId, {
+            toolCallId,
+            toolName: 'run_on_machine',
+            input: { credentialId },
+          })
+          envFiles.push(released.file)
+        }
+        return cutWait(arrivals, abortSignal, (signal) =>
+          runs.run(
+            {
+              command: input.command,
+              ...(input.cwd ? { cwd: input.cwd } : {}),
+              ...(input.outputs?.length ? { outputs: input.outputs } : {}),
+              ...(input.library?.length ? { library: input.library } : {}),
+              ...(input.env && Object.keys(input.env).length ? { env: input.env } : {}),
+              ...(envFiles.length ? { envFiles } : {}),
+              ...(input.timeoutMinutes ? { timeoutMs: input.timeoutMinutes * 60_000 } : {}),
+            },
+            waitMs(input.waitMinutes),
+            signal,
+          ),
+        )
+      },
+    }),
+    machine_run: tool({
+      description:
+        'A command you started with run_on_machine: wait for it to end (up to `waitMinutes`, or until a ' +
+        'message comes in or Brigade updates), read more of its output (`lines`), or stop it (`stop`). ' +
+        'Without `id`, lists the commands of this thread.',
+      inputSchema: jsonSchema<{
+        id?: string
+        waitMinutes?: number
+        lines?: number
+        stop?: boolean
+      }>({
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: 'As run_on_machine gave it' },
+          waitMinutes: {
+            type: 'number',
+            description: `How long to wait for it to end (default ${MACHINE_WAIT_MINUTES}, up to ${MACHINE_WAIT_MAX_MINUTES}; 0 not to wait)`,
+          },
+          lines: {
+            type: 'number',
+            description: 'How many of its last lines of output (default 60, up to 2000)',
+          },
+          stop: { type: 'boolean', description: 'Stop it, and all it started on the machine' },
+        },
+      }),
+      execute: async (input, { abortSignal }) => {
+        if (!input.id) return { commands: runs.list() }
+        if (input.stop) return withNote(await runs.stop(input.id))
+        const id = input.id
+        return cutWait(arrivals, abortSignal, (signal) =>
+          runs.get(id, waitMs(input.waitMinutes), input.lines, signal),
+        )
+      },
     }),
   }
 }
@@ -2465,7 +3842,12 @@ export type ComputerUse = {
     method: string,
     params: Record<string, unknown>,
     signal?: AbortSignal,
+    options?: RequestOptions,
   ) => Promise<unknown>
+  /** The working directory, where a command runs by default (computer_run). */
+  workDir: string
+  /** The environment a command gets: what the teammate's own shell gets, without its keys. */
+  env: () => Record<string, string>
   /** Where the next screenshot goes: relative to the working directory, and absolute. */
   screenshotPath: () => { path: string; absolute: string }
   /** Show a screenshot in the thread, like a generated image. */
@@ -2479,9 +3861,26 @@ export type ComputerUse = {
 /** Requests that change what is on screen. */
 const ACTIONS = new Set(['move', 'click', 'drag', 'scroll', 'type', 'key', 'open_app'])
 
-const ABOUT_COMPUTER =
+/** computer_run: the helper's own bounds (apps/computer-use-macos Run.swift). */
+const COMMAND_TIMEOUT_DEFAULT = 120
+const COMMAND_TIMEOUT_MAX = 1800
+const COMMAND_OUTPUT_MAX = 100_000
+
+const ABOUT_WINDOWS =
+  "On the person's own Windows PC (this computer), in their session. Coordinates are screen pixels " +
+  'with the top-left of the main display at 0,0: the same units as computer_screenshot. Clicks, keys and ' +
+  "the pointer are the person's own: act when they are not using the PC, or ask first."
+
+const ABOUT_MAC =
   "On the person's own Mac (this computer), through Brigade Computer Use. Coordinates are screen points " +
   'with the top-left of the main display at 0,0: the same units as computer_screenshot and computer_ui_tree. ' +
+  'While you act, a pill on their screen shows your name with a Stop button.'
+
+/** On a member's Linux computer, where Brigade.app serves computer use itself. */
+const ABOUT_COMPUTER_LINUX =
+  "On the person's own Linux computer (this computer), through Brigade.app. Coordinates are screen points " +
+  'with the top-left of the main display at 0,0: the same units as computer_screenshot and computer_ui_tree. ' +
+  'Shortcuts use ctrl where a Mac uses cmd (cmd is the Super key here). ' +
   'While you act, a pill on their screen shows your name with a Stop button.'
 
 const point = {
@@ -2489,26 +3888,109 @@ const point = {
   y: { type: 'number', description: 'Screen y, in points' },
 } as const
 
+/** How long computer_open_app waits for a window of the app, and then for it to finish opening. */
+const WINDOW_WAIT_MS = 5000
+const WINDOW_SETTLE_MS = 300
+
+const APP_FOR_KEYS = {
+  type: 'string',
+  description: 'The app it is for, by the name computer_apps lists (it must be running)',
+} as const
+
 /**
- * See and use the apps on a member's Mac: screenshots, the mouse and keyboard,
+ * See and use the apps on a member's Mac or Linux computer: screenshots, the mouse and keyboard,
  * opening apps and reading their interface. For what nothing else reaches:
  * the shell, a CLI or an app's own tools come first.
  */
-export function computerUseTools(computer: ComputerUse): Record<string, Tool> {
+export function computerUseTools(
+  computer: ComputerUse,
+  /** Input for a named app, straight to its process (desktop-tools.ts's macAppInput). */
+  appInput?: AppInput,
+  /**
+   * A Mac (Brigade Computer Use), a Linux computer (Brigade.app serves the same requests), or a
+   * Windows PC (agent-desktop, harness/windows-computer.ts), which has no computer_run (its
+   * commands need no helper's permission there) nor ui_tree.
+   */
+  system: 'mac' | 'windows' | 'linux' = process.platform === 'linux' ? 'linux' : 'mac',
+): Record<string, Tool> {
+  // The thread's panel glances at the screen shortly after each action, however it was asked.
+  const raw = computer
+  computer = {
+    ...raw,
+    request: async (method, params, signal, options) => {
+      const result = await raw.request(method, params, signal, options)
+      if (ACTIONS.has(method)) raw.acted()
+      return result
+    },
+  }
+  const windows = system === 'windows'
+  const linux = system === 'linux'
+  const about = windows ? ABOUT_WINDOWS : linux ? ABOUT_COMPUTER_LINUX : ABOUT_MAC
+  /** "Mac", "PC" or "computer", as the descriptions name it. */
+  const here = windows ? 'PC' : linux ? 'computer' : 'Mac'
   const act =
     (method: string) =>
-    async (input: object, { abortSignal }: { abortSignal?: AbortSignal }) => {
-      const result = await computer.request(method, input as Record<string, unknown>, abortSignal)
-      if (ACTIONS.has(method)) computer.acted()
-      return result
+    (input: object, { abortSignal }: { abortSignal?: AbortSignal }) =>
+      computer.request(method, input as Record<string, unknown>, abortSignal)
+  /**
+   * Keys and text without an app go to the one in front, whatever it is: Brigade.app itself came
+   * back to the front between two calls once, and a shortcut meant for TextEdit went elsewhere.
+   * The answer names the app that was in front as they were sent. With an app named, they go to
+   * that app's own process instead (appInput), so nothing that comes to the front meanwhile gets
+   * them.
+   */
+  const frontApp = async (signal?: AbortSignal) => {
+    const { apps } = (await computer.request('apps', {}, signal)) as {
+      apps?: { name?: string; bundleId?: string; active?: boolean }[]
     }
-  return {
+    return apps?.find((running) => running.active)
+  }
+  /** Whether Brigade Computer Use checks a named app is in front as it sends a key (version 3). */
+  let checking: Promise<boolean> | undefined
+  const checksFront = (signal?: AbortSignal) =>
+    (checking ??= computer
+      .request('status', {}, signal)
+      .then((status) => Number((status as { version?: unknown }).version) >= 3)
+      .catch(() => {
+        checking = undefined
+        return false
+      }))
+  /** Keys for a named app, one after the other (computer_key). */
+  const namedKeys = new Line()
+  const inFront = async (signal?: AbortSignal) => (await frontApp(signal))?.name ?? 'unknown'
+  /** Whether an app as computer_apps lists it is the one named (its name, bundle id or .app). */
+  const isApp = (app: { name?: string; bundleId?: string } | undefined, named: string) => {
+    const wanted = named.toLowerCase().replace(/\.app$/, '')
+    return !!app && [app.name, app.bundleId].some((id) => id?.toLowerCase() === wanted)
+  }
+  const named = (app: string | undefined) => {
+    if (!app) return
+    if (!appInput)
+      throw new Error(
+        'Keys for a named app need agent-desktop, which this runner does not have: leave app out to send ' +
+          'them to the app in front (bring it there with computer_open_app and check it with computer_apps).',
+      )
+    const input = appInput
+    const after = async <T>(result: Promise<T>) => {
+      const value = await result
+      computer.acted()
+      return value
+    }
+    return {
+      ...input,
+      press: (app: string, key: string, signal?: AbortSignal) =>
+        after(input.press(app, key, signal)),
+      type: (app: string, text: string, signal?: AbortSignal) =>
+        after(input.type(app, text, signal)),
+    }
+  }
+  const tools: Record<string, Tool> = {
     computer_screenshot: tool({
       description:
         'Take a screenshot of a display. Returns the PNG it saved in your working directory (images/...): open it ' +
         'to look at it. Take one before acting on what is on screen and after, to check it worked. With share, ' +
         'the thread shows it too, for when the person asked to see their screen. ' +
-        ABOUT_COMPUTER,
+        about,
       inputSchema: jsonSchema<{ display?: number; share?: boolean }>({
         type: 'object',
         properties: {
@@ -2540,7 +4022,7 @@ export function computerUseTools(computer: ComputerUse): Record<string, Tool> {
       },
     }),
     computer_click: tool({
-      description: 'Click at a point on screen. ' + ABOUT_COMPUTER,
+      description: 'Click at a point on screen. ' + about,
       inputSchema: jsonSchema<{
         x: number
         y: number
@@ -2569,7 +4051,7 @@ export function computerUseTools(computer: ComputerUse): Record<string, Tool> {
     }),
     computer_move: tool({
       description:
-        'Move the pointer to a point, e.g. to show a tooltip or a menu on hover. ' + ABOUT_COMPUTER,
+        'Move the pointer to a point, e.g. to show a tooltip or a menu on hover. ' + about,
       inputSchema: jsonSchema<{ x: number; y: number }>({
         type: 'object',
         properties: point,
@@ -2578,7 +4060,7 @@ export function computerUseTools(computer: ComputerUse): Record<string, Tool> {
       execute: act('move'),
     }),
     computer_drag: tool({
-      description: 'Press at one point, drag to another and release. ' + ABOUT_COMPUTER,
+      description: 'Press at one point, drag to another and release. ' + about,
       inputSchema: jsonSchema<{ fromX: number; fromY: number; toX: number; toY: number }>({
         type: 'object',
         properties: {
@@ -2592,7 +4074,7 @@ export function computerUseTools(computer: ComputerUse): Record<string, Tool> {
       execute: act('drag'),
     }),
     computer_scroll: tool({
-      description: 'Scroll at a point. ' + ABOUT_COMPUTER,
+      description: 'Scroll at a point. ' + about,
       inputSchema: jsonSchema<{
         x: number
         y: number
@@ -2611,50 +4093,227 @@ export function computerUseTools(computer: ComputerUse): Record<string, Tool> {
     }),
     computer_type: tool({
       description:
-        'Type text into whatever has the keyboard focus (click the field first); a newline presses Return. ' +
-        ABOUT_COMPUTER,
-      inputSchema: jsonSchema<{ text: string }>({
+        'Type text where the keyboard focus is (focus the field first). Name the app: the text goes into ' +
+        'the field that has its focus, even when another app comes to the front meanwhile, and the app ' +
+        'stays where it is. Without one, it goes to the app in front, which the answer names (front), ' +
+        'and a newline presses Return. computer_act (type, set_value) on a ref comes first. ' +
+        about,
+      inputSchema: jsonSchema<{ text: string; app?: string }>({
         type: 'object',
-        properties: { text: { type: 'string' } },
+        properties: { text: { type: 'string' }, app: APP_FOR_KEYS },
         required: ['text'],
       }),
-      execute: act('type'),
+      execute: async (input, { abortSignal }) => {
+        const target = named(input.app)
+        if (target && input.app)
+          return { to: input.app, ...(await target.type(input.app, input.text, abortSignal)) }
+        const front = await inFront(abortSignal)
+        await computer.request('type', { text: input.text }, abortSignal)
+        return { ok: true, front }
+      },
     }),
     computer_key: tool({
       description:
-        'Press a key or a shortcut: "return", "escape", "tab", "cmd+n", "cmd+shift+t", "down". ' +
-        ABOUT_COMPUTER,
-      inputSchema: jsonSchema<{ key: string }>({
+        `Press a key or a shortcut: "return", "escape", "tab", "${linux || windows ? 'ctrl+n' : 'cmd+n'}", "${linux || windows ? 'ctrl+shift+t' : 'cmd+shift+t'}", "down". Name the ` +
+        'app it is for: it is sent only if that app is in front as it goes, to what has its focus (its ' +
+        'dialogs and sheets too); nothing is sent otherwise. An app behind others takes no key, ' +
+        "so it is refused there unless front: true brings the app forward first (taking the person's focus). " +
+        'Without app, it goes to the app in front, which the answer names (front). ' +
+        about,
+      inputSchema: jsonSchema<{ key: string; app?: string; front?: boolean }>({
         type: 'object',
         properties: {
           key: { type: 'string', description: 'Modifiers (cmd, shift, alt, ctrl) joined with +' },
+          app: APP_FOR_KEYS,
+          front: {
+            type: 'boolean',
+            description:
+              "Bring the app to the front first when it is behind another, taking the person's focus: " +
+              `only when they are not using the ${here} (default false)`,
+          },
         },
         required: ['key'],
       }),
-      execute: act('key'),
+      execute: async (input, { abortSignal }) => {
+        if (input.app) {
+          const app = input.app
+          // One named key at a time: the app checked (or brought) in front, the key sent, and the
+          // front checked again, with no other named key in between.
+          return namedKeys.run(async () => {
+            // An app behind others takes no key: it has no window with the keyboard, and its menus,
+            // which shortcuts go through, are off (Cmd+S to TextEdit behind Chrome did nothing).
+            const front = await frontApp(abortSignal)
+            let brought = false
+            if (!isApp(front, app)) {
+              if (!input.front)
+                throw new Error(
+                  `${app} is behind ${front?.name ?? 'another app'}, and an app behind others takes no key ` +
+                    '(its menus, which shortcuts go through, are off there), so nothing was sent. If the person ' +
+                    `is not using the ${here}, call again with front: true: it brings ${app} to the front first, ` +
+                    'taking their focus. Text for one of its fields goes in from behind: computer_act on its ref, ' +
+                    'or computer_type with app.',
+                )
+              const opened = (await computer.request('open_app', { app }, abortSignal)) as {
+                name?: string
+                active?: boolean
+              }
+              if (opened.active === false)
+                throw new Error(
+                  `${opened.name ?? app} did not come to the front, so nothing was sent.`,
+                )
+              brought = true
+            }
+            // The helper checks the app is in front and sends the key in one go, to what has the
+            // keyboard: the app's Open and Save panels too, which run in a process of their own and
+            // which a key for the app's process never reached (Cmd+Shift+G in TextEdit's save sheet).
+            if (await checksFront(abortSignal)) {
+              try {
+                await computer.request('key', { key: input.key, app }, abortSignal)
+              } catch (error) {
+                if (error instanceof ComputerUseError && error.code === 'not_front')
+                  throw new Error(
+                    `${error.message}: another app came to the front meanwhile. Look at the screen before trying again.`,
+                  )
+                throw error
+              }
+              return { to: app, ...(brought ? { broughtToFront: true } : {}) }
+            }
+            // An older helper: to the app's process, which its Open and Save panels don't get.
+            const target = named(app)!
+            return {
+              to: app,
+              ...(brought ? { broughtToFront: true } : {}),
+              ...(await target.press(app, input.key, abortSignal)),
+              note: "Sent to the app's process: its Open and Save panels don't get keys this way until Brigade.app is updated (Check for Updates…).",
+            }
+          }, abortSignal)
+        }
+        const front = await inFront(abortSignal)
+        await computer.request('key', { key: input.key }, abortSignal)
+        return { ok: true, front }
+      },
     }),
     computer_apps: tool({
-      description: 'The apps running on this Mac, which one is in front. ' + ABOUT_COMPUTER,
+      description: `The apps running on this ${here}, which one is in front. ` + about,
       inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
       execute: act('apps'),
     }),
     computer_open_app: tool({
       description:
-        'Open an app (or bring it to the front) by name or bundle id, e.g. "Visual Studio Code" or ' +
-        '"com.apple.Notes". ' +
-        ABOUT_COMPUTER,
+        (linux
+          ? 'Open an app (or bring it to the front) by the name computer_apps lists, its desktop entry ' +
+            '(e.g. "Text Editor" or "org.gnome.TextEditor") or its command ("firefox"). It answers once a ' +
+            'window of it is there, with its windows. '
+          : 'Open an app (or bring it to the front) by name or bundle id, e.g. "Visual Studio Code" or ' +
+            '"com.apple.Notes". It answers once a window of it is there, with its windows (an app may open ' +
+            'on a dialog: TextEdit on its Open panel, whose New Document makes a document). ') +
+        about,
       inputSchema: jsonSchema<{ app: string }>({
         type: 'object',
         properties: { app: { type: 'string' } },
         required: ['app'],
       }),
-      execute: act('open_app'),
+      execute: async (input, { abortSignal }) => {
+        const opened = (await computer.request('open_app', input, abortSignal)) as Record<
+          string,
+          unknown
+        >
+        if (!appInput) return opened
+        // Its window, once there: a snapshot taken at once read an Open panel still opening (empty)
+        // or no window at all (WINDOW_NOT_FOUND).
+        const name = typeof opened.name === 'string' && opened.name ? opened.name : input.app
+        const until = Date.now() + WINDOW_WAIT_MS
+        let windows = await appInput.windows(name, abortSignal)
+        while (!windows.length && Date.now() < until) {
+          await wait(250, undefined, abortSignal ? { signal: abortSignal } : {})
+          windows = await appInput.windows(name, abortSignal)
+        }
+        if (windows.length)
+          await wait(WINDOW_SETTLE_MS, undefined, abortSignal ? { signal: abortSignal } : {})
+        return {
+          ...opened,
+          windows,
+          ...(windows.length
+            ? {}
+            : {
+                note: `No window of ${name} yet (an app of the menu bar has none): take a snapshot in a moment.`,
+              }),
+        }
+      },
+    }),
+    computer_run: tool({
+      description: linux
+        ? 'Run a shell command (bash) in the person’s own desktop session, through Brigade.app: for a command ' +
+          'that clicks, types in, reads or records other apps, such as agent-desktop (for what ' +
+          'computer_snapshot and computer_act do not cover: its batch, wait or find), xdotool or a screen ' +
+          'recorder. It gets the session’s display and buses whatever your shell has. Everything else goes in ' +
+          'your shell. While it runs, the pill shows your name with Stop; whatever it leaves running in its ' +
+          'process group is stopped when it ends. Returns its output (stdout and stderr, the last ' +
+          `${COMMAND_OUTPUT_MAX / 1000} KB) and exit code. On the person's own Linux computer (this computer).`
+        : 'Run a shell command (zsh) through Brigade Computer Use, so that it gets the helper’s Accessibility and ' +
+          'Screen Recording: for a command that clicks, types in, reads or records other apps, such as ' +
+          'agent-desktop (for what computer_snapshot and computer_act do not cover: its batch, wait or find), ' +
+          'osascript with System Events or a screen recorder. Commands in your own shell have ' +
+          'neither on this Mac, and fail for lack of them (agent-desktop: PERM_DENIED): run those here, and ' +
+          'everything else in your shell. While it runs, the pill shows your name with Stop; whatever it leaves ' +
+          'running in the background is stopped when it ends. Returns its output (stdout and stderr, the last ' +
+          `${COMMAND_OUTPUT_MAX / 1000} KB) and exit code. On the person's own Mac (this computer).`,
+      inputSchema: jsonSchema<{ command: string; cwd?: string; timeout?: number }>({
+        type: 'object',
+        properties: {
+          command: {
+            type: 'string',
+            description: `The command line, run with ${linux ? 'bash' : 'zsh'} -c`,
+          },
+          cwd: {
+            type: 'string',
+            description: 'Where it runs: relative to your working directory (default), or absolute',
+          },
+          timeout: {
+            type: 'number',
+            description: `Seconds before it is stopped (default ${COMMAND_TIMEOUT_DEFAULT}, at most ${COMMAND_TIMEOUT_MAX})`,
+          },
+        },
+        required: ['command'],
+      }),
+      execute: async (input, { abortSignal }) => {
+        const timeout = Math.min(
+          Math.max(Math.round(input.timeout ?? COMMAND_TIMEOUT_DEFAULT), 1),
+          COMMAND_TIMEOUT_MAX,
+        )
+        // An interrupted turn stops its command too, rather than leaving it to its timeout.
+        const cancel = () => void computer.request('cancel', {}).catch(() => undefined)
+        abortSignal?.addEventListener('abort', cancel, { once: true })
+        try {
+          return await computer.request(
+            'run',
+            {
+              command: input.command,
+              cwd: resolve(computer.workDir, input.cwd ?? '.'),
+              env: computer.env(),
+              timeout,
+            },
+            abortSignal,
+            { wait: (timeout + 30) * 1000, once: true },
+          )
+        } catch (error) {
+          if (error instanceof ComputerUseError && error.code === 'unknown_method')
+            throw new Error(
+              `The Brigade Computer Use on this ${here} is too old to run commands: ask the person to update ` +
+                'Brigade.app (Check for Updates… in its menu), then try again.',
+            )
+          throw error
+        } finally {
+          abortSignal?.removeEventListener('abort', cancel)
+        }
+      },
     }),
     computer_ui_tree: tool({
       description:
         "An app's interface as text: each element's role, title, value and frame [x,y w×h] in screen points. " +
         'Cheaper and more exact than a screenshot to find what to click: click the middle of its frame. ' +
-        ABOUT_COMPUTER,
+        'computer_snapshot comes first: its refs act without moving the pointer. ' +
+        about,
       inputSchema: jsonSchema<{
         app?: string
         maxDepth?: number
@@ -2665,7 +4324,9 @@ export function computerUseTools(computer: ComputerUse): Record<string, Tool> {
         properties: {
           app: {
             type: 'string',
-            description: 'Name, bundle id or pid (default: the app in front)',
+            description: linux
+              ? 'Name or desktop entry, as computer_apps lists it (default: the app in front)'
+              : 'Name, bundle id or pid (default: the app in front)',
           },
           maxDepth: { type: 'number', description: 'Default 12' },
           maxNodes: { type: 'number', description: 'Default 400' },
@@ -2673,6 +4334,582 @@ export function computerUseTools(computer: ComputerUse): Record<string, Tool> {
         },
       }),
       execute: act('ui_tree'),
+    }),
+  }
+  // Windows: commands need no helper to reach other apps there (the shell's own do), and
+  // computer_snapshot reads an app's tree.
+  if (windows) {
+    delete tools.computer_run
+    delete tools.computer_ui_tree
+  }
+  return tools
+}
+
+/** The contract propose_goal takes (GoalContractInput), described for the model. */
+const GOAL_CONTRACT_SCHEMA: JSONSchema7 = {
+  type: 'object',
+  properties: {
+    outcome: {
+      type: 'string',
+      description: 'The result expected, in the person\'s language, in a line: "10 demos booked"',
+    },
+    deadline: {
+      type: 'string',
+      description:
+        'When the result is due, ISO 8601 with its offset ("2026-11-14T18:00:00+01:00"). Leave it out for a work goal with no date: the budget\'s hours bound it.',
+    },
+    target: {
+      type: 'object',
+      description:
+        "Where the measurement must land. Required, except for a command's exit code (it must exit 0) and the person's judgment.",
+      properties: {
+        comparison: { type: 'string', enum: ['at_least', 'at_most'] },
+        value: { type: 'number' },
+        unit: {
+          type: 'string',
+          description:
+            'What the value counts, in the person\'s language: "demos", "€ MRR", "position"',
+        },
+      },
+      required: ['comparison', 'value'],
+    },
+    recipe: {
+      type: 'object',
+      description:
+        'How Brigade measures it, never you. kind command: a shell command run in your working folder on this computer, as you (read exit_code: reached when it exits 0; last_number: the last number it prints). ' +
+        'kind app: a read operation of an App account you were granted (list_apps gives its connectionId; operation as its tool names it without the account suffix, input fixed), with read.path (dotted, with indexes, into its answer) and read.op value | count (the length of a list there) | sum (of read.field across a list); measured every everyMinutes (15 or more) and after each turn. ' +
+        'kind list: a list file of the library (path): its ticked lines. kind person: no figure is possible; the person judges at the deadline or before.',
+      properties: {
+        kind: { type: 'string', enum: ['command', 'app', 'list', 'person'] },
+        command: { type: 'string' },
+        read: {
+          description: 'command: "exit_code" or "last_number". app: { path, op, field }.',
+        },
+        timeoutMinutes: { type: 'number', description: 'command: at most 30, 10 by default' },
+        everyMinutes: {
+          type: 'number',
+          description: 'app, list or command: also measured this often, at least 15',
+        },
+        connectionId: { type: 'string' },
+        operation: { type: 'string' },
+        input: { type: 'object' },
+        path: { type: 'string', description: "list: the list file's library path" },
+      },
+      required: ['kind'],
+    },
+    permissions: {
+      type: 'array',
+      description:
+        'Writes allowed in advance: each one precise operation of one App account with a cap a day, never a category. They go without asking within it; past the cap or outside the list, a write asks as usual. Ask only for what the goal needs.',
+      items: {
+        type: 'object',
+        properties: {
+          connectionId: { type: 'string' },
+          operation: {
+            type: 'string',
+            description: 'As its tool names it without the account suffix: gmail_send',
+          },
+          label: {
+            type: 'string',
+            description: 'In the person\'s language: "Gmail: send, 20 a day"',
+          },
+          perDay: { type: 'number', description: 'At most this many calls in 24 hours' },
+          onlyWhen: {
+            type: 'array',
+            description:
+              'Only when each argument is one of its values: [{ argument: "subreddit", oneOf: ["a", "b"] }]',
+            items: {
+              type: 'object',
+              properties: {
+                argument: { type: 'string' },
+                oneOf: { type: 'array', items: { type: 'string' } },
+              },
+              required: ['argument', 'oneOf'],
+            },
+          },
+          afterChecks: {
+            type: 'boolean',
+            description: 'A merge only once every required check of its pull request passed',
+          },
+        },
+        required: ['connectionId', 'operation', 'label', 'perDay'],
+      },
+    },
+    budget: {
+      type: 'object',
+      description:
+        "The person's subscription it may spend, sub-threads included, in tokens as Usage counts them (input with the cache, and output; a busy hour of work is often several million), and the longest it runs, in hours. It must never use up the quota their other threads need.",
+      properties: { tokens: { type: 'number' }, hours: { type: 'number' } },
+      required: ['tokens', 'hours'],
+    },
+    stallTurns: {
+      type: 'number',
+      description: 'Turns in a row without progress before it stops (6 by default)',
+    },
+  },
+  required: ['outcome', 'recipe', 'budget'],
+}
+
+/**
+ * Goals (docs/goals.md): the contract a `/goal` becomes, where it stands, and its summary once
+ * over. In a thread a person started, at the top; a sub-thread working on one of its levers reads
+ * where it stands. Through the schedule calls, which the API checks.
+ */
+export function goalTools(call: ScheduleCaller, options: { top: boolean }): Record<string, Tool> {
+  const status = tool({
+    description:
+      "Where this thread's goal stands, as Brigade measures it: its status, the latest measurements, the budget spent, the deadline, turns without progress, and each permission's use today. Use it to see which levers move the measurement.",
+    inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
+    execute: (input, { toolCallId }) =>
+      call({ operation: { name: 'goal_status' }, toolCallId, toolName: 'goal_status', input }),
+  })
+  if (!options.top) return { goal_status: status }
+  return {
+    propose_goal: tool({
+      description:
+        'Propose the contract of the goal the person set with /goal, for them to approve or correct in one click. Brigade then keeps you working until its measurement confirms it, its deadline or budget runs out, or nothing moves. Call it again to replace a proposal nobody decided yet.',
+      inputSchema: jsonSchema<{ contract: GoalContractInput }>({
+        type: 'object',
+        properties: { contract: GOAL_CONTRACT_SCHEMA },
+        required: ['contract'],
+      }),
+      execute: async (input, { toolCallId }) => {
+        // Checked here, so the teammate reads what to fix rather than a schema error.
+        const contract = GoalContractInput.safeParse(input.contract)
+        if (!contract.success)
+          throw new Error(
+            `The contract is not complete: ${contract.error.issues
+              .map((i) => `${i.path.join('.') || 'contract'}: ${i.message}`)
+              .join('; ')}`,
+          )
+        return call({
+          operation: { name: 'propose_goal', contract: contract.data },
+          toolCallId,
+          toolName: 'propose_goal',
+          input,
+        }).catch((error: unknown) => {
+          if (errorMessage(error).includes('could not read this call'))
+            throw new Error(GOALS_UNKNOWN)
+          throw error
+        })
+      },
+    }),
+    goal_status: status,
+    goal_report: tool({
+      description:
+        'Once Brigade says the goal is over: its summary, once. The final measurement and where it ended in `summary`, what moved the measurement in `worked`, what did nothing in `didNotWork`, a line each.',
+      inputSchema: jsonSchema<{ summary: string; worked?: string[]; didNotWork?: string[] }>({
+        type: 'object',
+        properties: {
+          summary: { type: 'string' },
+          worked: { type: 'array', items: { type: 'string' } },
+          didNotWork: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['summary'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'goal_report',
+            summary: input.summary,
+            worked: input.worked ?? [],
+            didNotWork: input.didNotWork ?? [],
+          },
+          toolCallId,
+          toolName: 'goal_report',
+          input,
+        }),
+    }),
+  }
+}
+
+/** What propose_goal says on an API from before goals. */
+const GOALS_UNKNOWN =
+  "Brigade's server does not have goals yet: it is older than this computer's runner. Tell the person, and work on what they asked as a usual request."
+
+/**
+ * Missions (docs/missions.md): in a thread of a mission (the spec's `mission`), its teammates plan
+ * dated actions Brigade runs at their time, and record what went out and the mission's number. The
+ * API checks the thread belongs to the mission.
+ */
+const METRIC_SCHEMA: JSONSchema7 = {
+  type: 'object',
+  description:
+    'The number it follows, when one says whether it works: "Followers", with its target',
+  properties: {
+    label: { type: 'string', description: 'Its name: "Followers"' },
+    unit: { type: 'string', description: 'Its unit, if any: "€", "%"' },
+    target: { type: 'number', description: 'Where it aims, if said: 2000' },
+  },
+  required: ['label'],
+}
+
+type MetricInput = { label: string; unit?: string; target?: number }
+
+/**
+ * A mission made of the work delegated in this thread (docs/missions.md), where its starter has
+ * the feature, in a thread a person started at the top that belongs to none yet.
+ */
+export function createMissionTools(call: ScheduleCaller): Record<string, Tool> {
+  return {
+    create_mission: tool({
+      description:
+        'Make this thread a mission: ongoing work the person delegated to you (grow an account, answer a community, ' +
+        'keep a channel going), with no end date. It shows on the Missions page with its plan, what waits on the ' +
+        'person and what went out; this thread, its sub-threads and routines, and what you start from here belong ' +
+        'to it. Only once the person delegated ongoing work or agreed to it: never for a one-off task or a deliverable.',
+      inputSchema: jsonSchema<{ title: string; objective: string; metric?: MetricInput }>({
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'A few words: "Grow LinkedIn for brigade.lol"' },
+          objective: {
+            type: 'string',
+            description:
+              'What it is for, in one line: "2,000 followers by January, two posts a week"',
+          },
+          metric: METRIC_SCHEMA,
+        },
+        required: ['title', 'objective'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'create_mission',
+            title: input.title,
+            objective: input.objective,
+            ...(input.metric ? { metric: input.metric } : {}),
+          },
+          toolCallId,
+          toolName: 'create_mission',
+          input,
+        }),
+    }),
+  }
+}
+
+export function missionTools(
+  call: ScheduleCaller,
+  mission: { number: { label: string; unit: string | null } | null },
+): Record<string, Tool> {
+  const tools: Record<string, Tool> = {
+    update_mission: tool({
+      description:
+        "Change this thread's mission when the person changes it: its title, objective or number (metric: null " +
+        'drops it); archive: true once the person ends the work.',
+      inputSchema: jsonSchema<{
+        title?: string
+        objective?: string
+        metric?: MetricInput | null
+        archive?: boolean
+      }>({
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          objective: { type: 'string' },
+          metric: { anyOf: [METRIC_SCHEMA, { type: 'null' }] },
+          archive: { type: 'boolean' },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'update_mission',
+            ...(input.title ? { title: input.title } : {}),
+            ...(input.objective ? { objective: input.objective } : {}),
+            ...(input.metric !== undefined ? { metric: input.metric } : {}),
+            ...(input.archive ? { archive: true } : {}),
+          },
+          toolCallId,
+          toolName: 'update_mission',
+          input,
+        }),
+    }),
+    plan_action: tool({
+      description:
+        "Plan a dated action of this thread's mission (a post at 14:30 Monday, a reply once a thread opens): at its time " +
+        'Brigade prompts the mission’s thread with your instructions, as a wake-up does, and it shows on the Missions ' +
+        'page’s week. With a draft, a person approves it on a ticket before approveBy, or it does not go: at its time ' +
+        'you get the approved draft. Use it only for what is truly dated; opportunistic work stays in routines.',
+      inputSchema: jsonSchema<{
+        at: string
+        title: string
+        instructions: string
+        draft?: string
+        approveBy?: string
+      }>({
+        type: 'object',
+        properties: {
+          at: {
+            type: 'string',
+            description: 'When it runs: ISO 8601 with its offset, e.g. "2026-11-17T14:30:00+01:00"',
+          },
+          title: {
+            type: 'string',
+            description: 'What it is, in a few words: "LinkedIn post: routines"',
+          },
+          instructions: {
+            type: 'string',
+            description: 'What to do then, standing alone: the prompt you get at its time',
+          },
+          draft: {
+            type: 'string',
+            description:
+              'The exact text a person approves before it goes out, when it needs approval',
+          },
+          approveBy: {
+            type: 'string',
+            description:
+              'With a draft: approved by then (ISO 8601), or it does not go. Default: 15 minutes before `at`',
+          },
+        },
+        required: ['at', 'title', 'instructions'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'plan_action',
+            at: input.at,
+            title: input.title,
+            instructions: input.instructions,
+            ...(input.draft ? { draft: input.draft } : {}),
+            ...(input.approveBy ? { approveBy: input.approveBy } : {}),
+          },
+          toolCallId,
+          toolName: 'plan_action',
+          input,
+        }),
+    }),
+    list_actions: tool({
+      description:
+        "The mission's planned actions, with their ids and states (planned, awaiting_approval), and the latest that ran, were declined or expired.",
+      inputSchema: jsonSchema<Record<string, never>>({ type: 'object', properties: {} }),
+      execute: (input, { toolCallId }) =>
+        call({ operation: { name: 'list_actions' }, toolCallId, toolName: 'list_actions', input }),
+    }),
+    cancel_action: tool({
+      description:
+        'Cancel a planned action of the mission that has not run (its approval ticket closes too).',
+      inputSchema: jsonSchema<{ actionId: string }>({
+        type: 'object',
+        properties: { actionId: { type: 'string', description: 'From list_actions' } },
+        required: ['actionId'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: { name: 'cancel_action', actionId: input.actionId },
+          toolCallId,
+          toolName: 'cancel_action',
+          input,
+        }),
+    }),
+    record_output: tool({
+      description:
+        'Record what went out for the mission (a post, a comment, a reply…) with its link, once it is out: it shows on ' +
+        'the Missions page, instead of a log file. Later, call it again with its outputId and metrics to add the numbers ' +
+        'you read where it went out (views, likes, comments). Brigade sees neither: they are your word, so record only ' +
+        'what you saw.',
+      inputSchema: jsonSchema<{
+        outputId?: string
+        kind?: string
+        channel?: string
+        url?: string
+        summary?: string
+        at?: string
+        actionId?: string
+        metrics?: Record<string, number>
+      }>({
+        type: 'object',
+        properties: {
+          outputId: { type: 'string', description: 'To update one recorded before: its id' },
+          kind: {
+            type: 'string',
+            enum: ['post', 'comment', 'reply', 'article', 'email', 'other'],
+          },
+          channel: { type: 'string', description: 'Where: "linkedin", "x", "reddit r/selfhosted"' },
+          url: { type: 'string', description: 'Its link' },
+          summary: { type: 'string', description: 'What it was, in a line' },
+          at: { type: 'string', description: 'When it went out (ISO 8601); default now' },
+          actionId: { type: 'string', description: 'The planned action it carried out, if any' },
+          metrics: {
+            type: 'object',
+            additionalProperties: { type: 'number' },
+            description: 'Its numbers as read: { "views": 1200, "likes": 31 }',
+          },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'record_output',
+            ...(input.outputId ? { outputId: input.outputId } : {}),
+            ...(input.kind
+              ? { kind: input.kind as 'post' | 'comment' | 'reply' | 'article' | 'email' | 'other' }
+              : {}),
+            ...(input.channel ? { channel: input.channel } : {}),
+            ...(input.url ? { url: input.url } : {}),
+            ...(input.summary ? { summary: input.summary } : {}),
+            ...(input.at ? { at: input.at } : {}),
+            ...(input.actionId ? { actionId: input.actionId } : {}),
+            ...(input.metrics ? { metrics: input.metrics } : {}),
+          },
+          toolCallId,
+          toolName: 'record_output',
+          input,
+        }),
+    }),
+  }
+  if (mission.number)
+    tools.record_number = tool({
+      description:
+        `Record the mission's number, ${mission.number.label}${mission.number.unit ? ` (${mission.number.unit})` : ''}, ` +
+        'as you read it now where it lives (an analytics page). The Missions page draws its trend. Your word: record only ' +
+        'what you read.',
+      inputSchema: jsonSchema<{ value: number; note?: string }>({
+        type: 'object',
+        properties: {
+          value: { type: 'number' },
+          note: {
+            type: 'string',
+            description: 'Where it was read: "LinkedIn analytics, followers"',
+          },
+        },
+        required: ['value'],
+      }),
+      execute: (input, { toolCallId }) =>
+        call({
+          operation: {
+            name: 'record_number',
+            value: input.value,
+            ...(input.note ? { note: input.note } : {}),
+          },
+          toolCallId,
+          toolName: 'record_number',
+          input,
+        }),
+    })
+  return tools
+}
+
+/** What a theme tool says on an API from before themes. */
+const THEMES_UNKNOWN =
+  "Brigade's server does not have themes yet: it is older than this computer's runner. Tell the person it comes with Brigade's next update."
+
+/**
+ * Themes (docs/themes.md): the look of the dashboard for the person who started the thread, in
+ * their windows only. Through the schedule calls, which the API checks; theme_add_file's file is
+ * uploaded by the harness before the call (themeFileCall in index.ts).
+ */
+export function themeTools(call: ScheduleCaller): Record<string, Tool> {
+  const send = (
+    operation: ScheduleOperation,
+    toolCallId: string,
+    toolName: string,
+    input: unknown,
+  ) =>
+    call({ operation, toolCallId, toolName, input }).catch((error: unknown) => {
+      if (errorMessage(error).includes('could not read this call')) throw new Error(THEMES_UNKNOWN)
+      throw error
+    })
+  return {
+    theme_read: tool({
+      description:
+        "Read the person's themes for Brigade's dashboard: the one they wear, the ones saved, their last look changes (each with its seq) and the guide to writing one (colours, CSS, files, stable selectors). Call it before your first theme_set in a thread. id: also return that saved theme whole.",
+      inputSchema: jsonSchema<{ id?: string }>({
+        type: 'object',
+        properties: { id: { type: 'string', description: "A saved theme's id" } },
+      }),
+      execute: (input, { toolCallId }) =>
+        send(
+          { name: 'theme_read', ...(input.id ? { id: input.id } : {}) },
+          toolCallId,
+          'theme_read',
+          input,
+        ),
+    }),
+    theme_set: tool({
+      description:
+        "Restyle Brigade's dashboard for the person who started this thread, live in their windows only. With theme: save it (as id, or its name's slug) and wear it. With only id: wear that saved theme, or \"none\" for the dashboard's own look. Read theme_read's guide first; make one small change at a time and ask how it looks.",
+      inputSchema: jsonSchema<{ id?: string; theme?: Record<string, unknown> }>({
+        type: 'object',
+        properties: {
+          id: {
+            type: 'string',
+            description: 'Lowercase letters, digits and dashes; "none" takes the theme off',
+          },
+          theme: {
+            type: 'object',
+            description:
+              "The whole theme: { name, canvas?, accent?, colors?, radius?, font?, fontMono?, css? }, as theme_read's guide says",
+            properties: {
+              name: { type: 'string' },
+              canvas: { type: 'string', description: 'Base background, hex' },
+              accent: { type: 'string', description: 'Highlight, hex' },
+              colors: {
+                type: 'object',
+                additionalProperties: { type: 'string' },
+                description: 'Single colour tokens by name',
+              },
+              radius: { type: 'string', description: 'e.g. "0.5rem", "0"' },
+              font: { type: 'string', description: 'A font-family list' },
+              fontMono: { type: 'string', description: 'A font-family list for code' },
+              css: { type: 'string', description: "Applied after the dashboard's own styles" },
+            },
+            required: ['name'],
+          },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        send(
+          {
+            name: 'theme_set',
+            ...(input.id ? { id: input.id } : {}),
+            ...(input.theme !== undefined ? { theme: input.theme } : {}),
+          },
+          toolCallId,
+          'theme_set',
+          input,
+        ),
+    }),
+    theme_add_file: tool({
+      description:
+        'Copy an image (png, jpg, webp, gif, avif) or a font (woff2, woff, ttf, otf) from your folder or this thread\'s attachments into a saved theme, up to 5 MB. Its css then names it url("theme:<file>"): the answer gives the name. No SVG.',
+      inputSchema: jsonSchema<{ id: string; path: string }>({
+        type: 'object',
+        properties: {
+          id: { type: 'string', description: "The saved theme's id" },
+          path: { type: 'string', description: 'The file, as you would read it' },
+        },
+        required: ['id', 'path'],
+      }),
+      execute: (input, { toolCallId }) =>
+        send(
+          { name: 'theme_add_file', id: input.id, path: input.path },
+          toolCallId,
+          'theme_add_file',
+          input,
+        ),
+    }),
+    theme_undo: tool({
+      description:
+        "Go back on the person's look changes: steps (default 1) undoes that many; seq (from theme_read's history) returns to the look right after that change, 0 to before any. An undo is a change too: undoing it again is a redo.",
+      inputSchema: jsonSchema<{ steps?: number; seq?: number }>({
+        type: 'object',
+        properties: {
+          steps: { type: 'number', description: 'How many changes to undo' },
+          seq: { type: 'number', description: "A change's seq from theme_read" },
+        },
+      }),
+      execute: (input, { toolCallId }) =>
+        send(
+          {
+            name: 'theme_undo',
+            ...(input.steps !== undefined ? { steps: input.steps } : {}),
+            ...(input.seq !== undefined ? { seq: input.seq } : {}),
+          },
+          toolCallId,
+          'theme_undo',
+          input,
+        ),
     }),
   }
 }

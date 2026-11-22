@@ -7,20 +7,25 @@
 // new version, by this member); ask the thread that made it about an element;
 // knobs to try values and save them; export; hand-off to a thread that builds
 // it. The pages and the canvas talk through the bridge the sandbox host adds to
-// them (apps/api/src/design-bridge.ts), by postMessage only.
+// them (apps/api/src/design-bridge.ts), by postMessage only. A save by anyone else
+// (a teammate working on it) shows at once: the boards whose page changed load it.
 import {
   DESIGN_ENTRY,
   designBoards,
   designName,
+  designOptionsOf,
   formatMention,
   screenHeight,
   type DesignEditOp,
   type DesignKnob,
+  type DesignOption,
   type DesignView as DesignViewInfo,
 } from '@brigade/contracts'
 import {
+  ChevronDown,
   Download,
   ExternalLink,
+  Hand,
   Hammer,
   Library,
   Maximize,
@@ -28,9 +33,13 @@ import {
   MessageSquarePlus,
   Minimize2,
   MousePointer2,
+  PanelRightClose,
+  PanelRightOpen,
   Palette,
+  Plus,
   Pencil,
   Play,
+  Send,
   Redo2,
   RotateCw,
   SlidersHorizontal,
@@ -38,22 +47,34 @@ import {
   X,
 } from 'lucide-react'
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import { useDashboard } from '@/components/dashboard'
 import {
   DesignCanvas,
   type CanvasBoard,
   type CanvasGroup,
   type CanvasHandle,
+  type CanvasMode,
+  type DragPhase,
   type Inspected,
   type PageMessage,
   type Selected,
 } from '@/components/design-canvas'
 import { DesignEdits, type DesignChange } from '@/components/design-edits'
-import { DesignProperties } from '@/components/design-properties'
+import { DesignProperties, hex } from '@/components/design-properties'
 import { NewThread, useLastTeammate, useThreadDraft } from '@/components/new-thread'
 import { SidePanel } from '@/components/side-panel'
+import { ShareButton, useShare } from '@/components/share-button'
 import { Button } from '@/components/ui/button'
+import { Hint } from '@/components/ui/tooltip'
 import {
   Dialog,
   DialogContent,
@@ -65,12 +86,23 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { api } from '@/lib/api'
+import { api, blobOfDataUrl, uploadFile } from '@/lib/api'
+import { movedTranslate } from '@/lib/design-move'
+import { stepOption } from '@/lib/design-options'
+import { addDesignEdit, useDesignEdits, useEditsSender } from '@/lib/pending-edits'
 import { API_URL } from '@/lib/config'
+import { useLive } from '@/lib/use-live'
 import { cn } from '@/lib/utils'
 
 /** What a comment is about: an element on a board, else the whole design. */
@@ -85,9 +117,13 @@ type Starting = { title: string; description: string; text: string; teammateId?:
 /** Wide enough for the properties beside the canvas. */
 const WIDE = 900
 
+/** Whether the member folded the panel beside the canvas, kept across designs. */
+const FOLDED = 'brigade:design-panel-folded'
+
 const mention = (folder: string) => formatMention({ kind: 'design', id: folder, label: folder })
 
-function commentText(input: { folder: string; target: Target | null; body: string }) {
+/** Where a comment is, for the teammate: the design, its board, the element and its line. */
+function commentWhere(input: { folder: string; target: Target | null }) {
   const t = input.target
   const board = t
     ? ` on the board ${t.board.title ? `“${t.board.title}” (\`${t.board.file}\`, ` : `\`${t.board.file}\` (`}${t.board.width}px wide)`
@@ -101,7 +137,19 @@ function commentText(input: { folder: string; target: Target | null; body: strin
   const quote = t?.element?.label
     ? `\n\n> <${t.element.tag}> ${t.element.label.replace(/`/g, "'")}`
     : ''
-  return `Comment on the design ${mention(input.folder)}${board}${on}${line}:${quote}\n\n${input.body.trim()}`
+  return `Comment on the design ${mention(input.folder)}${board}${on}${line}:${quote}`
+}
+
+function commentText(input: { folder: string; target: Target | null; body: string }) {
+  return `${commentWhere(input)}\n\n${input.body.trim()}`
+}
+
+/** What a pending comment's row names: its element, else its board, else the design. */
+function commentLabel(target: Target | null, folder: string) {
+  if (!target) return designName(folder)
+  const e = target.element
+  if (e) return e.label || e.dataId || e.tag
+  return target.board.title ?? target.board.file
 }
 
 const handoffText = (folder: string) =>
@@ -150,6 +198,13 @@ function DesignFrame({
   onExpand,
   onInfo,
   onStart,
+  title,
+  about,
+  description,
+  libraryHref,
+  picker,
+  controls,
+  hidden = false,
 }: {
   /** The design's library folder ("acme/pricing.design"). */
   folder: string
@@ -162,6 +217,18 @@ function DesignFrame({
   onExpand?: () => void
   onInfo?: (info: DesignViewInfo) => void
   onStart: (start: Starting) => void
+  title: string
+  /** What it is and where it lives, in the title's menu. */
+  about: ReactNode
+  description?: string
+  /** The design in the library, from the title's menu (not when already there). */
+  libraryHref?: string
+  /** First in the title's menu: the options to switch between. */
+  picker?: ReactNode
+  /** The panel's own buttons, at the end of the bar: expand, close. */
+  controls: ReactNode
+  /** Kept beside a thread while another one shows: changes wait until it shows again. */
+  hidden?: boolean
 }) {
   const folders = useMemo(
     () => (options && options.length > 1 && options.includes(folder) ? options : [folder]),
@@ -171,29 +238,53 @@ function DesignFrame({
   const [views, setViews] = useState<Record<string, DesignViewInfo>>({})
   const [error, setError] = useState<string>()
   const [reloadAll, setReloadAll] = useState(0)
+  /** Reload: every board loads its page again, whatever version it shows. */
+  const forced = useRef(false)
+  /** The library changed: the view again, quietly; only boards whose page changed load. */
+  const [refreshes, setRefreshes] = useState(0)
+  const quiet = useRef(false)
+  /** A change came while hidden or while this person's own were on their way: a look once done. */
+  const behind = useRef(false)
+  const hiddenRef = useRef(hidden)
+  hiddenRef.current = hidden
   const root = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(0)
   const canvas = useRef<CanvasHandle>(null)
-  const [mode, setMode] = useState<'select' | 'play'>('select')
+  const [mode, setMode] = useState<CanvasMode>('select')
   const [selection, setSelection] = useState<Selected[]>([])
   const [inspected, setInspected] = useState<Record<string, Inspected>>({})
   const [tab, setTab] = useState<'properties' | 'ask' | 'knobs' | null>(null)
+  const [folded, setFolded] = useState(false)
+  useEffect(() => setFolded(localStorage.getItem(FOLDED) === '1'), [])
+  const fold = (next: boolean) => {
+    setFolded(next)
+    if (next) localStorage.setItem(FOLDED, '1')
+    else localStorage.removeItem(FOLDED)
+  }
   const [values, setValues] = useState<Record<string, string>>({})
   const [notice, setNotice] = useState<{ text: string; href?: string; error?: boolean }>()
   const [busy, setBusy] = useState<string>()
   const [slides, setSlides] = useState(0)
   const [, rerender] = useState(0)
+  /** The Ask box takes the focus each time this changes: an element was picked in Comment. */
+  const [askFocus, setAskFocus] = useState(0)
   /** The version of the page each board shows. */
   const shown = useRef(new Map<string, string>())
   /** Each board's address: kept while its page is the one it shows, so a new view does not reload it. */
   const [srcs, setSrcs] = useState<Record<string, string>>({})
+  const srcsRef = useRef(srcs)
+  srcsRef.current = srcs
   const thumbnail = useRef<ReturnType<typeof setTimeout>>(undefined)
   const view = views[folder]
+  const shareLink = useShare(view?.entryId)
 
   const edits = useRef<DesignEdits>(null)
   edits.current ??= new DesignEdits({
-    onSaved: (f, file) => {
+    onSaved: (f, file, result) => {
       setNotice({ text: 'Saved.' })
+      // Its boards show this version now: changed in place, not loaded again.
+      for (const b of canvasBoards())
+        if (b.folder === f && b.file === file) shown.current.set(b.key, result.sha256)
       // The gallery's picture is the first board's.
       const first = canvasBoards().find((b) => b.folder === f)
       if (first?.file !== file) return
@@ -201,14 +292,17 @@ function DesignFrame({
       thumbnail.current = setTimeout(() => {
         canvas.current
           ?.capture(first.key, { ratio: 0.5, maxHeight: first.height ?? screenHeight(first.width) })
-          .then(([image]) =>
-            image
-              ? api('/designs/thumbnail', {
-                  method: 'PUT',
-                  body: { path: f, png: image.data.slice(image.data.indexOf(',') + 1) },
-                })
-              : undefined,
-          )
+          .then(async ([image]) => {
+            if (!image) return
+            // The picture goes to the bucket, then the API files it as the design's thumbnail.
+            const upload = await uploadFile('library', blobOfDataUrl(image.data), {
+              name: `${f}/thumbnail.png`,
+            })
+            await api('/designs/thumbnail', {
+              method: 'PUT',
+              body: { path: f, uploadId: upload.id },
+            })
+          })
           .catch(() => undefined)
       }, 3000)
     },
@@ -216,13 +310,43 @@ function DesignFrame({
       setNotice({ text: message, error: true })
       canvas.current?.reload(f, file)
     },
-    onChange: () => rerender((n) => n + 1),
+    onChange: () => {
+      rerender((n) => n + 1)
+      // What changed while this person's own changes were saving: now that theirs are known.
+      if (behind.current && !hiddenRef.current && !edits.current?.busy) refreshNow()
+    },
   })
   const canvasBoards = () => canvas.current?.boards() ?? []
 
+  function refreshNow() {
+    behind.current = false
+    quiet.current = true
+    setRefreshes((n) => n + 1)
+  }
+  // Someone saved in the library (a teammate working on this design, often): the view again.
+  // Not while hidden, nor while this person's own changes are on their way, whose answers say
+  // which versions are theirs: once they are.
+  useLive((message) => {
+    if (message.type !== 'library.updated') return
+    if (hiddenRef.current || edits.current!.busy) behind.current = true
+    else refreshNow()
+  })
+  useEffect(() => {
+    if (!hidden && behind.current && !edits.current!.busy) refreshNow()
+  }, [hidden])
+
   useEffect(() => {
     let live = true
-    setError(undefined)
+    const force = forced.current
+    forced.current = false
+    // A look because the library changed: what shows stays as it is if it fails.
+    const quietly = quiet.current
+    quiet.current = false
+    const known = views
+    const previous = known[folder]
+    // A save answered while the view was asked may be missing from it: asked again then.
+    const saves = edits.current!.saves
+    if (!quietly) setError(undefined)
     Promise.all(
       folders.map((f) =>
         api<DesignViewInfo>('/designs/view', { body: { path: f } }).then((v) => [f, v] as const),
@@ -230,44 +354,86 @@ function DesignFrame({
     ).then(
       (loaded) => {
         if (!live) return
+        if (quietly && (edits.current!.busy || edits.current!.saves !== saves)) {
+          behind.current = true
+          if (!edits.current!.busy && !hiddenRef.current) refreshNow()
+          return
+        }
         const next = Object.fromEntries(loaded)
         setViews(next)
-        setSrcs((before) => {
-          const after: Record<string, string> = {}
-          for (const [f, v] of loaded)
-            designBoards(v.manifest).forEach((b, i) => {
-              const key = `${f}#${i}`
-              const sha = v.files[b.file]
-              const was = shown.current.get(key)
-              const keep =
-                reloadAll === 0 &&
-                before[key] &&
-                sha &&
-                (was === sha || edits.current!.own.has(sha))
-              after[key] = keep ? before[key]! : pageUrl(v, b.file)
-            })
-          return after
-        })
+        // A board keeps its page while that is the version it shows (as loaded, or as this
+        // canvas saved it since); another version (someone else saved it), or other styles,
+        // scripts or images it loads, load it again, and what was selected on it goes.
+        const before = srcsRef.current
+        const after: Record<string, string> = {}
+        const reloaded = new Set<string>()
+        // Boards to load again whose address came back the same (an API before view
+        // addresses were unique): their frames are loaded again by hand.
+        const same = new Map<string, { folder: string; file: string }>()
+        for (const [f, v] of loaded) {
+          const assetsChanged =
+            known[f]?.assets !== undefined &&
+            v.assets !== undefined &&
+            known[f]!.assets !== v.assets
+          designBoards(v.manifest).forEach((b, i) => {
+            const key = `${f}#${i}`
+            const sha = v.files[b.file]
+            const keep =
+              !force && !assetsChanged && before[key] && sha && shown.current.get(key) === sha
+            after[key] = keep ? before[key]! : pageUrl(v, b.file)
+            if (before[key] && !keep) {
+              reloaded.add(key)
+              if (after[key] === before[key])
+                same.set(`${f}\n${b.file}`, { folder: f, file: b.file })
+            }
+          })
+        }
+        setSrcs(after)
+        for (const { folder: f, file } of same.values()) canvas.current?.reload(f, file)
+        if (reloaded.size) {
+          setSelection((all) => all.filter((s) => !reloaded.has(s.board)))
+          // Their elements are numbered anew: where they were moved by hand is read again.
+          moved.current.clear()
+        }
         for (const [f, v] of loaded)
           for (const [file, sha] of Object.entries(v.files)) edits.current!.seen(f, file, sha)
         const primary = next[folder]
         if (primary) {
-          setValues(Object.fromEntries(primary.knobs.map((k) => [k.var, k.value])))
+          const saved = Object.fromEntries(primary.knobs.map((k) => [k.var, k.value]))
+          // Values being tried stay, unless their knob's saved value changed meanwhile.
+          setValues((tried) =>
+            quietly && previous
+              ? Object.fromEntries(
+                  primary.knobs.map((k) => {
+                    const was = previous.knobs.find((o) => o.var === k.var)
+                    return [
+                      k.var,
+                      was?.value === k.value && tried[k.var] !== undefined
+                        ? tried[k.var]!
+                        : k.value,
+                    ]
+                  }),
+                )
+              : saved,
+          )
           onInfo?.(primary)
         }
       },
-      (e: Error) => live && setError(e.message),
+      (e: Error) => live && !quietly && setError(e.message),
     )
     return () => {
       live = false
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per design, version and reload
-  }, [folders, version, reloadAll])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per design, version, reload and change
+  }, [folders, version, reloadAll, refreshes])
 
   useEffect(() => {
     const element = root.current
     if (!element) return
-    const observer = new ResizeObserver(([entry]) => setWidth(entry!.contentRect.width))
+    // Hidden, it keeps the width it had: its layout does not change while out of sight.
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry!.contentRect.width > 0) setWidth(entry!.contentRect.width)
+    })
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
@@ -298,6 +464,8 @@ function DesignFrame({
   const boardByKey = (key: string) => groups.flatMap((g) => g.boards).find((b) => b.key === key)
 
   const wide = width >= WIDE
+  /** Too narrow for the bar's labels: icons only. */
+  const compact = width > 0 && width < 520
   const last = selection.at(-1)
   const lastInspected = last ? inspected[`${last.board}:${last.h}`] : undefined
   const lastBoard = last ? boardByKey(last.board) : undefined
@@ -323,12 +491,18 @@ function DesignFrame({
               : s,
           ),
         )
+        // The page says where the element is now: a move made by hand is in it.
+        if (element.bid !== null) moved.current.delete(moveKey(board, element.bid))
+        if (picking.current === key) {
+          picking.current = null
+          onPicked.current(board, element)
+        }
       } else if (m.type === 'typed' && m.text !== null) {
         const element = inspected[`${board.key}:${m.h}`]
         change(board, [{ id: m.bid, text: m.text }], element)
       }
-      // eslint-disable-next-line react-hooks/exhaustive-deps -- reads the latest through state setters
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reads the latest through state setters
     [folder, inspected],
   )
 
@@ -355,6 +529,7 @@ function DesignFrame({
 
   function applyUndo(entry: DesignChange | null) {
     if (!entry) return
+    moved.current.clear()
     for (const op of entry.ops) canvas.current?.postToFile(entry.folder, entry.file, live(op))
     refreshInspected()
   }
@@ -379,12 +554,115 @@ function DesignFrame({
     change(lastBoard, [{ id: last.bid, text }], lastInspected)
   }
 
+  // -- Moving elements by hand ---------------------------------------------------
+
+  /** Where an element moved by hand was put last, until its page says so itself. */
+  const moved = useRef(new Map<string, string>())
+  const moveKey = (board: CanvasBoard, bid: number) => `${board.folder}\n${board.file}\n${bid}`
+  type Moving = { key: string; board: CanvasBoard; bid: number; from: string; before: Inspected }
+  /** The elements being dragged: each once, where it started and what it had. */
+  const dragged = useRef<Map<string, Moving> | null>(null)
+
+  /** The selected elements that can move: written in their page, each element once. */
+  function movable(): Moving[] {
+    const all = new Map<string, Moving>()
+    for (const s of selection) {
+      const board = boardByKey(s.board)
+      const element = inspected[`${s.board}:${s.h}`]
+      if (!board || s.bid === null || !element?.editable.style) continue
+      const key = moveKey(board, s.bid)
+      if (all.has(key)) continue
+      const from = moved.current.get(key) ?? element.computed.translate ?? 'none'
+      all.set(key, { key, board, bid: s.bid, from, before: element })
+    }
+    return [...all.values()]
+  }
+
+  /** Dragging the selection on the canvas: shown as it moves, saved as a change once dropped. */
+  function onDrag(phase: DragPhase, delta: { x: number; y: number }) {
+    if (phase === 'start') {
+      dragged.current = new Map()
+      if (selection.length && !movable().length && lastInspected) {
+        setNotice({
+          text: lastInspected.scripted
+            ? `The page's script made this element: ask ${view?.teammate?.name ?? 'the teammate'} to move it.`
+            : 'This element cannot be moved by hand.',
+        })
+      }
+    }
+    const list = dragged.current
+    if (!list) return
+    // An element picked as the drag began joins it once its page has described it.
+    for (const m of movable()) if (!list.has(m.key)) list.set(m.key, m)
+    for (const m of list.values()) {
+      const translate =
+        phase === 'cancel'
+          ? (m.before.inline.translate ?? null)
+          : movedTranslate(m.from, delta.x, delta.y)
+      if (phase !== 'end') {
+        canvas.current?.postToFile(m.board.folder, m.board.file, {
+          type: 'brigade:style',
+          bid: m.bid,
+          style: { translate },
+        })
+      } else if (translate !== null && translate !== movedTranslate(m.from, 0, 0)) {
+        moved.current.set(m.key, translate)
+        change(m.board, [{ id: m.bid, style: { translate } }], m.before)
+      } else {
+        // Dropped where it was: what the page had.
+        canvas.current?.postToFile(m.board.folder, m.board.file, {
+          type: 'brigade:style',
+          bid: m.bid,
+          style: { translate: m.before.inline.translate ?? null },
+        })
+      }
+    }
+    if (phase === 'end' || phase === 'cancel') dragged.current = null
+  }
+
+  /** The arrow keys move the selection by a pixel, ⇧ by ten: one step of undo while they go. */
+  function nudge(dx: number, dy: number) {
+    const list = movable()
+    for (const m of list) {
+      const translate = movedTranslate(m.from, dx, dy)
+      moved.current.set(m.key, translate)
+      change(m.board, [{ id: m.bid, style: { translate } }], m.before, 'nudge')
+    }
+    return list.length > 0
+  }
+
+  // -- Comment: pick elements to say what should change on each ------------------
+
+  /** In Comment, the element just picked, until its page describes it. */
+  const picking = useRef<string | null>(null)
+
+  function onSelect(next: Selected[]) {
+    setSelection(next)
+    const last = next.at(-1)
+    picking.current = mode === 'comment' && last ? `${last.board}:${last.h}` : null
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey
+    const arrows: Record<string, [number, number]> = {
+      ArrowLeft: [-1, 0],
+      ArrowRight: [1, 0],
+      ArrowUp: [0, -1],
+      ArrowDown: [0, 1],
+    }
     if (mod && e.key.toLowerCase() === 'z') {
       e.preventDefault()
       applyUndo(e.shiftKey ? edits.current!.redo() : edits.current!.undo())
+    } else if (mode === 'select' && !mod && !e.altKey && arrows[e.key] && selection.length) {
+      const [x, y] = arrows[e.key]!
+      const step = e.shiftKey ? 10 : 1
+      if (nudge(x * step, y * step)) e.preventDefault()
     } else if (e.key === 'Escape') {
+      if (mode === 'comment' && selection.length === 0) {
+        e.preventDefault()
+        setMode('select')
+        return
+      }
       if (selection.length === 0) return
       e.preventDefault()
       const parent = lastInspected?.parent
@@ -393,6 +671,10 @@ function DesignFrame({
           ? [{ board: last.board, h: parent, bid: null }]
           : [],
       )
+    } else if (!mod && !e.altKey && (e.key === 'v' || e.key === 'h' || e.key === 'c')) {
+      e.preventDefault()
+      if (e.key === 'c') setSelection([])
+      setMode(e.key === 'v' ? 'select' : e.key === 'h' ? 'hand' : 'comment')
     } else if ((e.key === 'Enter' || e.key === 'F2') && last && lastInspected?.editable.text) {
       e.preventDefault()
       canvas.current?.retype(last)
@@ -451,13 +733,66 @@ function DesignFrame({
     : null
   const commentFolder = lastBoard?.folder ?? folder
 
+  // Beside its thread, a comment waits in the thread's composer with the other edits, to go
+  // in one message (lib/pending-edits.ts); elsewhere, or when that composer cannot take it
+  // (the member may not write there), it goes at once.
+  const designEdits = useDesignEdits(threadId)
+  const editsSender = useEditsSender(threadId)
+  const pending = !!threadId && !!editsSender
+  const boardKeys = new Set(groups.flatMap((g) => g.boards.map((b) => b.key)))
+  const ownEdits = designEdits.filter(
+    (e) => folders.includes(e.folder) || (e.board && boardKeys.has(e.board)),
+  )
+  const pins = ownEdits.flatMap((e) => {
+    if (!e.board || !e.rect) return []
+    const at = editsSender?.order.indexOf(e.id) ?? -1
+    return [
+      { key: e.id, board: e.board, rect: e.rect, n: at >= 0 ? at + 1 : designEdits.indexOf(e) + 1 },
+    ]
+  })
+
+  // Beside its thread (not expanded over it, where its composer is out of sight), an element
+  // picked in Comment goes straight to the composer's edits, where its note is written, as an
+  // element picked in the preview does; elsewhere the Ask box opens on it.
+  const direct = pending && !expanded
+  const onPicked = useRef<(board: CanvasBoard, element: Inspected) => void>(() => {})
+  onPicked.current = (board, element) => {
+    if (direct && threadId) {
+      const at: Target = { board, element }
+      addDesignEdit(threadId, {
+        folder: board.folder,
+        board: board.key,
+        rect: element.rect,
+        label: commentLabel(at, board.folder),
+        where: commentWhere({ folder: board.folder, target: at }),
+        note: '',
+      })
+      // Its numbered pin marks it now.
+      setSelection([])
+      return
+    }
+    setTab('ask')
+    setAskFocus((n) => n + 1)
+  }
+
   async function sendComment(body: string) {
+    if (pending && threadId) {
+      addDesignEdit(threadId, {
+        folder: commentFolder,
+        board: target?.board.key ?? null,
+        rect: target?.element ? (lastInspected?.rect ?? null) : null,
+        label: commentLabel(target, commentFolder),
+        where: commentWhere({ folder: commentFolder, target }),
+        note: body.trim(),
+      })
+      return true
+    }
     const text = commentText({ folder: commentFolder, target, body })
     if (!commentThread) {
       onStart({
         title: 'Send the comment in a new thread',
         description: view?.thread
-          ? `The thread that made this design runs on another member's subscription. Start one to ${view.teammate?.name ?? 'a teammate'}.`
+          ? `Another member started the thread that made this design. Start one to ${view.teammate?.name ?? 'a teammate'}.`
           : 'No thread made this design that you can write to. Start one.',
         text,
         ...(view?.teammate ? { teammateId: view.teammate.id } : {}),
@@ -549,6 +884,7 @@ function DesignFrame({
   const askBox = view && (
     <CommentBox
       target={target}
+      focus={askFocus}
       to={
         commentThread === threadId && threadId
           ? 'this thread'
@@ -558,198 +894,200 @@ function DesignFrame({
       }
       onClear={() => setSelection([])}
       onSend={sendComment}
+      {...(pending &&
+        editsSender && {
+          pending: {
+            count: editsSender.count,
+            send: editsSender.send,
+            ...(editsSender.disabled && { disabled: editsSender.disabled }),
+          },
+        })}
     />
   )
 
   return (
     <div ref={root} className="flex min-h-0 flex-1 flex-col">
-      <div className="flex flex-wrap items-center gap-1 border-b px-3 py-1.5">
-        <div role="radiogroup" aria-label="Mode" className="flex rounded-md bg-muted p-0.5">
-          {(
-            [
-              ['select', MousePointer2, 'Select: pick elements to change or ask about'],
-              ['play', Play, 'Play: use the pages'],
-            ] as const
-          ).map(([m, Icon, title]) => (
-            <button
-              key={m}
+      <div className="flex flex-nowrap items-center gap-1 border-b px-2 py-1.5">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
               type="button"
-              role="radio"
-              aria-checked={mode === m}
-              title={title}
-              onClick={() => {
-                setMode(m)
-                if (m === 'play') setSelection([])
-              }}
-              className={cn(
-                'flex size-7 items-center justify-center rounded',
-                mode === m
-                  ? 'bg-background text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
+              variant="ghost"
+              size="sm"
+              className="min-w-0 shrink justify-start gap-1.5 px-1.5"
+              tooltip={
+                picker ? 'Switch options, export, hand off' : 'About this design, export, hand off'
+              }
             >
-              <Icon aria-hidden className="size-3.5" />
-              <span className="sr-only">{m}</span>
-            </button>
-          ))}
-        </div>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          title="Fit everything (⇧1)"
-          aria-label="Fit everything"
-          onClick={() => canvas.current?.fit()}
-        >
-          <Maximize aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          title="Undo (⌘Z)"
-          aria-label="Undo"
-          disabled={!edits.current.canUndo}
-          onClick={() => applyUndo(edits.current!.undo())}
-        >
-          <Undo2 aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          title="Redo (⇧⌘Z)"
-          aria-label="Redo"
-          disabled={!edits.current.canRedo}
-          onClick={() => applyUndo(edits.current!.redo())}
-        >
-          <Redo2 aria-hidden />
-        </Button>
-        <span className="text-xs text-muted-foreground">{edits.current.busy ? 'Saving…' : ''}</span>
+              <Palette aria-hidden className="shrink-0 text-muted-foreground" />
+              <span className="truncate font-semibold">{title}</span>
+              <ChevronDown aria-hidden className="shrink-0 text-muted-foreground" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-80">
+            {picker}
+            <DropdownMenuLabel className="flex flex-col gap-1.5 font-normal">
+              <span className="text-xs break-words text-muted-foreground">{about}</span>
+              {description && <span className="text-xs leading-relaxed">{description}</span>}
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {libraryHref && (
+              <DropdownMenuItem asChild>
+                <Link href={libraryHref}>
+                  <Library aria-hidden />
+                  Open in the library
+                </Link>
+              </DropdownMenuItem>
+            )}
+            {view && (
+              <DropdownMenuItem asChild>
+                <a
+                  href={lastBoard ? (srcs[lastBoard.key] ?? view.url) : view.url}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  <ExternalLink aria-hidden />
+                  Open in a new tab
+                </a>
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger disabled={!view}>
+                <Download aria-hidden />
+                Export
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent>
+                <DropdownMenuItem asChild>
+                  <a href={`${API_URL}/api/designs/zip?path=${encodeURIComponent(folder)}`}>
+                    HTML (.zip)
+                  </a>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={!view}
+                  onSelect={() => {
+                    const board = exportBoard()
+                    if (board) canvas.current?.post(board.key, { type: 'brigade:print' })
+                  }}
+                >
+                  PDF (print)
+                </DropdownMenuItem>
+                <DropdownMenuItem disabled={!view} onSelect={() => void exportPng()}>
+                  Image (.png), {lastBoard ? 'the selected board' : 'the first board'}
+                </DropdownMenuItem>
+                {slides > 0 && (
+                  <DropdownMenuItem onSelect={() => void exportPptx()}>
+                    PowerPoint (.pptx)
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+            <DropdownMenuItem
+              disabled={!view}
+              onSelect={() =>
+                onStart({
+                  title: 'Hand off the design',
+                  description:
+                    'Start a thread that builds it. Mention the repository it goes in (type @).',
+                  text: handoffText(folder),
+                })
+              }
+            >
+              <Hammer aria-hidden />
+              Hand off: start a thread that builds it
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => {
+                setSelection([])
+                shown.current.clear()
+                forced.current = true
+                setReloadAll((n) => n + 1)
+              }}
+            >
+              <RotateCw aria-hidden />
+              Reload
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         <span className="flex-1" />
+        {view && <ShareButton key={view.entryId} name={title} link={shareLink} label={!compact} />}
         {!wide && (
           <>
             <Button
               type="button"
-              variant={tab === 'ask' ? 'secondary' : 'ghost'}
-              size="sm"
-              aria-pressed={tab === 'ask'}
+              variant={(direct ? mode === 'comment' : tab === 'ask') ? 'secondary' : 'ghost'}
+              size={compact ? 'icon-sm' : 'sm'}
+              tooltip={
+                direct
+                  ? mode === 'comment'
+                    ? 'Stop commenting (Esc)'
+                    : `Comment: click elements and say what should change on each, then send them together${ownEdits.length ? ` · ${ownEdits.length} waiting in the composer` : ''} (C)`
+                  : ownEdits.length
+                    ? `Comment · ${ownEdits.length} waiting in the composer`
+                    : 'Comment'
+              }
+              aria-label={
+                compact || ownEdits.length
+                  ? `Comment${ownEdits.length ? `, ${ownEdits.length} waiting` : ''}`
+                  : undefined
+              }
+              aria-pressed={direct ? mode === 'comment' : tab === 'ask'}
               disabled={!view}
-              onClick={() => setTab(tab === 'ask' ? null : 'ask')}
+              onClick={() => {
+                if (!direct) return setTab(tab === 'ask' ? null : 'ask')
+                setSelection([])
+                setTab(null)
+                setMode(mode === 'comment' ? 'select' : 'comment')
+              }}
             >
               <MessageSquarePlus aria-hidden />
-              Comment
+              {!compact && 'Comment'}
+              {ownEdits.length > 0 && (
+                <span className="rounded-full bg-primary px-1.5 text-[0.6875rem] leading-4 font-semibold text-primary-foreground tabular-nums">
+                  {ownEdits.length}
+                </span>
+              )}
             </Button>
             {view && view.knobs.length > 0 && (
               <Button
                 type="button"
                 variant={tab === 'knobs' ? 'secondary' : 'ghost'}
-                size="sm"
+                size={compact ? 'icon-sm' : 'sm'}
+                tooltip="Knobs"
+                aria-label={compact ? 'Knobs' : undefined}
                 aria-pressed={tab === 'knobs'}
                 onClick={() => setTab(tab === 'knobs' ? null : 'knobs')}
               >
                 <SlidersHorizontal aria-hidden />
-                Knobs
+                {!compact && 'Knobs'}
               </Button>
             )}
             {onExpand && !expanded && (
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
-                title="Edit by hand: expand the design"
+                size={compact ? 'icon-sm' : 'sm'}
+                tooltip="Edit by hand: expand the design"
+                // The panel already takes the whole screen there.
+                className="max-xl:hidden"
+                aria-label={compact ? 'Edit' : undefined}
                 onClick={onExpand}
               >
                 <Pencil aria-hidden />
-                Edit
+                {!compact && 'Edit'}
               </Button>
             )}
           </>
         )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              title="Export"
-              aria-label="Export"
-              disabled={!view}
-            >
-              <Download aria-hidden />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem asChild>
-              <a href={`${API_URL}/api/designs/zip?path=${encodeURIComponent(folder)}`}>
-                HTML (.zip)
-              </a>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!view}
-              onSelect={() => {
-                const board = exportBoard()
-                if (board) canvas.current?.post(board.key, { type: 'brigade:print' })
-              }}
-            >
-              PDF (print)
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={!view} onSelect={() => void exportPng()}>
-              Image (.png), {lastBoard ? 'the selected board' : 'the first board'}
-            </DropdownMenuItem>
-            {slides > 0 && (
-              <DropdownMenuItem onSelect={() => void exportPptx()}>
-                PowerPoint (.pptx)
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          title="Hand off: start a thread that builds it"
-          aria-label="Hand off"
-          disabled={!view}
-          onClick={() =>
-            onStart({
-              title: 'Hand off the design',
-              description:
-                'Start a thread that builds it. Mention the repository it goes in (type @).',
-              text: handoffText(folder),
-            })
-          }
-        >
-          <Hammer aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          title="Reload"
-          aria-label="Reload"
-          onClick={() => {
-            setSelection([])
-            shown.current.clear()
-            setReloadAll((n) => n + 1)
-          }}
-        >
-          <RotateCw aria-hidden />
-        </Button>
-        {view && (
-          <Button asChild variant="ghost" size="icon-sm" title="Open in a new tab">
-            <a
-              href={lastBoard ? (srcs[lastBoard.key] ?? view.url) : view.url}
-              target="_blank"
-              rel="noreferrer noopener"
-              aria-label="Open in a new tab"
-            >
-              <ExternalLink aria-hidden />
-            </a>
-          </Button>
-        )}
+        {controls}
       </div>
 
+      {mode === 'comment' && view && (
+        <p role="status" className="border-b px-3 py-1.5 text-xs text-muted-foreground">
+          {direct
+            ? `Click an element to add it to your edits, then say in the composer what should change there${ownEdits.length ? ` · ${ownEdits.length} added` : ''}. Esc to stop.`
+            : 'Click an element to comment on it. Esc to stop.'}
+        </p>
+      )}
       {(busy || notice) && (
         <p
           role="status"
@@ -770,31 +1108,120 @@ function DesignFrame({
         </p>
       )}
 
-      {!wide && tab === 'knobs' && knobsPanel}
-
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1">
+        <div className="pointer-events-none absolute top-2 left-2 z-10 flex items-center gap-0.5 rounded-lg border bg-background p-0.5 shadow-sm [&>*]:pointer-events-auto">
+          <div role="radiogroup" aria-label="Mode" className="flex rounded-md bg-muted p-0.5">
+            {(
+              [
+                [
+                  'select',
+                  MousePointer2,
+                  'Select: pick elements to change, drag them to move them (V)',
+                ],
+                [
+                  'comment',
+                  MessageSquarePlus,
+                  'Comment: click elements to say what should change (C)',
+                ],
+                ['hand', Hand, 'Hand: drag to move around the canvas (H)'],
+                ['play', Play, 'Play: use the pages'],
+              ] as const
+            ).map(([m, Icon, title]) => (
+              <Hint key={m} label={title}>
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={mode === m}
+                  onClick={() => {
+                    setMode(m)
+                    if (m === 'play' || m === 'comment') setSelection([])
+                  }}
+                  className={cn(
+                    'flex size-7 items-center justify-center rounded',
+                    mode === m
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <Icon aria-hidden className="size-3.5" />
+                  <span className="sr-only">{m}</span>
+                </button>
+              </Hint>
+            ))}
+          </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            tooltip="Fit everything (⇧1)"
+            aria-label="Fit everything"
+            onClick={() => canvas.current?.fit()}
+          >
+            <Maximize aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            tooltip="Undo (⌘Z)"
+            aria-label="Undo"
+            disabled={!edits.current.canUndo}
+            onClick={() => applyUndo(edits.current!.undo())}
+          >
+            <Undo2 aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            tooltip="Redo (⇧⌘Z)"
+            aria-label="Redo"
+            disabled={!edits.current.canRedo}
+            onClick={() => applyUndo(edits.current!.redo())}
+          >
+            <Redo2 aria-hidden />
+          </Button>
+          {edits.current.busy && (
+            <span className="px-1.5 text-xs text-muted-foreground">Saving…</span>
+          )}
+        </div>
         {error ? (
-          <p className="p-4 text-sm text-destructive-text">{error}</p>
+          <p className="p-4 pt-14 text-sm text-destructive-text">{error}</p>
         ) : groups.length === 0 ? (
-          <p className="p-4 text-sm text-muted-foreground">Loading…</p>
+          <p className="p-4 pt-14 text-sm text-muted-foreground">Loading…</p>
         ) : (
           <DesignCanvas
             handle={canvas}
             groups={groups}
             mode={mode}
             selection={selection}
-            onSelect={setSelection}
+            pins={pins}
+            onSelect={onSelect}
             onMessage={onPage}
             onKeyDown={onKeyDown}
+            onDrag={onDrag}
             onDoubleClick={(s) => {
               if (inspected[`${s.board}:${s.h}`]?.editable.text) canvas.current?.retype(s)
             }}
           />
         )}
 
-        {wide && view && (
+        {wide && view && folded && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            tooltip="Show the panel"
+            aria-label="Show the panel"
+            className="absolute top-2 right-2 z-10 bg-background shadow-sm"
+            onClick={() => fold(false)}
+          >
+            <PanelRightOpen aria-hidden />
+          </Button>
+        )}
+        {wide && view && !folded && (
           <aside aria-label="Properties" className="flex w-[300px] shrink-0 flex-col border-l">
-            <div role="tablist" className="flex gap-1 border-b px-2 py-1.5">
+            <div role="tablist" className="flex items-center gap-1 border-b px-2 py-1.5">
               {(
                 [
                   ['properties', 'Properties'],
@@ -818,6 +1245,18 @@ function DesignFrame({
                   {label}
                 </button>
               ))}
+              <span className="flex-1" />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                tooltip="Hide the panel"
+                aria-label="Hide the panel"
+                className="text-muted-foreground"
+                onClick={() => fold(true)}
+              >
+                <PanelRightClose aria-hidden />
+              </Button>
             </div>
             {panel === 'knobs' ? (
               knobsPanel
@@ -838,31 +1277,82 @@ function DesignFrame({
               <p className="p-3 text-xs text-muted-foreground">
                 {mode === 'play'
                   ? 'Play: the pages work as they would in a browser. Switch to Select to change them.'
-                  : 'Select an element on a board to change its text, size, spacing and look. Space + drag or the trackpad pans, pinch or ⌘ + scroll zooms, ⇧1 fits everything.'}
+                  : mode === 'comment'
+                    ? 'Comment: click an element, then say what should change there.'
+                    : mode === 'hand'
+                      ? 'Hand: drag anywhere to move around the canvas. Switch to Select (V) to change elements.'
+                      : 'Select an element on a board to change its text, size, spacing and look; drag it, or use the arrow keys, to move it. Space + drag, the Hand (H) or the trackpad pans, pinch or ⌘ + scroll zooms, ⇧1 fits everything.'}
               </p>
             )}
           </aside>
         )}
       </div>
 
-      {!wide && tab === 'ask' && askBox}
+      {!wide && (tab === 'ask' || (tab === 'knobs' && knobsPanel)) && (
+        <section aria-label="Design tools" className="flex max-h-[60%] min-h-0 flex-col border-t">
+          <div role="tablist" className="flex items-center gap-1 px-2 pt-1.5">
+            {(
+              [['ask', 'Comment'], ...(knobsPanel ? ([['knobs', 'Knobs']] as const) : [])] as const
+            ).map(([t, label]) => (
+              <button
+                key={t}
+                type="button"
+                role="tab"
+                aria-selected={tab === t}
+                onClick={() => setTab(t)}
+                className={cn(
+                  'rounded-md px-2 py-1 text-xs',
+                  tab === t
+                    ? 'bg-secondary font-medium'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {label}
+              </button>
+            ))}
+            <span className="flex-1" />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Close"
+              onClick={() => setTab(null)}
+            >
+              <X aria-hidden />
+            </Button>
+          </div>
+          <div className="min-h-0 overflow-y-auto [&>div]:max-h-none [&>div]:border-0">
+            {tab === 'ask' ? askBox : knobsPanel}
+          </div>
+        </section>
+      )}
     </div>
   )
 }
 
 function CommentBox({
   target,
+  focus = 0,
   to,
   onClear,
   onSend,
+  pending,
 }: {
   target: Target | null
+  /** Takes the focus each time this changes past 0: an element was just picked. */
+  focus?: number
   to: string
   onClear: () => void
   onSend: (body: string) => Promise<boolean>
+  /** Comments wait in the thread's composer: how many wait there, and its send. */
+  pending?: { count: number; send?: () => void; disabled?: string }
 }) {
   const [body, setBody] = useState('')
   const [sending, setSending] = useState(false)
+  const box = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    if (focus > 0) box.current?.focus({ preventScroll: true })
+  }, [focus])
 
   async function send() {
     if (!body.trim() || sending) return
@@ -871,59 +1361,108 @@ function CommentBox({
     setSending(false)
   }
 
+  const on = target
+    ? target.element
+      ? target.element.label || target.element.dataId || target.element.tag
+      : (target.board.title ?? target.board.file)
+    : null
+
   return (
-    <div className="flex flex-col gap-2 border-t px-3 py-2.5">
-      <div className="flex min-w-0 items-center gap-2 text-xs">
-        {target ? (
-          <>
-            <span className="text-muted-foreground">On</span>
-            <code
-              className="min-w-0 truncate rounded bg-muted px-1.5 py-0.5"
-              title={target.element?.path}
-            >
-              {target.element
-                ? (target.element.dataId ?? target.element.tag)
-                : (target.board.title ?? target.board.file)}
-            </code>
-            {target.element?.label && (
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                “{target.element.label}”
-              </span>
-            )}
-            <button
-              type="button"
-              className="shrink-0 font-medium text-primary hover:underline"
-              onClick={onClear}
-            >
-              The whole design
-            </button>
-          </>
-        ) : (
-          <span className="flex-1 text-muted-foreground">
-            On the whole design. Select an element to point at it.
-          </span>
+    <div className="p-3">
+      <div className="flex flex-col rounded-lg border bg-card transition-[box-shadow,border-color] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+        {on && (
+          <div className="flex px-2 pt-2">
+            <span className="flex min-w-0 items-center gap-1 rounded-md bg-muted py-0.5 pr-0.5 pl-2 text-xs">
+              <Hint label={target?.element?.path}>
+                <span className="truncate">{on}</span>
+              </Hint>
+              <Hint label="On the whole design instead">
+                <button
+                  type="button"
+                  aria-label="On the whole design instead"
+                  className="flex size-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                  onClick={onClear}
+                >
+                  <X aria-hidden className="size-3" />
+                </button>
+              </Hint>
+            </span>
+          </div>
         )}
-      </div>
-      <Textarea
-        aria-label="Comment"
-        value={body}
-        rows={3}
-        placeholder="What should change?"
-        onChange={(e) => setBody(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault()
-            void send()
+        <Textarea
+          ref={box}
+          aria-label="Comment"
+          value={body}
+          rows={3}
+          placeholder={
+            on
+              ? 'What should change here?'
+              : 'What should change? Select an element to point at it.'
           }
-        }}
-        className="bg-card text-sm"
-      />
-      <div className="flex items-center justify-between gap-2">
-        <span className="truncate text-xs text-muted-foreground">To {to}</span>
-        <Button size="sm" disabled={!body.trim() || sending} onClick={() => void send()}>
-          Send
-        </Button>
+          onChange={(e) => setBody(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault()
+              void send()
+            }
+          }}
+          className="max-h-60 min-h-20 resize-none rounded-none border-0 bg-transparent text-sm shadow-none focus-visible:ring-0 dark:bg-transparent"
+        />
+        <div className="flex items-center gap-2 py-1.5 pr-1.5 pl-3">
+          {pending ? (
+            <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+              {pending.count
+                ? `${pending.count} waiting in the composer`
+                : 'Waits in the composer with your other edits'}
+            </span>
+          ) : (
+            <span
+              className="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+              title={`To ${to}`}
+            >
+              To {to}
+            </span>
+          )}
+          {pending ? (
+            <Button
+              size="sm"
+              tooltip="Add to the edits (⌘↵)"
+              disabled={!body.trim() || sending}
+              onClick={() => void send()}
+            >
+              <Plus aria-hidden />
+              Add to edits
+            </Button>
+          ) : (
+            <Button
+              size="icon-sm"
+              tooltip="Send (⌘↵)"
+              aria-label="Send"
+              disabled={!body.trim() || sending}
+              onClick={() => void send()}
+            >
+              <Send aria-hidden />
+            </Button>
+          )}
+        </div>
       </div>
+      {pending?.send && pending.count > 0 && (
+        <div className="mt-2 flex justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!!pending.disabled}
+            tooltip={
+              pending.disabled ?? 'Send them in one message, with what is written in the composer'
+            }
+            onClick={pending.send}
+          >
+            <Send aria-hidden />
+            Send {pending.count === 1 ? '1 edit' : `${pending.count} edits`}
+          </Button>
+        </div>
+      )}
     </div>
   )
 }
@@ -956,15 +1495,17 @@ function Knobs({
         const label = k.label ?? k.var
         return (
           <div key={k.var} className="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-3">
-            <label htmlFor={id} className="truncate text-xs font-medium" title={k.var}>
-              {label}
-            </label>
+            <Hint label={k.var}>
+              <label htmlFor={id} className="truncate text-xs font-medium">
+                {label}
+              </label>
+            </Hint>
             {k.type === 'color' ? (
               <div className="flex items-center gap-2">
                 <input
                   id={id}
                   type="color"
-                  value={/^#[0-9a-f]{6}$/i.test(value) ? value : '#000000'}
+                  value={hex(value)}
                   onChange={(e) => onChange(k, e.target.value)}
                   className="h-7 w-10 cursor-pointer rounded border bg-transparent"
                 />
@@ -1062,6 +1603,7 @@ function StartThreadDialog({ start, onClose }: { start: Starting; onClose: () =>
             draft={draft}
             rows={6}
             autoFocus
+            openAtOnce
           />
         ) : (
           <p className="text-sm text-muted-foreground">Add a teammate first.</p>
@@ -1079,6 +1621,8 @@ export function DesignPanel({
   onClose,
   libraryLink = true,
   options,
+  expand = false,
+  hidden = false,
 }: {
   folder: string
   version?: string
@@ -1087,25 +1631,86 @@ export function DesignPanel({
   onClose: () => void
   /** A button to the design in the library (not when already there). */
   libraryLink?: boolean
-  /** The options offered with this one, it included: shown side by side, a row each. */
+  /** The options offered with this one, it included: shown side by side at first, a row each. */
   options?: string[]
+  /** Opens over the whole page rather than beside it. */
+  expand?: boolean
+  /**
+   * Kept beside a thread while another one shows (components/kept-previews.tsx): its pages stay
+   * as they were, not loaded again when it shows.
+   */
+  hidden?: boolean
 }) {
   const [info, setInfo] = useState<DesignViewInfo>()
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(expand)
   const [start, setStart] = useState<Starting>()
+  const sideBySide = !!options && options.length > 1
+  // The option shown, switched from the title's menu; null: all of them side by side.
+  const [picked, setPicked] = useState<string | null>(sideBySide ? null : folder)
   // Another design: its title, not the last one's, until it loads.
   const [shown, setShown] = useState(folder)
   if (shown !== folder) {
     setShown(folder)
     setInfo(undefined)
+    setPicked(sideBySide ? null : folder)
   }
-  const slash = folder.lastIndexOf('/')
-  const parent = slash >= 0 ? folder.slice(0, slash) : ''
-  const title = info?.manifest?.title || designName(folder)
-  const set = options && options.length > 1
+  // The options offered with it, with their titles, from the library.
+  const [offered, setOffered] = useState<DesignOption[]>()
+  const set = designOptionsOf(folder)
+  useEffect(() => {
+    setOffered(undefined)
+    if (!set) return
+    let live = true
+    api<DesignOption[]>('/designs/options', { body: { path: folder } }).then(
+      (o) => live && setOffered(o),
+      () => {},
+    )
+    return () => {
+      live = false
+    }
+  }, [folder, set])
+  const choices: DesignOption[] = offered ?? (options ?? []).map((path) => ({ path, title: null }))
+  const switchable = choices.length > 1
+  const all = picked === null && switchable
+  const current = picked ?? folder
+  const slash = current.lastIndexOf('/')
+  const parent = slash >= 0 ? current.slice(0, slash) : ''
+  const titleOf = (path: string) => choices.find((o) => o.path === path)?.title || designName(path)
+  const title = info?.manifest?.title || titleOf(current)
+
+  // Switching remounts the canvas, which had the focus: the panel takes it back, so the
+  // next arrow still reaches it.
+  const refocus = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    refocus.current?.focus({ preventScroll: true })
+    refocus.current = null
+  }, [current, all])
+
+  function pick(next: string | null) {
+    if (next === picked) return
+    setInfo(undefined)
+    setPicked(next)
+  }
+
+  // Left and right arrows go to the previous and next option, while the panel has the focus.
+  function onKeyDown(e: KeyboardEvent<HTMLElement>) {
+    if (!switchable || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+    const target = e.target as HTMLElement
+    if (
+      target.closest('input, textarea, select, [contenteditable], [role="menu"], [role="slider"]')
+    )
+      return
+    const paths = choices.map((o) => o.path)
+    const next = stepOption(paths, all ? null : current, e.key === 'ArrowRight' ? 1 : -1)
+    if (!next) return
+    e.preventDefault()
+    refocus.current = e.currentTarget
+    pick(next)
+  }
 
   useEffect(() => {
-    if (!expanded) return
+    if (!expanded || hidden) return
     const onKey = (e: globalThis.KeyboardEvent) => {
       // The canvas takes Escape while something is selected on it.
       if (e.key !== 'Escape' || start || e.defaultPrevented) return
@@ -1115,80 +1720,103 @@ export function DesignPanel({
     // As the key comes back up: after the canvas had it.
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [expanded, start])
+  }, [expanded, start, hidden])
 
   return (
     <SidePanel
       aria-label={`Design ${title}`}
+      hidden={hidden}
       onClose={onClose}
+      onKeyDown={onKeyDown}
+      tabIndex={-1}
       raiseKey={folder}
       // Expanded over the whole page; the same element, so the page keeps its state.
+      // The whole screen until the panel sits beside the page: a sheet over a page that
+      // scrolls would fight the canvas for the pointer.
       className={cn(
+        'outline-none max-xl:top-0 max-xl:h-auto max-xl:rounded-none max-xl:border-t-0',
         expanded &&
           'inset-0 z-50 h-auto rounded-none border-0 xl:inset-0 xl:left-0 xl:z-50 xl:w-auto xl:border-l-0',
       )}
     >
-      <div className="flex flex-nowrap items-center gap-2 border-b px-3 py-2.5">
-        <Palette aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <strong className="truncate text-sm font-semibold">
-            {set
-              ? `${options.length} options for ${designName(parent.replace(/\.options$/, '.design'))}`
-              : title}
-          </strong>
-          <span className="truncate text-xs text-muted-foreground">
-            Design
-            {info?.manifest?.designSystem && ` · ${info.manifest.designSystem}`}
-            {info?.teammate && ` · by ${info.teammate.name}`}
-            {parent && <span className="font-mono"> · {parent}</span>}
-          </span>
-        </div>
-        {libraryLink && (
-          <Button asChild variant="ghost" size="icon-sm" title="Open the library">
-            <Link
-              href={`/app/library?design=${encodeURIComponent(folder)}`}
-              aria-label="Open the library"
-            >
-              <Library aria-hidden />
-            </Link>
-          </Button>
-        )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          title={expanded ? 'Back to the panel' : 'Expand'}
-          aria-label={expanded ? 'Back to the panel' : 'Expand'}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          onClick={onClose}
-          aria-label="Close design"
-        >
-          <X aria-hidden />
-        </Button>
-      </div>
-      {!set && info?.manifest?.description && (
-        <p className="border-b px-3 py-2 text-xs text-muted-foreground">
-          {info.manifest.description}
-        </p>
-      )}
       <DesignFrame
-        folder={folder}
-        version={version}
-        {...(set ? { options } : {})}
+        key={all ? '' : current}
+        folder={current}
+        {...(current === folder ? { version } : {})}
+        {...(all ? { options: choices.map((o) => o.path) } : {})}
         threadId={threadId}
+        hidden={hidden}
         expanded={expanded}
         onExpand={() => setExpanded(true)}
         onInfo={setInfo}
         onStart={setStart}
+        title={
+          all
+            ? `${choices.length} options for ${designName(parent.replace(/\.options$/, '.design'))}`
+            : title
+        }
+        {...(switchable
+          ? {
+              picker: (
+                <>
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    {choices.length} options
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={all ? '' : current}
+                    onValueChange={(v) => pick(v || null)}
+                  >
+                    {choices.map((o) => (
+                      <DropdownMenuRadioItem key={o.path} value={o.path}>
+                        <span className="truncate">{titleOf(o.path)}</span>
+                      </DropdownMenuRadioItem>
+                    ))}
+                    <DropdownMenuRadioItem value="">All side by side</DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                  <DropdownMenuSeparator />
+                </>
+              ),
+            }
+          : {})}
+        about={
+          <>
+            Design
+            {info?.manifest?.designSystem && ` · ${info.manifest.designSystem}`}
+            {info?.teammate && ` · by ${info.teammate.name}`}
+            {parent && <span className="font-mono"> · {parent}</span>}
+          </>
+        }
+        {...(!all && info?.manifest?.description ? { description: info.manifest.description } : {})}
+        {...(libraryLink
+          ? { libraryHref: `/app/library?design=${encodeURIComponent(current)}` }
+          : {})}
+        controls={
+          <>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              tooltip={expanded ? 'Back to the panel' : 'Expand'}
+              aria-label={expanded ? 'Back to the panel' : 'Expand'}
+              // Below xl the panel is the whole screen already.
+              className="max-xl:hidden"
+              onClick={() => setExpanded(!expanded)}
+            >
+              {expanded ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={onClose}
+              aria-label="Close design"
+            >
+              <X aria-hidden />
+            </Button>
+          </>
+        }
       />
-      {start && <StartThreadDialog start={start} onClose={() => setStart(undefined)} />}
+      {start && !hidden && <StartThreadDialog start={start} onClose={() => setStart(undefined)} />}
     </SidePanel>
   )
 }

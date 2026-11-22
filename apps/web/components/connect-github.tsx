@@ -8,12 +8,13 @@ import { ProviderTile } from '@/components/provider-logo'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { api, useApi, type ConnectionsResponse } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 
 /** Whether the workspace reaches GitHub. */
 export type GitHubState = 'loading' | 'connected' | 'needs_reauth' | 'none' | 'unavailable'
 
 export function useGitHub(): GitHubState {
-  const { data } = useApi<ConnectionsResponse>('/connections')
+  const { data } = useApi<ConnectionsResponse>('/connections', ['connections.updated'])
   if (!data) return 'loading'
   const github = data.connections.filter((c) => c.kind === 'github')
   if (github.some((c) => c.status === 'active')) return 'connected'
@@ -57,7 +58,9 @@ export function ConnectGitHub({ state }: { state: Exclude<GitHubState, 'loading'
         (admin ? (
           state === 'needs_reauth' ? (
             <Button asChild>
-              <Link href="/app/connections">Open Apps</Link>
+              <Link href="/app/connections" onClick={(e) => clickSettings(e, '/app/connections')}>
+                Open Apps
+              </Link>
             </Button>
           ) : (
             <Button onClick={() => void connect()}>Connect GitHub</Button>

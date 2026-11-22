@@ -30,7 +30,16 @@ export type MemberMinAggregateOutputType = {
   userId: string | null
   role: string | null
   createdAt: Date | null
+  removingAt: Date | null
   notify: $Enums.NotifyPreset | null
+  suggestions: boolean | null
+  autoMerge: boolean | null
+  previewMachines: boolean | null
+  chiefAnswers: boolean | null
+  chiefAutoChangedAt: Date | null
+  chiefPass: boolean | null
+  chiefRules: string | null
+  timezone: string | null
 }
 
 export type MemberMaxAggregateOutputType = {
@@ -39,7 +48,16 @@ export type MemberMaxAggregateOutputType = {
   userId: string | null
   role: string | null
   createdAt: Date | null
+  removingAt: Date | null
   notify: $Enums.NotifyPreset | null
+  suggestions: boolean | null
+  autoMerge: boolean | null
+  previewMachines: boolean | null
+  chiefAnswers: boolean | null
+  chiefAutoChangedAt: Date | null
+  chiefPass: boolean | null
+  chiefRules: string | null
+  timezone: string | null
 }
 
 export type MemberCountAggregateOutputType = {
@@ -48,7 +66,18 @@ export type MemberCountAggregateOutputType = {
   userId: number
   role: number
   createdAt: number
+  removingAt: number
   notify: number
+  suggestions: number
+  autoMerge: number
+  previewMachines: number
+  chiefAnswers: number
+  chiefAuto: number
+  chiefAutoChangedAt: number
+  chiefPass: number
+  chiefRules: number
+  chiefRulesRefused: number
+  timezone: number
   _all: number
 }
 
@@ -59,7 +88,16 @@ export type MemberMinAggregateInputType = {
   userId?: true
   role?: true
   createdAt?: true
+  removingAt?: true
   notify?: true
+  suggestions?: true
+  autoMerge?: true
+  previewMachines?: true
+  chiefAnswers?: true
+  chiefAutoChangedAt?: true
+  chiefPass?: true
+  chiefRules?: true
+  timezone?: true
 }
 
 export type MemberMaxAggregateInputType = {
@@ -68,7 +106,16 @@ export type MemberMaxAggregateInputType = {
   userId?: true
   role?: true
   createdAt?: true
+  removingAt?: true
   notify?: true
+  suggestions?: true
+  autoMerge?: true
+  previewMachines?: true
+  chiefAnswers?: true
+  chiefAutoChangedAt?: true
+  chiefPass?: true
+  chiefRules?: true
+  timezone?: true
 }
 
 export type MemberCountAggregateInputType = {
@@ -77,7 +124,18 @@ export type MemberCountAggregateInputType = {
   userId?: true
   role?: true
   createdAt?: true
+  removingAt?: true
   notify?: true
+  suggestions?: true
+  autoMerge?: true
+  previewMachines?: true
+  chiefAnswers?: true
+  chiefAuto?: true
+  chiefAutoChangedAt?: true
+  chiefPass?: true
+  chiefRules?: true
+  chiefRulesRefused?: true
+  timezone?: true
   _all?: true
 }
 
@@ -159,7 +217,18 @@ export type MemberGroupByOutputType = {
   userId: string
   role: string
   createdAt: Date
+  removingAt: Date | null
   notify: $Enums.NotifyPreset
+  suggestions: boolean
+  autoMerge: boolean
+  previewMachines: boolean
+  chiefAnswers: boolean
+  chiefAuto: string[]
+  chiefAutoChangedAt: Date | null
+  chiefPass: boolean
+  chiefRules: string | null
+  chiefRulesRefused: string[]
+  timezone: string | null
   _count: MemberCountAggregateOutputType | null
   _min: MemberMinAggregateOutputType | null
   _max: MemberMaxAggregateOutputType | null
@@ -189,7 +258,18 @@ export type MemberWhereInput = {
   userId?: Prisma.StringFilter<"Member"> | string
   role?: Prisma.StringFilter<"Member"> | string
   createdAt?: Prisma.DateTimeFilter<"Member"> | Date | string
+  removingAt?: Prisma.DateTimeNullableFilter<"Member"> | Date | string | null
   notify?: Prisma.EnumNotifyPresetFilter<"Member"> | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFilter<"Member"> | boolean
+  autoMerge?: Prisma.BoolFilter<"Member"> | boolean
+  previewMachines?: Prisma.BoolFilter<"Member"> | boolean
+  chiefAnswers?: Prisma.BoolFilter<"Member"> | boolean
+  chiefAuto?: Prisma.StringNullableListFilter<"Member">
+  chiefAutoChangedAt?: Prisma.DateTimeNullableFilter<"Member"> | Date | string | null
+  chiefPass?: Prisma.BoolFilter<"Member"> | boolean
+  chiefRules?: Prisma.StringNullableFilter<"Member"> | string | null
+  chiefRulesRefused?: Prisma.StringNullableListFilter<"Member">
+  timezone?: Prisma.StringNullableFilter<"Member"> | string | null
   organization?: Prisma.XOR<Prisma.OrganizationScalarRelationFilter, Prisma.OrganizationWhereInput>
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   computers?: Prisma.ComputerListRelationFilter
@@ -199,9 +279,17 @@ export type MemberWhereInput = {
   schedules?: Prisma.ScheduleListRelationFilter
   threadReads?: Prisma.ThreadReadListRelationFilter
   threadPins?: Prisma.ThreadPinListRelationFilter
+  documentPins?: Prisma.DocumentPinListRelationFilter
+  listPins?: Prisma.ListPinListRelationFilter
+  sidebarOrders?: Prisma.SidebarOrderListRelationFilter
+  threadLaters?: Prisma.ThreadLaterListRelationFilter
   homeDismissals?: Prisma.HomeDismissalListRelationFilter
+  chiefDecisions?: Prisma.ChiefDecisionListRelationFilter
+  chiefPasses?: Prisma.ChiefPassListRelationFilter
   pushNotices?: Prisma.PushNoticeListRelationFilter
   playbookInstallations?: Prisma.PlaybookInstallationListRelationFilter
+  themes?: Prisma.ThemeListRelationFilter
+  themeChanges?: Prisma.ThemeChangeListRelationFilter
 }
 
 export type MemberOrderByWithRelationInput = {
@@ -210,7 +298,18 @@ export type MemberOrderByWithRelationInput = {
   userId?: Prisma.SortOrder
   role?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
+  removingAt?: Prisma.SortOrderInput | Prisma.SortOrder
   notify?: Prisma.SortOrder
+  suggestions?: Prisma.SortOrder
+  autoMerge?: Prisma.SortOrder
+  previewMachines?: Prisma.SortOrder
+  chiefAnswers?: Prisma.SortOrder
+  chiefAuto?: Prisma.SortOrder
+  chiefAutoChangedAt?: Prisma.SortOrderInput | Prisma.SortOrder
+  chiefPass?: Prisma.SortOrder
+  chiefRules?: Prisma.SortOrderInput | Prisma.SortOrder
+  chiefRulesRefused?: Prisma.SortOrder
+  timezone?: Prisma.SortOrderInput | Prisma.SortOrder
   organization?: Prisma.OrganizationOrderByWithRelationInput
   user?: Prisma.UserOrderByWithRelationInput
   computers?: Prisma.ComputerOrderByRelationAggregateInput
@@ -220,9 +319,17 @@ export type MemberOrderByWithRelationInput = {
   schedules?: Prisma.ScheduleOrderByRelationAggregateInput
   threadReads?: Prisma.ThreadReadOrderByRelationAggregateInput
   threadPins?: Prisma.ThreadPinOrderByRelationAggregateInput
+  documentPins?: Prisma.DocumentPinOrderByRelationAggregateInput
+  listPins?: Prisma.ListPinOrderByRelationAggregateInput
+  sidebarOrders?: Prisma.SidebarOrderOrderByRelationAggregateInput
+  threadLaters?: Prisma.ThreadLaterOrderByRelationAggregateInput
   homeDismissals?: Prisma.HomeDismissalOrderByRelationAggregateInput
+  chiefDecisions?: Prisma.ChiefDecisionOrderByRelationAggregateInput
+  chiefPasses?: Prisma.ChiefPassOrderByRelationAggregateInput
   pushNotices?: Prisma.PushNoticeOrderByRelationAggregateInput
   playbookInstallations?: Prisma.PlaybookInstallationOrderByRelationAggregateInput
+  themes?: Prisma.ThemeOrderByRelationAggregateInput
+  themeChanges?: Prisma.ThemeChangeOrderByRelationAggregateInput
 }
 
 export type MemberWhereUniqueInput = Prisma.AtLeast<{
@@ -235,7 +342,18 @@ export type MemberWhereUniqueInput = Prisma.AtLeast<{
   userId?: Prisma.StringFilter<"Member"> | string
   role?: Prisma.StringFilter<"Member"> | string
   createdAt?: Prisma.DateTimeFilter<"Member"> | Date | string
+  removingAt?: Prisma.DateTimeNullableFilter<"Member"> | Date | string | null
   notify?: Prisma.EnumNotifyPresetFilter<"Member"> | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFilter<"Member"> | boolean
+  autoMerge?: Prisma.BoolFilter<"Member"> | boolean
+  previewMachines?: Prisma.BoolFilter<"Member"> | boolean
+  chiefAnswers?: Prisma.BoolFilter<"Member"> | boolean
+  chiefAuto?: Prisma.StringNullableListFilter<"Member">
+  chiefAutoChangedAt?: Prisma.DateTimeNullableFilter<"Member"> | Date | string | null
+  chiefPass?: Prisma.BoolFilter<"Member"> | boolean
+  chiefRules?: Prisma.StringNullableFilter<"Member"> | string | null
+  chiefRulesRefused?: Prisma.StringNullableListFilter<"Member">
+  timezone?: Prisma.StringNullableFilter<"Member"> | string | null
   organization?: Prisma.XOR<Prisma.OrganizationScalarRelationFilter, Prisma.OrganizationWhereInput>
   user?: Prisma.XOR<Prisma.UserScalarRelationFilter, Prisma.UserWhereInput>
   computers?: Prisma.ComputerListRelationFilter
@@ -245,9 +363,17 @@ export type MemberWhereUniqueInput = Prisma.AtLeast<{
   schedules?: Prisma.ScheduleListRelationFilter
   threadReads?: Prisma.ThreadReadListRelationFilter
   threadPins?: Prisma.ThreadPinListRelationFilter
+  documentPins?: Prisma.DocumentPinListRelationFilter
+  listPins?: Prisma.ListPinListRelationFilter
+  sidebarOrders?: Prisma.SidebarOrderListRelationFilter
+  threadLaters?: Prisma.ThreadLaterListRelationFilter
   homeDismissals?: Prisma.HomeDismissalListRelationFilter
+  chiefDecisions?: Prisma.ChiefDecisionListRelationFilter
+  chiefPasses?: Prisma.ChiefPassListRelationFilter
   pushNotices?: Prisma.PushNoticeListRelationFilter
   playbookInstallations?: Prisma.PlaybookInstallationListRelationFilter
+  themes?: Prisma.ThemeListRelationFilter
+  themeChanges?: Prisma.ThemeChangeListRelationFilter
 }, "id" | "organizationId_userId">
 
 export type MemberOrderByWithAggregationInput = {
@@ -256,7 +382,18 @@ export type MemberOrderByWithAggregationInput = {
   userId?: Prisma.SortOrder
   role?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
+  removingAt?: Prisma.SortOrderInput | Prisma.SortOrder
   notify?: Prisma.SortOrder
+  suggestions?: Prisma.SortOrder
+  autoMerge?: Prisma.SortOrder
+  previewMachines?: Prisma.SortOrder
+  chiefAnswers?: Prisma.SortOrder
+  chiefAuto?: Prisma.SortOrder
+  chiefAutoChangedAt?: Prisma.SortOrderInput | Prisma.SortOrder
+  chiefPass?: Prisma.SortOrder
+  chiefRules?: Prisma.SortOrderInput | Prisma.SortOrder
+  chiefRulesRefused?: Prisma.SortOrder
+  timezone?: Prisma.SortOrderInput | Prisma.SortOrder
   _count?: Prisma.MemberCountOrderByAggregateInput
   _max?: Prisma.MemberMaxOrderByAggregateInput
   _min?: Prisma.MemberMinOrderByAggregateInput
@@ -271,14 +408,36 @@ export type MemberScalarWhereWithAggregatesInput = {
   userId?: Prisma.StringWithAggregatesFilter<"Member"> | string
   role?: Prisma.StringWithAggregatesFilter<"Member"> | string
   createdAt?: Prisma.DateTimeWithAggregatesFilter<"Member"> | Date | string
+  removingAt?: Prisma.DateTimeNullableWithAggregatesFilter<"Member"> | Date | string | null
   notify?: Prisma.EnumNotifyPresetWithAggregatesFilter<"Member"> | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolWithAggregatesFilter<"Member"> | boolean
+  autoMerge?: Prisma.BoolWithAggregatesFilter<"Member"> | boolean
+  previewMachines?: Prisma.BoolWithAggregatesFilter<"Member"> | boolean
+  chiefAnswers?: Prisma.BoolWithAggregatesFilter<"Member"> | boolean
+  chiefAuto?: Prisma.StringNullableListFilter<"Member">
+  chiefAutoChangedAt?: Prisma.DateTimeNullableWithAggregatesFilter<"Member"> | Date | string | null
+  chiefPass?: Prisma.BoolWithAggregatesFilter<"Member"> | boolean
+  chiefRules?: Prisma.StringNullableWithAggregatesFilter<"Member"> | string | null
+  chiefRulesRefused?: Prisma.StringNullableListFilter<"Member">
+  timezone?: Prisma.StringNullableWithAggregatesFilter<"Member"> | string | null
 }
 
 export type MemberCreateInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -288,9 +447,17 @@ export type MemberCreateInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateInput = {
@@ -299,7 +466,18 @@ export type MemberUncheckedCreateInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
@@ -307,16 +485,35 @@ export type MemberUncheckedCreateInput = {
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUpdateInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -326,9 +523,17 @@ export type MemberUpdateInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateInput = {
@@ -337,7 +542,18 @@ export type MemberUncheckedUpdateInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
@@ -345,9 +561,17 @@ export type MemberUncheckedUpdateInput = {
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberCreateManyInput = {
@@ -356,14 +580,36 @@ export type MemberCreateManyInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
 }
 
 export type MemberUpdateManyMutationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type MemberUncheckedUpdateManyInput = {
@@ -372,7 +618,18 @@ export type MemberUncheckedUpdateManyInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type MemberListRelationFilter = {
@@ -383,6 +640,14 @@ export type MemberListRelationFilter = {
 
 export type MemberOrderByRelationAggregateInput = {
   _count?: Prisma.SortOrder
+}
+
+export type StringNullableListFilter<$PrismaModel = never> = {
+  equals?: string[] | Prisma.ListStringFieldRefInput<$PrismaModel> | null
+  has?: string | Prisma.StringFieldRefInput<$PrismaModel> | null
+  hasEvery?: string[] | Prisma.ListStringFieldRefInput<$PrismaModel>
+  hasSome?: string[] | Prisma.ListStringFieldRefInput<$PrismaModel>
+  isEmpty?: boolean
 }
 
 export type MemberOrganizationIdUserIdCompoundUniqueInput = {
@@ -396,7 +661,18 @@ export type MemberCountOrderByAggregateInput = {
   userId?: Prisma.SortOrder
   role?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
+  removingAt?: Prisma.SortOrder
   notify?: Prisma.SortOrder
+  suggestions?: Prisma.SortOrder
+  autoMerge?: Prisma.SortOrder
+  previewMachines?: Prisma.SortOrder
+  chiefAnswers?: Prisma.SortOrder
+  chiefAuto?: Prisma.SortOrder
+  chiefAutoChangedAt?: Prisma.SortOrder
+  chiefPass?: Prisma.SortOrder
+  chiefRules?: Prisma.SortOrder
+  chiefRulesRefused?: Prisma.SortOrder
+  timezone?: Prisma.SortOrder
 }
 
 export type MemberMaxOrderByAggregateInput = {
@@ -405,7 +681,16 @@ export type MemberMaxOrderByAggregateInput = {
   userId?: Prisma.SortOrder
   role?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
+  removingAt?: Prisma.SortOrder
   notify?: Prisma.SortOrder
+  suggestions?: Prisma.SortOrder
+  autoMerge?: Prisma.SortOrder
+  previewMachines?: Prisma.SortOrder
+  chiefAnswers?: Prisma.SortOrder
+  chiefAutoChangedAt?: Prisma.SortOrder
+  chiefPass?: Prisma.SortOrder
+  chiefRules?: Prisma.SortOrder
+  timezone?: Prisma.SortOrder
 }
 
 export type MemberMinOrderByAggregateInput = {
@@ -414,7 +699,16 @@ export type MemberMinOrderByAggregateInput = {
   userId?: Prisma.SortOrder
   role?: Prisma.SortOrder
   createdAt?: Prisma.SortOrder
+  removingAt?: Prisma.SortOrder
   notify?: Prisma.SortOrder
+  suggestions?: Prisma.SortOrder
+  autoMerge?: Prisma.SortOrder
+  previewMachines?: Prisma.SortOrder
+  chiefAnswers?: Prisma.SortOrder
+  chiefAutoChangedAt?: Prisma.SortOrder
+  chiefPass?: Prisma.SortOrder
+  chiefRules?: Prisma.SortOrder
+  timezone?: Prisma.SortOrder
 }
 
 export type MemberNullableScalarRelationFilter = {
@@ -511,8 +805,26 @@ export type MemberUncheckedUpdateManyWithoutOrganizationNestedInput = {
   deleteMany?: Prisma.MemberScalarWhereInput | Prisma.MemberScalarWhereInput[]
 }
 
+export type MemberCreatechiefAutoInput = {
+  set: string[]
+}
+
+export type MemberCreatechiefRulesRefusedInput = {
+  set: string[]
+}
+
 export type EnumNotifyPresetFieldUpdateOperationsInput = {
   set?: $Enums.NotifyPreset
+}
+
+export type MemberUpdatechiefAutoInput = {
+  set?: string[]
+  push?: string | string[]
+}
+
+export type MemberUpdatechiefRulesRefusedInput = {
+  set?: string[]
+  push?: string | string[]
 }
 
 export type MemberCreateNestedOneWithoutComputersInput = {
@@ -557,6 +869,34 @@ export type MemberUpdateOneRequiredWithoutThreadPinsNestedInput = {
   upsert?: Prisma.MemberUpsertWithoutThreadPinsInput
   connect?: Prisma.MemberWhereUniqueInput
   update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutThreadPinsInput, Prisma.MemberUpdateWithoutThreadPinsInput>, Prisma.MemberUncheckedUpdateWithoutThreadPinsInput>
+}
+
+export type MemberCreateNestedOneWithoutSidebarOrdersInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutSidebarOrdersInput, Prisma.MemberUncheckedCreateWithoutSidebarOrdersInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutSidebarOrdersInput
+  connect?: Prisma.MemberWhereUniqueInput
+}
+
+export type MemberUpdateOneRequiredWithoutSidebarOrdersNestedInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutSidebarOrdersInput, Prisma.MemberUncheckedCreateWithoutSidebarOrdersInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutSidebarOrdersInput
+  upsert?: Prisma.MemberUpsertWithoutSidebarOrdersInput
+  connect?: Prisma.MemberWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutSidebarOrdersInput, Prisma.MemberUpdateWithoutSidebarOrdersInput>, Prisma.MemberUncheckedUpdateWithoutSidebarOrdersInput>
+}
+
+export type MemberCreateNestedOneWithoutThreadLatersInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutThreadLatersInput, Prisma.MemberUncheckedCreateWithoutThreadLatersInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutThreadLatersInput
+  connect?: Prisma.MemberWhereUniqueInput
+}
+
+export type MemberUpdateOneRequiredWithoutThreadLatersNestedInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutThreadLatersInput, Prisma.MemberUncheckedCreateWithoutThreadLatersInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutThreadLatersInput
+  upsert?: Prisma.MemberUpsertWithoutThreadLatersInput
+  connect?: Prisma.MemberWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutThreadLatersInput, Prisma.MemberUpdateWithoutThreadLatersInput>, Prisma.MemberUncheckedUpdateWithoutThreadLatersInput>
 }
 
 export type MemberCreateNestedOneWithoutHomeDismissalsInput = {
@@ -615,6 +955,34 @@ export type MemberUpdateOneRequiredWithoutSchedulesNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutSchedulesInput, Prisma.MemberUpdateWithoutSchedulesInput>, Prisma.MemberUncheckedUpdateWithoutSchedulesInput>
 }
 
+export type MemberCreateNestedOneWithoutChiefDecisionsInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutChiefDecisionsInput, Prisma.MemberUncheckedCreateWithoutChiefDecisionsInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutChiefDecisionsInput
+  connect?: Prisma.MemberWhereUniqueInput
+}
+
+export type MemberUpdateOneRequiredWithoutChiefDecisionsNestedInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutChiefDecisionsInput, Prisma.MemberUncheckedCreateWithoutChiefDecisionsInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutChiefDecisionsInput
+  upsert?: Prisma.MemberUpsertWithoutChiefDecisionsInput
+  connect?: Prisma.MemberWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutChiefDecisionsInput, Prisma.MemberUpdateWithoutChiefDecisionsInput>, Prisma.MemberUncheckedUpdateWithoutChiefDecisionsInput>
+}
+
+export type MemberCreateNestedOneWithoutChiefPassesInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutChiefPassesInput, Prisma.MemberUncheckedCreateWithoutChiefPassesInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutChiefPassesInput
+  connect?: Prisma.MemberWhereUniqueInput
+}
+
+export type MemberUpdateOneRequiredWithoutChiefPassesNestedInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutChiefPassesInput, Prisma.MemberUncheckedCreateWithoutChiefPassesInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutChiefPassesInput
+  upsert?: Prisma.MemberUpsertWithoutChiefPassesInput
+  connect?: Prisma.MemberWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutChiefPassesInput, Prisma.MemberUpdateWithoutChiefPassesInput>, Prisma.MemberUncheckedUpdateWithoutChiefPassesInput>
+}
+
 export type MemberCreateNestedOneWithoutAccountsInput = {
   create?: Prisma.XOR<Prisma.MemberCreateWithoutAccountsInput, Prisma.MemberUncheckedCreateWithoutAccountsInput>
   connectOrCreate?: Prisma.MemberCreateOrConnectWithoutAccountsInput
@@ -627,6 +995,62 @@ export type MemberUpdateOneRequiredWithoutAccountsNestedInput = {
   upsert?: Prisma.MemberUpsertWithoutAccountsInput
   connect?: Prisma.MemberWhereUniqueInput
   update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutAccountsInput, Prisma.MemberUpdateWithoutAccountsInput>, Prisma.MemberUncheckedUpdateWithoutAccountsInput>
+}
+
+export type MemberCreateNestedOneWithoutListPinsInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutListPinsInput, Prisma.MemberUncheckedCreateWithoutListPinsInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutListPinsInput
+  connect?: Prisma.MemberWhereUniqueInput
+}
+
+export type MemberUpdateOneRequiredWithoutListPinsNestedInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutListPinsInput, Prisma.MemberUncheckedCreateWithoutListPinsInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutListPinsInput
+  upsert?: Prisma.MemberUpsertWithoutListPinsInput
+  connect?: Prisma.MemberWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutListPinsInput, Prisma.MemberUpdateWithoutListPinsInput>, Prisma.MemberUncheckedUpdateWithoutListPinsInput>
+}
+
+export type MemberCreateNestedOneWithoutDocumentPinsInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutDocumentPinsInput, Prisma.MemberUncheckedCreateWithoutDocumentPinsInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutDocumentPinsInput
+  connect?: Prisma.MemberWhereUniqueInput
+}
+
+export type MemberUpdateOneRequiredWithoutDocumentPinsNestedInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutDocumentPinsInput, Prisma.MemberUncheckedCreateWithoutDocumentPinsInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutDocumentPinsInput
+  upsert?: Prisma.MemberUpsertWithoutDocumentPinsInput
+  connect?: Prisma.MemberWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutDocumentPinsInput, Prisma.MemberUpdateWithoutDocumentPinsInput>, Prisma.MemberUncheckedUpdateWithoutDocumentPinsInput>
+}
+
+export type MemberCreateNestedOneWithoutThemesInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutThemesInput, Prisma.MemberUncheckedCreateWithoutThemesInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutThemesInput
+  connect?: Prisma.MemberWhereUniqueInput
+}
+
+export type MemberUpdateOneRequiredWithoutThemesNestedInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutThemesInput, Prisma.MemberUncheckedCreateWithoutThemesInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutThemesInput
+  upsert?: Prisma.MemberUpsertWithoutThemesInput
+  connect?: Prisma.MemberWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutThemesInput, Prisma.MemberUpdateWithoutThemesInput>, Prisma.MemberUncheckedUpdateWithoutThemesInput>
+}
+
+export type MemberCreateNestedOneWithoutThemeChangesInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutThemeChangesInput, Prisma.MemberUncheckedCreateWithoutThemeChangesInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutThemeChangesInput
+  connect?: Prisma.MemberWhereUniqueInput
+}
+
+export type MemberUpdateOneRequiredWithoutThemeChangesNestedInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutThemeChangesInput, Prisma.MemberUncheckedCreateWithoutThemeChangesInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutThemeChangesInput
+  upsert?: Prisma.MemberUpsertWithoutThemeChangesInput
+  connect?: Prisma.MemberWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutThemeChangesInput, Prisma.MemberUpdateWithoutThemeChangesInput>, Prisma.MemberUncheckedUpdateWithoutThemeChangesInput>
 }
 
 export type MemberCreateNestedOneWithoutPushNoticesInput = {
@@ -661,7 +1085,18 @@ export type MemberCreateWithoutUserInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
@@ -670,9 +1105,17 @@ export type MemberCreateWithoutUserInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutUserInput = {
@@ -680,7 +1123,18 @@ export type MemberUncheckedCreateWithoutUserInput = {
   organizationId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
@@ -688,9 +1142,17 @@ export type MemberUncheckedCreateWithoutUserInput = {
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutUserInput = {
@@ -728,14 +1190,36 @@ export type MemberScalarWhereInput = {
   userId?: Prisma.StringFilter<"Member"> | string
   role?: Prisma.StringFilter<"Member"> | string
   createdAt?: Prisma.DateTimeFilter<"Member"> | Date | string
+  removingAt?: Prisma.DateTimeNullableFilter<"Member"> | Date | string | null
   notify?: Prisma.EnumNotifyPresetFilter<"Member"> | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFilter<"Member"> | boolean
+  autoMerge?: Prisma.BoolFilter<"Member"> | boolean
+  previewMachines?: Prisma.BoolFilter<"Member"> | boolean
+  chiefAnswers?: Prisma.BoolFilter<"Member"> | boolean
+  chiefAuto?: Prisma.StringNullableListFilter<"Member">
+  chiefAutoChangedAt?: Prisma.DateTimeNullableFilter<"Member"> | Date | string | null
+  chiefPass?: Prisma.BoolFilter<"Member"> | boolean
+  chiefRules?: Prisma.StringNullableFilter<"Member"> | string | null
+  chiefRulesRefused?: Prisma.StringNullableListFilter<"Member">
+  timezone?: Prisma.StringNullableFilter<"Member"> | string | null
 }
 
 export type MemberCreateWithoutOrganizationInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
@@ -744,9 +1228,17 @@ export type MemberCreateWithoutOrganizationInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutOrganizationInput = {
@@ -754,7 +1246,18 @@ export type MemberUncheckedCreateWithoutOrganizationInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
@@ -762,9 +1265,17 @@ export type MemberUncheckedCreateWithoutOrganizationInput = {
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutOrganizationInput = {
@@ -797,7 +1308,18 @@ export type MemberCreateWithoutComputersInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
@@ -806,9 +1328,17 @@ export type MemberCreateWithoutComputersInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutComputersInput = {
@@ -817,16 +1347,35 @@ export type MemberUncheckedCreateWithoutComputersInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
   tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutComputersInput = {
@@ -849,7 +1398,18 @@ export type MemberUpdateWithoutComputersInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
@@ -858,9 +1418,17 @@ export type MemberUpdateWithoutComputersInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutComputersInput = {
@@ -869,23 +1437,53 @@ export type MemberUncheckedUpdateWithoutComputersInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
   tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberCreateWithoutThreadReadsInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -894,9 +1492,17 @@ export type MemberCreateWithoutThreadReadsInput = {
   tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutThreadReadsInput = {
@@ -905,16 +1511,35 @@ export type MemberUncheckedCreateWithoutThreadReadsInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
   tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutThreadReadsInput = {
@@ -937,7 +1562,18 @@ export type MemberUpdateWithoutThreadReadsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -946,9 +1582,17 @@ export type MemberUpdateWithoutThreadReadsInput = {
   tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutThreadReadsInput = {
@@ -957,23 +1601,53 @@ export type MemberUncheckedUpdateWithoutThreadReadsInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
   tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberCreateWithoutThreadPinsInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -982,9 +1656,17 @@ export type MemberCreateWithoutThreadPinsInput = {
   tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutThreadPinsInput = {
@@ -993,16 +1675,35 @@ export type MemberUncheckedCreateWithoutThreadPinsInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
   tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutThreadPinsInput = {
@@ -1025,7 +1726,18 @@ export type MemberUpdateWithoutThreadPinsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -1034,9 +1746,17 @@ export type MemberUpdateWithoutThreadPinsInput = {
   tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutThreadPinsInput = {
@@ -1045,23 +1765,53 @@ export type MemberUncheckedUpdateWithoutThreadPinsInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
   tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
-export type MemberCreateWithoutHomeDismissalsInput = {
+export type MemberCreateWithoutSidebarOrdersInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -1071,8 +1821,344 @@ export type MemberCreateWithoutHomeDismissalsInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
+}
+
+export type MemberUncheckedCreateWithoutSidebarOrdersInput = {
+  id: string
+  organizationId: string
+  userId: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
+}
+
+export type MemberCreateOrConnectWithoutSidebarOrdersInput = {
+  where: Prisma.MemberWhereUniqueInput
+  create: Prisma.XOR<Prisma.MemberCreateWithoutSidebarOrdersInput, Prisma.MemberUncheckedCreateWithoutSidebarOrdersInput>
+}
+
+export type MemberUpsertWithoutSidebarOrdersInput = {
+  update: Prisma.XOR<Prisma.MemberUpdateWithoutSidebarOrdersInput, Prisma.MemberUncheckedUpdateWithoutSidebarOrdersInput>
+  create: Prisma.XOR<Prisma.MemberCreateWithoutSidebarOrdersInput, Prisma.MemberUncheckedCreateWithoutSidebarOrdersInput>
+  where?: Prisma.MemberWhereInput
+}
+
+export type MemberUpdateToOneWithWhereWithoutSidebarOrdersInput = {
+  where?: Prisma.MemberWhereInput
+  data: Prisma.XOR<Prisma.MemberUpdateWithoutSidebarOrdersInput, Prisma.MemberUncheckedUpdateWithoutSidebarOrdersInput>
+}
+
+export type MemberUpdateWithoutSidebarOrdersInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
+  user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberUncheckedUpdateWithoutSidebarOrdersInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberCreateWithoutThreadLatersInput = {
+  id: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
+  user: Prisma.UserCreateNestedOneWithoutMembersInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
+}
+
+export type MemberUncheckedCreateWithoutThreadLatersInput = {
+  id: string
+  organizationId: string
+  userId: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
+}
+
+export type MemberCreateOrConnectWithoutThreadLatersInput = {
+  where: Prisma.MemberWhereUniqueInput
+  create: Prisma.XOR<Prisma.MemberCreateWithoutThreadLatersInput, Prisma.MemberUncheckedCreateWithoutThreadLatersInput>
+}
+
+export type MemberUpsertWithoutThreadLatersInput = {
+  update: Prisma.XOR<Prisma.MemberUpdateWithoutThreadLatersInput, Prisma.MemberUncheckedUpdateWithoutThreadLatersInput>
+  create: Prisma.XOR<Prisma.MemberCreateWithoutThreadLatersInput, Prisma.MemberUncheckedCreateWithoutThreadLatersInput>
+  where?: Prisma.MemberWhereInput
+}
+
+export type MemberUpdateToOneWithWhereWithoutThreadLatersInput = {
+  where?: Prisma.MemberWhereInput
+  data: Prisma.XOR<Prisma.MemberUpdateWithoutThreadLatersInput, Prisma.MemberUncheckedUpdateWithoutThreadLatersInput>
+}
+
+export type MemberUpdateWithoutThreadLatersInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
+  user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberUncheckedUpdateWithoutThreadLatersInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberCreateWithoutHomeDismissalsInput = {
+  id: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
+  user: Prisma.UserCreateNestedOneWithoutMembersInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutHomeDismissalsInput = {
@@ -1081,7 +2167,18 @@ export type MemberUncheckedCreateWithoutHomeDismissalsInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
@@ -1089,8 +2186,16 @@ export type MemberUncheckedCreateWithoutHomeDismissalsInput = {
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutHomeDismissalsInput = {
@@ -1113,7 +2218,18 @@ export type MemberUpdateWithoutHomeDismissalsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -1123,8 +2239,16 @@ export type MemberUpdateWithoutHomeDismissalsInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutHomeDismissalsInput = {
@@ -1133,7 +2257,18 @@ export type MemberUncheckedUpdateWithoutHomeDismissalsInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
@@ -1141,15 +2276,34 @@ export type MemberUncheckedUpdateWithoutHomeDismissalsInput = {
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberCreateWithoutSessionsInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -1158,9 +2312,17 @@ export type MemberCreateWithoutSessionsInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutSessionsInput = {
@@ -1169,16 +2331,35 @@ export type MemberUncheckedCreateWithoutSessionsInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutSessionsInput = {
@@ -1201,7 +2382,18 @@ export type MemberUpdateWithoutSessionsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -1210,9 +2402,17 @@ export type MemberUpdateWithoutSessionsInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutSessionsInput = {
@@ -1221,23 +2421,53 @@ export type MemberUncheckedUpdateWithoutSessionsInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberCreateWithoutTasksInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -1246,9 +2476,17 @@ export type MemberCreateWithoutTasksInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutTasksInput = {
@@ -1257,16 +2495,35 @@ export type MemberUncheckedCreateWithoutTasksInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutTasksInput = {
@@ -1289,7 +2546,18 @@ export type MemberUpdateWithoutTasksInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -1298,9 +2566,17 @@ export type MemberUpdateWithoutTasksInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutTasksInput = {
@@ -1309,23 +2585,53 @@ export type MemberUncheckedUpdateWithoutTasksInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberCreateWithoutSchedulesInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -1334,9 +2640,17 @@ export type MemberCreateWithoutSchedulesInput = {
   tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutSchedulesInput = {
@@ -1345,16 +2659,35 @@ export type MemberUncheckedCreateWithoutSchedulesInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
   tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutSchedulesInput = {
@@ -1377,7 +2710,18 @@ export type MemberUpdateWithoutSchedulesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -1386,9 +2730,17 @@ export type MemberUpdateWithoutSchedulesInput = {
   tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutSchedulesInput = {
@@ -1397,23 +2749,381 @@ export type MemberUncheckedUpdateWithoutSchedulesInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
   tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberCreateWithoutChiefDecisionsInput = {
+  id: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
+  user: Prisma.UserCreateNestedOneWithoutMembersInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
+}
+
+export type MemberUncheckedCreateWithoutChiefDecisionsInput = {
+  id: string
+  organizationId: string
+  userId: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
+}
+
+export type MemberCreateOrConnectWithoutChiefDecisionsInput = {
+  where: Prisma.MemberWhereUniqueInput
+  create: Prisma.XOR<Prisma.MemberCreateWithoutChiefDecisionsInput, Prisma.MemberUncheckedCreateWithoutChiefDecisionsInput>
+}
+
+export type MemberUpsertWithoutChiefDecisionsInput = {
+  update: Prisma.XOR<Prisma.MemberUpdateWithoutChiefDecisionsInput, Prisma.MemberUncheckedUpdateWithoutChiefDecisionsInput>
+  create: Prisma.XOR<Prisma.MemberCreateWithoutChiefDecisionsInput, Prisma.MemberUncheckedCreateWithoutChiefDecisionsInput>
+  where?: Prisma.MemberWhereInput
+}
+
+export type MemberUpdateToOneWithWhereWithoutChiefDecisionsInput = {
+  where?: Prisma.MemberWhereInput
+  data: Prisma.XOR<Prisma.MemberUpdateWithoutChiefDecisionsInput, Prisma.MemberUncheckedUpdateWithoutChiefDecisionsInput>
+}
+
+export type MemberUpdateWithoutChiefDecisionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
+  user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberUncheckedUpdateWithoutChiefDecisionsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberCreateWithoutChiefPassesInput = {
+  id: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
+  user: Prisma.UserCreateNestedOneWithoutMembersInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
+}
+
+export type MemberUncheckedCreateWithoutChiefPassesInput = {
+  id: string
+  organizationId: string
+  userId: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
+}
+
+export type MemberCreateOrConnectWithoutChiefPassesInput = {
+  where: Prisma.MemberWhereUniqueInput
+  create: Prisma.XOR<Prisma.MemberCreateWithoutChiefPassesInput, Prisma.MemberUncheckedCreateWithoutChiefPassesInput>
+}
+
+export type MemberUpsertWithoutChiefPassesInput = {
+  update: Prisma.XOR<Prisma.MemberUpdateWithoutChiefPassesInput, Prisma.MemberUncheckedUpdateWithoutChiefPassesInput>
+  create: Prisma.XOR<Prisma.MemberCreateWithoutChiefPassesInput, Prisma.MemberUncheckedCreateWithoutChiefPassesInput>
+  where?: Prisma.MemberWhereInput
+}
+
+export type MemberUpdateToOneWithWhereWithoutChiefPassesInput = {
+  where?: Prisma.MemberWhereInput
+  data: Prisma.XOR<Prisma.MemberUpdateWithoutChiefPassesInput, Prisma.MemberUncheckedUpdateWithoutChiefPassesInput>
+}
+
+export type MemberUpdateWithoutChiefPassesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
+  user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberUncheckedUpdateWithoutChiefPassesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberCreateWithoutAccountsInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -1422,9 +3132,17 @@ export type MemberCreateWithoutAccountsInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutAccountsInput = {
@@ -1433,16 +3151,35 @@ export type MemberUncheckedCreateWithoutAccountsInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
   tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutAccountsInput = {
@@ -1465,7 +3202,18 @@ export type MemberUpdateWithoutAccountsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -1474,9 +3222,17 @@ export type MemberUpdateWithoutAccountsInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutAccountsInput = {
@@ -1485,23 +3241,53 @@ export type MemberUncheckedUpdateWithoutAccountsInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
   tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
-export type MemberCreateWithoutPushNoticesInput = {
+export type MemberCreateWithoutListPinsInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -1511,8 +3297,672 @@ export type MemberCreateWithoutPushNoticesInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
+}
+
+export type MemberUncheckedCreateWithoutListPinsInput = {
+  id: string
+  organizationId: string
+  userId: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
+}
+
+export type MemberCreateOrConnectWithoutListPinsInput = {
+  where: Prisma.MemberWhereUniqueInput
+  create: Prisma.XOR<Prisma.MemberCreateWithoutListPinsInput, Prisma.MemberUncheckedCreateWithoutListPinsInput>
+}
+
+export type MemberUpsertWithoutListPinsInput = {
+  update: Prisma.XOR<Prisma.MemberUpdateWithoutListPinsInput, Prisma.MemberUncheckedUpdateWithoutListPinsInput>
+  create: Prisma.XOR<Prisma.MemberCreateWithoutListPinsInput, Prisma.MemberUncheckedCreateWithoutListPinsInput>
+  where?: Prisma.MemberWhereInput
+}
+
+export type MemberUpdateToOneWithWhereWithoutListPinsInput = {
+  where?: Prisma.MemberWhereInput
+  data: Prisma.XOR<Prisma.MemberUpdateWithoutListPinsInput, Prisma.MemberUncheckedUpdateWithoutListPinsInput>
+}
+
+export type MemberUpdateWithoutListPinsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
+  user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberUncheckedUpdateWithoutListPinsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberCreateWithoutDocumentPinsInput = {
+  id: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
+  user: Prisma.UserCreateNestedOneWithoutMembersInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
+}
+
+export type MemberUncheckedCreateWithoutDocumentPinsInput = {
+  id: string
+  organizationId: string
+  userId: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
+}
+
+export type MemberCreateOrConnectWithoutDocumentPinsInput = {
+  where: Prisma.MemberWhereUniqueInput
+  create: Prisma.XOR<Prisma.MemberCreateWithoutDocumentPinsInput, Prisma.MemberUncheckedCreateWithoutDocumentPinsInput>
+}
+
+export type MemberUpsertWithoutDocumentPinsInput = {
+  update: Prisma.XOR<Prisma.MemberUpdateWithoutDocumentPinsInput, Prisma.MemberUncheckedUpdateWithoutDocumentPinsInput>
+  create: Prisma.XOR<Prisma.MemberCreateWithoutDocumentPinsInput, Prisma.MemberUncheckedCreateWithoutDocumentPinsInput>
+  where?: Prisma.MemberWhereInput
+}
+
+export type MemberUpdateToOneWithWhereWithoutDocumentPinsInput = {
+  where?: Prisma.MemberWhereInput
+  data: Prisma.XOR<Prisma.MemberUpdateWithoutDocumentPinsInput, Prisma.MemberUncheckedUpdateWithoutDocumentPinsInput>
+}
+
+export type MemberUpdateWithoutDocumentPinsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
+  user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberUncheckedUpdateWithoutDocumentPinsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberCreateWithoutThemesInput = {
+  id: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
+  user: Prisma.UserCreateNestedOneWithoutMembersInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
+}
+
+export type MemberUncheckedCreateWithoutThemesInput = {
+  id: string
+  organizationId: string
+  userId: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
+}
+
+export type MemberCreateOrConnectWithoutThemesInput = {
+  where: Prisma.MemberWhereUniqueInput
+  create: Prisma.XOR<Prisma.MemberCreateWithoutThemesInput, Prisma.MemberUncheckedCreateWithoutThemesInput>
+}
+
+export type MemberUpsertWithoutThemesInput = {
+  update: Prisma.XOR<Prisma.MemberUpdateWithoutThemesInput, Prisma.MemberUncheckedUpdateWithoutThemesInput>
+  create: Prisma.XOR<Prisma.MemberCreateWithoutThemesInput, Prisma.MemberUncheckedCreateWithoutThemesInput>
+  where?: Prisma.MemberWhereInput
+}
+
+export type MemberUpdateToOneWithWhereWithoutThemesInput = {
+  where?: Prisma.MemberWhereInput
+  data: Prisma.XOR<Prisma.MemberUpdateWithoutThemesInput, Prisma.MemberUncheckedUpdateWithoutThemesInput>
+}
+
+export type MemberUpdateWithoutThemesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
+  user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberUncheckedUpdateWithoutThemesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberCreateWithoutThemeChangesInput = {
+  id: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
+  user: Prisma.UserCreateNestedOneWithoutMembersInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+}
+
+export type MemberUncheckedCreateWithoutThemeChangesInput = {
+  id: string
+  organizationId: string
+  userId: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+}
+
+export type MemberCreateOrConnectWithoutThemeChangesInput = {
+  where: Prisma.MemberWhereUniqueInput
+  create: Prisma.XOR<Prisma.MemberCreateWithoutThemeChangesInput, Prisma.MemberUncheckedCreateWithoutThemeChangesInput>
+}
+
+export type MemberUpsertWithoutThemeChangesInput = {
+  update: Prisma.XOR<Prisma.MemberUpdateWithoutThemeChangesInput, Prisma.MemberUncheckedUpdateWithoutThemeChangesInput>
+  create: Prisma.XOR<Prisma.MemberCreateWithoutThemeChangesInput, Prisma.MemberUncheckedCreateWithoutThemeChangesInput>
+  where?: Prisma.MemberWhereInput
+}
+
+export type MemberUpdateToOneWithWhereWithoutThemeChangesInput = {
+  where?: Prisma.MemberWhereInput
+  data: Prisma.XOR<Prisma.MemberUpdateWithoutThemeChangesInput, Prisma.MemberUncheckedUpdateWithoutThemeChangesInput>
+}
+
+export type MemberUpdateWithoutThemeChangesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
+  user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberUncheckedUpdateWithoutThemeChangesInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberCreateWithoutPushNoticesInput = {
+  id: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
+  user: Prisma.UserCreateNestedOneWithoutMembersInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutPushNoticesInput = {
@@ -1521,7 +3971,18 @@ export type MemberUncheckedCreateWithoutPushNoticesInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
@@ -1529,8 +3990,16 @@ export type MemberUncheckedCreateWithoutPushNoticesInput = {
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutPushNoticesInput = {
@@ -1553,7 +4022,18 @@ export type MemberUpdateWithoutPushNoticesInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -1563,8 +4043,16 @@ export type MemberUpdateWithoutPushNoticesInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutPushNoticesInput = {
@@ -1573,7 +4061,18 @@ export type MemberUncheckedUpdateWithoutPushNoticesInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
@@ -1581,15 +4080,34 @@ export type MemberUncheckedUpdateWithoutPushNoticesInput = {
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberCreateWithoutPlaybookInstallationsInput = {
   id: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
   user: Prisma.UserCreateNestedOneWithoutMembersInput
   computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
@@ -1599,8 +4117,16 @@ export type MemberCreateWithoutPlaybookInstallationsInput = {
   schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
 }
 
 export type MemberUncheckedCreateWithoutPlaybookInstallationsInput = {
@@ -1609,7 +4135,18 @@ export type MemberUncheckedCreateWithoutPlaybookInstallationsInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
   computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
   accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
   sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
@@ -1617,8 +4154,16 @@ export type MemberUncheckedCreateWithoutPlaybookInstallationsInput = {
   schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
   pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
 }
 
 export type MemberCreateOrConnectWithoutPlaybookInstallationsInput = {
@@ -1641,7 +4186,18 @@ export type MemberUpdateWithoutPlaybookInstallationsInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
@@ -1651,8 +4207,16 @@ export type MemberUpdateWithoutPlaybookInstallationsInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutPlaybookInstallationsInput = {
@@ -1661,7 +4225,18 @@ export type MemberUncheckedUpdateWithoutPlaybookInstallationsInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
@@ -1669,8 +4244,16 @@ export type MemberUncheckedUpdateWithoutPlaybookInstallationsInput = {
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberCreateManyUserInput = {
@@ -1678,14 +4261,36 @@ export type MemberCreateManyUserInput = {
   organizationId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
 }
 
 export type MemberUpdateWithoutUserInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
@@ -1694,9 +4299,17 @@ export type MemberUpdateWithoutUserInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutUserInput = {
@@ -1704,7 +4317,18 @@ export type MemberUncheckedUpdateWithoutUserInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
@@ -1712,9 +4336,17 @@ export type MemberUncheckedUpdateWithoutUserInput = {
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateManyWithoutUserInput = {
@@ -1722,7 +4354,18 @@ export type MemberUncheckedUpdateManyWithoutUserInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 export type MemberCreateManyOrganizationInput = {
@@ -1730,14 +4373,36 @@ export type MemberCreateManyOrganizationInput = {
   userId: string
   role?: string
   createdAt?: Date | string
+  removingAt?: Date | string | null
   notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
 }
 
 export type MemberUpdateWithoutOrganizationInput = {
   id?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
   computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
@@ -1746,9 +4411,17 @@ export type MemberUpdateWithoutOrganizationInput = {
   schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateWithoutOrganizationInput = {
@@ -1756,7 +4429,18 @@ export type MemberUncheckedUpdateWithoutOrganizationInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
   computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
   accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
   sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
@@ -1764,9 +4448,17 @@ export type MemberUncheckedUpdateWithoutOrganizationInput = {
   schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
   playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
 }
 
 export type MemberUncheckedUpdateManyWithoutOrganizationInput = {
@@ -1774,7 +4466,18 @@ export type MemberUncheckedUpdateManyWithoutOrganizationInput = {
   userId?: Prisma.StringFieldUpdateOperationsInput | string
   role?: Prisma.StringFieldUpdateOperationsInput | string
   createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
 }
 
 
@@ -1790,9 +4493,17 @@ export type MemberCountOutputType = {
   schedules: number
   threadReads: number
   threadPins: number
+  documentPins: number
+  listPins: number
+  sidebarOrders: number
+  threadLaters: number
   homeDismissals: number
+  chiefDecisions: number
+  chiefPasses: number
   pushNotices: number
   playbookInstallations: number
+  themes: number
+  themeChanges: number
 }
 
 export type MemberCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -1803,9 +4514,17 @@ export type MemberCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions
   schedules?: boolean | MemberCountOutputTypeCountSchedulesArgs
   threadReads?: boolean | MemberCountOutputTypeCountThreadReadsArgs
   threadPins?: boolean | MemberCountOutputTypeCountThreadPinsArgs
+  documentPins?: boolean | MemberCountOutputTypeCountDocumentPinsArgs
+  listPins?: boolean | MemberCountOutputTypeCountListPinsArgs
+  sidebarOrders?: boolean | MemberCountOutputTypeCountSidebarOrdersArgs
+  threadLaters?: boolean | MemberCountOutputTypeCountThreadLatersArgs
   homeDismissals?: boolean | MemberCountOutputTypeCountHomeDismissalsArgs
+  chiefDecisions?: boolean | MemberCountOutputTypeCountChiefDecisionsArgs
+  chiefPasses?: boolean | MemberCountOutputTypeCountChiefPassesArgs
   pushNotices?: boolean | MemberCountOutputTypeCountPushNoticesArgs
   playbookInstallations?: boolean | MemberCountOutputTypeCountPlaybookInstallationsArgs
+  themes?: boolean | MemberCountOutputTypeCountThemesArgs
+  themeChanges?: boolean | MemberCountOutputTypeCountThemeChangesArgs
 }
 
 /**
@@ -1870,8 +4589,50 @@ export type MemberCountOutputTypeCountThreadPinsArgs<ExtArgs extends runtime.Typ
 /**
  * MemberCountOutputType without action
  */
+export type MemberCountOutputTypeCountDocumentPinsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.DocumentPinWhereInput
+}
+
+/**
+ * MemberCountOutputType without action
+ */
+export type MemberCountOutputTypeCountListPinsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ListPinWhereInput
+}
+
+/**
+ * MemberCountOutputType without action
+ */
+export type MemberCountOutputTypeCountSidebarOrdersArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.SidebarOrderWhereInput
+}
+
+/**
+ * MemberCountOutputType without action
+ */
+export type MemberCountOutputTypeCountThreadLatersArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ThreadLaterWhereInput
+}
+
+/**
+ * MemberCountOutputType without action
+ */
 export type MemberCountOutputTypeCountHomeDismissalsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   where?: Prisma.HomeDismissalWhereInput
+}
+
+/**
+ * MemberCountOutputType without action
+ */
+export type MemberCountOutputTypeCountChiefDecisionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ChiefDecisionWhereInput
+}
+
+/**
+ * MemberCountOutputType without action
+ */
+export type MemberCountOutputTypeCountChiefPassesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ChiefPassWhereInput
 }
 
 /**
@@ -1888,6 +4649,20 @@ export type MemberCountOutputTypeCountPlaybookInstallationsArgs<ExtArgs extends 
   where?: Prisma.PlaybookInstallationWhereInput
 }
 
+/**
+ * MemberCountOutputType without action
+ */
+export type MemberCountOutputTypeCountThemesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ThemeWhereInput
+}
+
+/**
+ * MemberCountOutputType without action
+ */
+export type MemberCountOutputTypeCountThemeChangesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.ThemeChangeWhereInput
+}
+
 
 export type MemberSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetSelect<{
   id?: boolean
@@ -1895,7 +4670,18 @@ export type MemberSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
   userId?: boolean
   role?: boolean
   createdAt?: boolean
+  removingAt?: boolean
   notify?: boolean
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: boolean
+  chiefAutoChangedAt?: boolean
+  chiefPass?: boolean
+  chiefRules?: boolean
+  chiefRulesRefused?: boolean
+  timezone?: boolean
   organization?: boolean | Prisma.OrganizationDefaultArgs<ExtArgs>
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
   computers?: boolean | Prisma.Member$computersArgs<ExtArgs>
@@ -1905,9 +4691,17 @@ export type MemberSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
   schedules?: boolean | Prisma.Member$schedulesArgs<ExtArgs>
   threadReads?: boolean | Prisma.Member$threadReadsArgs<ExtArgs>
   threadPins?: boolean | Prisma.Member$threadPinsArgs<ExtArgs>
+  documentPins?: boolean | Prisma.Member$documentPinsArgs<ExtArgs>
+  listPins?: boolean | Prisma.Member$listPinsArgs<ExtArgs>
+  sidebarOrders?: boolean | Prisma.Member$sidebarOrdersArgs<ExtArgs>
+  threadLaters?: boolean | Prisma.Member$threadLatersArgs<ExtArgs>
   homeDismissals?: boolean | Prisma.Member$homeDismissalsArgs<ExtArgs>
+  chiefDecisions?: boolean | Prisma.Member$chiefDecisionsArgs<ExtArgs>
+  chiefPasses?: boolean | Prisma.Member$chiefPassesArgs<ExtArgs>
   pushNotices?: boolean | Prisma.Member$pushNoticesArgs<ExtArgs>
   playbookInstallations?: boolean | Prisma.Member$playbookInstallationsArgs<ExtArgs>
+  themes?: boolean | Prisma.Member$themesArgs<ExtArgs>
+  themeChanges?: boolean | Prisma.Member$themeChangesArgs<ExtArgs>
   _count?: boolean | Prisma.MemberCountOutputTypeDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["member"]>
 
@@ -1917,7 +4711,18 @@ export type MemberSelectCreateManyAndReturn<ExtArgs extends runtime.Types.Extens
   userId?: boolean
   role?: boolean
   createdAt?: boolean
+  removingAt?: boolean
   notify?: boolean
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: boolean
+  chiefAutoChangedAt?: boolean
+  chiefPass?: boolean
+  chiefRules?: boolean
+  chiefRulesRefused?: boolean
+  timezone?: boolean
   organization?: boolean | Prisma.OrganizationDefaultArgs<ExtArgs>
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["member"]>
@@ -1928,7 +4733,18 @@ export type MemberSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.Extens
   userId?: boolean
   role?: boolean
   createdAt?: boolean
+  removingAt?: boolean
   notify?: boolean
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: boolean
+  chiefAutoChangedAt?: boolean
+  chiefPass?: boolean
+  chiefRules?: boolean
+  chiefRulesRefused?: boolean
+  timezone?: boolean
   organization?: boolean | Prisma.OrganizationDefaultArgs<ExtArgs>
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
 }, ExtArgs["result"]["member"]>
@@ -1939,10 +4755,21 @@ export type MemberSelectScalar = {
   userId?: boolean
   role?: boolean
   createdAt?: boolean
+  removingAt?: boolean
   notify?: boolean
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: boolean
+  chiefAutoChangedAt?: boolean
+  chiefPass?: boolean
+  chiefRules?: boolean
+  chiefRulesRefused?: boolean
+  timezone?: boolean
 }
 
-export type MemberOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "organizationId" | "userId" | "role" | "createdAt" | "notify", ExtArgs["result"]["member"]>
+export type MemberOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"id" | "organizationId" | "userId" | "role" | "createdAt" | "removingAt" | "notify" | "suggestions" | "autoMerge" | "previewMachines" | "chiefAnswers" | "chiefAuto" | "chiefAutoChangedAt" | "chiefPass" | "chiefRules" | "chiefRulesRefused" | "timezone", ExtArgs["result"]["member"]>
 export type MemberInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   organization?: boolean | Prisma.OrganizationDefaultArgs<ExtArgs>
   user?: boolean | Prisma.UserDefaultArgs<ExtArgs>
@@ -1953,9 +4780,17 @@ export type MemberInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   schedules?: boolean | Prisma.Member$schedulesArgs<ExtArgs>
   threadReads?: boolean | Prisma.Member$threadReadsArgs<ExtArgs>
   threadPins?: boolean | Prisma.Member$threadPinsArgs<ExtArgs>
+  documentPins?: boolean | Prisma.Member$documentPinsArgs<ExtArgs>
+  listPins?: boolean | Prisma.Member$listPinsArgs<ExtArgs>
+  sidebarOrders?: boolean | Prisma.Member$sidebarOrdersArgs<ExtArgs>
+  threadLaters?: boolean | Prisma.Member$threadLatersArgs<ExtArgs>
   homeDismissals?: boolean | Prisma.Member$homeDismissalsArgs<ExtArgs>
+  chiefDecisions?: boolean | Prisma.Member$chiefDecisionsArgs<ExtArgs>
+  chiefPasses?: boolean | Prisma.Member$chiefPassesArgs<ExtArgs>
   pushNotices?: boolean | Prisma.Member$pushNoticesArgs<ExtArgs>
   playbookInstallations?: boolean | Prisma.Member$playbookInstallationsArgs<ExtArgs>
+  themes?: boolean | Prisma.Member$themesArgs<ExtArgs>
+  themeChanges?: boolean | Prisma.Member$themeChangesArgs<ExtArgs>
   _count?: boolean | Prisma.MemberCountOutputTypeDefaultArgs<ExtArgs>
 }
 export type MemberIncludeCreateManyAndReturn<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -1979,12 +4814,23 @@ export type $MemberPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
     schedules: Prisma.$SchedulePayload<ExtArgs>[]
     threadReads: Prisma.$ThreadReadPayload<ExtArgs>[]
     threadPins: Prisma.$ThreadPinPayload<ExtArgs>[]
+    documentPins: Prisma.$DocumentPinPayload<ExtArgs>[]
+    listPins: Prisma.$ListPinPayload<ExtArgs>[]
+    sidebarOrders: Prisma.$SidebarOrderPayload<ExtArgs>[]
+    threadLaters: Prisma.$ThreadLaterPayload<ExtArgs>[]
     homeDismissals: Prisma.$HomeDismissalPayload<ExtArgs>[]
+    chiefDecisions: Prisma.$ChiefDecisionPayload<ExtArgs>[]
+    chiefPasses: Prisma.$ChiefPassPayload<ExtArgs>[]
     pushNotices: Prisma.$PushNoticePayload<ExtArgs>[]
     /**
      * Playbooks that run on their accounts.
      */
     playbookInstallations: Prisma.$PlaybookInstallationPayload<ExtArgs>[]
+    /**
+     * Their own looks for the dashboard (docs/themes.md), one set per workspace.
+     */
+    themes: Prisma.$ThemePayload<ExtArgs>[]
+    themeChanges: Prisma.$ThemeChangePayload<ExtArgs>[]
   }
   scalars: runtime.Types.Extensions.GetPayloadResult<{
     id: string
@@ -1993,9 +4839,60 @@ export type $MemberPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
     role: string
     createdAt: Date
     /**
+     * Set while they are being removed from the organization (src/member-remove.ts): they reach
+     * nothing of it, and their role no longer changes. Cleared when the removal fails; one older
+     * than its lease no longer holds.
+     */
+    removingAt: Date | null
+    /**
      * Which notifications reach their devices (src/notifications.ts).
      */
     notify: $Enums.NotifyPreset
+    /**
+     * Their message box suggests what they may write next, guessed after each turn on their account.
+     */
+    suggestions: boolean
+    /**
+     * Brigade merges the pull requests teammates open in their threads once they are ready: no
+     * review under way or asked for, and checks passed (src/auto-merge.ts). Owners and admins only.
+     */
+    autoMerge: boolean
+    /**
+     * The previews of the threads they start run on a machine of their own (docs/previews.md),
+     * while they have the preview_machines feature. Off: on the cloud computer, as before.
+     */
+    previewMachines: boolean
+    /**
+     * No longer read: Chief read each question their teammates ended on (#724), replaced by their
+     * rules and daily pass (docs/chief-answers.md). Kept while an older API may still read it.
+     */
+    chiefAnswers: boolean
+    /**
+     * No longer read (#724): the kinds of question Chief answered on its own for them.
+     */
+    chiefAuto: string[]
+    /**
+     * No longer read (#724).
+     */
+    chiefAutoChangedAt: Date | null
+    /**
+     * Chief's daily pass for them (docs/chief-answers.md): once a day, from CHIEF_PASS_HOUR in their
+     * timezone, Chief goes through what waits on them and settles what their rules settle. Off: none.
+     */
+    chiefPass: boolean
+    /**
+     * Their rules, in their words: every teammate working for them reads them, decides what they
+     * settle and asks them only the rest. Null: none.
+     */
+    chiefRules: string | null
+    /**
+     * Rules Chief proposed and they refused, the latest: never proposed again.
+     */
+    chiefRulesRefused: string[]
+    /**
+     * Their timezone (IANA), as their browser said it: their pass runs in their morning.
+     */
+    timezone: string | null
   }, ExtArgs["result"]["member"]>
   composites: {}
 }
@@ -2399,9 +5296,17 @@ export interface Prisma__MemberClient<T, Null = never, ExtArgs extends runtime.T
   schedules<T extends Prisma.Member$schedulesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$schedulesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$SchedulePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   threadReads<T extends Prisma.Member$threadReadsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$threadReadsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ThreadReadPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   threadPins<T extends Prisma.Member$threadPinsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$threadPinsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ThreadPinPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  documentPins<T extends Prisma.Member$documentPinsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$documentPinsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$DocumentPinPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  listPins<T extends Prisma.Member$listPinsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$listPinsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ListPinPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  sidebarOrders<T extends Prisma.Member$sidebarOrdersArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$sidebarOrdersArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$SidebarOrderPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  threadLaters<T extends Prisma.Member$threadLatersArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$threadLatersArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ThreadLaterPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   homeDismissals<T extends Prisma.Member$homeDismissalsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$homeDismissalsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$HomeDismissalPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  chiefDecisions<T extends Prisma.Member$chiefDecisionsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$chiefDecisionsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ChiefDecisionPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  chiefPasses<T extends Prisma.Member$chiefPassesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$chiefPassesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ChiefPassPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   pushNotices<T extends Prisma.Member$pushNoticesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$pushNoticesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$PushNoticePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   playbookInstallations<T extends Prisma.Member$playbookInstallationsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$playbookInstallationsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$PlaybookInstallationPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  themes<T extends Prisma.Member$themesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$themesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ThemePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  themeChanges<T extends Prisma.Member$themeChangesArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$themeChangesArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ThemeChangePayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   /**
    * Attaches callbacks for the resolution and/or rejection of the Promise.
    * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -2436,7 +5341,18 @@ export interface MemberFieldRefs {
   readonly userId: Prisma.FieldRef<"Member", 'String'>
   readonly role: Prisma.FieldRef<"Member", 'String'>
   readonly createdAt: Prisma.FieldRef<"Member", 'DateTime'>
+  readonly removingAt: Prisma.FieldRef<"Member", 'DateTime'>
   readonly notify: Prisma.FieldRef<"Member", 'NotifyPreset'>
+  readonly suggestions: Prisma.FieldRef<"Member", 'Boolean'>
+  readonly autoMerge: Prisma.FieldRef<"Member", 'Boolean'>
+  readonly previewMachines: Prisma.FieldRef<"Member", 'Boolean'>
+  readonly chiefAnswers: Prisma.FieldRef<"Member", 'Boolean'>
+  readonly chiefAuto: Prisma.FieldRef<"Member", 'String[]'>
+  readonly chiefAutoChangedAt: Prisma.FieldRef<"Member", 'DateTime'>
+  readonly chiefPass: Prisma.FieldRef<"Member", 'Boolean'>
+  readonly chiefRules: Prisma.FieldRef<"Member", 'String'>
+  readonly chiefRulesRefused: Prisma.FieldRef<"Member", 'String[]'>
+  readonly timezone: Prisma.FieldRef<"Member", 'String'>
 }
     
 
@@ -3006,6 +5922,102 @@ export type Member$threadPinsArgs<ExtArgs extends runtime.Types.Extensions.Inter
 }
 
 /**
+ * Member.documentPins
+ */
+export type Member$documentPinsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the DocumentPin
+   */
+  select?: Prisma.DocumentPinSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the DocumentPin
+   */
+  omit?: Prisma.DocumentPinOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.DocumentPinInclude<ExtArgs> | null
+  where?: Prisma.DocumentPinWhereInput
+  orderBy?: Prisma.DocumentPinOrderByWithRelationInput | Prisma.DocumentPinOrderByWithRelationInput[]
+  cursor?: Prisma.DocumentPinWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.DocumentPinScalarFieldEnum | Prisma.DocumentPinScalarFieldEnum[]
+}
+
+/**
+ * Member.listPins
+ */
+export type Member$listPinsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the ListPin
+   */
+  select?: Prisma.ListPinSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the ListPin
+   */
+  omit?: Prisma.ListPinOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ListPinInclude<ExtArgs> | null
+  where?: Prisma.ListPinWhereInput
+  orderBy?: Prisma.ListPinOrderByWithRelationInput | Prisma.ListPinOrderByWithRelationInput[]
+  cursor?: Prisma.ListPinWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ListPinScalarFieldEnum | Prisma.ListPinScalarFieldEnum[]
+}
+
+/**
+ * Member.sidebarOrders
+ */
+export type Member$sidebarOrdersArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the SidebarOrder
+   */
+  select?: Prisma.SidebarOrderSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the SidebarOrder
+   */
+  omit?: Prisma.SidebarOrderOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.SidebarOrderInclude<ExtArgs> | null
+  where?: Prisma.SidebarOrderWhereInput
+  orderBy?: Prisma.SidebarOrderOrderByWithRelationInput | Prisma.SidebarOrderOrderByWithRelationInput[]
+  cursor?: Prisma.SidebarOrderWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.SidebarOrderScalarFieldEnum | Prisma.SidebarOrderScalarFieldEnum[]
+}
+
+/**
+ * Member.threadLaters
+ */
+export type Member$threadLatersArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the ThreadLater
+   */
+  select?: Prisma.ThreadLaterSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the ThreadLater
+   */
+  omit?: Prisma.ThreadLaterOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ThreadLaterInclude<ExtArgs> | null
+  where?: Prisma.ThreadLaterWhereInput
+  orderBy?: Prisma.ThreadLaterOrderByWithRelationInput | Prisma.ThreadLaterOrderByWithRelationInput[]
+  cursor?: Prisma.ThreadLaterWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ThreadLaterScalarFieldEnum | Prisma.ThreadLaterScalarFieldEnum[]
+}
+
+/**
  * Member.homeDismissals
  */
 export type Member$homeDismissalsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
@@ -3027,6 +6039,54 @@ export type Member$homeDismissalsArgs<ExtArgs extends runtime.Types.Extensions.I
   take?: number
   skip?: number
   distinct?: Prisma.HomeDismissalScalarFieldEnum | Prisma.HomeDismissalScalarFieldEnum[]
+}
+
+/**
+ * Member.chiefDecisions
+ */
+export type Member$chiefDecisionsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the ChiefDecision
+   */
+  select?: Prisma.ChiefDecisionSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the ChiefDecision
+   */
+  omit?: Prisma.ChiefDecisionOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ChiefDecisionInclude<ExtArgs> | null
+  where?: Prisma.ChiefDecisionWhereInput
+  orderBy?: Prisma.ChiefDecisionOrderByWithRelationInput | Prisma.ChiefDecisionOrderByWithRelationInput[]
+  cursor?: Prisma.ChiefDecisionWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ChiefDecisionScalarFieldEnum | Prisma.ChiefDecisionScalarFieldEnum[]
+}
+
+/**
+ * Member.chiefPasses
+ */
+export type Member$chiefPassesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the ChiefPass
+   */
+  select?: Prisma.ChiefPassSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the ChiefPass
+   */
+  omit?: Prisma.ChiefPassOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ChiefPassInclude<ExtArgs> | null
+  where?: Prisma.ChiefPassWhereInput
+  orderBy?: Prisma.ChiefPassOrderByWithRelationInput | Prisma.ChiefPassOrderByWithRelationInput[]
+  cursor?: Prisma.ChiefPassWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ChiefPassScalarFieldEnum | Prisma.ChiefPassScalarFieldEnum[]
 }
 
 /**
@@ -3075,6 +6135,54 @@ export type Member$playbookInstallationsArgs<ExtArgs extends runtime.Types.Exten
   take?: number
   skip?: number
   distinct?: Prisma.PlaybookInstallationScalarFieldEnum | Prisma.PlaybookInstallationScalarFieldEnum[]
+}
+
+/**
+ * Member.themes
+ */
+export type Member$themesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the Theme
+   */
+  select?: Prisma.ThemeSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the Theme
+   */
+  omit?: Prisma.ThemeOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ThemeInclude<ExtArgs> | null
+  where?: Prisma.ThemeWhereInput
+  orderBy?: Prisma.ThemeOrderByWithRelationInput | Prisma.ThemeOrderByWithRelationInput[]
+  cursor?: Prisma.ThemeWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ThemeScalarFieldEnum | Prisma.ThemeScalarFieldEnum[]
+}
+
+/**
+ * Member.themeChanges
+ */
+export type Member$themeChangesArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the ThemeChange
+   */
+  select?: Prisma.ThemeChangeSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the ThemeChange
+   */
+  omit?: Prisma.ThemeChangeOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.ThemeChangeInclude<ExtArgs> | null
+  where?: Prisma.ThemeChangeWhereInput
+  orderBy?: Prisma.ThemeChangeOrderByWithRelationInput | Prisma.ThemeChangeOrderByWithRelationInput[]
+  cursor?: Prisma.ThemeChangeWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.ThemeChangeScalarFieldEnum | Prisma.ThemeChangeScalarFieldEnum[]
 }
 
 /**

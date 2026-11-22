@@ -4,44 +4,53 @@
 // who made it and who changed it last; its versions and a preview open beside
 // the page. Admins decide which teammates reach a folder.
 import {
+  DESIGN_OPTIONS_SUFFIX,
   designFolderOf,
   designName,
+  designOptionsOf,
   folderAccessFor,
+  TOOL_ENTRY,
+  toolFolderOf,
+  toolName,
   type FolderAccess,
   type FolderRule,
   type LibraryAccess,
 } from '@brigade/contracts'
 import {
   ChevronRight,
+  Clock,
   Download,
   Ellipsis,
   File,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileImage,
-  FileSpreadsheet,
   FileText,
-  FileVideoCamera,
   Folder,
   FolderLock,
   History,
+  House,
   Library,
   Palette,
   Pencil,
-  Presentation,
+  Pin,
+  PinOff,
   ShieldCheck,
   Trash2,
   Upload,
-  X,
+  Wrench,
 } from 'lucide-react'
-import { useEffect, useMemo, useState, type DragEvent, type ReactNode } from 'react'
-import { timeAgo } from '@/components/dashboard'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
+import { timeAgo, useDashboard } from '@/components/dashboard'
 import { DesignPanel } from '@/components/design-view'
 import { libraryDocument, useDocumentPanel } from '@/components/document-panel'
-import { FilePreview } from '@/components/file-preview'
-import { ActorName, FileHistory, size } from '@/components/library-history'
-import { PanelExpandButton, SidePanel } from '@/components/side-panel'
+import { PUBLIC_LINK } from '@/components/share-button'
+import { ActorName, size } from '@/components/library-history'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -71,7 +80,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
+import { Hint, Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   api,
   type LibraryFile,
@@ -79,31 +88,28 @@ import {
   type LibraryTree,
   type Teammate,
 } from '@/lib/api'
-import { API_URL } from '@/lib/config'
+import { fileView } from '@/lib/file-view'
+import { contentUrl } from '@/lib/library-urls'
+import { openIntent } from '@/lib/prepare-document'
+import { fileIcon } from '@/components/file-icon'
+import { folderSuggestions, splitTyped } from '@/lib/library-path'
 import { cn } from '@/lib/utils'
 
-export const contentUrl = (id: string, download = false) =>
-  `${API_URL}/api/library/${id}/content${download ? '?download' : ''}`
+export { contentUrl }
 
 const DRAG_TYPE = 'application/x-brigade-library'
 type Dragged = { kind: 'file'; id: string; path: string } | { kind: 'folder'; path: string }
 
+/**
+ * A row lays out only once near the screen. Recent lists every file of the library,
+ * hundreds of rows each with fading names (truncate): without this, resizing the side
+ * panel beside it laid all of them out again on each frame of the drag.
+ */
+const LAZY_ROW = '[content-visibility:auto] [contain-intrinsic-size:auto_4rem]'
+
 const parentOf = (path: string) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
 const nameOf = (path: string) => path.slice(path.lastIndexOf('/') + 1)
 export const join = (folder: string, name: string) => (folder ? `${folder}/${name}` : name)
-
-function fileIcon(contentType: string) {
-  if (contentType.startsWith('image/')) return FileImage
-  if (contentType.startsWith('video/')) return FileVideoCamera
-  if (contentType.startsWith('audio/')) return FileAudio
-  if (/spreadsheet|text\/csv|tab-separated/.test(contentType)) return FileSpreadsheet
-  if (/presentation/.test(contentType)) return Presentation
-  if (/zip/.test(contentType)) return FileArchive
-  if (/json|yaml|xml|javascript|python|shellscript|text\/css|text\/html/.test(contentType))
-    return FileCode
-  if (contentType.startsWith('text/') || /pdf|wordprocessing/.test(contentType)) return FileText
-  return File
-}
 
 /** Every folder: the ones with a row, and the ones that exist through their files. */
 function allFolders(tree: LibraryTree) {
@@ -142,54 +148,86 @@ export function LibraryBrowser({
   tree,
   folder,
   setFolder,
+  home = '',
   focus,
   focusDesign,
+  focusTool,
   reload,
   upload,
   teammates,
   admin,
   creating,
   setCreating,
+  view,
 }: {
   tree: LibraryTree | undefined
   /** The folder shown; '' for the top. */
   folder: string
   setFolder: (folder: string) => void
+  /** The folder the browser opens at: the member's pinned files in it show there, on top. */
+  home?: string
   /** A file asked for by the address: opened, and scrolled to. */
   focus?: string
   /** A design asked for by the address (its folder): opened beside the page. */
   focusDesign?: string
+  /** A tool asked for by the address (its folder): opened beside the page. */
+  focusTool?: string
   reload: () => Promise<void>
   upload: (files: Upload[]) => Promise<void>
   teammates: Teammate[] | undefined
   admin: boolean
   creating: 'file' | 'folder' | null
   setCreating: (what: 'file' | 'folder' | null) => void
+  /** Recent or Folders, when the page shows its switch itself (useLibrarySort, LibraryViewSwitch). */
+  view?: [LibrarySort, (sort: LibrarySort) => void]
 }) {
   const documents = useDocumentPanel()
-  const [panel, setPanel] = useState<{ id: string; tab: 'preview' | 'history' }>()
   /** The design open beside the page: its folder. */
   const [design, setDesign] = useState<string>()
+  const { me } = useDashboard()
+  /** Tools (docs/tools.md) show as tools for people who have them; as folders for the others. */
+  const tools = me.features?.includes('tools') ?? false
+  const isTool = (path: string) => tools && toolFolderOf(path) === path
   const [renaming, setRenaming] = useState<string>()
   const [access, setAccess] = useState<string>()
   const [error, setError] = useState<string>()
   const [over, setOver] = useState<string | null>(null)
-  const [sort, setSort] = useState<'name' | 'updated'>('name')
+  const own = useLibrarySort()
+  const [sort, chooseSort] = view ?? own
+  const recent = sort === 'updated'
 
   const folders = useMemo(
     () => (tree ? allFolders(tree) : new Map<string, LibraryFolder>()),
     [tree],
   )
   const rules = useMemo(() => (tree ? rulesOf(tree.folders) : []), [tree])
+  /** The folders a new file or folder can go in: not a design's own, nor its options'. */
+  const places = useMemo(
+    () =>
+      [...folders.keys()].filter(
+        (p) => !designFolderOf(p) && !p.split('/').some((s) => s.endsWith(DESIGN_OPTIONS_SUFFIX)),
+      ),
+    [folders],
+  )
   const subfolders = [...folders.values()]
     .filter((f) => parentOf(f.path) === folder)
     .sort((a, b) => a.path.localeCompare(b.path))
   const files = (tree?.files ?? [])
     .filter((f) => parentOf(f.path) === folder)
-    .sort((a, b) =>
-      sort === 'name' ? a.path.localeCompare(b.path) : b.updatedAt.localeCompare(a.updatedAt),
-    )
-  const opened = tree?.files.find((f) => f.id === panel?.id)
+    .sort((a, b) => a.path.localeCompare(b.path))
+  const entries = recent
+    ? recentIn(tree, folder, folders, tools)
+    : [
+        ...subfolders.map((f) => ({ kind: 'folder' as const, folder: f })),
+        ...files.map((f) => ({ kind: 'file' as const, file: f })),
+      ]
+  const pinned = new Set(tree?.pinned)
+  const pinnedFiles =
+    folder === home
+      ? (tree?.pinned ?? [])
+          .map((id) => tree?.files.find((f) => f.id === id))
+          .filter((f): f is LibraryFile => !!f && (!home || f.path.startsWith(`${home}/`)))
+      : []
 
   // A file asked for by the address: its folder, then the file itself.
   const loaded = Boolean(tree)
@@ -197,6 +235,12 @@ export function LibraryBrowser({
     if (!focus || !tree) return
     const file = tree.files.find((f) => f.id === focus)
     if (!file) return
+    const inTool = tools ? toolFolderOf(file.path) : undefined
+    if (inTool && file.contentType !== 'text/markdown') {
+      setFolder(parentOf(inTool))
+      openTool(inTool)
+      return
+    }
     const inDesign = designFolderOf(file.path)
     if (inDesign) {
       setFolder(parentOf(inDesign))
@@ -217,32 +261,36 @@ export function LibraryBrowser({
     openDesign(focusDesign)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once the list is in, not on each reload
   }, [focusDesign, loaded])
+  useEffect(() => {
+    if (!focusTool || !tree || !tools) return
+    setFolder(parentOf(focusTool))
+    openTool(focusTool)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once the list is in, not on each reload
+  }, [focusTool, loaded, tools])
   // A design whose files all went away closes.
   const designFiles = design ? tree?.files.filter((f) => f.path.startsWith(`${design}/`)) : []
   useEffect(() => {
     if (design && tree && designFiles?.length === 0) setDesign(undefined)
   }, [design, tree, designFiles?.length])
-  // A file that went away (moved to the trash elsewhere) closes.
-  useEffect(() => {
-    if (panel && tree && !opened) setPanel(undefined)
-  }, [panel, tree, opened])
 
-  function open(file: LibraryFile, tab: 'preview' | 'history' = 'preview') {
-    // Markdown opens in the editor, which has its own history.
-    if (file.contentType === 'text/markdown' && file.editable && tab === 'preview') {
-      setPanel(undefined)
-      documents.open(libraryDocument(file))
-      return
-    }
-    documents.close()
+  // Any file opens in the file panel (components/document-panel.tsx), beside whatever page shows.
+  function open(file: LibraryFile, show: 'file' | 'history' = 'file') {
     setDesign(undefined)
-    setPanel({ id: file.id, tab })
+    documents.open(libraryDocument(file), { history: show === 'history' })
   }
 
   function openDesign(path: string) {
     documents.close()
-    setPanel(undefined)
     setDesign(path)
+  }
+
+  // A tool opens in the document panel too, as the tool (its page): it stays open from page to
+  // page, and minimizes into the panel's button as a document does.
+  function openTool(path: string) {
+    const page = tree?.files.find((f) => f.path === `${path}/${TOOL_ENTRY}`)
+    if (!page) return
+    setDesign(undefined)
+    documents.open(libraryDocument(page))
   }
 
   async function act(work: () => Promise<unknown>) {
@@ -305,69 +353,331 @@ export function LibraryBrowser({
 
   if (!tree) return <p className="text-sm text-muted-foreground">Loading…</p>
 
-  const crumbs = folder ? folder.split('/') : []
-  const empty = subfolders.length === 0 && files.length === 0
-  return (
-    <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <nav aria-label="Folder" className="flex min-w-0 flex-wrap items-center gap-1 text-sm">
+  const folderRow = (f: LibraryFolder, flat = false) => {
+    const inside = tree.files.filter((file) => file.path.startsWith(`${f.path}/`)).length
+    const guarded = f.restricted || f.grants.length > 0
+    const isDesign = designFolderOf(f.path) === f.path
+    const toolRow = isTool(f.path)
+    // The options offered for a design: one row, opening them side by side.
+    const set = isDesign || toolRow ? [] : optionsIn(tree.files, f.path)
+    const isSet = set.length > 0
+    const Icon = toolRow ? Wrench : isDesign || isSet ? Palette : guarded ? FolderLock : Folder
+    return (
+      <div key={f.path} className={LAZY_ROW}>
+        <div
+          {...draggable({ kind: 'folder', path: f.path })}
+          {...dropTarget(f.path)}
+          className={cn(
+            'flex items-center gap-4 px-5 py-3',
+            over === f.path && 'bg-primary/10',
+            design === f.path && 'bg-primary/5',
+          )}
+        >
+          <span
+            aria-hidden
+            className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
+          >
+            <Icon className="size-4" />
+          </span>
           <button
             type="button"
-            onClick={() => setFolder('')}
-            {...dropTarget('')}
-            className={cn(
-              'rounded-md px-1.5 py-0.5 font-semibold hover:bg-muted',
-              over === '' && 'bg-primary/15',
-            )}
+            onClick={() =>
+              toolRow
+                ? openTool(f.path)
+                : isDesign
+                  ? openDesign(f.path)
+                  : isSet
+                    ? openDesign(set[0]!)
+                    : setFolder(f.path)
+            }
+            className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
           >
-            Library
+            <span className="truncate text-sm font-semibold hover:underline">
+              {toolRow
+                ? toolName(f.path)
+                : isDesign
+                  ? designName(f.path)
+                  : isSet
+                    ? nameOf(f.path).slice(0, -DESIGN_OPTIONS_SUFFIX.length)
+                    : nameOf(f.path)}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {flat && `${parentOf(f.path) || 'Library'} · `}
+              {isDesign && 'Design · '}
+              {toolRow && 'Tool · '}
+              {isDesign &&
+                tree.files.some((file) => file.shared && file.path === `${f.path}/index.html`) &&
+                `${PUBLIC_LINK} · `}
+              {isSet
+                ? `${set.length} design option${set.length === 1 ? '' : 's'}`
+                : inside === 0
+                  ? 'Empty'
+                  : `${inside} file${inside === 1 ? '' : 's'}`}
+              {(isDesign || isSet || toolRow) && updatedIn(tree.files, f.path)}
+            </span>
           </button>
-          {crumbs.map((name, i) => {
-            const path = crumbs.slice(0, i + 1).join('/')
-            return (
-              <span key={path} className="flex items-center gap-1">
-                <ChevronRight aria-hidden className="size-3.5 text-muted-foreground" />
+          {f.restricted ? (
+            <Badge variant="secondary">Restricted</Badge>
+          ) : (
+            f.grants.length > 0 && <Badge variant="secondary">Custom access</Badge>
+          )}
+          <RowMenu label={`Actions for folder ${nameOf(f.path)}`}>
+            {toolRow && (
+              <DropdownMenuItem onSelect={() => openTool(f.path)}>
+                <Wrench aria-hidden />
+                Open tool
+              </DropdownMenuItem>
+            )}
+            {(isDesign || isSet) && (
+              <DropdownMenuItem onSelect={() => openDesign(isSet ? set[0]! : f.path)}>
+                <Palette aria-hidden />
+                {isSet ? 'View options' : 'View design'}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => setFolder(f.path)}>
+              <Folder aria-hidden />
+              {isDesign || isSet || toolRow ? 'Its files' : 'Open'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setRenaming(`folder:${f.path}`)}>
+              <Pencil aria-hidden />
+              Rename or move
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setAccess(f.path)}>
+              <ShieldCheck aria-hidden />
+              Teammate access
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() =>
+                confirm(
+                  inside > 0
+                    ? `Move the ${inside} file${inside === 1 ? '' : 's'} in ${f.path} to the trash?` +
+                        (guarded ? ' Restored files follow the access of where they land.' : '')
+                    : `Remove the folder ${f.path}?`,
+                ) &&
+                void act(() =>
+                  api(`/library/folders?path=${encodeURIComponent(f.path)}`, {
+                    method: 'DELETE',
+                  }),
+                )
+              }
+            >
+              <Trash2 aria-hidden />
+              Delete
+            </DropdownMenuItem>
+          </RowMenu>
+        </div>
+        {renaming === `folder:${f.path}` && (
+          <Rename
+            path={f.path}
+            onCancel={() => setRenaming(undefined)}
+            onSave={(to) =>
+              act(async () => {
+                await api('/library/folders', {
+                  method: 'PATCH',
+                  body: { path: f.path, to },
+                })
+                setRenaming(undefined)
+              })
+            }
+          />
+        )}
+      </div>
+    )
+  }
+
+  const fileRow = (f: LibraryFile, where: 'list' | 'pinned', flat = false) => {
+    const Icon = fileIcon(f.contentType)
+    const isOpen =
+      documents.current?.target.kind === 'library' && documents.current.target.id === f.id
+    return (
+      <div
+        key={f.id}
+        id={where === 'list' ? `library-file-${f.id}` : undefined}
+        className={cn(LAZY_ROW, 'scroll-mt-20', (f.id === focus || isOpen) && 'bg-primary/5')}
+      >
+        <div
+          {...draggable({ kind: 'file', id: f.id, path: f.path })}
+          className="flex items-center gap-4 px-5 py-3"
+        >
+          <span
+            aria-hidden
+            className="flex size-9 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground"
+          >
+            <Icon className="size-4" />
+          </span>
+          <button
+            type="button"
+            {...openIntent(
+              fileView(f.path, f, f) === 'editor' ? { kind: 'library', id: f.id } : null,
+            )}
+            onClick={() => open(f)}
+            className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
+          >
+            <span className="truncate text-sm font-semibold hover:underline">
+              {nameOf(f.path)}
+              {where === 'list' && pinned.has(f.id) && (
+                <Pin aria-label="Pinned" className="ml-1.5 inline size-3 text-muted-foreground" />
+              )}
+            </span>
+            <span className="truncate text-xs text-muted-foreground">
+              {flat && `${parentOf(f.path) || 'Library'} · `}
+              {size(f.size)} · {timeAgo(f.updatedAt)}
+              {f.updatedBy && (
+                <>
+                  {' by '}
+                  <ActorName actor={f.updatedBy} />
+                </>
+              )}
+              {!f.indexed && ' · not searchable'}
+              {f.shared && ` · ${PUBLIC_LINK}`}
+            </span>
+          </button>
+          <RowMenu label={`Actions for ${nameOf(f.path)}`}>
+            <DropdownMenuItem onSelect={() => open(f)}>
+              <FileText aria-hidden />
+              Open
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => open(f, 'history')}>
+              <History aria-hidden />
+              History
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() =>
+                void act(() =>
+                  api(`/library/${f.id}/pin`, { method: pinned.has(f.id) ? 'DELETE' : 'POST' }),
+                )
+              }
+            >
+              {pinned.has(f.id) ? <PinOff aria-hidden /> : <Pin aria-hidden />}
+              {pinned.has(f.id) ? 'Unpin' : 'Pin to top'}
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <a href={contentUrl(f.id, true)}>
+                <Download aria-hidden />
+                Download
+              </a>
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setRenaming(`${where}:file:${f.id}`)}>
+              <Pencil aria-hidden />
+              Rename or move
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() =>
+                void act(async () => {
+                  await api(`/library/${f.id}`, { method: 'DELETE' })
+                  documents.remove({ kind: 'library', id: f.id })
+                })
+              }
+            >
+              <Trash2 aria-hidden />
+              Move to trash
+            </DropdownMenuItem>
+          </RowMenu>
+        </div>
+        {renaming === `${where}:file:${f.id}` && (
+          <Rename
+            path={f.path}
+            onCancel={() => setRenaming(undefined)}
+            onSave={(path) =>
+              act(async () => {
+                await api(`/library/${f.id}`, { method: 'PATCH', body: { path } })
+                setRenaming(undefined)
+              })
+            }
+          />
+        )}
+      </div>
+    )
+  }
+
+  const crumbs = folder ? folder.split('/') : []
+  const empty = entries.length === 0
+  return (
+    <>
+      {(crumbs.length > 0 || !view) && (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          {crumbs.length > 0 && (
+            <nav aria-label="Folder" className="flex min-w-0 flex-wrap items-center gap-1 text-sm">
+              <Hint label="Library">
                 <button
                   type="button"
-                  onClick={() => setFolder(path)}
-                  aria-current={path === folder ? 'page' : undefined}
-                  {...dropTarget(path)}
+                  onClick={() => setFolder('')}
+                  {...dropTarget('')}
+                  aria-label="Library"
                   className={cn(
-                    'rounded-md px-1.5 py-0.5 hover:bg-muted',
-                    path === folder && 'font-semibold',
-                    over === path && 'bg-primary/15',
+                    'rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground',
+                    over === '' && 'bg-primary/15',
                   )}
                 >
-                  {name}
+                  <House aria-hidden className="size-4" />
                 </button>
-              </span>
-            )
-          })}
-        </nav>
-        <Tabs value={sort} onValueChange={(v) => setSort(v as 'name' | 'updated')}>
-          <TabsList aria-label="Sort">
-            <TabsTrigger value="name">Name</TabsTrigger>
-            <TabsTrigger value="updated">Recent</TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
+              </Hint>
+              {crumbs.map((name, i) => {
+                const path = crumbs.slice(0, i + 1).join('/')
+                return (
+                  <span key={path} className="flex items-center gap-1">
+                    <ChevronRight aria-hidden className="size-3.5 text-muted-foreground" />
+                    <button
+                      type="button"
+                      onClick={() => setFolder(path)}
+                      aria-current={path === folder ? 'page' : undefined}
+                      {...dropTarget(path)}
+                      className={cn(
+                        'rounded-md px-1.5 py-0.5 hover:bg-muted',
+                        path === folder && 'font-semibold',
+                        over === path && 'bg-primary/15',
+                      )}
+                    >
+                      {name}
+                    </button>
+                  </span>
+                )
+              })}
+            </nav>
+          )}
+          {!view && (
+            <Tabs
+              value={sort}
+              onValueChange={(v) => chooseSort(v as LibrarySort)}
+              className="ml-auto"
+            >
+              <TabsList aria-label="View">
+                <TabsTrigger value="updated">Recent</TabsTrigger>
+                <TabsTrigger value="name">Folders</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          )}
+        </div>
+      )}
 
       {creating && (
         <NewItem
           kind={creating}
           folder={folder}
+          folders={places}
           onCancel={() => setCreating(null)}
           onCreated={async (made) => {
             setCreating(null)
             await reload()
             if (made.kind === 'folder') setFolder(made.path)
-            else if (made.file.contentType === 'text/markdown')
-              documents.open(libraryDocument(made.file))
-            else setPanel({ id: made.file.id, tab: 'preview' })
+            else open(made.file)
           }}
         />
       )}
       {error && <p className="text-sm text-destructive-text">{error}</p>}
+
+      {pinnedFiles.length > 0 && (
+        <section aria-label="Pinned" className="flex flex-col gap-2">
+          <h2 className="text-xs font-medium text-muted-foreground">Pinned</h2>
+          <Card className="gap-0 divide-y py-0">
+            {pinnedFiles.map((f) => fileRow(f, 'pinned', true))}
+          </Card>
+        </section>
+      )}
 
       <div
         {...dropTarget(folder)}
@@ -377,203 +687,9 @@ export function LibraryBrowser({
           <EmptyFolder top={!folder} />
         ) : (
           <Card className="gap-0 divide-y py-0">
-            {subfolders.map((f) => {
-              const inside = tree.files.filter((file) => file.path.startsWith(`${f.path}/`)).length
-              const guarded = f.restricted || f.grants.length > 0
-              const isDesign = designFolderOf(f.path) === f.path
-              const Icon = isDesign ? Palette : guarded ? FolderLock : Folder
-              return (
-                <div key={f.path}>
-                  <div
-                    {...draggable({ kind: 'folder', path: f.path })}
-                    {...dropTarget(f.path)}
-                    className={cn(
-                      'flex items-center gap-4 px-5 py-3',
-                      over === f.path && 'bg-primary/10',
-                      design === f.path && 'bg-primary/5',
-                    )}
-                  >
-                    <span
-                      aria-hidden
-                      className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"
-                    >
-                      <Icon className="size-4" />
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => (isDesign ? openDesign(f.path) : setFolder(f.path))}
-                      className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
-                    >
-                      <span className="truncate text-sm font-semibold hover:underline">
-                        {isDesign ? designName(f.path) : nameOf(f.path)}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {isDesign && 'Design · '}
-                        {inside === 0 ? 'Empty' : `${inside} file${inside === 1 ? '' : 's'}`}
-                        {isDesign && updatedIn(tree.files, f.path)}
-                      </span>
-                    </button>
-                    {f.restricted ? (
-                      <Badge variant="secondary">Restricted</Badge>
-                    ) : (
-                      f.grants.length > 0 && <Badge variant="secondary">Custom access</Badge>
-                    )}
-                    <RowMenu label={`Actions for folder ${nameOf(f.path)}`}>
-                      {isDesign && (
-                        <DropdownMenuItem onSelect={() => openDesign(f.path)}>
-                          <Palette aria-hidden />
-                          View design
-                        </DropdownMenuItem>
-                      )}
-                      <DropdownMenuItem onSelect={() => setFolder(f.path)}>
-                        <Folder aria-hidden />
-                        {isDesign ? 'Its files' : 'Open'}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => setRenaming(`folder:${f.path}`)}>
-                        <Pencil aria-hidden />
-                        Rename or move
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => setAccess(f.path)}>
-                        <ShieldCheck aria-hidden />
-                        Teammate access
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onSelect={() =>
-                          confirm(
-                            inside > 0
-                              ? `Move the ${inside} file${inside === 1 ? '' : 's'} in ${f.path} to the trash?` +
-                                  (guarded
-                                    ? ' Restored files follow the access of where they land.'
-                                    : '')
-                              : `Remove the folder ${f.path}?`,
-                          ) &&
-                          void act(() =>
-                            api(`/library/folders?path=${encodeURIComponent(f.path)}`, {
-                              method: 'DELETE',
-                            }),
-                          )
-                        }
-                      >
-                        <Trash2 aria-hidden />
-                        Delete
-                      </DropdownMenuItem>
-                    </RowMenu>
-                  </div>
-                  {renaming === `folder:${f.path}` && (
-                    <Rename
-                      path={f.path}
-                      onCancel={() => setRenaming(undefined)}
-                      onSave={(to) =>
-                        act(async () => {
-                          await api('/library/folders', {
-                            method: 'PATCH',
-                            body: { path: f.path, to },
-                          })
-                          setRenaming(undefined)
-                        })
-                      }
-                    />
-                  )}
-                </div>
-              )
-            })}
-            {files.map((f) => {
-              const Icon = fileIcon(f.contentType)
-              const isOpen =
-                panel?.id === f.id ||
-                (documents.current?.target.kind === 'library' &&
-                  documents.current.target.id === f.id)
-              return (
-                <div
-                  key={f.id}
-                  id={`library-file-${f.id}`}
-                  className={cn('scroll-mt-20', (f.id === focus || isOpen) && 'bg-primary/5')}
-                >
-                  <div
-                    {...draggable({ kind: 'file', id: f.id, path: f.path })}
-                    className="flex items-center gap-4 px-5 py-3"
-                  >
-                    <span
-                      aria-hidden
-                      className="flex size-9 shrink-0 items-center justify-center rounded-md bg-secondary text-muted-foreground"
-                    >
-                      <Icon className="size-4" />
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => open(f)}
-                      className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
-                    >
-                      <span className="truncate text-sm font-semibold hover:underline">
-                        {nameOf(f.path)}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {size(f.size)} · {timeAgo(f.updatedAt)}
-                        {f.updatedBy && (
-                          <>
-                            {' by '}
-                            <ActorName actor={f.updatedBy} />
-                          </>
-                        )}
-                        {!f.indexed && ' · not searchable'}
-                      </span>
-                    </button>
-                    <RowMenu label={`Actions for ${nameOf(f.path)}`}>
-                      <DropdownMenuItem onSelect={() => open(f)}>
-                        <FileText aria-hidden />
-                        Open
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => open(f, 'history')}>
-                        <History aria-hidden />
-                        History
-                      </DropdownMenuItem>
-                      <DropdownMenuItem asChild>
-                        <a href={contentUrl(f.id, true)}>
-                          <Download aria-hidden />
-                          Download
-                        </a>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={() => setRenaming(`file:${f.id}`)}>
-                        <Pencil aria-hidden />
-                        Rename or move
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        variant="destructive"
-                        onSelect={() =>
-                          void act(async () => {
-                            await api(`/library/${f.id}`, { method: 'DELETE' })
-                            if (panel?.id === f.id) setPanel(undefined)
-                            if (
-                              documents.current?.target.kind === 'library' &&
-                              documents.current.target.id === f.id
-                            )
-                              documents.close()
-                          })
-                        }
-                      >
-                        <Trash2 aria-hidden />
-                        Move to trash
-                      </DropdownMenuItem>
-                    </RowMenu>
-                  </div>
-                  {renaming === `file:${f.id}` && (
-                    <Rename
-                      path={f.path}
-                      onCancel={() => setRenaming(undefined)}
-                      onSave={(path) =>
-                        act(async () => {
-                          await api(`/library/${f.id}`, { method: 'PATCH', body: { path } })
-                          setRenaming(undefined)
-                        })
-                      }
-                    />
-                  )}
-                </div>
-              )
-            })}
+            {entries.map((e) =>
+              e.kind === 'folder' ? folderRow(e.folder, recent) : fileRow(e.file, 'list', recent),
+            )}
           </Card>
         )}
       </div>
@@ -588,15 +704,9 @@ export function LibraryBrowser({
           version={designFiles?.reduce((v, f) => (f.updatedAt > v ? f.updatedAt : v), '')}
           libraryLink={false}
           onClose={() => setDesign(undefined)}
-        />
-      )}
-      {opened && panel && (
-        <LibraryFilePanel
-          file={opened}
-          tab={panel.tab}
-          setTab={(tab) => setPanel({ id: opened.id, tab })}
-          onChanged={reload}
-          onClose={() => setPanel(undefined)}
+          {...(designOptionsOf(design)
+            ? { options: optionsIn(tree.files, designOptionsOf(design)!) }
+            : {})}
         />
       )}
       {access !== undefined && (
@@ -614,6 +724,112 @@ export function LibraryBrowser({
   )
 }
 
+const SORT_KEY = 'brigade.library.sort'
+
+export type LibrarySort = 'name' | 'updated'
+
+/** Recent or Folders: each member's choice, kept in this browser. */
+export function useLibrarySort(): [LibrarySort, (sort: LibrarySort) => void] {
+  const [sort, setSort] = useState<LibrarySort>('updated')
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(SORT_KEY) === 'name') setSort('name')
+    } catch {}
+  }, [])
+  function chooseSort(next: LibrarySort) {
+    setSort(next)
+    try {
+      localStorage.setItem(SORT_KEY, next)
+    } catch {}
+  }
+  return [sort, chooseSort]
+}
+
+/** Recent or Folders as two icons, to sit on a row of tabs. */
+export function LibraryViewSwitch({
+  view: [sort, chooseSort],
+  className,
+}: {
+  view: [LibrarySort, (sort: LibrarySort) => void]
+  className?: string
+}) {
+  return (
+    <Tabs value={sort} onValueChange={(v) => chooseSort(v as LibrarySort)} className={className}>
+      <TabsList aria-label="View">
+        {/* The tab is the tooltip's trigger, not the other way round: a trigger wrapped in
+            the tooltip's would take its data-state and lose the active tab's look. */}
+        <Tooltip>
+          <TabsTrigger value="updated" aria-label="Recent" asChild>
+            <TooltipTrigger>
+              <Clock aria-hidden />
+            </TooltipTrigger>
+          </TabsTrigger>
+          <TooltipContent>Recent</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TabsTrigger value="name" aria-label="Folders" asChild>
+            <TooltipTrigger>
+              <Folder aria-hidden />
+            </TooltipTrigger>
+          </TabsTrigger>
+          <TooltipContent>Folders</TooltipContent>
+        </Tooltip>
+      </TabsList>
+    </Tabs>
+  )
+}
+
+type Entry = { kind: 'folder'; folder: LibraryFolder } | { kind: 'file'; file: LibraryFile }
+
+/** The designs offered in an options folder ("a/x.options"), in the order offered. */
+function optionsIn(files: LibraryFile[], folder: string) {
+  const designs = new Set<string>()
+  for (const file of files) {
+    const design = designFolderOf(file.path)
+    if (design && designOptionsOf(design) === folder) designs.add(design)
+  }
+  return [...designs].sort()
+}
+
+/**
+ * Everything under the folder, at any depth, newest change first: so a file is found
+ * without opening each folder on the way. A design counts as one entry, as of its
+ * newest file, unless the folder shown is inside it; the options offered for a
+ * design count as one, unless the folder shown is theirs.
+ */
+function recentIn(
+  tree: LibraryTree | undefined,
+  folder: string,
+  folders: Map<string, LibraryFolder>,
+  tools = false,
+): Entry[] {
+  const under = folder ? `${folder}/` : ''
+  const designs = new Map<string, string>()
+  const entries: (Entry & { at: string })[] = []
+  for (const file of tree?.files ?? []) {
+    if (!file.path.startsWith(under)) continue
+    // A tool counts as one entry too, for people who have tools.
+    const tool = tools ? toolFolderOf(file.path) : undefined
+    if (tool && tool.startsWith(under) && tool !== folder) {
+      if ((designs.get(tool) ?? '') < file.updatedAt) designs.set(tool, file.updatedAt)
+      continue
+    }
+    const design = designFolderOf(file.path)
+    if (design && design.startsWith(under) && design !== folder) {
+      const options = designOptionsOf(design)
+      const entry = options && options.startsWith(under) && options !== folder ? options : design
+      if ((designs.get(entry) ?? '') < file.updatedAt) designs.set(entry, file.updatedAt)
+    } else entries.push({ kind: 'file', file, at: file.updatedAt })
+  }
+  for (const [path, at] of designs)
+    entries.push({
+      kind: 'folder',
+      folder: folders.get(path) ?? { path, explicit: false, restricted: false, grants: [] },
+      at,
+    })
+  return entries.sort((a, b) => b.at.localeCompare(a.at))
+}
+
 /** When a folder's newest file changed, as " · 5 minutes ago". */
 function updatedIn(files: LibraryFile[], folder: string) {
   const latest = files
@@ -626,7 +842,7 @@ function RowMenu({ label, children }: { label: string; children: ReactNode }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label={label} title="Actions">
+        <Button variant="ghost" size="icon-sm" aria-label={label} tooltip="Actions">
           <Ellipsis aria-hidden />
         </Button>
       </DropdownMenuTrigger>
@@ -687,15 +903,22 @@ function Rename({
   )
 }
 
-/** A new folder, or a new file named here and written in the editor (Markdown without an extension). */
+/**
+ * A new folder, or a new file named here and written in the editor (Markdown without an extension).
+ * Its place is typed with the name: each folder gone into shows as a chip, the
+ * folders matching what is typed are offered below, and it starts in the folder shown.
+ */
 function NewItem({
   kind,
   folder,
+  folders,
   onCancel,
   onCreated,
 }: {
   kind: 'file' | 'folder'
   folder: string
+  /** Every folder a new item can go in. */
+  folders: string[]
   onCancel: () => void
   onCreated: (
     made: { kind: 'folder'; path: string } | { kind: 'file'; file: LibraryFile },
@@ -703,21 +926,68 @@ function NewItem({
 }) {
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const [segments, setSegments] = useState(() => (folder ? folder.split('/') : []))
+  const [text, setText] = useState('')
+  /** Folders are offered once the member types or goes into one, until Esc or leaving the field. */
+  const [offering, setOffering] = useState(false)
+  const [active, setActive] = useState(0)
+  /** Moved to a folder with the arrows: Enter goes into it rather than creating. */
+  const [picked, setPicked] = useState(false)
+  const input = useRef<HTMLInputElement>(null)
 
-  async function create(form: FormData) {
+  const base = segments.join('/')
+  const offered = offering ? folderSuggestions(folders, base, text) : []
+  // The folder it starts in exists, even when it is not offered (a design's files).
+  const known = new Set([
+    ...folders,
+    ...(folder ? folder.split('/') : []).map((_, i, all) => all.slice(0, i + 1).join('/')),
+  ])
+  const isNew = (i: number) => !known.has(segments.slice(0, i + 1).join('/'))
+  const name = text.trim()
+  const named = kind === 'file' && name && !/\.[a-z0-9]+$/i.test(name) ? `${name}.md` : name
+  const made = segments.filter((_, i) => isNew(i))
+
+  function show(next: string[], typed: string) {
+    setSegments(next)
+    setText(typed)
+    setOffering(true)
+    setActive(0)
+    setPicked(false)
+    input.current?.focus()
+  }
+
+  function onKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && offered.length) {
+      e.preventDefault()
+      const step = e.key === 'ArrowDown' ? 1 : -1
+      setActive((active + step + offered.length) % offered.length)
+      setPicked(true)
+    } else if (
+      offered.length &&
+      ((e.key === 'Tab' && !e.shiftKey && text) || (e.key === 'Enter' && picked))
+    ) {
+      e.preventDefault()
+      show([...segments, offered[active]!], '')
+    } else if (e.key === 'Backspace' && segments.length && e.currentTarget.selectionEnd === 0) {
+      e.preventDefault()
+      show(segments.slice(0, -1), text)
+    } else if (e.key === 'Escape' && offered.length) {
+      e.preventDefault()
+      setOffering(false)
+    }
+  }
+
+  async function create() {
     setBusy(true)
     setError(undefined)
-    const name = String(form.get('name') ?? '')
-      .trim()
-      .replace(/^\/+|\/+$/g, '')
     try {
       if (kind === 'folder') {
-        const path = join(folder, name)
+        const path = join(base, name)
         await api('/library/folders', { body: { path } })
         await onCreated({ kind: 'folder', path })
       } else {
         const file = await api<LibraryFile>('/library/text', {
-          body: { path: join(folder, /\.[a-z0-9]+$/i.test(name) ? name : `${name}.md`), text: '' },
+          body: { path: join(base, named), text: '' },
         })
         await onCreated({ kind: 'file', file })
       }
@@ -730,188 +1000,104 @@ function NewItem({
   return (
     <form action={create} className="flex flex-col gap-4 rounded-xl border bg-card p-5 shadow-sm">
       <div className="flex flex-col gap-2">
-        <Label htmlFor="new-name">
-          {kind === 'folder' ? 'Folder name' : 'File name'}
-          {folder && <span className="font-normal text-muted-foreground"> in {folder}/</span>}
-        </Label>
-        <Input
-          id="new-name"
-          name="name"
-          required
-          autoFocus
-          placeholder={kind === 'folder' ? 'policies' : 'refunds.md'}
-          className="font-mono text-sm"
-        />
+        <Label htmlFor="new-name">{kind === 'folder' ? 'Folder name' : 'File name'}</Label>
+        <div
+          className="flex min-h-9 w-full flex-wrap items-center gap-1 rounded-md border border-input px-3 py-1 font-mono text-sm shadow-xs focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30"
+          onClick={() => input.current?.focus()}
+        >
+          {segments.map((s, i) => (
+            <span key={i} className="flex items-center gap-1">
+              <Hint label={isNew(i) ? 'New folder: go back to it' : 'Go back to this folder'}>
+                <button
+                  type="button"
+                  onClick={() => show(segments.slice(0, i + 1), '')}
+                  className={cn(
+                    'rounded-md bg-muted px-2 py-0.5 font-sans hover:bg-accent',
+                    isNew(i) && 'border border-dashed border-muted-foreground/50 bg-transparent',
+                  )}
+                >
+                  {s}
+                </button>
+              </Hint>
+              <span className="text-muted-foreground">/</span>
+            </span>
+          ))}
+          <input
+            ref={input}
+            id="new-name"
+            required
+            autoFocus
+            autoComplete="off"
+            role="combobox"
+            aria-expanded={offered.length > 0}
+            aria-controls="new-name-folders"
+            aria-activedescendant={offered.length ? `new-name-folder-${active}` : undefined}
+            value={text}
+            onChange={(e) => {
+              const next = splitTyped(folders, segments, e.target.value)
+              show(next.segments, next.text)
+            }}
+            onKeyDown={onKeyDown}
+            onBlur={() => setOffering(false)}
+            placeholder={kind === 'folder' ? 'policies' : 'refunds.md'}
+            className="h-7 min-w-24 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+          />
+        </div>
+        {offered.length > 0 && (
+          <ul
+            id="new-name-folders"
+            role="listbox"
+            aria-label="Folders"
+            className="flex flex-col rounded-md border bg-background p-1 text-sm"
+          >
+            {offered.map((f, i) => (
+              <li
+                key={f}
+                id={`new-name-folder-${i}`}
+                role="option"
+                aria-selected={i === active}
+                // Keep the field focused: leaving it would close the list before the click.
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => show([...segments, f], '')}
+                className={cn(
+                  'flex cursor-pointer items-center gap-2 rounded px-2 py-1.5',
+                  i === active && 'bg-accent text-accent-foreground',
+                )}
+              >
+                <Folder className="size-4 text-muted-foreground" aria-hidden />
+                <span className="flex-1 truncate">{f}</span>
+                {i === active && (
+                  <kbd className="rounded border px-1 font-mono text-xs text-muted-foreground">
+                    {picked ? 'Enter' : 'Tab'}
+                  </kbd>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-xs text-muted-foreground">
+          {name ? (
+            <>
+              Creates <span className="font-mono text-foreground">{join(base, named)}</span>
+              {made.length > 0 &&
+                ` and the new folder${made.length === 1 ? '' : 's'} ${made.join(', ')}`}
+            </>
+          ) : (
+            'Type a folder name to go into it, or / after a new one. ⌫ goes back up.'
+          )}
+        </p>
       </div>
       {error && <p className="text-sm text-destructive-text">{error}</p>}
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" onClick={onCancel}>
           Cancel
         </Button>
-        <Button disabled={busy}>{kind === 'folder' ? 'Create folder' : 'Create and open'}</Button>
+        <Button disabled={busy || !name}>
+          {kind === 'folder' ? 'Create folder' : 'Create and open'}
+        </Button>
       </div>
     </form>
-  )
-}
-
-/** A library file beside the page: its preview (text files editable) and its history. */
-function LibraryFilePanel({
-  file,
-  tab,
-  setTab,
-  onChanged,
-  onClose,
-}: {
-  file: LibraryFile
-  tab: 'preview' | 'history'
-  setTab: (tab: 'preview' | 'history') => void
-  onChanged: () => Promise<void>
-  onClose: () => void
-}) {
-  const name = nameOf(file.path)
-  const folder = parentOf(file.path)
-  const Icon = fileIcon(file.contentType)
-  // Markdown edits in the editor; other text files here.
-  const editable = file.editable && file.contentType !== 'text/markdown'
-  return (
-    <SidePanel aria-label={`File ${file.path}`} onClose={onClose} raiseKey={file.id}>
-      <div className="flex flex-nowrap items-center gap-2 border-b px-3 py-2.5">
-        <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <strong className="truncate text-sm font-semibold">{name}</strong>
-          <span className="truncate text-xs text-muted-foreground">
-            {folder && <span className="font-mono">{folder} · </span>}
-            {file.createdBy ? (
-              <>
-                added by <ActorName actor={file.createdBy} /> {timeAgo(file.createdAt)}
-              </>
-            ) : (
-              `added ${timeAgo(file.createdAt)}`
-            )}
-          </span>
-        </div>
-        <Button asChild variant="ghost" size="icon-sm" title="Download">
-          <a href={contentUrl(file.id, true)} aria-label="Download">
-            <Download aria-hidden />
-          </a>
-        </Button>
-        <PanelExpandButton />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          onClick={onClose}
-          aria-label="Close file"
-        >
-          <X aria-hidden />
-        </Button>
-      </div>
-      <Tabs
-        value={tab}
-        onValueChange={(v) => setTab(v as 'preview' | 'history')}
-        className="border-b px-3 py-2"
-      >
-        <TabsList>
-          <TabsTrigger value="preview">{editable ? 'File' : 'Preview'}</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
-        </TabsList>
-      </Tabs>
-      <div className="min-h-0 flex-1 overflow-auto">
-        {tab === 'history' ? (
-          <FileHistory file={file} onRestored={onChanged} />
-        ) : editable ? (
-          <TextFile file={file} onSaved={onChanged} />
-        ) : (
-          <FilePreview
-            key={file.updatedAt}
-            url={contentUrl(file.id)}
-            previewUrl={`/library/${file.id}/preview`}
-            name={name}
-            contentType={file.contentType}
-            download={contentUrl(file.id, true)}
-          />
-        )}
-      </div>
-    </SidePanel>
-  )
-}
-
-/** A plain text file (not Markdown, which opens in the editor), read and edited in place. */
-function TextFile({ file, onSaved }: { file: LibraryFile; onSaved: () => Promise<void> }) {
-  const [text, setText] = useState<string>()
-  const [draft, setDraft] = useState<string>()
-  const [error, setError] = useState<string>()
-  const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    fetch(contentUrl(file.id), { credentials: 'include', cache: 'no-store' })
-      .then((r) => (r.ok ? r.text() : Promise.reject(new Error(r.statusText))))
-      .then(setText, (e: Error) => setError(e.message))
-  }, [file.id, file.updatedAt])
-
-  async function save() {
-    setBusy(true)
-    setError(undefined)
-    try {
-      await api(`/library/${file.id}/text`, { method: 'PUT', body: { text: draft } })
-      setText(draft)
-      setDraft(undefined)
-      await onSaved()
-    } catch (e) {
-      setError((e as Error).message)
-    }
-    setBusy(false)
-  }
-
-  if (text === undefined)
-    return <p className="p-4 text-sm text-muted-foreground">{error ?? 'Loading…'}</p>
-  if (draft === undefined && /^text\/(csv|tab-separated-values|html)$/.test(file.contentType))
-    return (
-      <div className="flex flex-col">
-        <div className="flex justify-end border-b px-4 py-2">
-          <Button size="sm" variant="outline" onClick={() => setDraft(text)}>
-            Edit
-          </Button>
-        </div>
-        <FilePreview
-          key={file.updatedAt}
-          url={contentUrl(file.id)}
-          name={nameOf(file.path)}
-          contentType={file.contentType}
-        />
-      </div>
-    )
-  return (
-    <div className="flex flex-col gap-3 p-4">
-      {draft === undefined ? (
-        <pre className="font-mono text-xs whitespace-pre-wrap wrap-anywhere">{text}</pre>
-      ) : (
-        <Textarea
-          aria-label={`Contents of ${file.path}`}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          rows={Math.min(30, Math.max(8, draft.split('\n').length + 1))}
-          className="bg-card font-mono text-sm"
-        />
-      )}
-      {error && <p className="text-sm text-destructive-text">{error}</p>}
-      <div className="flex justify-end gap-2">
-        {draft === undefined ? (
-          <Button size="sm" onClick={() => setDraft(text)}>
-            Edit
-          </Button>
-        ) : (
-          <>
-            <Button variant="outline" size="sm" onClick={() => setDraft(undefined)}>
-              Cancel
-            </Button>
-            <Button size="sm" disabled={busy} onClick={() => void save()}>
-              Save
-            </Button>
-          </>
-        )}
-      </div>
-    </div>
   )
 }
 

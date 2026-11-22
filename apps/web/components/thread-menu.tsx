@@ -1,16 +1,22 @@
 'use client'
-// A thread's menu: Pin, Rename, Archive and Delete, each with its letter, as in Claude: with
-// the menu open, the letter does it. The same in its sidebar row and in its details panel, so
-// a thread out of the sidebar (filtered, past "+N more", archived) can be changed from inside.
+// A thread's menu: Pin, Snooze, Rename, Mark done, Archive and Delete, each with its letter, as
+// in Claude: with the menu open, the letter does it (Snooze's opens its times, picked by their
+// number). The same in its sidebar row and in its details panel, so a thread out of the sidebar
+// (filtered, past "+N more", archived, snoozed) can be changed from inside.
+import { snoozeOptions, type SnoozeOption } from '@brigade/contracts'
 import {
   Archive,
   ArchiveRestore,
+  CircleCheck,
+  Clock,
   EllipsisVertical,
-  MonitorPlay,
+  Globe,
   Pencil,
   Pin,
   PinOff,
+  RotateCcw,
   Trash2,
+  Undo2,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { Fragment, useState, type KeyboardEvent, type ReactNode } from 'react'
@@ -21,18 +27,31 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Hint } from '@/components/ui/tooltip'
 import { renamedHere } from '@/components/streamed-title'
 import { useThreadPanel } from '@/components/thread-panel'
 import { api, type Thread, type ThreadSummary } from '@/lib/api'
+import { changeThread, setPinned, useShownThreads } from '@/lib/optimistic-threads'
+import { wakeLabel } from '@/lib/snooze'
 
-type Action = 'preview' | 'pin' | 'rename' | 'archive' | 'delete'
+type Action = 'preview' | 'pin' | 'later' | 'rename' | 'done' | 'archive' | 'delete'
 
 export type MenuThread = Pick<
   ThreadSummary,
-  'id' | 'title' | 'pinnedAt' | 'archivedAt' | 'othersMayPrompt' | 'previewRunning'
-> & { startedBy: { id: string } }
+  | 'id'
+  | 'title'
+  | 'pinnedAt'
+  | 'laterAt'
+  | 'archivedAt'
+  | 'othersMayPrompt'
+  | 'previewRunning'
+  | 'doneAt'
+> & { startedBy: { id: string }; parent?: { id: string } | null }
 
 /** What the menu shows for this member, and what each item does. */
 export function useThreadMenu({
@@ -48,40 +67,92 @@ export function useThreadMenu({
   admin: boolean
   /** Rename picked: where the title is edited is the caller's. */
   onRename: () => void
-  onChanged: () => void
+  /**
+   * Something changed: ask for the lists again. Pin, Snooze, Done and Archive wait for it before
+   * they stop showing ahead.
+   */
+  onChanged: () => unknown
   onDeleted: (id: string) => void
 }) {
   const title = thread.title || 'New thread'
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
+  // Snooze's times, open beside the menu: by its letter, or the pointer on it.
+  const [snoozing, setSnoozing] = useState(false)
   const { openPreview } = useThreadPanel()
 
   const starter = thread.startedBy.id === memberId
-  // As the API decides (routes/threads.ts): who may write in it renames and archives it,
-  // its starter deletes it, and admins do all of them.
+  // As the API decides (routes/threads.ts): who may write in it renames, marks done and
+  // archives it, its starter deletes it, and admins do all of them.
   const mayChange = starter || !!thread.othersMayPrompt || admin
   const mayDelete = starter || admin
-  const pinned = !!thread.pinnedAt
-  const archived = !!thread.archivedAt
+  // Pin, Snooze, Done and Archive show at once (lib/optimistic-threads.ts): as clicked, while
+  // their requests go.
+  const state = { ...thread, ...useShownThreads().get(thread.id) }
+  const pinned = !!state.pinnedAt
+  const archived = !!state.archivedAt
+  const later = !!state.laterAt
+  const done = !!state.doneAt
 
-  async function run(action: Action) {
+  async function run(action: Action, until?: Date) {
     setOpen(false)
+    setSnoozing(false)
     if (action === 'preview') return openPreview(thread.id)
     if (action === 'rename') return onRename()
     if (action === 'delete' && !confirm(await deleteQuestion(thread.id, title))) return
     const path = `/threads/${thread.id}`
+    const refused = (e: unknown) => alert(e instanceof Error ? e.message : String(e))
+    const now = new Date().toISOString()
+    if (action === 'pin')
+      return setPinned(
+        thread.id,
+        !pinned,
+        (pin) => api(`${path}/pin`, { method: pin ? 'POST' : 'DELETE' }),
+        onChanged,
+      ).catch(refused)
+    // Snoozed until a time, or woken: the wish is that time, or null.
+    if (action === 'later') {
+      const wake = later ? null : (until?.toISOString() ?? '')
+      return changeThread(
+        thread.id,
+        'later',
+        wake,
+        wake === null
+          ? { laterAt: null, snoozedUntil: null }
+          : { laterAt: now, snoozedUntil: wake || null },
+        (wish) =>
+          api(`${path}/later`, {
+            method: wish === null ? 'DELETE' : 'POST',
+            ...(wish === null ? {} : { body: { until: wish || undefined } }),
+          }),
+        onChanged,
+      ).catch(refused)
+    }
+    if (action === 'done')
+      return changeThread(
+        thread.id,
+        'done',
+        !done,
+        { doneAt: done ? null : now },
+        (on) => api(`${path}/done`, { method: on ? 'POST' : 'DELETE' }),
+        onChanged,
+      ).catch(refused)
+    if (action === 'archive')
+      return changeThread(
+        thread.id,
+        'archive',
+        !archived,
+        { archivedAt: archived ? null : now },
+        (on) => api(`${path}/archive`, { method: on ? 'POST' : 'DELETE' }),
+        onChanged,
+      ).catch(refused)
     setBusy(true)
     try {
-      if (action === 'pin') await api(`${path}/pin`, { method: pinned ? 'DELETE' : 'POST' })
-      else if (action === 'archive')
-        await api(`${path}/archive`, { method: archived ? 'DELETE' : 'POST' })
-      else {
-        await api(path, { method: 'DELETE' })
-        onDeleted(thread.id)
-      }
+      await api(path, { method: 'DELETE' })
+      onDeleted(thread.id)
       onChanged()
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e))
+      refused(e)
     } finally {
       setBusy(false)
     }
@@ -91,7 +162,7 @@ export function useThreadMenu({
     {
       action: 'preview',
       label: 'Open preview',
-      icon: <MonitorPlay />,
+      icon: <Globe />,
       key: 'O',
       show: !!thread.previewRunning,
     },
@@ -102,7 +173,24 @@ export function useThreadMenu({
       key: 'P',
       show: true,
     },
+    // Each member's own, like a pin: out of their list and of what waits on them until the time
+    // picked, or until something new happens in it. An archived thread is already put away.
+    {
+      action: 'later',
+      label: later ? 'Wake now' : 'Snooze',
+      icon: later ? <Undo2 /> : <Clock />,
+      key: 'S',
+      show: later || (!archived && !thread.parent),
+    },
     { action: 'rename', label: 'Rename', icon: <Pencil />, key: 'R', show: mayChange },
+    // The work asked in it is delivered, as its teammate declares it; a child shows in its parent.
+    {
+      action: 'done',
+      label: done ? 'Reopen' : 'Mark done',
+      icon: done ? <RotateCcw /> : <CircleCheck />,
+      key: 'M',
+      show: mayChange && !thread.parent,
+    },
     {
       action: 'archive',
       label: archived ? 'Unarchive' : 'Archive',
@@ -113,26 +201,55 @@ export function useThreadMenu({
     { action: 'delete', label: 'Delete', icon: <Trash2 />, key: 'D', show: mayDelete },
   ]
   const shown = items.filter((i) => i.show)
+  // From now, each time the menu shows: "Tomorrow" is the member's own tomorrow.
+  const times: SnoozeOption[] = open ? snoozeOptions() : []
 
   function onMenuKey(e: KeyboardEvent) {
     if (e.metaKey || e.ctrlKey || e.altKey) return
+    const time = snoozing ? times[Number(e.key) - 1] : undefined
+    if (time) {
+      e.preventDefault()
+      return void run('later', time.until)
+    }
     const item = shown.find((i) => i.key === e.key.toUpperCase())
     if (!item) return
     e.preventDefault()
+    if (item.action === 'later' && !later) return setSnoozing(true)
     void run(item.action)
   }
 
   const content = shown.map((item) => (
     <Fragment key={item.action}>
       {item.action === 'delete' && <DropdownMenuSeparator />}
-      <DropdownMenuItem
-        variant={item.action === 'delete' ? 'destructive' : 'default'}
-        onSelect={() => void run(item.action)}
-      >
-        {item.icon}
-        {item.label}
-        <DropdownMenuShortcut>{item.key}</DropdownMenuShortcut>
-      </DropdownMenuItem>
+      {item.action === 'later' && !later ? (
+        <DropdownMenuSub open={snoozing} onOpenChange={setSnoozing}>
+          <DropdownMenuSubTrigger className="[&>svg:last-child]:ml-1">
+            {item.icon}
+            {item.label}
+            <DropdownMenuShortcut>{item.key}</DropdownMenuShortcut>
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="min-w-52">
+            {times.map((time, i) => (
+              <DropdownMenuItem key={time.key} onSelect={() => void run('later', time.until)}>
+                {time.label}
+                <span className="text-muted-foreground ml-auto pl-4 text-xs tabular-nums">
+                  {wakeLabel(time.until)}
+                </span>
+                <DropdownMenuShortcut className="ml-2">{i + 1}</DropdownMenuShortcut>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+      ) : (
+        <DropdownMenuItem
+          variant={item.action === 'delete' ? 'destructive' : 'default'}
+          onSelect={() => void run(item.action)}
+        >
+          {item.icon}
+          {item.label}
+          <DropdownMenuShortcut>{item.key}</DropdownMenuShortcut>
+        </DropdownMenuItem>
+      )}
     </Fragment>
   ))
 
@@ -157,13 +274,12 @@ export async function renameThread(id: string, current: string, next: string) {
  * In the thread's details panel, beside its "Thread" heading, quiet as the sidebar row's ⋮:
  * that row's menu, for the thread open. Deleted, the thread is gone: back to Home.
  */
-export function ThreadMenu({ thread, onChanged }: { thread: Thread; onChanged: () => void }) {
+export function ThreadMenu({ thread, onChanged }: { thread: Thread; onChanged: () => unknown }) {
   const { me } = useDashboard()
   const { reloadThreads } = useThreadPanel()
   const router = useRouter()
   function changed() {
-    onChanged()
-    void reloadThreads()
+    return Promise.all([onChanged(), reloadThreads()])
   }
   const menu = useThreadMenu({
     thread,
@@ -172,21 +288,22 @@ export function ThreadMenu({ thread, onChanged }: { thread: Thread; onChanged: (
     onRename: () => {
       const next = prompt('Rename the thread', thread.title)
       if (next !== null)
-        void renameThread(thread.id, thread.title, next).then((ok) => ok && changed())
+        void renameThread(thread.id, thread.title, next).then((ok) => void (ok && changed()))
     },
     onChanged: changed,
     onDeleted: () => router.push('/app'),
   })
   return (
     <DropdownMenu open={menu.open} onOpenChange={menu.setOpen}>
-      <DropdownMenuTrigger
-        aria-label={`${menu.title}: more`}
-        title="More"
-        disabled={menu.busy}
-        className="-my-1 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 data-[state=open]:bg-accent data-[state=open]:text-foreground [&>svg]:size-4"
-      >
-        <EllipsisVertical aria-hidden />
-      </DropdownMenuTrigger>
+      <Hint label="More">
+        <DropdownMenuTrigger
+          aria-label={`${menu.title}: more`}
+          disabled={menu.busy}
+          className="-my-1 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 data-[state=open]:bg-accent data-[state=open]:text-foreground [&>svg]:size-4"
+        >
+          <EllipsisVertical aria-hidden />
+        </DropdownMenuTrigger>
+      </Hint>
       <DropdownMenuContent align="end" className="min-w-44" onKeyDown={menu.onMenuKey}>
         {menu.content}
       </DropdownMenuContent>

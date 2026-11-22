@@ -21,7 +21,7 @@ export const canMerge = (p: { mergeable: boolean | null; mergeableState: string 
 /** It conflicts, and nobody is resolving it yet: Resolve conflicts takes the Merge button's place. */
 export const hasConflicts = (p: { mergeableState: string; tracking: PullRequestTracking | null }) =>
   p.mergeableState === 'dirty' &&
-  !['reviewing', 'fixing', 'resolving', 'merging'].includes(p.tracking?.reviewStatus ?? 'none')
+  !['resolving', 'merging'].includes(p.tracking?.mergeStatus ?? 'none')
 
 /** A teammate wrote it in a thread, so it can resolve the conflicts there; else they are resolved on GitHub. */
 export const resolvesInBrigade = (p: { tracking: PullRequestTracking | null }) =>
@@ -29,7 +29,62 @@ export const resolvesInBrigade = (p: { tracking: PullRequestTracking | null }) =
 
 /** Where Brigade waits on the pull request's teammate or on GitHub before it merges. */
 export const resolving = (p: { tracking: PullRequestTracking | null }) =>
-  p.tracking?.reviewStatus === 'resolving' || p.tracking?.reviewStatus === 'merging'
+  p.tracking?.mergeStatus === 'resolving' || p.tracking?.mergeStatus === 'merging'
+
+/** Who is reviewing it, while a review is under way. */
+export const reviewer = (p: { tracking: PullRequestTracking | null }) =>
+  p.tracking?.review?.state === 'reviewing'
+    ? (p.tracking.review.reviewer?.name ?? 'A teammate')
+    : null
+
+/** Who asked for changes, while that is its review's latest verdict. */
+export const changesAskedBy = (p: { tracking: PullRequestTracking | null }) =>
+  p.tracking?.review?.state === 'changes_requested'
+    ? (p.tracking.review.reviewer?.name ?? 'A teammate')
+    : null
+
+/**
+ * Who gave its review's latest verdict, when commits came after the one it read: those are
+ * not reviewed (an approval, or fixes pushed after its last look).
+ */
+export const unreviewedBy = (p: { tracking: PullRequestTracking | null }) => {
+  const review = p.tracking?.review
+  return (review?.state === 'approved' || review?.state === 'changes_requested') && review.changed
+    ? (review.reviewer?.name ?? 'A teammate')
+    : null
+}
+
+/**
+ * Its review is under way, asked for changes, or has not read its latest commits: Merge
+ * steps back, and still merges.
+ */
+export const reviewHolds = (p: { tracking: PullRequestTracking | null }) =>
+  Boolean(reviewer(p) || changesAskedBy(p) || unreviewedBy(p))
+
+/** How its review holds it, in a sentence (reviewHolds); null when it holds nothing back. */
+export function reviewHold(p: { tracking: PullRequestTracking | null }, number: number) {
+  const by = reviewer(p)
+  if (by) return `${by} is still reviewing #${number}`
+  const behind = unreviewedBy(p)
+  if (behind) return `${behind} has not reviewed the latest commits on #${number}`
+  const asked = changesAskedBy(p)
+  if (asked) return `${asked} asked for changes on #${number}`
+  return null
+}
+
+/** Merge, but not without a word while a review is under way, asked for changes or is behind. */
+export function confirmMerge(
+  p: { number: number; base?: string; tracking: PullRequestTracking | null } | undefined,
+  number: number,
+  method: string,
+) {
+  const hold = p ? reviewHold(p, number) : null
+  return confirm(
+    hold
+      ? `${hold}. Merge it anyway (${method})?`
+      : `Merge #${number}${p?.base ? ` into ${p.base}` : ''} (${method})?`,
+  )
+}
 
 /** The merge method last picked, remembered per browser. Squash until one is picked. */
 export function useLastMergeMethod() {

@@ -1,0 +1,155 @@
+# Board
+
+The **Board** (`/app/board`, between Inbox and Lists in the sidebar) shows what moves across a
+workspace: the lines of its lists that have work on them, its threads on no list, and its
+failing routines. It answers "where is everything?", where Today answers "what changed since I looked?".
+Its design is `Projects/Brigade/designs/board.design` in the library; how competitors handle the
+same question is `Projects/Brigade/investigations/agent-work-tracking-competitors.md`.
+
+## Decisions
+
+- **A view, not a store.** The API computes it on each read (`GET /api/board`,
+  `apps/api/src/board.ts`) from the lists (`workspaceLists`, the same reading as the Lists page),
+  the threads and the schedules. It keeps nothing of its own, so it can't fall behind them. It
+  replaced the Tasks board, gone since (docs/hand-offs.md); `/app/tasks` opens it.
+- **Three columns, all computed.** Needs you, In progress, Done (the last 7 days). Nobody drags a
+  card: where it stands follows from its threads, tickets and pull requests. There is no "To do"
+  column: work is planned in a list's file, where the order of the lines matters.
+- **A card is a list's line, a thread on no list, or a failing routine.**
+  - A line with work on it (a thread or a pull request) is the card; its threads are not cards
+    of their own. Its state is the list's (`stateOf`, docs/lists.md).
+  - A thread on no list, top-level (a child thread shows in its parent), not archived, active in
+    the last 14 days or done this week.
+  - A routine's run threads are never cards: the Routines page and Today say what they did, and a
+    line they work on is its card. A routine that fails is one card in Needs you, the routine and not
+    its run (`failingRoutines`, src/failed.ts).
+- **Needs you is the same everywhere**: an open ticket or question in the thread or its
+  children, a teammate waiting on an answer (or a person who took the thread over), a pull
+  request ready for a person to merge or decide, choices nobody picked (below), a failed thread
+  or routine (src/failed.ts). The sidebar, Today, the app badge, notifications and a list's
+  Needs you tab count the same things. The Board is the workspace's, like a list's
+  tab; Today and the badge are the member's own.
+- **Choices wait on a person** (src/choices-waiting.ts). A teammate that ends its reply on a
+  choices card offered alternatives for someone to pick, and the thread stops there: without
+  this, it showed as Stopped among every other quiet thread, and the reply was lost there. Its
+  card says "Pick one", with the card's question as its note. It waits while the thread is idle,
+  until a message comes in it (a pick is one; so is a wake-up, which closes the card in the
+  thread too), and on whoever started it, as a failed thread does. A choice nobody made in 7
+  days closes with its thread, as Stopped does. Reply buttons ("Build it", "Not yet") do not
+  wait: they offer a next step a person may leave, and almost every reply ends on some; Today
+  lists those it left as loose ends.
+- **A choice can be dismissed** without picking: Dismiss on the card, in the thread or on
+  Today (`POST /api/threads/:id/choices/dismiss` with the card's event `seq`, who may change
+  the thread). The card shows Dismissed, it waits on nobody, and the thread stops, with no turn
+  started: Stopped from then (a person's dismissal is its latest activity), closed after 7 days.
+  Its teammate reads a note at its next turn ("Ada dismissed the choices you offered…").
+  Brigade keeps the card's place (`Session.choicesDismissedSeq`), not a message in the thread,
+  so it holds while the teammate's computer is off. A card answered or offered after the one a
+  person saw is not theirs to dismiss: refused, so a stale page never closes choices nobody
+  read. Chosen over Mark done, which ends the thread: a person may come back to it.
+- **A snoozed thread is put away until a time.** Its ⋮ menu's Snooze (Later in the code and
+  the database), or the clock on a choice card in Today's Needs you (shown with its ✕ Dismiss as
+  the pointer is on the card), takes it out of the member's list and of what waits on them (Today, sidebar, app
+  badge, notifications), for them only, like a pin, for 1 hour, 3 hours, until tomorrow or next
+  Monday at 9:00 in their own time zone, or a month (`snoozeOptions` in `@brigade/contracts`; the
+  API takes any time up to `SNOOZE_MAX_DAYS`). The sidebar filter's Snoozed lists them, with how
+  many and when each comes back. At its time a minute job (`snoozes`) brings it back, unread for
+  that member and on top of their list for a week however old it is (`returnedAt`, so it never
+  stays past the list's latest 100); anything new in it sooner (a message, or a ticket or pull request in it or a child)
+  brings it back for everyone (`src/later.ts`). Those put away before Snooze came back a week
+  after it shipped: the column's default, which also covers an older API still running.
+- **What a member snoozed is not theirs to see here.** A thread they snoozed
+  (`src/later.ts`) no longer waits on them anywhere, so on their Board it is like an
+  archived one: no card in Needs you or In progress, not Stopped, and a list's line it alone
+  carries leaves the Board too. What it did this week stays in Done. Other members still see it,
+  and anything new in it brings it back for everyone.
+- **In progress** is a thread at work (or its children it waits for), one waiting on a wake-up it
+  set, or one whose pull request is being reviewed or fixed. A thread that failed on an error the
+  runner tries again by itself stays here until those tries are over (src/failed.ts).
+- **In progress puts what is at work first**, the latest activity first; then what waits on a
+  review or a fix; then what waits on a wake-up (its threads idle with one pending), the soonest
+  to wake first. A thread waiting days for its wake-up no longer sits among those at work. The
+  other columns show the latest activity first.
+- **A card shows its next wake-up**: an alarm and the time of the earliest pending wake-up of its
+  threads (the full date on hover), in any column but Done, so it says when its teammate comes
+  back on its own.
+- **Done** is a line ticked through Brigade (a teammate's `complete_item`, a merged pull request
+  that closes it) or a thread declared done (below), in the last 7 days. A line a person ticks in
+  the file has no date, so it shows only in its list. A thread whose task was done on the old
+  Tasks board was declared done when the board went (docs/hand-offs.md).
+- **Stopped, then closed.** A thread that is idle, not done, with nothing pending is not lost: it
+  shows under the columns as Stopped, with Mark done and Archive for who may write in it. After 7
+  days without activity it leaves the Board as closed with no activity, listed under Done apart
+  from what was done, and anything new in it brings it back. A list's line whose threads all
+  stopped with it open (`stalled`) shows there too, until its last thread closes; it then is an
+  open line of its list again. "N stopped" in the summary at the top opens it and scrolls down
+  to it.
+- **A column is never taller than the window.** From a tablet's width up, each column stops at
+  the window's height, less the header above it and room for the Stopped bar below, and its
+  cards scroll inside it, their edges fading where more is hidden. A short column keeps its
+  height. The page itself still scrolls, down to Stopped.
+- **No routines section.** A healthy routine neither waits on a person nor moves, so its row
+  only pushed the columns down. A failing one is already a card in Needs you; the routines and
+  what their runs did are on the Routines page and Today (`GET /api/board` still returns them for
+  Today).
+- **Cards say little.** The title; the list and section only for a list's line (nothing for a
+  thread on no list); a note on one line (two for an error); the teammate's avatar and name. In
+  Needs you, what to do, on the right ("Merge #15, #16", "Answer ticket", "Reply", "Failed").
+  In progress has no label: the column says it moves, and a violet dot on the avatar says the
+  teammate works right now. One pull request chip, the latest, its color saying its state, with
+  "+N" for the others. Done adds who ticked it, when it isn't the teammate, and when.
+- **Filters**: project, lists (several at once, plus Not on a list) and teammate, kept in the
+  address (`?project=`, `?list=` repeated, `?teammate=`). A list's page links to the Board on that
+  list. This browser remembers the last filters per workspace: the Board opened with none in its
+  address shows them again; one opened with filters in its address (a list's link) takes those. A Filter button offers the filters not set yet; each one set shows as a pill after it
+  ("Project Brigade", "List Backlog +1") that reopens its choices, with an × to remove it, and
+  Clear appears once two are set. The list choices show their counts and stay open while ticked.
+- **Live**, reloaded once a burst of changes settles (threads, tickets, pull requests, lists,
+  schedules), not on each one.
+- **On a phone**, one column at a time, chosen like a list's tabs; this browser remembers the last
+  one chosen, per workspace.
+
+## Done
+
+A thread's done is a fact someone declares, never one read from its silence (`Session.doneAt`,
+`doneSummary`, `doneByType`, `doneById`; `apps/api/src/thread-done.ts`).
+
+- **Its teammate declares it** with a `done` block at the end of the reply that delivers it, one
+  line on what was delivered (2026-11-04, `replyCard`). Its runner sends it as
+  `complete_thread({ summary })` as the reply ends, and the turn's end waits for the answer
+  (`apps/runner/src/harness/outbox.ts`): the reply stays the turn's last text, and nobody waits
+  on a model round trip just to close. A refusal shows under the reply ("Not marked done", and
+  what is open); the teammate learns of it only when what blocked it wakes it again. The
+  `complete_thread` tool stays, no longer loaded up front, for a teammate used to it. Only in a
+  top-level thread a person or a trigger started: a child reports, a playbook's run ends with
+  `playbook_report`, a schedule's run with its turn. Audited as `thread.done`.
+- **A question is done once answered** (2026-11-02). The teammate closes it in the turn that
+  answers, even when its reply ends on suggested replies: they are a next step a person may
+  leave, not pending work, and a click is a message that reopens the thread. A change that was
+  asked and only proposed is not delivered, nor is a reply ending on choices the teammate needs
+  picked (closing it would take them out of Needs you): those stay open. On the first day of
+  `complete_thread`, teammates closed 26 of 32 threads that made something and none of 7
+  answered questions, even one that offered no next step, so Stopped filled with answers. Chosen
+  over sorting threads into work and questions from what they made (a request nobody followed up
+  looks like a question) and over leaving it to Mark done. The check: how often a person reopens
+  a thread within the hour after its teammate closed it.
+- **Brigade refuses it while anything is open**, and says what (`openWork`): a ticket or question
+  in the thread or its children; a pull request opened from them still open; a child it waits for
+  that has not reported (a review is one); a wake-up the teammate set; a person's queued message;
+  a list item it works on not ticked, unless what remains of it is a line of its own. The write
+  checks again, so something opened meanwhile is not missed. Refusals rest on these records,
+  never on reading the brief: a teammate once declared work done without the review its brief
+  asked for in prose (Paperclip's lesson, in the investigation above).
+- **A person marks it done** (Mark done in the thread's menu, or on a Stopped row of the Board;
+  `POST /api/threads/:id/done`, optional `summary`), whatever is open: who may change the thread,
+  never a child. Reopen (`DELETE`) clears it. Audited as `thread.done` and `thread.reopened`.
+- **It reopens when a person or new work shows up**, on the root: a member's message or mail, a
+  ticket or pull request opened in it or a child. The teammate's own wake-ups, a child's report,
+  a schedule's run and Brigade's notes leave it done.
+- **A merge wakes its teammate** once per pull request, at once, asking it to declare the thread
+  done or say what remains: a merge is not done by itself (a deploy to check is often left). Not
+  while the thread works, waits or is paused, nor once done or archived, nor while another of its
+  pull requests is open, nor in a child, a schedule's or a playbook's run.
+- **Mark done stays a fallback.** Teammates declare done themselves in the common case; a thread
+  that stops without it shows as Stopped, then closes after 7 days. How often people still mark
+  threads done by hand says whether teammates need one more nudge at the end of a turn.

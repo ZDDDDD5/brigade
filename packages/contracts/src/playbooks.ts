@@ -25,6 +25,11 @@ export const PlaybookSettingType = z.enum([
   'account',
   'amount',
   'choice',
+  /**
+   * One of the workspace's teammates: its id. The Apps that name it (`teammate: developer`) are
+   * its alone, and so are the threads handed to it (start_child with its key).
+   */
+  'teammate',
 ])
 export type PlaybookSettingType = z.infer<typeof PlaybookSettingType>
 
@@ -138,6 +143,8 @@ export type UpdatePlaybookAction = z.infer<typeof UpdatePlaybookAction>
 
 const AppKind = z.string().regex(/^[a-z_]+$/)
 const Access = z.enum(['read', 'read_write'])
+/** The teammate setting whose threads have this App; unset: the teammate its runs start with. */
+const AppTeammate = Key.optional()
 
 /**
  * An App it needs: one App by its kind (`{ kind: gmail }`), or a role any of several Apps can
@@ -150,6 +157,7 @@ export const PlaybookApp = z.union([
     kind: AppKind,
     access: Access,
     optional: z.boolean().optional(),
+    teammate: AppTeammate,
   }),
   z.object({
     /** Its name, as its account setting names it (`app: analytics`). */
@@ -158,6 +166,7 @@ export const PlaybookApp = z.union([
     kinds: z.array(AppKind).min(1).max(20),
     access: Access,
     optional: z.boolean().optional(),
+    teammate: AppTeammate,
   }),
 ])
 export type PlaybookApp = z.infer<typeof PlaybookApp>
@@ -170,6 +179,8 @@ export type PlaybookRole = {
   optional: boolean
   /** Declared as one App (`kind`) rather than a role. */
   plain: boolean
+  /** The teammate setting whose threads have it; null: the one its runs start with. */
+  teammate: string | null
 }
 
 export const playbookRole = (app: PlaybookApp): PlaybookRole =>
@@ -180,6 +191,7 @@ export const playbookRole = (app: PlaybookApp): PlaybookRole =>
         access: app.access,
         optional: Boolean(app.optional),
         plain: false,
+        teammate: app.teammate ?? null,
       }
     : {
         name: app.kind,
@@ -187,9 +199,20 @@ export const playbookRole = (app: PlaybookApp): PlaybookRole =>
         access: app.access,
         optional: Boolean(app.optional),
         plain: true,
+        teammate: app.teammate ?? null,
       }
 
 export const playbookRoles = (apps: readonly PlaybookApp[]) => apps.map(playbookRole)
+
+/**
+ * Whether a role is one a thread of this teammate setting has: the thread's own (`null`, the
+ * one its runs start with). A manifest with no teammate settings gives every thread every role.
+ */
+export const roleOfTeammate = (
+  role: { teammate: string | null },
+  manifest: { teammate?: string },
+  teammate: string | null,
+) => (role.teammate ?? manifest.teammate ?? null) === (teammate ?? manifest.teammate ?? null)
 
 /** A server added by its URL: it may hold a role only through an account setting naming it. */
 export const MCP_KIND = 'mcp'
@@ -203,6 +226,12 @@ export const PlaybookManifest = z
     apps: z.array(PlaybookApp).default([]),
     settings: z.array(PlaybookSetting).default([]),
     entries: z.array(PlaybookEntry).min(1),
+    /**
+     * The teammate setting its runs start with (`teammate: support`), when it has teammate
+     * settings: its triggers and schedules start that teammate's threads, which have the Apps that
+     * name no other teammate. Unset: the teammate it is installed for, with every App.
+     */
+    teammate: Key.optional(),
     /** Its recipe: folders of the template, each with a SKILL.md. */
     skills: z.array(z.string().min(1)).default([]),
     actions: z.array(PlaybookActionSpec).default([]),
@@ -253,6 +282,22 @@ export const PlaybookManifest = z
         )
     })
     const keys = new Set(m.settings.map((s) => s.key))
+    // Its teammates: the one its runs start with, and those its Apps name, are teammate settings.
+    const teammates = new Set(m.settings.filter((s) => s.type === 'teammate').map((s) => s.key))
+    if (teammates.size && !m.teammate)
+      issue('it has teammate settings, so teammate names the one its runs start with', ['teammate'])
+    if (m.teammate && !teammates.has(m.teammate))
+      issue(`${m.teammate} is not one of its teammate settings`, ['teammate'])
+    roles.forEach((r, i) => {
+      if (r.teammate && !teammates.has(r.teammate))
+        issue(`${r.teammate} is not one of its teammate settings`, ['apps', i, 'teammate'])
+      if (r.teammate && r.teammate === m.teammate)
+        issue('leave teammate out for the one its runs start with', ['apps', i, 'teammate'])
+    })
+    m.settings.forEach((s, i) => {
+      if (s.type === 'teammate' && (s.optional || s.default !== undefined))
+        issue('a teammate setting is always asked', ['settings', i])
+    })
     // Every {{setting}} it uses is one of its settings.
     const refs = (text: string, path: (string | number)[]) => {
       for (const [, key] of text.matchAll(/\{\{\s*([a-z0-9_]+)\s*\}\}/gi))
@@ -270,6 +315,12 @@ export const PlaybookManifest = z
         // A trigger is an App's event: its App is declared by its kind, not as a role, whose
         // account could be of another kind.
         const kind = e.trigger.split('.')[0]!
+        if (roles.some((r) => r.plain && r.name === kind && r.teammate))
+          issue(`${kind} starts its runs, so it is an App of the teammate they start with`, [
+            'entries',
+            i,
+            'trigger',
+          ])
         if (!roles.some((r) => r.plain && r.name === kind))
           issue(
             roles.some((r) => r.kinds.includes(kind))
@@ -328,6 +379,11 @@ export const PlaybookOperations = [
     outcome: PlaybookOutcome,
     summary: z.string().trim().max(2_000).optional(),
   }),
+  /**
+   * A live run keeps an idea for the team (a customer's feature request): a line at the end of the
+   * playbook's ideas list, which starts nothing (src/playbook-ideas.ts).
+   */
+  z.object({ name: z.literal('file_idea'), text: z.string().trim().min(1).max(1_000) }),
   /** The catalog, or one playbook as a card in the thread. */
   z.object({ name: z.literal('show_playbook'), playbookKey: z.string().trim().min(1).optional() }),
   /** Start installing one (playbookKey), or go on with it (installationId): answers, checked by type. */
@@ -335,7 +391,10 @@ export const PlaybookOperations = [
     name: z.literal('configure_playbook'),
     playbookKey: z.string().trim().min(1).optional(),
     installationId: z.string().trim().min(1).optional(),
-    /** The teammate that runs it, by name or id; unset: the one installing it. */
+    /**
+     * The teammate that runs it, by name or id: with teammate settings, the answer to the one its
+     * runs start with. Unset (and no such setting): the one installing it.
+     */
     teammate: z.string().trim().min(1).optional(),
     settings: SettingValues.default({}),
   }),
@@ -347,6 +406,19 @@ export const PlaybookOperations = [
   }),
   z.object({ name: z.literal('dry_run_report'), installationId: z.string().trim().min(1) }),
   z.object({ name: z.literal('activate_playbook'), installationId: z.string().trim().min(1) }),
+  /**
+   * Move an installed playbook to its template's newer version: without `apply`, what changes and
+   * the new questions; with it, the update itself (or the questions still without an answer).
+   */
+  z.object({
+    name: z.literal('update_playbook'),
+    installationId: z.string().trim().min(1).optional(),
+    playbookKey: z.string().trim().min(1).optional(),
+    settings: SettingValues.default({}),
+    /** Skills the workspace edited that take the new version anyway, by name. */
+    replaceSkills: z.array(z.string().trim().min(1)).max(50).optional(),
+    apply: z.boolean().default(false),
+  }),
 ] as const
 
 /** The tools of the teammate that installs a playbook, by the operation each one is. */
@@ -356,6 +428,7 @@ export const PLAYBOOK_INSTALL_TOOLS = [
   'start_dry_run',
   'dry_run_report',
   'activate_playbook',
+  'update_playbook',
 ] as const
 export type PlaybookInstallTool = (typeof PLAYBOOK_INSTALL_TOOLS)[number]
 
@@ -381,6 +454,20 @@ export const ThreadPlaybook = z.object({
     .optional(),
   /** A dry run's: every write is simulated, nothing is pushed, nobody is asked. */
   dryRun: z.boolean().default(false),
+  /**
+   * Its teammates, when it has several: each by its setting's key, the teammate and its Apps;
+   * `here` is this thread's. Work for another goes to a child thread with that key as teammate.
+   */
+  teammates: z
+    .array(
+      z.object({
+        key: z.string(),
+        name: z.string(),
+        apps: z.array(z.string()),
+        here: z.boolean(),
+      }),
+    )
+    .optional(),
 })
 export type ThreadPlaybook = z.infer<typeof ThreadPlaybook>
 
@@ -417,6 +504,57 @@ export const UpdatePlaybook = z.object({
   paused: z.boolean().optional(),
 })
 
+/**
+ * POST /playbooks/:id/update: onto its template's latest version. Answers for its new settings,
+ * by key; skills the workspace edited are kept unless named in `replaceSkills`.
+ */
+export const UpgradePlaybook = z.object({
+  settings: SettingValues.default({}),
+  replaceSkills: z.array(z.string().trim().min(1)).max(50).optional(),
+})
+export type UpgradePlaybook = z.infer<typeof UpgradePlaybook>
+
+/** A setting a newer version asks for, as the update shows it. */
+export type PlaybookUpdateQuestion = {
+  key: string
+  type: PlaybookSettingType
+  ask: string
+  optional: boolean
+  /** A choice's values. */
+  options?: string[]
+  /** An account setting's App or role. */
+  app?: string
+}
+
+/** Its template has a newer version: what moving to it changes. */
+export type PlaybookUpdateView = {
+  version: string
+  /** What changes, in plain English: skills, entries, actions, Apps and settings. */
+  changes: string[]
+  /** What happens to its actions' autonomy; an update never gives more. */
+  autonomy: string[]
+  /** Skills the workspace edited since they were installed: kept as they are unless chosen. */
+  keptSkills: string[]
+  /** Its new settings without an answer; the required ones must have one before it updates. */
+  newSettings: PlaybookUpdateQuestion[]
+  /** Why it cannot update right now (a dry run under way), else null. */
+  blocked: string | null
+  /** Whether the person viewing may update it: its owner, an owner or an admin. */
+  canUpdate: boolean
+}
+
+/** POST /playbooks/:id/update's answer: updated, or the questions still without an answer. */
+export type PlaybookUpgradeResult = {
+  updated: boolean
+  from: string
+  to: string
+  /** Skills kept as the workspace edited them. */
+  keptSkills: string[]
+  /** When not updated: the required settings still without an answer. */
+  missing: PlaybookUpdateQuestion[]
+  playbook: PlaybookInstallationView
+}
+
 /** The Activate button: from the thread it was installed in, where a member's ticket goes. */
 export const ActivatePlaybook = z.object({ threadId: z.string().optional() })
 
@@ -432,6 +570,8 @@ export type PlaybookAppStatus = PlaybookRole & {
   picks: boolean
   /** The account that setting picked (what its row shows, and its kind), else null. */
   chosen: { name: string; kind: string } | null
+  /** The teammate whose threads have it, once its setting has an answer. */
+  holder: { id: string; name: string } | null
 }
 
 /** One event of a dry run: the case found, what would have been done, its thread. */
@@ -652,6 +792,8 @@ export type PlaybookInstallationView = {
   dryRun: PlaybookDryRunView | null
   /** A member asked an owner or admin to activate it: the ticket that waits. */
   activationTicketId: string | null
+  /** Its template's newer version, when there is one. */
+  update: PlaybookUpdateView | null
   createdAt: string
   activatedAt: string | null
   pausedAt: string | null

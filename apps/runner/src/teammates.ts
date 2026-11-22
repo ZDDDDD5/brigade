@@ -27,6 +27,18 @@ async function helper(...args: string[]) {
   await run('sudo', ['-n', HELPER, ...args], { cwd: '/' })
 }
 
+/**
+ * The teammate's systemd user manager, lingering, for user services put back on a computer
+ * that replaced another (teammate-backups.ts). Resolves to its uid.
+ */
+export async function userServices(user: string) {
+  const { stdout } = await run('sudo', ['-n', HELPER, 'user-services', user], {
+    cwd: '/',
+    timeout: 60_000,
+  })
+  return stdout.trim()
+}
+
 const users = new Map<string, Promise<void>>()
 
 /** Once per user: a thread's turn and its title run may both ask at the same time. */
@@ -63,9 +75,9 @@ export async function containerEnv(user: string, sessionId: string) {
 }
 
 /**
- * In a thread with its own network, the teammate's Docker of that thread (see
- * thread-net.ts): what its containers publish is the thread's. {} without one,
- * or when it did not start (said in the runner's log).
+ * In a thread with its own network, the teammate's Docker through the thread's
+ * socket (docker-proxy.ts): what its containers publish there is the thread's.
+ * {} without one, or when the helper failed (said in the runner's log).
  */
 async function threadDockerEnv(net: ThreadNet, user: string): Promise<Record<string, string>> {
   const socket = await threadDocker(net, user).catch((error: { stderr?: string } & Error) => {
@@ -108,6 +120,26 @@ export function dockerEnv(user: string): Promise<Record<string, string>> {
 }
 
 export const shareAccount = (accountId: string) => helper('share-account', accountId)
+
+/**
+ * Give the account's shared login files (auth.json, its lock, .credentials.json) back to the
+ * runner and the teammates' group, after a harness rewrote one as a teammate. Only those files:
+ * never the runner's own token (share-login).
+ */
+export const shareLogin = (accountId: string) => helper('share-login', accountId)
+
+/**
+ * Free what the computer's own Docker keeps for nothing (prune-system-docker): images
+ * pulled there outside the teammates' rootless Dockers. Says how much it freed.
+ */
+export async function pruneSystemDocker() {
+  const { stdout } = await run('sudo', ['-n', HELPER, 'prune-system-docker'], {
+    cwd: '/',
+    // A Docker that hangs must not hold the disk check up for good.
+    timeout: 5 * 60_000,
+  })
+  return stdout.trim()
+}
 
 /**
  * The teammate's own config directory for an account: private (its sessions

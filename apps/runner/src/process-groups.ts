@@ -5,14 +5,17 @@
 // again may take the old one's answer for its own. So each group is noted in a
 // file as it starts, and the next runner stops what is left of those, with what
 // they started that is still their child (a harness runs commands in groups of
-// their own). A cloud computer needs none of it: systemd stops all the runner's
-// service holds (its cgroup) when the runner stops.
+// their own), but those an update handed over (turns, previews). A cloud computer
+// needs none of it: systemd stops all the runner's service holds (its cgroup)
+// when the service stops. Windows has no process groups: a "group" there is the
+// process the runner started and what it started since (windows.ts).
 import { execFile } from 'node:child_process'
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { uptime } from 'node:os'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import { CLOUD, paths } from './config.js'
+import { groupAlive, windowsProcesses, WINDOWS } from './windows.js'
 
 /** A group the runner started: its leader's pid, when, and what for (for the log). */
 export type Group = { pgid: number; at: number; what: string }
@@ -86,6 +89,8 @@ export class ProcessGroups {
       }
     }
     for (const p of found) signal(p.pid, 'SIGTERM')
+    // A paused preview's (previews.ts) only gets to its SIGTERM handler once resumed.
+    if (!WINDOWS) for (const p of found) signal(p.pid, 'SIGCONT')
     const until = Date.now() + GRACE_MS
     while (Date.now() < until && found.some((p) => signal(p.pid, 0)))
       await new Promise((done) => setTimeout(done, 200))
@@ -118,7 +123,13 @@ export function leftovers(groups: Group[], procs: Proc[], self: number): Proc[] 
   for (let p = byPid.get(self); p && !spared.has(p.pid); p = byPid.get(p.ppid)) spared.add(p.pid)
   const found = new Map<number, Proc>()
   for (const group of groups) {
-    const members = procs.filter((p) => p.pgid === group.pgid)
+    // Windows: no groups, so the leader and what it started since, even once it ended (pids
+    // given out again started before the group did).
+    const members = procs.filter(
+      (p) =>
+        p.pgid === group.pgid ||
+        (WINDOWS && p.ppid === group.pgid && p.started >= group.at - SLACK_MS),
+    )
     const leader = members.find((p) => p.pid === group.pgid)
     // A pid is not given out again while its group lives; once it ended, another group may have it.
     // Its leader started when ours did; gone, everything left in it started after.
@@ -141,8 +152,16 @@ export function leftovers(groups: Group[], procs: Proc[], self: number): Proc[] 
 /** The runner's own, on a member's machine. */
 export const processGroups = new ProcessGroups(join(paths.state, 'process-groups.json'), !CLOUD)
 
-/** Every process, from ps (the same options on macOS and Linux). */
+/** Every process, from ps (the same options on macOS and Linux); on Windows from its process
+ * list, each its own group. */
 export async function processes(now = Date.now()): Promise<Proc[]> {
+  if (WINDOWS)
+    return (await windowsProcesses()).map((p) => ({
+      pid: p.pid,
+      ppid: p.ppid,
+      pgid: p.pid,
+      started: now - p.seconds * 1000,
+    }))
   const { stdout } = await execFileAsync('ps', ['-A', '-o', 'pid=,ppid=,pgid=,etime='], {
     maxBuffer: 16 * 1024 * 1024,
   })
@@ -166,12 +185,5 @@ export function parseProcesses(text: string, now: number): Proc[] {
 /** When the computer last started, in ms since the epoch. */
 const bootTime = () => Date.now() - uptime() * 1000
 
-/** Whether any process is left in the group. */
-function alive(pgid: number) {
-  try {
-    process.kill(-pgid, 0)
-    return true
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
-  }
-}
+/** Whether any process is left in the group (on Windows: its leader runs). */
+const alive = groupAlive

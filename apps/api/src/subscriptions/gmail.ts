@@ -1,15 +1,25 @@
 // Gmail: with Pub/Sub configured, Gmail tells Brigade when an inbox changes
 // (users.watch, renewed daily; Gmail drops it after seven days). Without it,
 // Brigade checks every minute. Either way the mailbox's history says what is
-// new since the last read.
+// new since the last read. Each new email goes to the threads waiting on a reply
+// in its conversation (src/replies.ts), then to the connection's triggers.
 import { createPublicKey, verify, type JsonWebKey } from 'node:crypto'
 import { env } from '../config.js'
 import { authorisedFetch } from '../connector-calls.js'
-import { API, full, type Message, type ReceivedEmail } from '../connectors/gmail.js'
+import {
+  API,
+  contentIdsOf,
+  full,
+  htmlOf,
+  type Message,
+  type ReceivedEmail,
+} from '../connectors/gmail.js'
 import { json } from '../connectors/types.js'
 import { prisma, scoped, type Scope } from '../db.js'
+import { automatic, bounced, wakeOnReply } from '../replies.js'
 import { dispatch } from '../triggers.js'
-import { reachable, serially, type Target } from './common.js'
+import { inInbox, keepGmail } from '../mail/gmail-inbox.js'
+import { LISTENING, reachable, retryLater, serially, type Target } from './common.js'
 
 const RESOURCE = 'inbox'
 /** Renew a watch once it has less than this left (Google suggests renewing daily). */
@@ -21,7 +31,10 @@ export const gmailPush = () =>
   Boolean(env.GMAIL_PUBSUB_TOPIC && env.GMAIL_PUBSUB_PUSH_ACCOUNT && reachable())
 
 type History = {
-  history?: { id: string; messagesAdded?: { message: { id: string; labelIds?: string[] } }[] }[]
+  history?: {
+    id: string
+    messagesAdded?: { message: { id: string; threadId?: string; labelIds?: string[] } }[]
+  }[]
   historyId: string
   nextPageToken?: string
 }
@@ -31,7 +44,7 @@ export async function syncGmail(target: Target) {
   const existing = await db.subscription.findFirst({
     where: { connectionId: connection.id, resource: RESOURCE },
   })
-  const wanted = target.triggers.length > 0
+  const wanted = target.triggers.length > 0 || target.awaitingReplies
   const fetch = await authorisedFetch(db, scope, connection)
 
   if (!wanted) {
@@ -91,12 +104,11 @@ export async function syncGmail(target: Target) {
 
 /** After a failed read, the mail waits this long before the next try. */
 const RETRY_MS = 5 * 60_000
-export const retryAt = new Map<string, number>()
 
 /**
  * Read what is new in the inbox since the cursor and offer each email to the
- * connection's triggers. The cursor moves past an email only once every
- * thread it should start has started.
+ * threads awaiting a reply and to the connection's triggers. The cursor moves
+ * past an email only once every thread it should start has started.
  */
 export const readInbox = (subscriptionId: string) =>
   serially(`gmail:${subscriptionId}`, async () => {
@@ -105,6 +117,8 @@ export const readInbox = (subscriptionId: string) =>
       include: { connection: true },
     })
     if (!sub?.cursor || sub.connection.status !== 'active') return
+    // Read again later unless this read finishes (a restart may cut it off).
+    await retryLater(sub.id, Date.now() + RETRY_MS)
     const scope: Scope = { organizationId: sub.organizationId, workspaceId: sub.workspaceId }
     const db = scoped(scope)
     const fetch = await authorisedFetch(db, scope, sub.connection)
@@ -112,6 +126,24 @@ export const readInbox = (subscriptionId: string) =>
       db.subscription.updateMany({ where: { id: sub.id }, data })
     const now = async () =>
       (await json<{ historyId: string }>(await fetch(`${API}/profile`))).historyId
+
+    // Without triggers, only the conversations threads wait on a reply in are read. Looked up
+    // after each page of history, so that a watch started while it was asked for is in it.
+    // A shared account's mail is all read: the Inbox keeps it (src/mail/gmail-inbox.ts).
+    const listed = inInbox(sub.connection)
+    const listeners = async () => ({
+      triggered: await db.trigger.count({
+        where: { connectionId: sub.connectionId, ...LISTENING },
+      }),
+      awaited: new Set(
+        (
+          await db.replyWatch.findMany({
+            where: { connectionId: sub.connectionId, until: { gt: new Date() } },
+            select: { conversationKey: true },
+          })
+        ).map((w) => w.conversationKey),
+      ),
+    })
 
     const start = sub.cursor
     let cursor = start
@@ -130,10 +162,13 @@ export const readInbox = (subscriptionId: string) =>
         // Gmail keeps about a week of history. Past that, start again from now.
         if (response.status === 404) return save({ cursor: await now(), error: null })
         const page = await json<History>(response)
+        const { triggered, awaited } = await listeners()
         for (const record of page.history ?? []) {
           for (const { message } of record.messagesAdded ?? []) {
             // The mailbox's own mail, e.g. a teammate's reply to itself, starts nothing.
             if (message.labelIds?.some((l) => l === 'SENT' || l === 'DRAFT')) continue
+            if (!triggered && !listed && !(message.threadId && awaited.has(message.threadId)))
+              continue
             if (read >= PER_READ) {
               await save({ cursor })
               // Pushes come only for new changes: read the rest now.
@@ -150,25 +185,64 @@ export const readInbox = (subscriptionId: string) =>
                 (h) => h.name.toLowerCase() === 'message-id',
               )?.value,
             }
-            const { failed } = await dispatch(sub.connection, {
+            // For the Inbox alone: teammates read the text.
+            const body = { html: htmlOf(email.payload), contentIds: contentIdsOf(email.payload) }
+            // A reply a thread waits on is that thread's: no trigger starts or continues another.
+            // So is a mail server's word that the thread's email could not be delivered.
+            const bounce = bounced(payload)
+            if (
+              (!automatic(email.payload?.headers) || bounce) &&
+              (await wakeOnReply(sub.connection, payload, new Date(), bounce))
+            ) {
+              // The thread it woke (on a read again too): its wake-up says, not the watches.
+              const woken = await db.wakeup.findFirst({
+                where: { sourceId: `gmail:${payload.id}`, kind: 'reply' },
+                orderBy: { createdAt: 'desc' },
+                select: { sessionId: true },
+              })
+              await keepGmail(
+                sub.connection,
+                payload,
+                { route: 'awaited', ...(woken ? { sessionId: woken.sessionId } : {}) },
+                body,
+              )
+              continue
+            }
+            const delivered = await dispatch(sub.connection, {
               id: email.id,
               type: 'email',
               payload,
             })
-            if (failed) {
-              retryAt.set(sub.id, Date.now() + RETRY_MS)
+            if (delivered.failed) {
+              await retryLater(sub.id, Date.now() + RETRY_MS)
               return save({ cursor })
             }
+            await keepGmail(
+              sub.connection,
+              payload,
+              delivered.threadId
+                ? { route: 'rule', sessionId: delivered.threadId, triggerId: delivered.triggerId! }
+                : delivered.kept
+                  ? // A rule with nobody: kept for a person, though Gmail's other mail is not.
+                    { route: 'kept', triggerId: delivered.triggerId! }
+                  : delivered.capped
+                    ? {
+                        route: 'cap',
+                        ...(delivered.triggerId ? { triggerId: delivered.triggerId } : {}),
+                      }
+                    : { route: 'box' },
+              body,
+            )
           }
           cursor = record.id
         }
         pageToken = page.nextPageToken
         if (!pageToken) cursor = page.historyId
       } while (pageToken)
-      retryAt.delete(sub.id)
+      await retryLater(sub.id, null)
       await save({ cursor, error: null })
     } catch (error) {
-      retryAt.set(sub.id, Date.now() + RETRY_MS)
+      await retryLater(sub.id, Date.now() + RETRY_MS)
       await save({ cursor, error: error instanceof Error ? error.message : String(error) })
       throw error
     }

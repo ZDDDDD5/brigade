@@ -12,6 +12,7 @@ import {
   type TicketAnswer,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
+import { mayWrite } from './account-sharing.js'
 import { usableIn } from './apps.js'
 import { audit } from './audit.js'
 import { decideTicket } from './connector-calls.js'
@@ -21,13 +22,14 @@ import { mcpAppKey } from './mcp-servers.js'
 import type { ConnectorKind } from './connectors/types.js'
 import { mayManage, type CredentialAction } from './credentials.js'
 import { scoped, type ScopedDb } from './db.js'
-import { broadcastThreadStatus, dispatch } from './hub.js'
+import { hubs, threadUpdated } from './hub.js'
 import { accountReaching } from './repository-grant.js'
 import type { WorkspaceScope } from './scope.js'
 import { decidePromotion } from './playbook-autonomy.js'
 import { decideActivation } from './playbooks.js'
 import { decideSkillProposal } from './skills.js'
-import { loadThread, specFor, teammateIn } from './thread-spec.js'
+import { decideMissionAction, type MissionActionPayload } from './initiatives.js'
+import { loadThread, noteAsker, specFor, teammateIn } from './thread-spec.js'
 import { handBack, joinThread, promptThread } from './work.js'
 
 /**
@@ -43,15 +45,14 @@ export async function answerQuestion(
   const db = scoped(scope)
   const ticket = await db.ticket.findFirst({
     where: { id: ticketId, type: 'question', status: 'open' },
-    include: { session: true },
+    include: { session: { include: { computer: { select: { kind: true } } } } },
   })
   const payload = ticket?.payload as TicketPayload | undefined
   if (!ticket?.sessionId || payload?.source !== 'harness' || !payload.questionId)
     throw new HTTPException(404, { message: 'Question not found or already answered' })
-  const isAdmin = scope.role === 'owner' || scope.role === 'admin'
-  if (!isAdmin && ticket.session?.startedByMemberId !== scope.memberId)
+  if (!ticket.session || !mayAnswer(scope, ticket.session))
     throw new HTTPException(403, {
-      message: 'Only the member who started the thread, or an admin, can answer',
+      message: 'Only who may write in the thread, or an admin, can answer',
     })
   if (answer.action !== 'declined') {
     const questions = new Map((payload.questions ?? []).map((q) => [q.id, q]))
@@ -74,7 +75,10 @@ export async function answerQuestion(
     }
   }
   const thread = await loadThread(db, ticket.sessionId)
-  const sent = await dispatch(thread.computer, {
+  // What they answer the teammate goes on with (a decline's note too): they ask in it too.
+  if (answer.action !== 'declined' || answer.note?.trim())
+    await noteAsker(db, thread.id, scope.memberId)
+  const sent = await hubs.get(thread.computer.workspaceId).dispatch(thread.computer, {
     type: 'thread.answer',
     commandId: randomUUID(),
     // The answer goes to the harness of the teammate that asked.
@@ -102,6 +106,17 @@ export async function answerQuestion(
 }
 
 /**
+ * Who may answer a thread's questions and tickets, and allow its teammates' steps: whoever may
+ * write in it (src/account-sharing.ts), or an admin.
+ */
+export function mayAnswer(
+  scope: WorkspaceScope,
+  thread: { startedByMemberId: string; othersMayPrompt: boolean; computer: { kind: string } },
+) {
+  return scope.role === 'owner' || scope.role === 'admin' || mayWrite(thread, scope)
+}
+
+/**
  * A person answers a ticket the teammate opened (open_ticket): every ask, or
  * a decline. The answers go to the teammate as the tool's result; changes to
  * a draft sent to another teammate also go to that teammate as a message.
@@ -110,15 +125,14 @@ export async function answerTicket(scope: WorkspaceScope, ticketId: string, answ
   const db = scoped(scope)
   const ticket = await db.ticket.findFirst({
     where: { id: ticketId, type: 'request', status: 'open' },
-    include: { session: true },
+    include: { session: { include: { computer: { select: { kind: true } } } } },
   })
   const payload = ticket?.payload as TicketPayload | undefined
   if (!ticket?.sessionId || payload?.source !== 'harness' || !payload.requestId)
     throw new HTTPException(404, { message: 'Ticket not found or already answered' })
-  const isAdmin = scope.role === 'owner' || scope.role === 'admin'
-  if (!isAdmin && ticket.session?.startedByMemberId !== scope.memberId)
+  if (!ticket.session || !mayAnswer(scope, ticket.session))
     throw new HTTPException(403, {
-      message: 'Only the member who started the thread, or an admin, can answer',
+      message: 'Only who may write in the thread, or an admin, can answer',
     })
   const thread = await loadThread(db, ticket.sessionId)
   const asker = teammateIn(thread, payload.teammateId)
@@ -214,9 +228,15 @@ export async function answerTicket(scope: WorkspaceScope, ticketId: string, answ
     accounts.push(
       await accountToGrant(db, scope, thread, grant.app, grant.what, grant.connectionId),
     )
+  // Each for the teammate it names (a playbook's developer), else the one asking.
+  const holders = []
+  for (const grant of grants) holders.push(await accessHolder(db, asker, grant.app.teammate))
   for (const [i, account] of accounts.entries())
-    await grantAccount(db, scope, asker.id, account, grants[i]!.app.scope)
-  const sent = await dispatch(thread.computer, {
+    await grantAccount(db, scope, holders[i]!.id, account, grants[i]!.app.scope)
+  // What they answer the teammate goes on with (a decline's note too): they ask in it too.
+  if (answer.action !== 'declined' || answer.note?.trim())
+    await noteAsker(db, thread.id, scope.memberId)
+  const sent = await hubs.get(thread.computer.workspaceId).dispatch(thread.computer, {
     type: 'thread.ticket',
     commandId: randomUUID(),
     thread: await specFor(db, thread, { teammate: asker }),
@@ -263,14 +283,27 @@ async function accountToGrant(
   db: ScopedDb,
   scope: WorkspaceScope,
   thread: { startedByMemberId: string },
-  app: { kind: string; scope: 'read' | 'read_write'; url?: string; repository?: string },
+  app: {
+    kind: string
+    scope: 'read' | 'read_write'
+    url?: string
+    repository?: string
+    server?: string
+  },
   what: string,
   connectionId: string | undefined,
 ) {
-  // An MCP server added by its URL: the App for that URL, whatever its name.
   let key: string | undefined
+  // An MCP server named by its App's id (from list_apps): that one, whatever its name. Its URL
+  // is then serverOnlyUrl, for older APIs: never read.
+  if (app.kind === 'mcp' && app.server) {
+    key = (await db.app.findFirst({ where: { id: app.server, key: { startsWith: 'mcp:' } } }))?.key
+    if (!key)
+      throw new HTTPException(404, { message: 'That MCP server is no longer in the workspace' })
+  }
+  // An MCP server added by its URL: the App for that URL, whatever its name.
   try {
-    key = app.kind === 'mcp' && app.url ? mcpAppKey(app.url) : undefined
+    key ??= app.kind === 'mcp' && app.url ? mcpAppKey(app.url) : undefined
   } catch {
     // not a URL
   }
@@ -341,6 +374,20 @@ async function accountToGrant(
   return account
 }
 
+/**
+ * The teammate an access ask is for: the one it names, else the one asking. Brigade put its id
+ * there when the ticket was stored (withTeammateIds), which the card shows too: by id alone.
+ */
+async function accessHolder(db: ScopedDb, asker: { id: string }, ref: string | undefined) {
+  if (!ref?.trim()) return asker
+  const teammate = await db.teammate.findFirst({ where: { id: ref.trim(), archivedAt: null } })
+  if (!teammate)
+    throw new HTTPException(404, {
+      message: `This access is for "${ref}", which is not one of the workspace's teammates (or is archived). Decline it, and the teammate asks again.`,
+    })
+  return teammate
+}
+
 /** Give the teammate the account; an existing read and write grant stays. */
 async function grantAccount(
   db: ScopedDb,
@@ -377,6 +424,8 @@ const onlyCredentialMentions = (text: string) => {
 }
 
 type TicketPayload = {
+  /** A teammate's trigger, waiting in this API process (trigger-calls.ts). */
+  triggerAction?: 'create'
   /** A connector call waiting in this API process. */
   connectionId?: string
   /** A harness approval or question: the harness's own id for it. */
@@ -396,6 +445,8 @@ type TicketPayload = {
     teammateIds?: string[]
     handoff?: boolean
     attachments?: ThreadAttachmentRef[]
+    /** Its stable id (a wake-up's, a delivery's), kept so it reaches the thread once. */
+    commandId?: string
   }
   /** A sign-in ticket's account. */
   accountId?: string
@@ -412,6 +463,8 @@ type TicketPayload = {
   playbookInstallationId?: string
   /** Brigade proposes a playbook's action act on its own: its owner, an owner or an admin decides. */
   playbookPromotion?: PlaybookPromotionPayload
+  /** A mission action's draft to approve before its deadline (src/initiatives.ts). */
+  missionAction?: MissionActionPayload['missionAction']
 }
 
 /**
@@ -452,12 +505,20 @@ async function mayDecideCredential(
 export async function resolveTicket(
   scope: WorkspaceScope,
   ticketId: string,
-  input: { approved: boolean; reason?: string; always?: boolean },
+  given: {
+    approved: boolean
+    reason?: string
+    always?: boolean
+    /** An email's draft as the person changed it (EditedEmail). */
+    edited?: Record<string, unknown>
+  },
 ): Promise<{ ok: true; live: boolean }> {
+  const { edited, ...rest } = given
+  const input = { ...rest, ...(edited ? { input: edited } : {}) }
   const db = scoped(scope)
   const ticket = await db.ticket.findFirst({
     where: { id: ticketId, status: 'open' },
-    include: { session: true },
+    include: { session: { include: { computer: { select: { kind: true } } } } },
   })
   if (!ticket) throw new HTTPException(404, { message: 'Ticket not found or already resolved' })
   const payload = ticket.payload as TicketPayload
@@ -488,12 +549,16 @@ export async function resolveTicket(
     if (!ticket.sessionId) return { ok: true, live: false }
     const thread = await loadThread(db, ticket.sessionId)
     if (input.approved && payload.pending) {
-      await promptThread(db, scope, thread, payload.pending, { skipCaps: true })
+      const { commandId, ...pending } = payload.pending
+      await promptThread(db, scope, thread, pending, {
+        skipCaps: true,
+        ...(commandId ? { commandId } : {}),
+      })
     } else {
       // Never started: done. Started before: it waits for its next message.
       const status = thread.lastSeq > 0 ? 'idle' : 'done'
       await db.session.updateMany({ where: { id: thread.id }, data: { status } })
-      broadcastThreadStatus(scope.workspaceId, thread.id, status)
+      void hubs.get(scope.workspaceId).broadcast(threadUpdated(thread.id, status))
     }
     return { ok: true, live: true }
   }
@@ -512,6 +577,18 @@ export async function resolveTicket(
       await decidePromotion(db, scope, ticket, input.approved)
       return { ok: true, live: false }
     }
+    if (payload.missionAction) {
+      // A mission's draft: whoever may write in its thread, as for its other approvals, or an admin.
+      if (!isAdmin && (!ticket.session || !mayAnswer(scope, ticket.session)))
+        throw new HTTPException(403, {
+          message: 'Only who may write in the thread, or an admin, can decide',
+        })
+      // Deciding takes part in the thread: from then on its teammate works for whoever asks there,
+      // so a member's own Apps no longer answer another's decision (thread-spec.ts askedBy).
+      if (ticket.session) await noteAsker(db, ticket.session.id, scope.memberId)
+      await decideMissionAction(db, scope, ticket, input.approved, input.reason)
+      return { ok: true, live: false }
+    }
     if (payload.skillAction) {
       // A skill shapes what every teammate does: admins decide, like writing one.
       if (!isAdmin)
@@ -519,21 +596,47 @@ export async function resolveTicket(
       await decideSkillProposal(db, scope, ticket, input.approved)
       return { ok: true, live: false }
     }
+    if (payload.triggerAction) {
+      // An outside event that starts work on someone's accounts: an admin's call, as on the Apps page.
+      if (!isAdmin)
+        throw new HTTPException(403, { message: 'Only an owner or admin can add a trigger' })
+      return { ok: true, live: await decideTicket(scope, ticket.id, input) }
+    }
     if (payload.credentialAction) {
       await mayDecideCredential(db, scope, payload, { isAdmin, isStarter, always: input.always })
       return { ok: true, live: await decideTicket(scope, ticket.id, input) }
     }
-    if (!isAdmin && !isStarter)
+    // Whoever may write in the thread, but a write on a member's own account (an App account
+    // only they use) is theirs to allow, or an admin's.
+    // A playbook's writes measure how far it may act alone (playbook-autonomy.ts): the member
+    // whose run it is decides them, or an admin.
+    if (payload.playbookInstallationId && !isAdmin && !isStarter)
       throw new HTTPException(403, {
         message: 'Only the member who started the thread, or an admin, can decide',
       })
+    if (!isAdmin && (!ticket.session || !mayAnswer(scope, ticket.session)))
+      throw new HTTPException(403, {
+        message: 'Only who may write in the thread, or an admin, can decide',
+      })
+    if (payload.connectionId && !isAdmin) {
+      const connection = await db.connection.findFirst({
+        where: { id: payload.connectionId },
+        select: { reach: true, createdByMemberId: true },
+      })
+      if (connection?.reach === 'mine' && connection.createdByMemberId !== scope.memberId)
+        throw new HTTPException(403, {
+          message: 'This account is another member’s own: only they, or an admin, can allow it',
+        })
+    }
     if (payload.source !== 'harness')
       return { ok: true, live: await decideTicket(scope, ticket.id, input) }
     // The harness asked before a built-in tool call: the answer goes to the runner.
     if (!ticket.sessionId || !payload.approvalId)
       throw new HTTPException(409, { message: 'This approval has no thread' })
     const thread = await loadThread(db, ticket.sessionId)
-    const sent = await dispatch(thread.computer, {
+    // Allowed, or told why not: they ask in it too.
+    if (input.approved || input.reason) await noteAsker(db, thread.id, scope.memberId)
+    const sent = await hubs.get(thread.computer.workspaceId).dispatch(thread.computer, {
       type: 'thread.approval',
       commandId: randomUUID(),
       thread: await specFor(db, thread, { teammate: teammateIn(thread, payload.teammateId) }),

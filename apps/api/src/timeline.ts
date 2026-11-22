@@ -1,5 +1,6 @@
 // A teammate's status timeline and a thread's run log. Both are read from the
 // event, call and audit logs; neither has a store of its own.
+import { LAST_SEQ, threadEvents, type StoredEvent } from './cold-events.js'
 import type { ScopedDb } from './db.js'
 
 export type TimelineState = 'working' | 'waiting' | 'blocked' | 'done'
@@ -28,11 +29,16 @@ export function eventsOf<E extends { type: string; data: unknown }>(
 /** What each event means for the teammate's state in that thread. */
 function transitionOf(type: string, data: Record<string, unknown>, at: Date): Transition | null {
   switch (type) {
-    case 'turn.started':
-    case 'message.user':
-    case 'approval.resolved':
     case 'question.answered':
     case 'ticket.answered':
+      return data.waiting ? null : { at, state: 'working' }
+    // Settled on the side (message.side): the teammate's work does not start for it.
+    case 'message.user':
+      return (data.side as { route?: string } | undefined)?.route === 'answer'
+        ? null
+        : { at, state: 'working' }
+    case 'turn.started':
+    case 'approval.resolved':
       return { at, state: 'working' }
     case 'question.asked':
       return { at, state: 'waiting', note: 'question' }
@@ -41,7 +47,7 @@ function transitionOf(type: string, data: Record<string, unknown>, at: Date): Tr
     case 'approval.requested':
       return { at, state: 'waiting', note: String(data.toolName ?? '') }
     case 'turn.completed':
-      return { at, state: 'done' }
+      return data.waiting ? { at, state: 'waiting', note: 'ticket' } : { at, state: 'done' }
     case 'error':
       return { at, state: 'blocked', note: 'error' }
     case 'account.switched':
@@ -164,10 +170,7 @@ export async function teammateTimeline(db: ScopedDb, teammateId: string, from: D
  */
 export async function runLog(db: ScopedDb, sessionId: string) {
   const [events, calls, tickets] = await Promise.all([
-    db.sessionEvent.findMany({
-      where: { sessionId, type: { notIn: ['message.delta'] } },
-      orderBy: { seq: 'asc' },
-    }),
+    allEvents(sessionId),
     db.connectionCall.findMany({
       where: { sessionId },
       include: { connection: { select: { label: true, externalAccount: true, kind: true } } },
@@ -249,4 +252,12 @@ export async function runLog(db: ScopedDb, sessionId: string) {
   ]
   entries.sort((a, b) => a.at.localeCompare(b.at) || (a.seq ?? 0) - (b.seq ?? 0))
   return { entries, members: names }
+}
+
+/** A thread's every event but its streamed text, those kept cold from the bucket too. */
+async function allEvents(sessionId: string) {
+  const events: StoredEvent[] = []
+  for await (const rows of threadEvents(sessionId, 1, LAST_SEQ, { without: ['message.delta'] }))
+    events.push(...rows)
+  return events
 }

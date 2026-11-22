@@ -21,7 +21,6 @@ process.env.VAPID_PRIVATE_KEY = vapidKeys.privateKey
 process.env.VAPID_SUBJECT = 'mailto:test@example.com'
 
 const { prisma, scoped } = await import('../src/db.js')
-const { awaitDecision } = await import('../src/connector-calls.js')
 const { resolveTicket } = await import('../src/decide.js')
 const { sweep } = await import('../src/notifications.js')
 const { decidePlaybookApprovals, playbookApprovals, waitingTickets } =
@@ -186,24 +185,40 @@ async function run(title: string) {
 }
 
 /** A reply the run's teammate wants to send, waiting for a person (connector-calls.ts). */
+const approvalData = (r: { runId: string; threadId: string }, to = 'jane@acme.test') => ({
+  sessionId: r.threadId,
+  type: 'approval' as const,
+  title: `Sam: gmail send (email to ${to}: "Your refund")`,
+  payload: {
+    connectionId: 'connection',
+    connection: 'support@brigade.test',
+    operation: 'gmail_send',
+    target: `email to ${to}: "Your refund"`,
+    input: { to: [to], subject: 'Your refund', body: 'Hello,\n\nIt is on its way.' },
+    playbookInstallationId: installationId,
+    playbookActionKey: 'reply',
+    playbookRunId: r.runId,
+  },
+})
 const approval = (r: { runId: string; threadId: string }, to = 'jane@acme.test') =>
-  db().ticket.create({
+  db().ticket.create({ data: approvalData(r, to) as never })
+
+/** The call a write that asks keeps with its ticket (src/held-calls.ts), as a live call has. */
+const hold = (ticket: { id: string; sessionId: string | null }) =>
+  db().heldCall.create({
     data: {
-      sessionId: r.threadId,
-      type: 'approval',
-      title: `Sam: gmail send (email to ${to}: "Your refund")`,
-      payload: {
-        connectionId: 'connection',
-        connection: 'support@brigade.test',
-        operation: 'gmail_send',
-        target: `email to ${to}: "Your refund"`,
-        input: { to: [to], subject: 'Your refund', body: 'Hello,\n\nIt is on its way.' },
-        playbookInstallationId: installationId,
-        playbookActionKey: 'reply',
-        playbookRunId: r.runId,
-      },
+      sessionId: ticket.sessionId,
+      teammateId,
+      ticketId: ticket.id,
+      kind: 'test',
+      fingerprint: ticket.id,
+      request: {},
     } as never,
   })
+/** What the held call on a ticket was told: approved or not. */
+const heldDecision = async (ticketId: string) =>
+  ((await db().heldCall.findFirst({ where: { ticketId } }))?.decision as { approved?: boolean })
+    ?.approved
 
 /** A thread no playbook started, and an approval in it. */
 async function plainApproval() {
@@ -395,8 +410,9 @@ test(
       await approval(r, 'c@acme.test'),
       await approval(r, 'd@acme.test'),
     ]
-    // a and b wait for a person in this process, as live calls do; c's call is gone (a restart).
-    const waiting = [awaitDecision(a!.id), awaitDecision(b!.id)]
+    // a and b are held for a person, as calls that ask are; c has none (a ticket from before).
+    await hold(a!)
+    await hold(b!)
     const plain = await plainApproval()
     const result = await decidePlaybookApprovals(as('admin'), installationId, {
       ticketIds: [a!.id, b!.id, c!.id, plain.ticket.id],
@@ -407,7 +423,7 @@ test(
       result.failed.map((f) => f.ticketId),
       [plain.ticket.id],
     )
-    for (const decision of await Promise.all(waiting)) assert.equal(decision.approved, true)
+    for (const id of [a!.id, b!.id]) assert.equal(await heldDecision(id), true)
     const rows = await db().ticket.findMany({ where: { id: { in: [a!.id, b!.id, c!.id] } } })
     for (const row of rows) {
       assert.equal((row.payload as Record<string, unknown>).decidedInBulk, true)
@@ -427,9 +443,9 @@ test(
       left.items.map((i) => i.ticketId),
       [single!.id],
     )
-    const live = awaitDecision(single!.id)
+    await hold(single!)
     await resolveTicket(as('owner'), single!.id, { approved: false })
-    assert.equal((await live).approved, false)
+    assert.equal(await heldDecision(single!.id), false)
     assert.equal((await payloadOf(single!.id)).decidedInBulk, undefined)
     // The plain one is left as it was.
     assert.equal((await db().ticket.findFirst({ where: { id: plain.ticket.id } }))!.status, 'open')
@@ -500,9 +516,13 @@ test(
         createdAt: new Date(Date.now() - (204 - i) * 1_000),
       })) as never,
     })
-    // An archived thread's approval waits on no one: not counted.
+    // An archived thread's approval waits on no one: not counted. Asked before the thread was
+    // put away, so written without the scoped write hooks: a new open ticket brings its thread
+    // back (src/thread-archive.ts) in the background, which could land after the archive below.
     const shelved = await run('Shelved')
-    await approval(shelved)
+    await prisma.ticket.create({
+      data: { ...approvalData(shelved), organizationId, workspaceId } as never,
+    })
     await db().session.updateMany({
       where: { id: shelved.threadId },
       data: { archivedAt: new Date() },

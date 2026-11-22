@@ -2,17 +2,14 @@ import { randomBytes } from 'node:crypto'
 import { RunnerLink, type RunnerLinkResult } from '@brigade/contracts'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
+import { personOfMember, trackLater } from '../analytics.js'
 import { audit } from '../audit.js'
-import {
-  cloudAvailable,
-  createWorkspaceComputer,
-  desktopUrl,
-  ensureRunning,
-  stopComputer,
-} from '../cloud.js'
+import { billingEnabled, cloudAccess, planOf, requireCloudPlan, starterUsage } from '../billing.js'
+import { cloudAvailable, createWorkspaceComputer, desktopUrl } from '../cloud.js'
+import { lastReplacement, replaceComputer } from '../cloud-replace.js'
 import { env } from '../config.js'
 import { prisma } from '../db.js'
-import { connectedBundle, hashToken, isOnline } from '../hub.js'
+import { hashToken, hubs } from '../hub.js'
 import { issueLinkCode, redeemLinkCode } from '../link-codes.js'
 import { parseBody, requireRole, requireUser, requireWorkspace, type AppEnv } from '../scope.js'
 import { runnerBundle } from './runner-install.js'
@@ -42,13 +39,36 @@ export const computers = new Hono<AppEnv>()
       orderBy: { createdAt: 'asc' },
     })
     const served = await runnerBundle()
+    const presence = await hubs.get(c.var.scope.workspaceId).presence(rows.map((r) => r.id))
+    const access = await cloudAccess(c.var.scope.workspaceId)
+    // On Starter, its hours this period, for the sidebar's card once they run low.
+    const { tier, plan } = await planOf(c.var.scope.workspaceId)
+    const usage =
+      tier === 'starter' && plan ? await starterUsage(c.var.scope.workspaceId, plan) : null
     return c.json({
       cloudAvailable: cloudAvailable(),
-      computers: rows.map(({ providerRef: _ref, ...row }) => ({
-        ...row,
-        online: isOnline(row.id),
-        runnerUpdate: runnerUpdate(served, connectedBundle(row.id)),
-      })),
+      // With billing on, the cloud computer comes with the workspace's Cloud plan.
+      billing: billingEnabled(),
+      cloudEntitled: access.ok,
+      // Starter's hours are used up: the cloud computer sleeps until then.
+      cloudHoursUsedUp:
+        !access.ok && access.reason === 'hours' ? access.resetsAt.toISOString() : null,
+      cloudHours: usage && {
+        used: Math.round(usage.usedHours * 10) / 10,
+        included: usage.includedHours,
+        resetsAt: usage.resetsAt.toISOString(),
+      },
+      computers: await Promise.all(
+        rows.map(async ({ providerRef: _ref, ...row }) => ({
+          ...row,
+          online: presence[row.id]?.online ?? false,
+          // Its runner restarts into an update: online all along, but not working for a minute.
+          restarting: presence[row.id]?.restarting ?? false,
+          runnerUpdate: runnerUpdate(served, presence[row.id]?.bundle),
+          // Its latest move onto a new VM (cloud-replace.ts), under way or done.
+          replacement: row.kind === 'cloud' ? await lastReplacement(row.id) : null,
+        })),
+      ),
     })
   })
 
@@ -64,6 +84,8 @@ export const computers = new Hono<AppEnv>()
       actor: { type: 'member', id: c.var.scope.memberId },
       action: 'runner.link_code_issued',
       target: { type: 'member', id: c.var.scope.memberId },
+      // The machine the member chose, as their browser says (the code is for this one).
+      track: { kind: osOfAgent(c.req.header('user-agent')) },
     })
     const bin = '~/.brigade/bin/brigade-runner'
     return c.json({
@@ -75,6 +97,8 @@ export const computers = new Hono<AppEnv>()
         code,
         api: env.API_URL,
         dashboard: new URL('/app', env.WEB_URL[0]).toString(),
+        // Brigade.app keeps a runner home per workspace: this one's, or a new one beside them.
+        workspace: c.var.scope.workspaceId,
       })}`,
     })
   })
@@ -84,9 +108,14 @@ export const computers = new Hono<AppEnv>()
     requireRole(c.var.scope, 'owner', 'admin')
     if (!cloudAvailable())
       throw new HTTPException(409, { message: 'No cloud computer provider is configured' })
+    await requireCloudPlan(c.var.scope.workspaceId)
     const computer = await createWorkspaceComputer({
       id: c.var.scope.workspaceId,
       organizationId: c.var.scope.organizationId,
+    })
+    trackLater(personOfMember(c.var.scope.memberId), 'computer_chosen', c.var.scope, {
+      feature: 'onboarding',
+      kind: 'cloud',
     })
     return c.json({ id: computer!.id }, 201)
   })
@@ -96,7 +125,7 @@ export const computers = new Hono<AppEnv>()
       where: { id: c.req.param('id'), kind: 'cloud' },
     })
     if (!computer) throw new HTTPException(404, { message: 'Computer not found' })
-    await ensureRunning(computer.id)
+    await hubs.get(computer.workspaceId).ensureRunning(computer.id)
     return c.json({ ok: true })
   })
 
@@ -106,8 +135,32 @@ export const computers = new Hono<AppEnv>()
       where: { id: c.req.param('id'), kind: 'cloud' },
     })
     if (!computer) throw new HTTPException(404, { message: 'Computer not found' })
-    await stopComputer(computer, { type: 'member', id: c.var.scope.memberId })
+    const result = await hubs
+      .get(computer.workspaceId)
+      .stopComputer(computer, { type: 'member', id: c.var.scope.memberId })
+    // Stopped now, it would stay down (cloud.ts's roomToStop).
+    if (result && !result.stopped)
+      throw new HTTPException(409, {
+        message: `The computer keeps running: ${result.reason}. Delete files on it first.`,
+      })
     return c.json({ ok: true })
+  })
+
+  /**
+   * The cloud computer on a new VM: what lives only on the old one's disk comes from its backups,
+   * and the old VM is kept, stopped, with the provider (cloud-replace.ts).
+   */
+  .post('/:id/replace', async (c) => {
+    requireRole(c.var.scope, 'owner', 'admin')
+    if (!cloudAvailable())
+      throw new HTTPException(409, { message: 'No cloud computer provider is configured' })
+    const { scope } = c.var
+    const row = await replaceComputer(
+      { organizationId: scope.organizationId, workspaceId: scope.workspaceId },
+      c.req.param('id'),
+      scope.memberId,
+    )
+    return c.json({ id: row.id }, 202)
   })
 
   /** Takeover: the computer's live desktop. Resumes a stopped computer first. */
@@ -116,7 +169,7 @@ export const computers = new Hono<AppEnv>()
       where: { id: c.req.param('id'), kind: 'cloud' },
     })
     if (!computer) throw new HTTPException(404, { message: 'Computer not found' })
-    await ensureRunning(computer.id)
+    await hubs.get(computer.workspaceId).ensureRunning(computer.id)
     const url = await desktopUrl(computer)
     if (!url)
       throw new HTTPException(409, {
@@ -132,12 +185,24 @@ export const computers = new Hono<AppEnv>()
   })
 
 /** Called by the runner command with a link code. No browser session. */
+/** The kind of machine a browser runs on, for computer_chosen. */
+function osOfAgent(agent: string | undefined) {
+  if (/iPhone|iPad|Android/.test(agent ?? '')) return 'mobile'
+  if (/Mac/.test(agent ?? '')) return 'mac'
+  if (/CrOS/.test(agent ?? '')) return 'chromeos'
+  if (/Linux|X11/.test(agent ?? '')) return 'linux'
+  if (/Windows/.test(agent ?? '')) return 'windows'
+  return 'other'
+}
+
 export const runnerLink = new Hono().post('/link', async (c) => {
   const input = await parseBody(c.req.raw, RunnerLink)
   const grant = await redeemLinkCode(input.code)
   if (!grant) throw new HTTPException(404, { message: 'This link code is invalid or has expired' })
 
-  const token = randomBytes(32).toString('base64url')
+  // Its workspace first: the API's front routes the runner's socket to that workspace's hub by it
+  // (src/front.ts), before anything is looked up. The whole token is the secret, hashed.
+  const token = `${grant.workspaceId}.${randomBytes(32).toString('base64url')}`
   const { computer, workspace } = await prisma.$transaction(async (tx) => {
     const workspace = await tx.workspace.findFirstOrThrow({
       where: { id: grant.workspaceId, organizationId: grant.organizationId },
@@ -216,7 +281,12 @@ export const runnerLink = new Hono().post('/link', async (c) => {
     data: { name: input.name, platform: input.platform },
   })
   return c.json(
-    { token, computerId: computer.id, workspaceName: workspace.name } satisfies RunnerLinkResult,
+    {
+      token,
+      computerId: computer.id,
+      workspaceName: workspace.name,
+      workspaceId: workspace.id,
+    } satisfies RunnerLinkResult,
     201,
   )
 })

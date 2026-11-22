@@ -4,8 +4,12 @@
 // documents in a frame that runs no script, spreadsheets and decks from the
 // API's reading of them. Used by the library and beside threads.
 import type { LibraryPreview } from '@brigade/contracts'
+import { FileText, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Markdown } from '@/components/markdown'
+import { RenewingAudio, RenewingVideo } from '@/components/renewing-media'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogClose, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -106,6 +110,45 @@ export function PdfView({ url, name }: { url: string; name: string }) {
   )
 }
 
+/** A PDF over the page, page by page; Esc, a click outside or × closes it. */
+export function PdfPreview({
+  pdf,
+  onClose,
+}: {
+  pdf?: { name: string; url: string }
+  onClose: () => void
+}) {
+  return (
+    <Dialog open={!!pdf} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        showCloseButton={false}
+        className="flex h-[calc(100dvh-4rem)] w-[min(56rem,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none"
+      >
+        <div className="flex items-center gap-2 border-b px-3 py-2.5">
+          <FileText aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+          <DialogTitle className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {pdf?.name}
+          </DialogTitle>
+          <DialogClose asChild>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              aria-label="Close"
+              tooltip="Close (Esc)"
+              className="rounded-full"
+            >
+              <X aria-hidden />
+            </Button>
+          </DialogClose>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          {pdf && <PdfView url={pdf.url} name={pdf.name} />}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /** The text of a file, first megabyte. */
 function useText(url: string, enabled: boolean) {
   const [state, setState] = useState<{ text?: string; cut?: boolean; error?: string }>({})
@@ -165,10 +208,10 @@ function Table({ rows, note }: { rows: string[][]; note?: string }) {
                 {Array.from({ length: width }, (_, j) => (
                   <td
                     key={j}
-                    className="max-w-72 truncate border px-2 py-1 align-top whitespace-nowrap"
+                    className="border px-2 py-1 align-top whitespace-nowrap"
                     title={row[j]}
                   >
-                    {row[j] ?? ''}
+                    <div className="max-w-72 truncate">{row[j] ?? ''}</div>
                   </td>
                 ))}
               </tr>
@@ -301,13 +344,13 @@ export function FilePreview({
   if (VIDEO_TYPE.test(contentType))
     return (
       <div className="flex justify-center bg-black">
-        <video src={url} controls className="max-h-[80vh] max-w-full" aria-label={name} />
+        <RenewingVideo src={url} controls className="max-h-[80vh] max-w-full" aria-label={name} />
       </div>
     )
   if (AUDIO_TYPE.test(contentType))
     return (
       <div className="p-4">
-        <audio src={url} controls className="w-full" aria-label={name} />
+        <RenewingAudio src={url} controls className="w-full" aria-label={name} />
       </div>
     )
   if (contentType === 'application/pdf') return <PdfView url={url} name={name} />

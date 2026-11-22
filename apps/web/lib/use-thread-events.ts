@@ -2,7 +2,8 @@
 import { ApiToBrowser, SequencedEvent } from '@brigade/contracts'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, preload, preloaded } from './api'
-import { WS_URL } from './config'
+import { latestJump } from './latest-jump'
+import { keepAlive, liveSocket, reconnectDelay } from './live-socket'
 
 /**
  * An event this dashboard does not know (a newer runner or API) becomes an
@@ -24,6 +25,30 @@ const latestPage = (sessionId: string) => `/threads/${sessionId}/events`
 
 type LatestPage = { firstSeq: number; lastSeq: number; context: unknown[]; events: unknown[] }
 
+/**
+ * What each thread showed when it was left, in this tab: opened again (Back most of all), it
+ * shows that at once while its latest page is asked for, which then replaces it. On iPhone,
+ * Safari's Back keeps a picture of the page until it is drawn about as full as it was left, or
+ * for 3 seconds: a thread that opened on its skeleton every time froze that long.
+ */
+const shownLast = new Map<string, { firstSeq: number; lastSeq: number; events: SequencedEvent[] }>()
+const THREADS_KEPT = 10
+
+let shownScope: string | undefined
+/** Counts scopes left: a thread opened in one left since is not kept. */
+let shownGeneration = 0
+
+/**
+ * Whose threads are kept (person and workspace), as lib/api.ts's setAnswersScope: another one,
+ * or none (signed out), forgets them all.
+ */
+export function setThreadsShownScope(scope: string | undefined) {
+  if (scope === shownScope) return
+  if (shownScope !== undefined) shownGeneration++
+  shownScope = scope
+  shownLast.clear()
+}
+
 /** Sends a thread's latest page ahead (lib/api.ts's `preload`), for it to open on. */
 export const preloadThreadEvents = (sessionId: string) => preload(latestPage(sessionId))
 
@@ -35,17 +60,41 @@ export const preloadThreadEvents = (sessionId: string) => preload(latestPage(ses
  * older ones the whole thread needs (its context); `loadOlder` pages in more.
  * `loaded` turns true once its latest page is in; `reconnect` tries again at once.
  */
-export function useThreadEvents(sessionId: string, onStatus?: (status: string) => void) {
+/** Whether a thread's computer is there, as its socket says on subscribing. */
+export type ComputerAvailability = {
+  /** The computer it is about: the thread may have moved since the page loaded it. */
+  id: string
+  online: boolean
+  restarting: boolean
+  status?: string
+}
+
+/**
+ * Events not loaded between two stretches that are: `from` up to, not including, `to`. One
+ * opens when the timeline jumps to an older message, which loads only that message's page.
+ */
+export type EventGap = { from: number; to: number }
+
+/** A page the timeline asked for: where it starts and ends, not included. */
+type JumpPage = { firstSeq: number; endSeq: number; events: SequencedEvent[] }
+
+export function useThreadEvents(
+  sessionId: string,
+  onStatus?: (status: string, computer?: ComputerAvailability) => void,
+) {
   const [events, setEvents] = useState<SequencedEvent[]>([])
   const [connected, setConnected] = useState(false)
   const [firstSeq, setFirstSeq] = useState(1)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [gaps, setGaps] = useState<EventGap[]>([])
   // The last event of the latest page, from its `history`: in, the thread has loaded.
   const pageEnd = useRef<number>(undefined)
   const reconnectRef = useRef<() => void>(() => undefined)
   const bySeq = useRef(new Map<number, SequencedEvent>())
   const first = useRef(1)
+  // In order, oldest first; what the socket follows starts after the last one.
+  const gapsRef = useRef<EventGap[]>([])
   const loading = useRef(false)
   // The thread shown now: a page or batch that arrives for another one is dropped.
   const thread = useRef(sessionId)
@@ -66,6 +115,10 @@ export function useThreadEvents(sessionId: string, onStatus?: (status: string) =
     first.current = seq
     setFirstSeq(seq)
   }
+  const holes = (list: EventGap[]) => {
+    gapsRef.current = list.filter((g) => g.from < g.to)
+    setGaps(gapsRef.current)
+  }
 
   useEffect(() => {
     thread.current = sessionId
@@ -74,13 +127,16 @@ export function useThreadEvents(sessionId: string, onStatus?: (status: string) =
     setEvents([])
     setLoaded(false)
     begin(1)
+    holes([])
+    jumps.clear()
     let socket: WebSocket | undefined
     let retry: ReturnType<typeof setTimeout> | undefined
     let delay = 500
     let stopped = false
 
+    // From the end of the last gap: what is before it is not for the socket to bring.
     const contiguous = () => {
-      let seq = first.current - 1
+      let seq = (gapsRef.current.at(-1)?.to ?? first.current) - 1
       while (bySeq.current.has(seq + 1)) seq++
       return seq
     }
@@ -101,11 +157,21 @@ export function useThreadEvents(sessionId: string, onStatus?: (status: string) =
         JSON.stringify({ type: 'subscribe', sessionId, afterSeq: contiguous(), tail: true }),
       )
     }
+    // Kept on leaving only for the person and workspace it opened for.
+    const generation = shownGeneration
+    // Shown as it was left until its latest page is in, which replaces it.
+    const kept = shownLast.get(sessionId)
+    if (kept) openOn(kept.firstSeq, kept.lastSeq, kept.events)
     const path = latestPage(sessionId)
     void (preloaded<LatestPage>(path) ?? api<LatestPage>(path))
       .then((page) => {
         if (stopped) return
         const events = [...page.context, ...page.events].map((e) => known(e) as SequencedEvent)
+        if (kept) {
+          bySeq.current = new Map()
+          setEvents([])
+          holes([])
+        }
         openOn(page.firstSeq, page.lastSeq, events)
       })
       .catch(() => undefined)
@@ -114,8 +180,11 @@ export function useThreadEvents(sessionId: string, onStatus?: (status: string) =
         if (!stopped) subscribe()
       })
 
+    let alive: (() => void) | undefined
     const connect = () => {
-      socket = new WebSocket(`${WS_URL}/api/ws`)
+      alive?.()
+      socket = liveSocket()
+      alive = keepAlive(socket)
       socket.onopen = () => {
         delay = 500
         setConnected(true)
@@ -141,13 +210,13 @@ export function useThreadEvents(sessionId: string, onStatus?: (status: string) =
           // An empty thread, or an API too old to say where the page ends: loaded now.
           openOn(data.firstSeq, data.lastSeq ?? 0, data.context)
         else if (data.type === 'thread.updated' && data.sessionId === sessionId) {
-          statusRef.current?.(data.status)
+          statusRef.current?.(data.status, data.computer)
         }
       }
       socket.onclose = () => {
         setConnected(false)
         if (stopped) return
-        retry = setTimeout(connect, delay)
+        retry = setTimeout(connect, reconnectDelay(delay))
         delay = Math.min(delay * 2, 10_000)
       }
     }
@@ -168,8 +237,29 @@ export function useThreadEvents(sessionId: string, onStatus?: (status: string) =
     return () => {
       stopped = true
       clearTimeout(retry)
+      alive?.()
       socket?.close()
+      // Kept for when it opens again: only all of it from its first event loaded, and only
+      // once its latest page was in (no gap, nothing missing before the end).
+      const events = [...bySeq.current.values()].sort((a, b) => a.seq - b.seq)
+      const end = pageEnd.current
+      if (
+        shownScope === undefined ||
+        shownGeneration !== generation ||
+        end === undefined ||
+        gapsRef.current.length ||
+        (end >= first.current && !bySeq.current.has(end))
+      )
+        return
+      shownLast.delete(sessionId)
+      shownLast.set(sessionId, {
+        firstSeq: first.current,
+        lastSeq: Math.max(end, events.at(-1)?.seq ?? 0),
+        events,
+      })
+      if (shownLast.size > THREADS_KEPT) shownLast.delete(shownLast.keys().next().value!)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- jumps is the same object for the hook's life (useState)
   }, [sessionId, add])
 
   /**
@@ -193,12 +283,125 @@ export function useThreadEvents(sessionId: string, onStatus?: (status: string) =
       } finally {
         loading.current = false
         setLoadingOlder(false)
+        jumpWaiting()
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- jumpWaiting only reads jumps, the same object for the hook's life
+    [sessionId, add],
+  )
+
+  /**
+   * Load the page holding `seq`, an event before the oldest loaded or in a gap, and only
+   * it: what lies between stays a gap, loaded as someone scrolls into it. Resolves once it
+   * is in, at once when the event is loaded already.
+   */
+  // Loads a message's page; false when what was loaded changed meanwhile.
+  const go = useRef<(seq: number) => Promise<boolean>>(async () => true)
+  const [jumps] = useState(() =>
+    latestJump(
+      () => loading.current,
+      (seq) => go.current(seq),
+    ),
+  )
+  go.current = async (seq: number) => {
+    if (thread.current !== sessionId) return true
+    if (bySeq.current.has(seq) && !inGap(gapsRef.current, seq)) return true
+    const gap = gapsRef.current.find((g) => g.from <= seq && seq < g.to)
+    // Before the oldest loaded: as a gap from the thread's start.
+    const top = first.current
+    const until = gap ? gap.to : top
+    if (seq >= until) return true
+    loading.current = true
+    try {
+      const page = await api<JumpPage>(`/threads/${sessionId}/events?from=${seq}&until=${until}`)
+      if (thread.current !== sessionId) return true
+      // What was loaded changed meanwhile: tried again with what is loaded now.
+      if (first.current !== top || (gap && !gapsRef.current.includes(gap))) return false
+      add(page.events.map((e) => known(e) as SequencedEvent))
+      if (gap)
+        holes(
+          gapsRef.current.flatMap((g) =>
+            g === gap
+              ? [
+                  { from: g.from, to: Math.max(g.from, page.firstSeq) },
+                  { from: Math.min(page.endSeq, g.to), to: g.to },
+                ]
+              : [g],
+          ),
+        )
+      else {
+        holes([{ from: page.endSeq, to: top }, ...gapsRef.current])
+        begin(page.firstSeq)
+      }
+      return true
+    } finally {
+      loading.current = false
+    }
+  }
+  /**
+   * Load the page holding `seq`, an event before the oldest loaded or in a gap, and only
+   * it: what lies between stays a gap, loaded as someone scrolls into it. Clicked while
+   * another page loads, it goes once that one is in; only the latest clicked goes. Resolves
+   * once it went (at once when the event is loaded already) or gave way to a newer one.
+   */
+  const jumpTo = useCallback((seq: number) => jumps.want(seq), [jumps])
+  // A page that loaded: a message clicked meanwhile goes now.
+  const jumpWaiting = () => void jumps.next().catch(() => undefined)
+
+  /**
+   * Load a page of a gap: its first one, read down into it, or its last one, read up
+   * into it. `beforeShow` runs just before the page goes in.
+   */
+  const fillGap = useCallback(
+    async (gap: EventGap, end: 'first' | 'last', beforeShow?: () => void) => {
+      if (loading.current) return
+      loading.current = true
+      try {
+        const page =
+          end === 'first'
+            ? await api<JumpPage>(`/threads/${sessionId}/events?from=${gap.from}&until=${gap.to}`)
+            : await api<{ firstSeq: number; events: SequencedEvent[] }>(
+                `/threads/${sessionId}/events?before=${gap.to}&since=${gap.from}`,
+              ).then((p) => ({ ...p, endSeq: gap.to }))
+        const now = gapsRef.current.find((g) => g.from === gap.from && g.to === gap.to)
+        if (thread.current !== sessionId || !now) return
+        beforeShow?.()
+        add(page.events.map((e) => known(e) as SequencedEvent))
+        holes(
+          gapsRef.current.flatMap((g) =>
+            g === now
+              ? [
+                  { from: g.from, to: Math.max(g.from, page.firstSeq) },
+                  { from: Math.min(page.endSeq, g.to), to: g.to },
+                ]
+              : [g],
+          ),
+        )
+      } finally {
+        loading.current = false
+        jumpWaiting()
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- jumpWaiting only reads jumps, the same object for the hook's life
     [sessionId, add],
   )
 
   const reconnect = useCallback(() => reconnectRef.current(), [])
 
-  return { events, connected, firstSeq, loadOlder, loadingOlder, loaded, reconnect }
+  return {
+    events,
+    connected,
+    firstSeq,
+    gaps,
+    loadOlder,
+    loadingOlder,
+    jumpTo,
+    fillGap,
+    loaded,
+    reconnect,
+  }
 }
+
+/** Whether `seq` falls in one of the gaps. */
+export const inGap = (gaps: EventGap[], seq: number) =>
+  gaps.some((g) => g.from <= seq && seq < g.to)

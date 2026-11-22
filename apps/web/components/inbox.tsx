@@ -1,0 +1,1942 @@
+'use client'
+// The Inbox: every email the workspace's mailboxes received (Brigade's own addresses and
+// connected Gmail accounts), one row per conversation with its next step; read one, approve a
+// teammate's reply (now or for later), mark it done or hand it to a teammate, and see what its
+// thread did when it did not reply (have it reply, discuss it there, or reply yourself). The
+// list and the open conversation are two columns, each the window's height. Filters and the
+// open email live in the address, so links and back work.
+import {
+  formatMention,
+  type InboxDetail,
+  type InboxDraft,
+  type InboxItem,
+  type InboxMessage,
+  type InboxNoise,
+  type InboxPlan,
+  type InboxSourceView,
+  type InboxStatus,
+} from '@brigade/contracts'
+import {
+  ArrowLeft,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  Clock,
+  FileText,
+  ListFilter,
+  Mail,
+  Search,
+  Settings,
+  ShieldAlert,
+  Undo2,
+  X,
+} from 'lucide-react'
+import Link from 'next/link'
+import { useRouter, useSearchParams } from 'next/navigation'
+import {
+  Fragment,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
+import { fileSize, type Media, MediaPreview, mediaKind, Thumbnail } from '@/components/attachments'
+import { TeammateAvatar, timeAgo, useDashboard } from '@/components/dashboard'
+import { type EditedEmail, EmailDraftEditor, emailDraft } from '@/components/email-cards'
+import { InboxPaywall } from '@/components/inbox-paywall'
+import { AddRule } from '@/components/project-email'
+import { ProjectIcon, ProjectSelect } from '@/components/projects'
+import { ProviderLogo } from '@/components/provider-logo'
+import { MailHtmlFrame, MailTextView, type MailView, MailViewSwitch } from '@/components/mail-body'
+import { leavingLabel, SendLaterMenu } from '@/components/send-later'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
+import { Hint } from '@/components/ui/tooltip'
+import { api, ApiError, attachmentUrl, useApi } from '@/lib/api'
+import { API_URL } from '@/lib/config'
+import {
+  draftFacts,
+  filtersKey,
+  filtersToRestore,
+  type KeptFilters,
+  keptFilters,
+  reloadsForThread,
+  reloadsInboxList,
+} from '@/lib/inbox'
+import { addToReply } from '@/lib/reply-drafts'
+import { useLive } from '@/lib/use-live'
+import { cn } from '@/lib/utils'
+
+type InboxList = { items: InboxItem[]; sources: InboxSourceView[]; next: string | null }
+type Param = 'status' | 'source' | 'teammate' | 'project' | 'q' | 'item'
+
+type StatusFilter = InboxStatus | 'scheduled' | 'all'
+
+/** Its tabs, by what comes next: to do (nobody on it, or a reply to approve), and the rest. */
+const STATUSES: { value: StatusFilter; label: string }[] = [
+  { value: 'waiting', label: 'To do' },
+  { value: 'handled', label: 'In progress' },
+  { value: 'scheduled', label: 'Scheduled' },
+  { value: 'done', label: 'Done' },
+  { value: 'other', label: 'Other' },
+  { value: 'all', label: 'All' },
+]
+
+/** Why a mail waits for nobody: in Other, not To do. */
+const NOISE: Record<InboxNoise, string> = {
+  sign_up: 'Sign-up address',
+  automatic: 'Sent by a machine',
+  muted: 'Muted sender',
+}
+
+const EMPTY: Record<StatusFilter, string> = {
+  waiting: 'Nothing to do. Every email has a teammate, and no reply waits for you.',
+  handled: 'No conversation with a teammate right now.',
+  scheduled: 'No reply set to leave later.',
+  done: 'Nothing done yet.',
+  other:
+    'Nothing here. Newsletters, mail sent by machines and muted senders land here, out of To do.',
+  all: 'No email here.',
+}
+
+const ALL = '*'
+/** A filter that is set, as it shows in the search box: its icon, short name and a ×. */
+type Chip = {
+  param: 'source' | 'teammate' | 'project'
+  what: string
+  icon: ReactNode
+  label: string
+}
+
+/**
+ * The search box, with the filters inside it: the ones set as chips before the words, and the
+ * menu that sets them behind the filter icon at its end (as the sidebar's thread filter). Two
+ * chips show at most (one on a phone) and the rest fold into a "+N" that opens the menu, so
+ * the words always keep room. Backspace in the empty box clears the last chip.
+ */
+function SearchFilters({
+  inputRef,
+  query,
+  onQuery,
+  chips,
+  sources,
+  source,
+  teammate,
+  project,
+  onPick,
+}: {
+  inputRef: RefObject<HTMLInputElement | null>
+  query: string
+  onQuery: (q: string) => void
+  chips: Chip[]
+  sources: InboxSourceView[]
+  source: string
+  teammate: string
+  project: string
+  onPick: (patch: Partial<Record<'source' | 'teammate' | 'project', string | null>>) => void
+}) {
+  const { teammates, projects } = useDashboard()
+  const [open, setOpen] = useState(false)
+  const brigade = sources.filter((s) => s.kind === 'email')
+  const gmail = sources.filter((s) => s.kind === 'gmail')
+  const filtered = !!(source || teammate || project)
+  // Past two chips, the second folds too on a phone: "+N" says how many each screen hides.
+  const folded = chips.length > 2
+  const pick = (param: Chip['param']) => (v: string) => onPick({ [param]: v === ALL ? null : v })
+  return (
+    <div
+      // A click on the box's padding goes to the words, as in a plain field.
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) {
+          e.preventDefault()
+          inputRef.current?.focus()
+        }
+      }}
+      className="flex h-9 w-full min-w-0 items-center gap-1 overflow-hidden rounded-md border border-input pr-1 pl-3 shadow-xs transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30"
+    >
+      <Search aria-hidden className="mr-1 size-4 flex-none text-muted-foreground" />
+      {chips.map((c, i) => (
+        <span
+          key={c.param}
+          className={cn(
+            'inline-flex h-6 max-w-32 min-w-0 flex-none items-center gap-1 rounded-full border bg-card pr-0.5 pl-1.5 text-xs',
+            folded && (i === 1 ? 'max-sm:hidden' : i > 1 && 'hidden'),
+          )}
+        >
+          {c.icon}
+          <span className="min-w-0 truncate">{c.label}</span>
+          <button
+            type="button"
+            aria-label={`Clear the ${c.what} filter`}
+            onClick={() => onPick({ [c.param]: null })}
+            className="flex size-5 flex-none items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >
+            <X className="size-3" aria-hidden />
+          </button>
+        </span>
+      ))}
+      {folded && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label={`${chips.length - 1} more filters`}
+          className="h-6 flex-none rounded-full bg-secondary px-2 text-xs tabular-nums outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        >
+          <span className="sm:hidden">+{chips.length - 1}</span>
+          <span className="max-sm:hidden">+{chips.length - 2}</span>
+        </button>
+      )}
+      <input
+        ref={inputRef}
+        type="search"
+        aria-label="Search"
+        placeholder={chips.length ? 'Search' : 'Search email'}
+        title="Search (/)"
+        value={query}
+        onChange={(e) => onQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') onQuery('')
+          // Backspace with nothing left to erase clears the last filter, as in a field of tags.
+          else if (
+            e.key === 'Backspace' &&
+            chips.length &&
+            e.currentTarget.selectionStart === 0 &&
+            e.currentTarget.selectionEnd === 0
+          ) {
+            e.preventDefault()
+            onPick({ [chips[chips.length - 1]!.param]: null })
+          }
+        }}
+        className="h-full min-w-12 flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground md:text-sm"
+      />
+      <DropdownMenu open={open} onOpenChange={setOpen}>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Filter emails"
+            tooltip="Filter"
+            className="relative size-7 flex-none text-muted-foreground data-[state=open]:bg-secondary data-[state=open]:text-foreground"
+          >
+            <ListFilter />
+            {filtered && (
+              <span
+                aria-hidden
+                className="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-primary"
+              />
+            )}
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent
+          align="end"
+          className="w-72 max-w-[calc(100vw-2rem)] max-sm:[&_[role^=menuitem]]:py-2"
+        >
+          <DropdownMenuLabel className="text-xs text-muted-foreground">Source</DropdownMenuLabel>
+          <DropdownMenuRadioGroup value={source || ALL} onValueChange={pick('source')}>
+            <DropdownMenuRadioItem value={ALL}>All sources</DropdownMenuRadioItem>
+            {brigade.length > 0 && (
+              <>
+                <DropdownMenuLabel className="pl-8 text-xs font-normal text-muted-foreground">
+                  Brigade addresses
+                </DropdownMenuLabel>
+                {brigade.map((s) => (
+                  <SourceItem key={s.id} source={s} />
+                ))}
+              </>
+            )}
+            {gmail.length > 0 && (
+              <>
+                <DropdownMenuLabel className="pl-8 text-xs font-normal text-muted-foreground">
+                  Gmail
+                </DropdownMenuLabel>
+                {gmail.map((s) => (
+                  <SourceItem key={s.id} source={s} />
+                ))}
+              </>
+            )}
+          </DropdownMenuRadioGroup>
+          {teammates.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground">Agent</DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={teammate || ALL} onValueChange={pick('teammate')}>
+                <DropdownMenuRadioItem value={ALL}>All agents</DropdownMenuRadioItem>
+                {teammates.map((t) => (
+                  <DropdownMenuRadioItem key={t.id} value={t.id}>
+                    <TeammateAvatar teammate={t} className="size-4" />
+                    <span className="min-w-0 truncate">{t.name}</span>
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </>
+          )}
+          {projects.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground">
+                Project
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup value={project || ALL} onValueChange={pick('project')}>
+                <DropdownMenuRadioItem value={ALL}>All projects</DropdownMenuRadioItem>
+                {projects
+                  .filter((p) => !p.archivedAt || p.id === project)
+                  .map((p) => (
+                    <DropdownMenuRadioItem key={p.id} value={p.id}>
+                      <ProjectIcon project={p} className="size-4 text-[0.625rem]" />
+                      <span className="min-w-0 truncate">{p.name}</span>
+                    </DropdownMenuRadioItem>
+                  ))}
+              </DropdownMenuRadioGroup>
+            </>
+          )}
+          {filtered && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={() => onPick({ source: null, teammate: null, project: null })}
+              >
+                <X />
+                Clear filters
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+}
+const SIGN_UP = 'Mail to a sign-up address'
+
+const message = (e: unknown) =>
+  e instanceof ApiError || e instanceof Error ? e.message : String(e)
+const itemPath = (id: string) => `/inbox/items/${encodeURIComponent(id)}`
+/** A mail's file: a received one from its mailbox (through the Inbox), a sent one as Brigade keeps it. */
+const fileUrl = (m: InboxMessage, fileId: string) =>
+  m.direction === 'out'
+    ? attachmentUrl(fileId)
+    : `${API_URL}/api${itemPath(m.id)}/files/${encodeURIComponent(fileId)}`
+
+/** Where an email went, in plain words. */
+export function destination(item: InboxItem): string {
+  switch (item.route) {
+    case 'awaited':
+      return 'Thread waiting for it'
+    case 'conversation':
+      return "Its conversation's thread"
+    case 'member':
+      return 'A member’s request'
+    case 'rule':
+      return item.rule ? `Rule "${item.rule.label}"` : 'A rule'
+    case 'kept':
+      return item.rule ? `Kept by rule "${item.rule.label}"` : 'Kept for a person'
+    case 'handed':
+      return 'Handed over'
+    case 'read':
+      return 'Read by a thread'
+    case 'box':
+      return 'In the mailbox'
+    case 'cap':
+      return 'Rule over its daily limit'
+    case 'loop':
+      return 'Stopped: looks like a loop'
+    case 'duplicate':
+      return 'Already delivered'
+    case 'own_copy':
+      return 'Sent from the mailbox'
+    case 'bounce':
+      return 'Delivery failure'
+    case 'test':
+      return 'Test mail'
+    default:
+      return item.thread ? 'Handled by a thread' : 'Unassigned'
+  }
+}
+
+/** The page: the list with its filters, and the open email beside it (in its place on a phone). */
+export function InboxView() {
+  const params = useSearchParams()
+  const router = useRouter()
+  const { me, teammates, projects, reloadInboxCount, inboxWaiting } = useDashboard()
+  const status = (STATUSES.find((s) => s.value === params.get('status'))?.value ??
+    'waiting') as StatusFilter
+  const source = params.get('source') ?? ''
+  const teammate = params.get('teammate') ?? ''
+  const project = params.get('project') ?? ''
+  const q = params.get('q') ?? ''
+  const item = params.get('item') ?? ''
+
+  const href = useCallback(
+    (patch: Partial<Record<Param, string | null>>) => {
+      const next = new URLSearchParams(params.toString())
+      for (const [key, value] of Object.entries(patch))
+        if (value) next.set(key, value)
+        else next.delete(key)
+      const query = next.toString()
+      return query ? `/app/inbox?${query}` : '/app/inbox'
+    },
+    [params],
+  )
+  const go = (patch: Partial<Record<Param, string | null>>) =>
+    router.push(href(patch), { scroll: false })
+
+  // The tab and pickers are remembered in this browser, per workspace: arriving on the bare
+  // address puts them back (a link to a view, a search or an email wins). Until they are back,
+  // nothing is asked, so the default view does not flash first.
+  const workspaceId = me?.activeWorkspaceId ?? null
+  const [restore, setRestore] = useState<'checking' | 'done' | KeptFilters>('checking')
+  useEffect(() => {
+    if (restore !== 'checking' || !workspaceId) return
+    let saved: string | null = null
+    try {
+      saved = localStorage.getItem(filtersKey(workspaceId))
+    } catch {}
+    const back = filtersToRestore(new URLSearchParams(params.toString()), saved)
+    setRestore(back ?? 'done')
+    if (back) router.replace(href(back), { scroll: false })
+  }, [restore, workspaceId, params, href, router])
+  useEffect(() => {
+    if (!workspaceId || restore === 'checking') return
+    const kept = keptFilters(new URLSearchParams(params.toString()))
+    if (restore !== 'done') {
+      // Waiting for the address to take the filters put back (it was bare): once it says
+      // anything, they are back, or the member already went elsewhere.
+      if (!Object.keys(kept).length && !params.has('q') && !params.has('item')) return
+      setRestore('done')
+    }
+    try {
+      localStorage.setItem(filtersKey(workspaceId), JSON.stringify(kept))
+    } catch {}
+  }, [params, restore, workspaceId])
+
+  // The search box: sent ~300 ms after the last key, and following back and forward.
+  const [query, setQuery] = useState(q)
+  const written = useRef(q)
+  useEffect(() => {
+    if (q === written.current) return
+    written.current = q
+    setQuery(q)
+  }, [q])
+  useEffect(() => {
+    if (query.trim() === q) return
+    const timer = window.setTimeout(() => {
+      written.current = query.trim()
+      router.replace(href({ q: query.trim() || null }), { scroll: false })
+    }, 300)
+    return () => window.clearTimeout(timer)
+  }, [query, q, href, router])
+
+  // "/" goes to the search box, from anywhere on the page but a field.
+  const searchBox = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      e.preventDefault()
+      searchBox.current?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+  // The To do count is the workspace's, so it shows only while nothing narrows the list.
+  const filtered = !!(source || teammate || project || q)
+
+  const search = new URLSearchParams({ status })
+  if (source) search.set('source', source)
+  if (teammate) search.set('teammate', teammate)
+  if (project) search.set('project', project)
+  if (q) search.set('q', q)
+  const path = `/inbox?${search}`
+  const list = useApi<InboxList>(restore === 'done' ? path : null)
+  // Brigade's own addresses come with Brigade Cloud (Resend charges for each mail).
+  const plan = useApi<InboxPlan>('/inbox/plan')
+  const reloadList = list.reload
+
+  // Older pages, appended below the first: kept for the filters they were asked with.
+  const [older, setOlder] = useState<{ path: string; items: InboxItem[]; next: string | null }>()
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [olderError, setOlderError] = useState<string>()
+  const more = older?.path === path ? older : undefined
+  const seen = new Set<string>()
+  const items = [...(list.data?.items ?? []), ...(more?.items ?? [])].filter(
+    (i) => !seen.has(i.id) && !!seen.add(i.id),
+  )
+  const next = more ? more.next : (list.data?.next ?? null)
+
+  // Counted up by each refresh: an older page asked for before it is dropped, not appended.
+  const generation = useRef(0)
+  async function loadOlder() {
+    if (!next) return
+    const asked = generation.current
+    setLoadingOlder(true)
+    setOlderError(undefined)
+    try {
+      const page = await api<InboxList>(`${path}&before=${encodeURIComponent(next)}`)
+      if (asked !== generation.current) return
+      setOlder({ path, items: [...(more?.items ?? []), ...page.items], next: page.next })
+    } catch (e) {
+      setOlderError(message(e))
+    } finally {
+      setLoadingOlder(false)
+    }
+  }
+
+  // Infinite scroll: the next page comes as the end of the list nears, in the list's own column
+  // on a wide screen (it scrolls on its own there), in the page on a phone. Watched again after
+  // each page, so a short page that leaves the end in sight asks for the next one too. Once a
+  // page failed, Load older asks again by hand.
+  const scroller = useRef<HTMLDivElement>(null)
+  const end = useRef<HTMLDivElement>(null)
+  const latestLoadOlder = useRef(loadOlder)
+  latestLoadOlder.current = loadOlder
+  const wide = useWide()
+  // On a wide screen the first conversation opens by itself, so the reading column is never
+  // empty; on a phone the list stays, since opening one hides it.
+  const first = items[0]?.id
+  useEffect(() => {
+    if (wide && !item && first) router.replace(href({ item: first }), { scroll: false })
+  }, [wide, item, first, href, router])
+  useEffect(() => {
+    if (!next || loadingOlder || olderError || !end.current) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void latestLoadOlder.current()
+      },
+      { root: wide ? scroller.current : null, rootMargin: '400px 0px' },
+    )
+    observer.observe(end.current)
+    return () => observer.disconnect()
+  }, [next, loadingOlder, olderError, wide])
+
+  const refresh = useCallback(async () => {
+    generation.current++
+    setOlder(undefined)
+    await Promise.all([reloadList(), reloadInboxCount()])
+  }, [reloadList, reloadInboxCount])
+  // Live: a mail came or changed anywhere in the list (older pages too, so they go and come
+  // back on asking), a mailbox came in or out of the Inbox, or a reply to approve opened or was
+  // decided (it moves its conversation in or out of To do). The sidebar's count follows
+  // the same messages by itself. A shown row's thread starting or stopping work changes what
+  // the row says of its teammate.
+  const shown = useRef(items)
+  shown.current = items
+  useLive(
+    (message) => {
+      if (
+        !reloadsInboxList(message.type) &&
+        !reloadsForThread(message as { type: string; sessionId?: string }, shown.current)
+      )
+        return
+      generation.current++
+      setOlder(undefined)
+      void reloadList()
+    },
+    () => void refresh(),
+  )
+
+  // Marked done, the open email gives its place to the next one in the list (the one before
+  // at its end), as in a mail app: the list is worked through without going back to it.
+  const at = items.findIndex((i) => i.id === item)
+  const following = at < 0 ? null : (items[at + 1] ?? items[at - 1] ?? null)
+  function doneWith() {
+    router.replace(href({ item: following?.id ?? null }), { scroll: false })
+    void refresh()
+  }
+
+  // ↑ and ↓ open the email above or below the open one, from anywhere on the page but a field
+  // or an open menu.
+  const step = useRef<(by: number) => void>(() => {})
+  step.current = (by) => {
+    const to = at < 0 ? items[0] : items[at + by]
+    if (to) router.replace(href({ item: to.id }), { scroll: false })
+  }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.defaultPrevented) return
+      const target = e.target as HTMLElement | null
+      if (
+        target?.closest(
+          'input, textarea, select, [contenteditable="true"], [role="listbox"], [role="menu"], [role="dialog"]',
+        )
+      )
+        return
+      e.preventDefault()
+      step.current(e.key === 'ArrowDown' ? 1 : -1)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const sources = list.data?.sources ?? []
+  // The filters set, by their short name and icon (an address's own shows in its menu).
+  const chosenSource = sources.find((s) => s.id === source)
+  const chosenTeammate = teammates.find((t) => t.id === teammate)
+  const chosenProject = projects.find((p) => p.id === project)
+  // A filter kept or linked to that is no more (a mailbox taken out, a teammate or project
+  // deleted) would show an empty list: it goes.
+  const stale = {
+    ...(source && list.data && !chosenSource ? { source: null } : {}),
+    ...(teammate && teammates.length && !chosenTeammate ? { teammate: null } : {}),
+    ...(project && projects.length && !chosenProject ? { project: null } : {}),
+  }
+  const staleKey = Object.keys(stale).join()
+  useEffect(() => {
+    if (staleKey) router.replace(href(stale), { scroll: false })
+  }, [staleKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  const chips: Chip[] = []
+  if (chosenSource)
+    chips.push({
+      param: 'source',
+      what: 'source',
+      icon: chosenSource.teammate ? (
+        <TeammateAvatar teammate={chosenSource.teammate} className="size-4" />
+      ) : (
+        <ProviderLogo kind={chosenSource.kind} className="size-4" />
+      ),
+      label: chosenSource.label,
+    })
+  if (chosenTeammate)
+    chips.push({
+      param: 'teammate',
+      what: 'agent',
+      icon: <TeammateAvatar teammate={chosenTeammate} className="size-4" />,
+      label: chosenTeammate.name,
+    })
+  if (chosenProject)
+    chips.push({
+      param: 'project',
+      what: 'project',
+      icon: <ProjectIcon project={chosenProject} className="size-4 text-[0.625rem]" />,
+      label: chosenProject.name,
+    })
+
+  // Without the plan, the offer instead of the list, unless a Gmail account brings mail of its own.
+  if (plan.data?.needed && list.data && !sources.some((s) => s.kind === 'gmail'))
+    return <InboxPaywall plan={plan.data} />
+
+  return (
+    // data-inbox: on a wide screen the page holds still behind its two columns (globals.css).
+    <div data-inbox className="flex min-w-0 lg:h-dvh">
+      <section
+        aria-label="Emails"
+        className={cn(
+          'flex w-full min-w-0 flex-col lg:w-[26rem] lg:flex-none lg:border-r xl:w-[28rem]',
+          item && 'hidden lg:flex',
+        )}
+      >
+        <header className="flex flex-col gap-3 border-b px-4 pt-6 pb-3 md:px-5">
+          <div className="flex items-baseline gap-2">
+            <h1 className="text-2xl font-extrabold tracking-tight">Inbox</h1>
+            <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground">
+              Every email your mailboxes received
+            </span>
+            {/* The Inbox's own settings: its mailboxes, where mail arrives and who handles it. */}
+            <Button
+              asChild
+              variant="ghost"
+              size="icon-sm"
+              className="flex-none self-center text-muted-foreground"
+              data-corner-clear
+              tooltip="Mailboxes"
+            >
+              <Link href="/app/inbox/mailboxes" aria-label="Mailboxes">
+                <Settings />
+              </Link>
+            </Button>
+          </div>
+          <SearchFilters
+            inputRef={searchBox}
+            query={query}
+            onQuery={setQuery}
+            chips={chips}
+            sources={sources}
+            source={source}
+            teammate={teammate}
+            project={project}
+            onPick={go}
+          />
+          <div
+            role="group"
+            aria-label="Status"
+            className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none]"
+          >
+            {STATUSES.map((s) => {
+              const count = s.value === 'waiting' && !filtered ? inboxWaiting : 0
+              return (
+                <button
+                  key={s.value}
+                  type="button"
+                  aria-pressed={status === s.value}
+                  onClick={() => go({ status: s.value === 'waiting' ? null : s.value, item: null })}
+                  className={cn(
+                    'inline-flex h-7 flex-none items-center gap-1.5 rounded-full px-3 text-sm font-semibold transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+                    status === s.value
+                      ? 'bg-foreground text-background'
+                      : 'text-muted-foreground hover:bg-secondary hover:text-foreground',
+                  )}
+                >
+                  {s.label}
+                  {count > 0 && <span className="text-xs font-normal tabular-nums">{count}</span>}
+                </button>
+              )
+            })}
+          </div>
+        </header>
+
+        <div
+          ref={scroller}
+          className="flex min-h-0 flex-1 flex-col lg:overflow-y-auto lg:overscroll-contain"
+        >
+          {list.error && (
+            <p className="px-5 py-4 text-sm text-destructive-text">{list.error.message}</p>
+          )}
+          {!list.data && !list.error ? (
+            <p className="px-5 py-4 text-sm text-muted-foreground">Loading…</p>
+          ) : list.data && items.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+              <span className="flex size-12 items-center justify-center rounded-2xl bg-primary/15 text-primary">
+                <Mail className="size-5" aria-hidden />
+              </span>
+              <p className="max-w-xs text-sm text-muted-foreground">{EMPTY[status]}</p>
+            </div>
+          ) : (
+            <ul className="divide-y border-b">
+              {items.map((i) => (
+                <li key={i.id}>
+                  <Row item={i} href={href({ item: i.id })} selected={i.id === item} />
+                </li>
+              ))}
+            </ul>
+          )}
+          {next && <div ref={end} aria-hidden className="h-px flex-none" />}
+          {loadingOlder && (
+            <p className="py-4 text-center text-xs text-muted-foreground">Loading…</p>
+          )}
+          {olderError && (
+            <div className="flex flex-col items-center gap-2 px-5 py-4">
+              <p className="text-sm text-destructive-text">{olderError}</p>
+              <Button variant="outline" size="sm" onClick={() => void loadOlder()}>
+                Load older
+              </Button>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section
+        aria-label="Email"
+        className={cn(
+          'min-w-0 flex-1 lg:overflow-y-auto lg:overscroll-contain',
+          item ? 'block' : 'hidden lg:block',
+        )}
+      >
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-4 pt-6 pb-16 md:px-10 md:pt-8">
+          {item ? (
+            <>
+              <Button asChild variant="ghost" size="sm" className="self-start lg:hidden">
+                <Link href={href({ item: null })} scroll={false}>
+                  <ArrowLeft /> Back
+                </Link>
+              </Button>
+              <Reader key={item} id={item} onChanged={refresh} onDone={doneWith} />
+            </>
+          ) : (
+            <p className="py-24 text-center text-sm text-muted-foreground">
+              Pick an email to read it.
+            </p>
+          )}
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function SourceItem({ source }: { source: InboxSourceView }) {
+  return (
+    <DropdownMenuRadioItem value={source.id}>
+      {source.teammate ? (
+        <TeammateAvatar teammate={source.teammate} className="size-4" />
+      ) : (
+        <ProviderLogo kind={source.kind} className="size-4" />
+      )}
+      <span className="flex min-w-0 flex-col">
+        <span className="truncate">{source.label}</span>
+        <span className="truncate text-xs text-muted-foreground">{source.address}</span>
+      </span>
+    </DropdownMenuRadioItem>
+  )
+}
+
+/** A screen wide enough for the Inbox's two columns (Tailwind's lg), following resizes. */
+function useWide() {
+  const [wide, setWide] = useState(false)
+  useEffect(() => {
+    const query = window.matchMedia('(min-width: 1024px)')
+    const update = () => setWide(query.matches)
+    update()
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
+  return wide
+}
+
+/** A sender's initial on a soft colour, the same for the same address. */
+function SenderAvatar({
+  name,
+  address,
+  className,
+}: {
+  name: string
+  address: string
+  className?: string
+}) {
+  const tones = [
+    'bg-chart-1/20',
+    'bg-chart-2/20',
+    'bg-chart-3/20',
+    'bg-chart-4/20',
+    'bg-chart-5/20',
+  ]
+  const tone = tones[[...address].reduce((sum, c) => sum + c.charCodeAt(0), 0) % tones.length]
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        'flex size-9 flex-none items-center justify-center rounded-lg text-sm font-semibold text-foreground',
+        tone,
+        className,
+      )}
+    >
+      {/* Its first letter or digit: a name in quotes ('Brigade alerts' via …) starts with neither. */}
+      {(name || address).match(/[\p{L}\p{N}]/u)?.[0]?.toUpperCase() ?? '?'}
+    </span>
+  )
+}
+
+/** A conversation's next step, in a few words: what the row says under its words. */
+function NextStep({ item }: { item: InboxItem }) {
+  const trouble = item.route === 'cap' || item.route === 'loop' || item.route === 'bounce'
+  const who = item.next?.kind === 'draft' ? (item.next.teammate ?? item.teammate) : item.teammate
+  const step =
+    item.next?.kind === 'draft' ? (
+      <span className="font-semibold text-primary">Draft to approve</span>
+    ) : item.status === 'done' ? (
+      item.outcome?.kind === 'handled' ? (
+        <Hint label={item.outcome.note}>
+          <span className="min-w-0 truncate">handled it without a reply</span>
+        </Hint>
+      ) : (
+        <span>Done</span>
+      )
+    ) : item.status === 'other' && item.noise ? (
+      <span>{NOISE[item.noise]}</span>
+    ) : item.next?.kind === 'scheduled' ? (
+      <span className="inline-flex items-center gap-1">
+        <Clock aria-hidden className="size-3" />
+        Leaves {leavingLabel(item.next.at)}
+      </span>
+    ) : item.outcome?.kind === 'no_reply' ? (
+      <span className="min-w-0 truncate font-semibold text-warning" title={item.outcome.note}>
+        needs you{item.outcome.note && `: ${item.outcome.note}`}
+      </span>
+    ) : item.status === 'waiting' ? (
+      <span className="font-semibold text-warning">
+        {trouble ? destination(item) : 'No teammate on it'}
+      </span>
+    ) : item.activity?.kind === 'working' ? (
+      <span>is on it…</span>
+    ) : item.activity?.kind === 'needs_you' ? (
+      <span className="font-semibold text-warning">needs you</span>
+    ) : item.activity?.kind === 'replied' ? (
+      <span>replied {timeAgo(item.activity.at)}</span>
+    ) : item.outcome?.kind === 'handled' ? (
+      <Hint label={item.outcome.note}>
+        <span className="min-w-0 truncate">handled it without a reply</span>
+      </Hint>
+    ) : null
+  return (
+    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+      {item.status === 'waiting' && !item.next && !item.outcome ? (
+        <span aria-hidden className="size-1.5 flex-none rounded-full bg-warning" />
+      ) : (
+        who && (
+          <>
+            <TeammateAvatar teammate={who} className="size-4" />
+            <span className="truncate">{who.name}</span>
+          </>
+        )
+      )}
+      {step}
+      {item.project && <span className="truncate">· {item.project.name}</span>}
+    </span>
+  )
+}
+
+function Row({ item, href, selected }: { item: InboxItem; href: string; selected: boolean }) {
+  const todo = item.status === 'waiting' || item.next?.kind === 'draft'
+  // Opened from the keyboard or by marking the one before done, it comes into view.
+  const self = useRef<HTMLAnchorElement>(null)
+  useEffect(() => {
+    if (selected) self.current?.scrollIntoView({ block: 'nearest' })
+  }, [selected])
+  return (
+    <Link
+      ref={self}
+      href={href}
+      scroll={false}
+      aria-current={selected ? 'true' : undefined}
+      className={cn(
+        'flex gap-3 px-4 py-3.5 outline-none hover:bg-secondary/50 focus-visible:bg-secondary/50 md:px-5',
+        selected && 'bg-secondary hover:bg-secondary',
+      )}
+    >
+      <SenderAvatar name={item.fromName} address={item.from} />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-baseline gap-2">
+          <span className={cn('min-w-0 flex-1 truncate text-sm', todo && 'font-semibold')}>
+            {item.fromName || item.from}
+            {item.count > 1 && (
+              <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                {item.count}
+                <span className="sr-only"> emails</span>
+              </span>
+            )}
+          </span>
+          <time dateTime={item.at} className="flex-none text-xs text-muted-foreground">
+            {timeAgo(item.at)}
+          </time>
+        </div>
+        <span className={cn('truncate text-sm', todo ? 'font-semibold' : 'text-foreground/90')}>
+          {item.hidden ? SIGN_UP : item.subject || '(No subject)'}
+        </span>
+        {!item.hidden && item.snippet && (
+          <span className="truncate text-sm text-muted-foreground">{item.snippet}</span>
+        )}
+        <NextStep item={item} />
+      </div>
+    </Link>
+  )
+}
+
+/** One conversation, whole, and what a person can do with it. */
+function Reader({
+  id,
+  onChanged,
+  onDone,
+}: {
+  id: string
+  onChanged: () => Promise<void>
+  /** Marked done: the page opens the next email. */
+  onDone: () => void
+}) {
+  const router = useRouter()
+  const detail = useApi<InboxDetail>(itemPath(id), ['mail.updated', 'tickets.updated'])
+  const [handing, setHanding] = useState(false)
+  const [ruling, setRuling] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  // Earlier mails folded, as in a mail app: the latest is open.
+  const [opened, setOpened] = useState<Set<string>>(() => new Set())
+
+  if (detail.error) return <p className="text-sm text-destructive-text">{detail.error.message}</p>
+  const d = detail.data
+  if (!d) return <p className="text-sm text-muted-foreground">Loading…</p>
+
+  const done = d.status === 'done'
+  async function toggleDone() {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await api(`${itemPath(id)}/done`, { body: { done: !done } })
+      if (!done) return onDone()
+      await Promise.all([detail.reload(), onChanged()])
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // Handed in one click when it can only go to one teammate and needs nothing more (Gmail's
+  // mail asks for its project first); otherwise the form opens.
+  const only = d.handTo.length === 1 ? d.handTo[0]! : null
+  const oneClick = only && d.source.kind !== 'gmail'
+  async function handToOnly() {
+    if (!only) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      const { threadId } = await api<{ threadId: string }>(`${itemPath(id)}/hand`, {
+        body: { teammateId: only.id },
+      })
+      void onChanged()
+      router.push(`/app/threads/${threadId}`)
+    } catch (e) {
+      setError(message(e))
+      setBusy(false)
+    }
+  }
+
+  const last = d.messages.at(-1)?.id
+  const unowned = d.status === 'waiting' && !d.thread
+  const trouble = d.route === 'cap' || d.route === 'loop' || d.route === 'bounce'
+  const other = d.status === 'other' && !d.thread
+  const state = d.reason
+    ? 'No teammate is on it'
+    : other && d.noise
+      ? `${NOISE[d.noise]}, kept out of To do`
+      : destination(d)
+  // Gmail's mail came to the account, not to the mailbox of the teammate who took it.
+  const mailboxName =
+    d.source.kind === 'gmail' ? `Gmail ${d.to}` : d.teammate && `${d.teammate.name}’s mailbox`
+  const about = [mailboxName, d.project?.name].filter(Boolean).join(' · ')
+  // Once a thread has it, handing it over starts a new thread: worth offering only when the
+  // mailbox has another teammate than the one on it.
+  const handOver = d.handTo.some((t) => t.id !== d.teammate?.id)
+  // The teammate on it: the one whose thread has it (a mailbox's teammate alone is not).
+  const owner = d.thread ? d.teammate : null
+  const handButton = (primary: boolean) =>
+    oneClick && unowned ? (
+      <Button size="sm" disabled={busy} onClick={() => void handToOnly()}>
+        Hand to {only.name}
+      </Button>
+    ) : primary ? (
+      <Button size="sm" aria-expanded={handing} onClick={() => setHanding((h) => !h)}>
+        {only ? `Hand to ${only.name}` : 'Hand to'}
+      </Button>
+    ) : (
+      // Who has it, as a picker: opening it hands the mail to another teammate.
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 gap-1.5 bg-card px-2"
+        aria-expanded={handing}
+        aria-label={owner ? `${owner.name}, hand to another teammate` : 'Hand to a teammate'}
+        onClick={() => setHanding((h) => !h)}
+      >
+        {owner ? (
+          <TeammateAvatar teammate={owner} className="size-4" />
+        ) : (
+          <span
+            aria-hidden
+            className="size-4 flex-none rounded-full border border-dashed border-muted-foreground"
+          />
+        )}
+        <span className="max-w-40 truncate">{owner?.name ?? 'Unassigned'}</span>
+        <ChevronDown aria-hidden className="size-3.5 text-muted-foreground" />
+      </Button>
+    )
+  const sender = d.fromName || d.from
+  // What the teammate did with the mail reads after it, at the end of the conversation.
+  const outcomeAtEnd = !!d.outcome && !!d.thread && (!done || d.outcome.kind === 'handled')
+  const reload = async () => {
+    await Promise.all([detail.reload(), onChanged()])
+  }
+  async function moveToTodo() {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await api(`${itemPath(id)}/todo`, { body: {} })
+      await reload()
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <article className="flex flex-col gap-4">
+      <header className="flex flex-col gap-3">
+        <div className="flex items-start gap-3">
+          <div className="flex min-w-0 flex-1 flex-col gap-1">
+            <h2 className="text-lg leading-snug font-semibold tracking-tight wrap-anywhere">
+              {d.hidden ? SIGN_UP : d.subject || '(No subject)'}
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              with {sender} · {d.messages.length} {d.messages.length === 1 ? 'message' : 'messages'}
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="icon"
+            className="size-8 flex-none"
+            data-corner-clear
+            disabled={busy}
+            aria-label={done ? 'Not done' : 'Done'}
+            tooltip={done ? 'Not done' : 'Done'}
+            onClick={() => void toggleDone()}
+          >
+            {done ? <Undo2 /> : <Check />}
+          </Button>
+        </div>
+        {unowned ? (
+          // Nobody is on it: what to do with it, and with the mail that comes next, together.
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-warning/30 bg-warning/10 px-3.5 py-2.5">
+            <span aria-hidden className="size-1.5 flex-none rounded-full bg-warning" />
+            <Hint label={d.reason ?? undefined}>
+              <span className={cn('min-w-0 flex-1 text-sm', trouble && 'text-warning')}>
+                {state}
+                {about && <span className="text-muted-foreground"> · {about}</span>}
+              </span>
+            </Hint>
+            <div className="flex flex-none items-center gap-1">
+              {!d.hidden && handButton(true)}
+              {d.reason && d.addRule && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={ruling}
+                  className="text-primary hover:text-primary"
+                  onClick={() => setRuling((r) => !r)}
+                >
+                  Add a rule
+                </Button>
+              )}
+              <MuteMenu detail={d} onChanged={reload} onError={setError} ghost />
+            </div>
+          </div>
+        ) : outcomeAtEnd ? null : (
+          <div className="flex min-h-11 flex-wrap items-center gap-x-1.5 gap-y-2 rounded-xl bg-muted/60 px-3.5 py-2 text-sm text-muted-foreground">
+            <span
+              aria-hidden
+              className={cn(
+                'size-1.5 flex-none rounded-full',
+                trouble ? 'bg-warning' : done ? 'bg-muted-foreground/50' : 'bg-primary',
+              )}
+            />
+            {d.thread ? (
+              <Link
+                href={`/app/threads/${d.thread.id}`}
+                className="inline-flex items-center gap-0.5 font-medium text-foreground underline-offset-4 hover:underline"
+              >
+                {state}
+                <ArrowUpRight aria-hidden className="size-3.5" />
+              </Link>
+            ) : (
+              <Hint label={d.reason ? undefined : (d.routeNote ?? undefined)}>
+                <span className={cn(trouble ? 'text-warning' : 'text-foreground')}>{state}</span>
+              </Hint>
+            )}
+            {about && <span>· {about}</span>}
+            {other ? (
+              <span className="ml-auto flex items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 bg-card px-2"
+                  disabled={busy}
+                  onClick={() => void moveToTodo()}
+                >
+                  Move to To do
+                </Button>
+                <MuteMenu detail={d} onChanged={reload} onError={setError} />
+              </span>
+            ) : (
+              !d.hidden && handOver && <span className="ml-auto">{handButton(false)}</span>
+            )}
+          </div>
+        )}
+        {/* Once a thread has it, the note stays under the row, which links to the thread. */}
+        {!d.reason && d.routeNote && (unowned || outcomeAtEnd || d.thread) && (
+          <p className="text-xs text-muted-foreground">{d.routeNote}</p>
+        )}
+        {error && <p className="text-sm text-destructive-text">{error}</p>}
+        {handing && !d.hidden && (
+          <HandForm detail={d} onCancel={() => setHanding(false)} onHanded={onChanged} />
+        )}
+        {ruling && d.addRule && (
+          <AddRule
+            connectionId={d.addRule.connectionId}
+            projectId={d.addRule.projectId}
+            teammateId={d.addRule.teammateId}
+            reload={detail.reload}
+            onClose={() => setRuling(false)}
+          />
+        )}
+      </header>
+
+      <ol className="flex flex-col gap-3">
+        {d.messages.map((m) => (
+          <li key={m.id}>
+            <Message
+              m={m}
+              open={m.id === last || opened.has(m.id) || !!m.sendAt}
+              onOpen={() => setOpened((o) => new Set(o).add(m.id))}
+              onChanged={reload}
+            />
+          </li>
+        ))}
+        {d.drafts.map((draft) => (
+          <li key={draft.ticketId}>
+            <DraftCard draft={draft} thread={d.thread} onChanged={reload} />
+          </li>
+        ))}
+        {outcomeAtEnd && (
+          <li>
+            <OutcomeLine detail={d} about={about} onChanged={reload} />
+          </li>
+        )}
+      </ol>
+    </article>
+  )
+}
+
+/**
+ * Mute a conversation's sender for the workspace (its address, or everyone at its domain unless
+ * it is a public mail provider's): their mail nobody takes goes to Other. Unmute when it is.
+ */
+function MuteMenu({
+  detail: d,
+  onChanged,
+  onError,
+  ghost = false,
+}: {
+  detail: InboxDetail
+  onChanged: () => Promise<void>
+  onError: (error: string | undefined) => void
+  /** In To do's banner, beside its other actions; else an outlined button. */
+  ghost?: boolean
+}) {
+  const [busy, setBusy] = useState(false)
+  async function run(call: () => Promise<unknown>) {
+    setBusy(true)
+    onError(undefined)
+    try {
+      await call()
+      await onChanged()
+    } catch (e) {
+      onError(message(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const look = ghost
+    ? ({ variant: 'ghost', className: 'text-muted-foreground' } as const)
+    : ({ variant: 'outline', className: 'h-7 gap-1 bg-card px-2' } as const)
+  if (d.hidden) return null
+  if (d.muted)
+    return (
+      <Button
+        size="sm"
+        {...look}
+        disabled={busy}
+        onClick={() => void run(() => api(`${itemPath(d.id)}/mute`, { method: 'DELETE' }))}
+      >
+        {d.muted.kind === 'domain' ? `Unmute ${d.muted.value}` : 'Unmute sender'}
+      </Button>
+    )
+  const mute = (kind: 'address' | 'domain') =>
+    void run(() => api(`${itemPath(d.id)}/mute`, { body: { kind } }))
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="sm" {...look} disabled={busy}>
+          Mute sender
+          <ChevronDown aria-hidden className="size-3.5 text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="max-w-72">
+        <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+          Their mail nobody takes goes to Other
+        </DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => mute('address')}>
+          <span className="truncate">Mute {d.from}</span>
+        </DropdownMenuItem>
+        {d.muteDomain && (
+          <DropdownMenuItem onSelect={() => mute('domain')}>
+            <span className="truncate">Mute all of {d.muteDomain}</span>
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+/**
+ * A teammate's reply waiting for approval, in its place in the conversation: approve it now or
+ * for later, change it, or turn it down (the thread's ticket, decided as in the thread).
+ */
+function DraftCard({
+  draft,
+  thread,
+  onChanged,
+}: {
+  draft: InboxDraft
+  thread: InboxDetail['thread']
+  onChanged: () => Promise<void>
+}) {
+  const [editing, setEditing] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const email = emailDraft(draft.input)
+  const teammate = draft.teammate
+  async function decide(approved: boolean, edited?: EditedEmail) {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await api(`/tickets/${draft.ticketId}/resolve`, {
+        body: { approved, ...(edited ? { edited } : {}) },
+      })
+      await onChanged()
+    } catch (e) {
+      setError(message(e))
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-primary/50 bg-card px-5 py-4">
+      <div className="flex items-start gap-3">
+        {teammate ? (
+          <TeammateAvatar teammate={teammate} className="size-9" />
+        ) : (
+          <SenderAvatar name="?" address="?" />
+        )}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <span className="flex items-center gap-2 text-sm font-semibold">
+            {teammate?.name ?? 'A teammate'}
+            <span className="rounded-full bg-primary/15 px-2 py-0.5 text-xs font-semibold text-primary">
+              Draft
+            </span>
+          </span>
+        </div>
+        <span className="flex-none text-xs text-muted-foreground">
+          {email?.sendAt ? `Leaves ${leavingLabel(email.sendAt)}` : 'Waiting for you'}
+        </span>
+      </div>
+      {/* Whom it goes to, its subject and files: all of what is approved, not only the words. */}
+      {email && (
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-0.5 text-sm">
+          {draftFacts(email).map(([label, value]) => (
+            <Fragment key={label}>
+              <dt className="text-muted-foreground">{label}</dt>
+              <dd className={cn('wrap-anywhere', label === 'Cc' && 'font-semibold')}>{value}</dd>
+            </Fragment>
+          ))}
+        </dl>
+      )}
+      {editing && email ? (
+        <EmailDraftEditor
+          draft={email}
+          onCancel={() => setEditing(false)}
+          onSend={(edited) => {
+            setEditing(false)
+            void decide(true, edited)
+          }}
+        />
+      ) : (
+        <p className="text-[15px] leading-relaxed whitespace-pre-wrap wrap-anywhere">
+          {email?.body ?? JSON.stringify(draft.input)}
+        </p>
+      )}
+      {error && <p className="text-sm text-destructive-text">{error}</p>}
+      {draft.canDecide ? (
+        !editing && (
+          <div className="flex flex-col gap-2 border-t pt-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" disabled={busy} onClick={() => void decide(true)}>
+                <Check />
+                {email?.sendAt ? 'Approve' : 'Approve & send'}
+              </Button>
+              <SendLaterMenu disabled={busy} onPick={(sendAt) => void decide(true, { sendAt })} />
+              {email && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => setEditing(true)}
+                >
+                  Edit
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto text-muted-foreground"
+                disabled={busy}
+                onClick={() => void decide(false)}
+              >
+                Discard
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {email?.sendAt
+                ? 'It leaves at that time once approved, and can be cancelled until then.'
+                : 'It leaves 30 seconds after you approve it, and can be cancelled until then.'}
+            </p>
+          </div>
+        )
+      ) : (
+        <p className="border-t pt-3 text-xs text-muted-foreground">
+          Only the member who started{' '}
+          {thread ? (
+            <Link href={`/app/threads/${thread.id}`} className="underline underline-offset-4">
+              its thread
+            </Link>
+          ) : (
+            'its thread'
+          )}
+          , or an admin, can approve it.
+        </p>
+      )}
+    </div>
+  )
+}
+
+const SENT_LABEL: Record<NonNullable<InboxMessage['sent']>, string> = {
+  scheduled: 'Sending',
+  sent: 'Sent',
+  delivered: 'Delivered',
+  bounced: 'Bounced',
+  failed: 'Not sent',
+}
+
+/** A mail's time: the hour today, the day this year, else the date. The whole date shows on hover. */
+function shortDate(at: string) {
+  const date = new Date(at)
+  const now = new Date()
+  if (date.toDateString() === now.toDateString())
+    return date.toLocaleTimeString(undefined, { timeStyle: 'short' })
+  if (date.getFullYear() === now.getFullYear())
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return date.toLocaleDateString(undefined, { dateStyle: 'medium' })
+}
+
+/** One mail of a conversation, as a card: folded to a line, or whole. */
+function Message({
+  m,
+  open,
+  onOpen,
+  onChanged,
+}: {
+  m: InboxMessage
+  open: boolean
+  onOpen: () => void
+  onChanged: () => Promise<void>
+}) {
+  const { teammates } = useDashboard()
+  const [quoteOpen, setQuoteOpen] = useState(false)
+  // Text by default; its HTML as it was made, on demand.
+  const [view, setView] = useState<MailView>('text')
+  const asHtml = view === 'html' && !!m.html && !m.hidden
+  const [cancelling, setCancelling] = useState(false)
+  const [error, setError] = useState<string>()
+  const date = new Date(m.at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+  const when = shortDate(m.at)
+  const auth = m.authentication
+  const verified = auth && (auth.dkim === 'pass' || auth.dmarc === 'pass')
+  const sent = m.sent && m.sent !== 'sent' && m.sent !== 'delivered' ? SENT_LABEL[m.sent] : null
+  // Sent by a teammate: its pebble, as everywhere else.
+  const teammate =
+    m.direction === 'out' ? (teammates.find((t) => t.name === m.fromName) ?? null) : null
+  const name = m.fromName || m.from
+  const avatar = teammate ? (
+    <TeammateAvatar teammate={teammate} className="size-9" />
+  ) : (
+    <SenderAvatar name={name} address={m.from} />
+  )
+  async function cancel() {
+    setCancelling(true)
+    setError(undefined)
+    try {
+      await api(`/email/messages/${encodeURIComponent(m.id.replace(/^mail:/, ''))}/cancel`, {
+        method: 'POST',
+      })
+      await onChanged()
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setCancelling(false)
+    }
+  }
+  const header = (
+    <div className="flex w-full items-start gap-3 text-left">
+      {avatar}
+      <span className="flex min-w-0 flex-1 flex-col">
+        <Hint label={m.from}>
+          <span className="truncate text-sm font-semibold">{name}</span>
+        </Hint>
+        <span className="truncate text-xs text-muted-foreground">
+          to {m.to.join(', ')}
+          {m.cc.length > 0 && ` · Cc ${m.cc.join(', ')}`}
+        </span>
+      </span>
+      {sent && !m.sendAt && (
+        <span
+          className={cn(
+            'flex-none text-xs',
+            m.sent === 'bounced' || m.sent === 'failed'
+              ? 'text-destructive-text'
+              : 'text-muted-foreground',
+          )}
+        >
+          {sent}
+        </span>
+      )}
+      {open && m.html && !m.hidden && <MailViewSwitch view={view} onChange={setView} />}
+      <Hint label={date}>
+        <time dateTime={m.at} className="flex-none text-xs text-muted-foreground">
+          {when}
+        </time>
+      </Hint>
+    </div>
+  )
+
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex w-full flex-col gap-2 rounded-xl border bg-card px-5 py-3.5 outline-none hover:bg-secondary/40 focus-visible:bg-secondary/40"
+      >
+        {header}
+        <span className="w-full truncate pl-12 text-left text-sm text-muted-foreground">
+          {m.hidden
+            ? SIGN_UP
+            : m.text.replace(/\s+/g, ' ') || (m.arriving ? 'Arriving…' : 'No text.')}
+        </span>
+      </button>
+    )
+
+  return (
+    <div
+      className={cn(
+        'flex flex-col items-start gap-3 rounded-xl border bg-card px-5 py-4',
+        m.sendAt && 'border-dashed',
+      )}
+    >
+      {header}
+      {m.sendAt && (
+        <div className="flex w-full flex-wrap items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-sm">
+          <Clock aria-hidden className="size-4 text-muted-foreground" />
+          <span className="flex-1">Leaves {leavingLabel(m.sendAt)}</span>
+          {m.canCancel && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7"
+              disabled={cancelling}
+              onClick={() => void cancel()}
+            >
+              Cancel sending
+            </Button>
+          )}
+        </div>
+      )}
+      {error && <p className="text-sm text-destructive-text">{error}</p>}
+      {auth && !verified && (
+        <p className="flex items-center gap-1.5 text-xs text-warning">
+          <ShieldAlert aria-hidden className="size-3.5" />
+          Not verified by the mail server
+        </p>
+      )}
+      {m.hidden ? (
+        <p className="text-sm text-muted-foreground">
+          Mail to a sign-up address is for its thread: only its starter and admins can read it.
+        </p>
+      ) : asHtml ? (
+        <MailHtmlFrame
+          html={m.html!}
+          inline={m.inlineFiles.map((f) => ({ cid: f.cid, url: fileUrl(m, f.id) }))}
+          title={m.subject || 'Mail'}
+        />
+      ) : m.text ? (
+        <MailTextView text={m.text} />
+      ) : m.arriving ? (
+        <p className="text-sm text-muted-foreground">Arriving…</p>
+      ) : (
+        <p className="text-sm text-muted-foreground">No text.</p>
+      )}
+      {!m.hidden &&
+        !asHtml &&
+        m.quoted &&
+        (quoteOpen ? (
+          <MailTextView
+            text={m.quoted}
+            className="border-l-2 pl-3 text-sm text-muted-foreground [&_p]:text-sm"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => setQuoteOpen(true)}
+            className="rounded-full bg-secondary px-2.5 py-0.5 text-xs font-semibold text-muted-foreground hover:text-foreground"
+          >
+            ··· Show quoted text
+          </button>
+        ))}
+      {m.attachments.length > 0 && <MailFiles m={m} />}
+    </div>
+  )
+}
+
+/**
+ * A mail's files, like a thread message's: an image, a video or audio opens over the page, any other
+ * file (a PDF, a text) in a new tab, where the browser shows what it can and downloads the rest.
+ */
+function MailFiles({ m }: { m: InboxMessage }) {
+  const [viewing, setViewing] = useState<Media>()
+  const chip =
+    'flex max-w-64 items-center gap-2 rounded-lg border bg-card py-1.5 pr-3 pl-2 text-xs hover:border-ring'
+  return (
+    <>
+      <ul className="flex w-full flex-wrap gap-2 pt-1" aria-label="Attached files">
+        {m.attachments.map((a, i) => {
+          const src = fileUrl(m, a.id)
+          const kind = mediaKind(a.contentType)
+          const body = (
+            <>
+              {kind ? (
+                <span className="relative size-8 shrink-0 overflow-hidden rounded bg-secondary">
+                  <Thumbnail src={src} kind={kind} small />
+                </span>
+              ) : (
+                <FileText aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              )}
+              <span className="flex min-w-0 flex-col text-left">
+                <span className="truncate font-medium">{a.name}</span>
+                {a.size > 0 && (
+                  <span className="truncate text-muted-foreground">{fileSize(a.size)}</span>
+                )}
+              </span>
+            </>
+          )
+          return (
+            <li key={`${a.id}-${i}`}>
+              {kind ? (
+                <Hint label={a.name}>
+                  <button
+                    type="button"
+                    className={cn(chip, kind === 'audio' ? 'cursor-pointer' : 'cursor-zoom-in')}
+                    onClick={() => setViewing({ name: a.name, src, kind })}
+                    aria-label={`Preview ${a.name}`}
+                  >
+                    {body}
+                  </button>
+                </Hint>
+              ) : (
+                <Hint label={a.name}>
+                  <a href={src} target="_blank" rel="noreferrer" className={chip}>
+                    {body}
+                  </a>
+                </Hint>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      <MediaPreview
+        media={viewing}
+        onClose={() => setViewing(undefined)}
+        unavailable="This image can’t be shown: its mailbox no longer has it, or Brigade did not keep it."
+      />
+    </>
+  )
+}
+
+/** The conversation's latest mail, as a mention its thread can read (email_read takes its id). */
+const mailMention = (d: InboxDetail) =>
+  formatMention({
+    kind: 'email',
+    id: d.id.slice('mail:'.length),
+    label: `${d.fromName || d.from} · ${d.subject || '(No subject)'}`,
+  })
+
+/**
+ * What the thread did with a conversation it did not answer, in its own words, and what a person
+ * can do about it: have it reply after all, talk it over in the thread, or reply themselves. It
+ * closes the conversation, after the mail it is about, where a reply would go.
+ */
+function OutcomeLine({
+  detail: d,
+  about,
+  onChanged,
+}: {
+  detail: InboxDetail
+  about: string
+  onChanged: () => Promise<void>
+}) {
+  const router = useRouter()
+  const [replying, setReplying] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const outcome = d.outcome!
+  const thread = d.thread!
+  const who = d.teammate?.name ?? 'The teammate'
+  const declined = outcome.kind === 'no_reply'
+
+  async function ask() {
+    setBusy(true)
+    setError(undefined)
+    try {
+      await api(`/threads/${thread.id}/messages`, {
+        body: { text: `Please reply to ${mailMention(d)} after all.` },
+      })
+      await api(`${itemPath(d.id)}/asked`, { body: {} })
+      await onChanged()
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  // Its thread opens with the mail in its box, ready for what the person has to say.
+  function discuss() {
+    addToReply(thread.id, `${mailMention(d)} `)
+    router.push(`/app/threads/${thread.id}`)
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div
+        className={cn(
+          'flex items-start gap-3 rounded-2xl border px-4 py-3',
+          declined ? 'border-warning/30 bg-warning/10' : 'bg-card',
+        )}
+      >
+        <span
+          aria-hidden
+          className={cn(
+            'mt-[7px] size-1.5 flex-none rounded-full',
+            declined ? 'bg-warning' : 'bg-primary',
+          )}
+        />
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <p className="flex flex-wrap items-center gap-x-1.5 text-sm">
+            <span className="font-medium">
+              {declined ? `${who} needs you and didn’t reply` : `${who} handled it without a reply`}
+            </span>
+            <time dateTime={outcome.at} className="text-muted-foreground">
+              · {timeAgo(outcome.at)}
+            </time>
+            {about && <span className="text-muted-foreground">· {about}</span>}
+          </p>
+          {outcome.note && (
+            <p className="text-sm text-muted-foreground wrap-anywhere">{outcome.note}</p>
+          )}
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {declined && d.mayPrompt && (
+              <Button size="sm" disabled={busy} onClick={() => void ask()}>
+                Ask {who} to reply
+              </Button>
+            )}
+            {d.canReply && (
+              <Button
+                size="sm"
+                variant={declined && d.mayPrompt ? 'outline' : 'default'}
+                aria-expanded={replying}
+                onClick={() => setReplying((r) => !r)}
+              >
+                {declined ? 'Reply myself' : 'Reply anyway'}
+              </Button>
+            )}
+            {d.mayPrompt ? (
+              <Button size="sm" variant="outline" onClick={discuss}>
+                Discuss with {who}
+              </Button>
+            ) : (
+              <Button asChild size="sm" variant="outline">
+                <Link href={`/app/threads/${thread.id}`}>
+                  Open its thread
+                  <ArrowUpRight aria-hidden />
+                </Link>
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+      {error && <p className="text-sm text-destructive-text">{error}</p>}
+      {replying && (
+        <ReplyForm
+          detail={d}
+          onCancel={() => setReplying(false)}
+          onSent={async () => {
+            setReplying(false)
+            await onChanged()
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+/** A person's own reply, from the conversation's mailbox, to its people. */
+function ReplyForm({
+  detail,
+  onCancel,
+  onSent,
+}: {
+  detail: InboxDetail
+  onCancel: () => void
+  onSent: () => Promise<void>
+}) {
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string>()
+  async function send() {
+    if (!text.trim()) return
+    setSending(true)
+    setError(undefined)
+    try {
+      await api(`${itemPath(detail.id)}/reply`, { body: { text } })
+      await onSent()
+    } catch (e) {
+      setError(message(e))
+      setSending(false)
+    }
+  }
+  return (
+    <form
+      className="flex flex-col gap-3 rounded-lg border p-4"
+      onSubmit={(e) => {
+        e.preventDefault()
+        void send()
+      }}
+    >
+      <p className="text-sm text-muted-foreground">
+        To {detail.replyRecipients.join(', ')}, from {detail.to}
+      </p>
+      <Textarea
+        aria-label="Your reply"
+        placeholder="Write your reply"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={5}
+        autoFocus
+      />
+      {error && <p className="text-sm text-destructive-text">{error}</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="submit" size="sm" disabled={!text.trim() || sending}>
+          {sending ? 'Sending…' : 'Send'}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+        <span className="text-xs text-muted-foreground">
+          It leaves in 30 seconds: you can cancel it until then.
+        </span>
+      </div>
+    </form>
+  )
+}
+
+/** Give the email to a teammate: a thread of the member's with it, the mail inside. */
+function HandForm({
+  detail,
+  onCancel,
+  onHanded,
+}: {
+  detail: InboxDetail
+  onCancel: () => void
+  onHanded: () => Promise<void>
+}) {
+  const router = useRouter()
+  const [teammateId, setTeammateId] = useState(
+    detail.handTo.length === 1 ? detail.handTo[0]!.id : '',
+  )
+  const [note, setNote] = useState('')
+  const [projectId, setProjectId] = useState(detail.project?.id ?? 'none')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string>()
+  // Brigade's mail is answered from its mailbox, which only its project's threads reach.
+  const gmail = detail.source.kind === 'gmail'
+
+  if (detail.handTo.length === 0)
+    return (
+      <p className="rounded-lg bg-secondary px-3 py-2 text-sm text-muted-foreground">
+        No teammate has this mailbox: give it to one in Settings › Apps.
+      </p>
+    )
+
+  async function hand() {
+    if (!teammateId) return
+    setSending(true)
+    setError(undefined)
+    try {
+      const { threadId } = await api<{ threadId: string }>(`${itemPath(detail.id)}/hand`, {
+        body: {
+          teammateId,
+          note: note.trim() || undefined,
+          ...(gmail ? { projectId: projectId === 'none' ? null : projectId } : {}),
+        },
+      })
+      void onHanded()
+      router.push(`/app/threads/${threadId}`)
+    } catch (e) {
+      setError(message(e))
+      setSending(false)
+    }
+  }
+
+  return (
+    <form
+      className="flex flex-col gap-3 rounded-lg border p-4"
+      onSubmit={(e) => {
+        e.preventDefault()
+        void hand()
+      }}
+    >
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="hand-teammate">Teammate</Label>
+        <Select value={teammateId} onValueChange={setTeammateId}>
+          <SelectTrigger id="hand-teammate" className="w-full sm:w-56">
+            <SelectValue placeholder="Pick a teammate" />
+          </SelectTrigger>
+          <SelectContent>
+            {detail.handTo.map((t) => (
+              <SelectItem key={t.id} value={t.id}>
+                {t.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="hand-note">Note</Label>
+        <Textarea
+          id="hand-note"
+          placeholder="What should they do?"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          maxLength={5000}
+          rows={3}
+        />
+      </div>
+      {gmail && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="hand-project">Project</Label>
+          <ProjectSelect id="hand-project" value={projectId} onChange={setProjectId} />
+        </div>
+      )}
+      {error && <p className="text-sm text-destructive-text">{error}</p>}
+      <div className="flex gap-2">
+        <Button type="submit" size="sm" disabled={!teammateId || sending}>
+          {sending ? 'Handing over…' : 'Hand over'}
+        </Button>
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
+  )
+}

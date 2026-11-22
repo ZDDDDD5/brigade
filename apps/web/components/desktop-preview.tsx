@@ -1,8 +1,9 @@
 'use client'
-import { Maximize2, Minimize2, RotateCw } from 'lucide-react'
+import { Maximize2, Minimize2, Moon, RotateCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Hint } from '@/components/ui/tooltip'
 import {
   KeyboardField,
   TouchButtons,
@@ -26,7 +27,8 @@ const RETRIES = 5
  * that opens the computer on a click. Open, it fills its place: mouse and
  * keyboard once this member has taken over, its controls in a toolbar floating
  * over its foot. On a touch screen, two fingers zoom, and with control the toolbar
- * adds a keyboard and copy and paste.
+ * adds a keyboard and copy and paste. A stopped cloud computer shows as asleep,
+ * with Wake up.
  */
 export function DesktopScreen({
   source,
@@ -66,6 +68,13 @@ export function DesktopScreen({
   const [retries, setRetries] = useState(0)
 
   const [waiting, setWaiting] = useState<string>()
+  /** The cloud computer is stopped: the screen offers Wake up. */
+  const [asleep, setAsleep] = useState(false)
+  /**
+   * This member asked it to wake: ask with it until it is up. A ref, not state, so
+   * that ending it does not ask again (a refused wake keeps its error on screen).
+   */
+  const waking = useRef(false)
   const [input, setInput] = useState<DesktopInput>()
   const touch = useTouchScreen()
   const keys = touch && mode === 'open' && control
@@ -79,21 +88,32 @@ export function DesktopScreen({
     let retry: ReturnType<typeof setTimeout> | undefined
     setConnection(undefined)
     setError(undefined)
-    api<DesktopConnection>(`${base}/desktop`, { method: 'POST' })
+    api<DesktopConnection>(`${base}/desktop${waking.current ? '?wake=1' : ''}`, { method: 'POST' })
       .then((r) => {
         if (!live) return
         setWaiting(undefined)
+        setAsleep(false)
+        waking.current = false
         setConnection(r)
       })
       .catch((e: Error) => {
         if (!live) return
         // 503: the computer is starting for this member. Ask again until it is up.
         if (e instanceof ApiError && e.status === 503) {
-          setWaiting(e.message)
+          setAsleep(false)
+          setWaiting(
+            waking.current ? 'Waking up the cloud computer… It takes a minute or so.' : e.message,
+          )
           retry = setTimeout(() => setAttempt((n) => n + 1), 4000)
           return
         }
         setWaiting(undefined)
+        waking.current = false
+        if (e instanceof ApiError && (e.body as { asleep?: boolean } | undefined)?.asleep) {
+          setAsleep(true)
+          return
+        }
+        setAsleep(false)
         setError(e.message)
       })
     return () => {
@@ -133,6 +153,15 @@ export function DesktopScreen({
     setAttempt((n) => n + 1)
   }
 
+  const wake = () => {
+    setAsleep(false)
+    setWaiting('Waking up the cloud computer… It takes a minute or so.')
+    waking.current = true
+    setAttempt((n) => n + 1)
+  }
+
+  const sleeping = asleep && !connection && !waiting
+
   const screen = connection ? (
     <DesktopView
       connection={connection}
@@ -147,6 +176,14 @@ export function DesktopScreen({
       }}
       onLost={onLost}
     />
+  ) : sleeping ? (
+    <div className="flex flex-col items-center gap-3 p-4 text-center">
+      <Moon aria-hidden className="size-5 text-muted-foreground" />
+      <p className="text-sm font-medium text-foreground">The cloud computer is asleep</p>
+      <Button type="button" size="sm" onClick={wake}>
+        Wake up
+      </Button>
+    </div>
   ) : (
     <p
       className={cn(
@@ -158,30 +195,44 @@ export function DesktopScreen({
     </p>
   )
 
+  const badge = (
+    <Badge
+      variant="secondary"
+      className="absolute top-2 left-2 bg-background/85 text-muted-foreground"
+    >
+      {control ? 'You have control' : 'View only'}
+    </Badge>
+  )
+
+  // Asleep, the thumbnail holds Wake up: a button inside the one that opens the computer cannot be.
+  if (mode === 'thumbnail' && sleeping)
+    return (
+      <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border bg-black">
+        {screen}
+        {badge}
+      </div>
+    )
+
   if (mode === 'thumbnail')
     return (
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label={`Open ${teammateName}'s computer`}
-        title="Open the computer"
-        className="group relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border bg-black outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >
-        {/* The screen shows, but the click is the button's: control is once it is open. */}
-        <span className="pointer-events-none flex size-full items-center justify-center">
-          {screen}
-        </span>
-        <Badge
-          variant="secondary"
-          className="absolute top-2 left-2 bg-background/85 text-muted-foreground"
+      <Hint label="Open the computer">
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`Open ${teammateName}'s computer`}
+          className="group relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border bg-black outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
-          {control ? 'You have control' : 'View only'}
-        </Badge>
-        <span className="absolute inset-0 flex items-center justify-center gap-2 bg-background/60 text-sm font-semibold opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-          <Maximize2 aria-hidden className="size-4" />
-          Open computer
-        </span>
-      </button>
+          {/* The screen shows, but the click is the button's: control is once it is open. */}
+          <span className="pointer-events-none flex size-full items-center justify-center">
+            {screen}
+          </span>
+          {badge}
+          <span className="absolute inset-0 flex items-center justify-center gap-2 bg-background/60 text-sm font-semibold opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+            <Maximize2 aria-hidden className="size-4" />
+            Open computer
+          </span>
+        </button>
+      </Hint>
     )
 
   return (
@@ -221,7 +272,7 @@ export function DesktopScreen({
           size="icon-sm"
           onClick={reload}
           aria-label="Reconnect"
-          title="Reconnect"
+          tooltip="Reconnect"
         >
           <RotateCw aria-hidden />
         </Button>
@@ -232,7 +283,7 @@ export function DesktopScreen({
             size="icon-sm"
             onClick={onCollapse}
             aria-label="Back to the thread"
-            title="Back to the thread (Esc)"
+            tooltip="Back to the thread (Esc)"
           >
             <Minimize2 aria-hidden />
           </Button>

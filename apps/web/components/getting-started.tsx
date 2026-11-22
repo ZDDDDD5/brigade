@@ -6,7 +6,8 @@ import { useDashboard } from '@/components/dashboard'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
-import { useApi, type ConnectionsResponse, type Task, type ThreadSummary } from '@/lib/api'
+import { useApi, type ConnectionsResponse, type ThreadSummary } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
 
 const dismissedKey = (workspaceId: string) => `brigade.checklist.dismissed.${workspaceId}`
@@ -19,8 +20,7 @@ const dismissedKey = (workspaceId: string) => `brigade.checklist.dismissed.${wor
 export function GettingStarted({ threads }: { threads: ThreadSummary[] | undefined }) {
   const { me, teammates } = useDashboard()
   const workspaceId = me.activeWorkspaceId!
-  const connections = useApi<ConnectionsResponse>('/connections')
-  const tasks = useApi<Task[]>('/tasks')
+  const connections = useApi<ConnectionsResponse>('/connections', ['connections.updated'])
   const [dismissed, setDismissed] = useState(true)
 
   useEffect(() => {
@@ -31,7 +31,7 @@ export function GettingStarted({ threads }: { threads: ThreadSummary[] | undefin
     }
   }, [workspaceId])
 
-  if (dismissed || !threads || !connections.data || !tasks.data) return null
+  if (dismissed || !threads || !connections.data) return null
 
   const chief = teammates.find((t) => t.kind === 'chief')
   const team = teammates.filter((t) => t.kind !== 'chief')
@@ -54,10 +54,9 @@ export function GettingStarted({ threads }: { threads: ThreadSummary[] | undefin
     },
     {
       label: 'Get a first piece of work done',
-      // A finished task, or a teammate's own thread done; one only joining the chief's is not yet.
-      done:
-        tasks.data.some((t) => t.column === 'done') ||
-        threads.some((t) => t.status === 'idle' && ids.has(t.teammate.id)),
+      // A teammate's own thread done, or that stopped at its answer; one only joining the
+      // chief's is not yet.
+      done: threads.some((t) => (t.doneAt || t.status === 'idle') && ids.has(t.teammate.id)),
       hint: team.length > 0 ? 'Give one of your teammates a small task below.' : undefined,
     },
   ]
@@ -121,7 +120,9 @@ export function GettingStarted({ threads }: { threads: ThreadSummary[] | undefin
               </div>
               {!s.done && s.href && s.action && (
                 <Button asChild size="sm" variant={next ? 'default' : 'outline'}>
-                  <Link href={s.href}>{s.action}</Link>
+                  <Link href={s.href} onClick={(e) => clickSettings(e, s.href!)}>
+                    {s.action}
+                  </Link>
                 </Button>
               )}
             </li>

@@ -1,8 +1,12 @@
 'use client'
 // The card for a pull request a teammate opened in a thread: the whole card opens
-// its changes, and an owner or admin merges it from here. One that conflicts has
-// Resolve conflicts instead: its teammate resolves them, then it merges by itself.
-// A thread's outputs show the same pull request as a row (thread-outputs).
+// its changes, its review line the reviewer's thread, and an owner or
+// admin merges it from here, after a word while its review is under way, asked for
+// changes or did not read its latest commits (then Review again has them read). One that
+// conflicts has Resolve conflicts instead: its teammate resolves them, then it merges by
+// itself. Its review is the line under its title, which opens the review's thread: no badge or
+// line of its own says it again. A thread's outputs show the same pull request as a row
+// (thread-outputs).
 import {
   ExternalLink,
   GitCompareArrows,
@@ -13,35 +17,50 @@ import {
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { isAdmin, useDashboard } from '@/components/dashboard'
-import { PullStatus } from '@/components/pull-status'
+import { PullStatus, pullStatus, ReviewLink, reviewLine } from '@/components/pull-status'
 import { Button } from '@/components/ui/button'
+import { Hint } from '@/components/ui/tooltip'
 import { api, pullHref, useApi, type PullRequestState } from '@/lib/api'
 import {
   blockedBecause,
   canMerge,
+  confirmMerge,
   hasConflicts,
   resolvesInBrigade,
   resolving,
+  reviewer,
+  reviewHolds,
+  unreviewedBy,
   useLastMergeMethod,
 } from '@/lib/merge-method'
 import { cn } from '@/lib/utils'
 
-/** While its conflicts are resolved and it merges, the card follows it. */
+/** While it is reviewed, or its conflicts are resolved and it merges, the card follows it. */
 const POLL_MS = 10_000
+
+/** The reloads of every card and merge button showing a pull request, by its path. */
+const shown = new Map<string, Set<() => Promise<void>>>()
+
+/** One of them merged it or asked for something: they all show where it stands now. */
+function reloadShown(path: string) {
+  return Promise.all([...(shown.get(path) ?? [])].map((reload) => reload()))
+}
 
 /**
  * A pull request's state from GitHub, and Merge and Resolve conflicts for it.
- * While its conflicts are resolved and it merges, it follows it.
+ * While it is reviewed, or its conflicts are resolved and it merges, it follows it. Merged
+ * from one place (its teammate's merge button), its card in the thread shows it too.
  */
 export function usePull(repository: string, number: number, options: { checks?: boolean } = {}) {
   const path = `/pulls/${repository}/${number}`
   const pull = useApi<PullRequestState>(`${path}/state${options.checks ? '?checks=1' : ''}`)
   const [method] = useLastMergeMethod()
   const [busy, setBusy] = useState(false)
+  const [asking, setAsking] = useState(false)
   const [error, setError] = useState<string>()
 
   const p = pull.data
-  const following = p?.state === 'open' && resolving(p)
+  const following = p?.state === 'open' && (resolving(p) || !!reviewer(p))
   const reload = pull.reload
   useEffect(() => {
     if (!following) return
@@ -49,12 +68,21 @@ export function usePull(repository: string, number: number, options: { checks?: 
     return () => clearInterval(timer)
   }, [following, reload])
 
+  useEffect(() => {
+    const reloads = shown.get(path) ?? new Set()
+    shown.set(path, reloads.add(reload))
+    return () => {
+      reloads.delete(reload)
+      if (!reloads.size) shown.delete(path)
+    }
+  }, [path, reload])
+
   async function act(run: () => Promise<unknown>) {
     setBusy(true)
     setError(undefined)
     try {
       await run()
-      await reload()
+      await reloadShown(path)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -63,7 +91,7 @@ export function usePull(repository: string, number: number, options: { checks?: 
   }
 
   function merge() {
-    if (!confirm(`Merge #${number}${p ? ` into ${p.base}` : ''} (${method})?`)) return
+    if (!confirmMerge(p, number, method)) return
     void act(() => api(`${path}/merge`, { body: { method } }))
   }
 
@@ -77,7 +105,17 @@ export function usePull(repository: string, number: number, options: { checks?: 
     void act(() => api(`${path}/resolve`, { body: { method } }))
   }
 
-  return { pull, busy, error, merge, resolve }
+  /** Its latest commits are not reviewed: the same reviewer reads it again, in a new review. */
+  function reviewAgain() {
+    const review = p?.tracking?.review
+    const id = review && review.state !== 'skipped' ? review.reviewer?.id : undefined
+    setAsking(true)
+    void act(() => api(`${path}/review`, { body: id ? { reviewerId: id } : {} })).finally(() =>
+      setAsking(false),
+    )
+  }
+
+  return { pull, busy, asking, error, merge, resolve, reviewAgain }
 }
 
 export function PullCard({
@@ -92,11 +130,14 @@ export function PullCard({
   title: string | null
   /** Known to be open (Home's waiting ones): Merge shows even when GitHub's state doesn't load. */
   open?: boolean
-  /** A teammate's merge button under it does the merging: the card shows where it stands instead. */
+  /**
+   * A teammate's merge button under it does the merging, while its review holds nothing back:
+   * the card shows where it stands instead.
+   */
   mergeElsewhere?: boolean
 }) {
   const { me } = useDashboard()
-  const { pull, busy, error, merge, resolve } = usePull(repository, number)
+  const { pull, busy, asking, error, merge, resolve, reviewAgain } = usePull(repository, number)
 
   const p = pull.data
   const Icon =
@@ -114,7 +155,7 @@ export function PullCard({
           className="relative z-10 flex-none"
           disabled={busy}
           onClick={resolve}
-          title={`It conflicts with ${p.base}. ${p.tracking?.author?.name} resolves the conflicts, then it merges.`}
+          tooltip={`It conflicts with ${p.base}. ${p.tracking?.author?.name} resolves the conflicts, then it merges.`}
         >
           <GitCompareArrows />
           {busy ? 'Asking…' : 'Resolve conflicts'}
@@ -127,22 +168,27 @@ export function PullCard({
           </a>
         </Button>
       )
-    if (resolving(p) || (mergeElsewhere && mergeable)) return <PullStatus pull={p} />
+    // The teammate's merge button merges it, unless its review holds it: then that one only
+    // says why, and Merge stays here.
+    if (resolving(p) || (mergeElsewhere && mergeable && !reviewHolds(p)))
+      return <PullStatus pull={p} />
+    // Its review under way or asking for changes, the line under its title says so and opens
+    // it, and Merge steps back (outlined).
     return mergeButton(mergeable, mergeable ? undefined : blockedBecause[p.mergeableState])
   }
 
-  // Filled, as every card's main action, while it can merge.
+  // Filled, as every card's main action, while it can merge and its review holds nothing back.
   const mergeButton = (enabled: boolean, title?: string) => (
     <Button
       size="sm"
-      variant={enabled ? 'default' : 'outline'}
+      variant={enabled && !(p && reviewHolds(p)) ? 'default' : 'outline'}
       className="relative z-10 flex-none"
       disabled={busy || !enabled}
       onClick={merge}
-      title={title}
+      tooltip={title}
     >
       <GitMerge />
-      {busy ? 'Merging…' : 'Merge'}
+      {busy && !asking ? 'Merging…' : 'Merge'}
     </Button>
   )
 
@@ -164,13 +210,54 @@ export function PullCard({
           href={pullHref(repository, number)}
           className="truncate font-semibold after:absolute after:inset-0"
         >
-          Opened pull request #{number}
-          {title && `: ${title}`}
+          #{number}
+          {title && ` ${title}`}
         </Link>
-        <span className="truncate font-mono text-xs text-muted-foreground">{repository}</span>
+        <span className="truncate text-xs text-muted-foreground">
+          <span className="font-mono">{repository}</span>
+          {p && reviewLine(p) && (
+            <>
+              {' · '}
+              {p.state === 'open' && (
+                <span
+                  aria-hidden
+                  className={cn(
+                    'mr-1.5 inline-block size-1.5 rounded-full align-middle',
+                    REVIEW_DOTS[pullStatus(p).tone],
+                  )}
+                />
+              )}
+              <ReviewLink pull={p} />
+            </>
+          )}
+          {p?.state === 'open' && unreviewedBy(p) && (
+            <>
+              {' · '}
+              <Hint label={`${unreviewedBy(p)} reviews its latest commits, in a new review`}>
+                <button
+                  type="button"
+                  className="relative z-10 font-medium text-primary hover:underline disabled:opacity-50"
+                  disabled={busy}
+                  onClick={reviewAgain}
+                >
+                  {asking ? 'Asking…' : 'Review again'}
+                </button>
+              </Hint>
+            </>
+          )}
+        </span>
         {error && <span className="text-xs text-destructive-text">{error}</span>}
       </span>
       {action()}
     </div>
   )
+}
+
+/** The dot before its review's line: where its review leaves it, as its badge's tone. */
+const REVIEW_DOTS: Record<string, string> = {
+  success: 'bg-success',
+  warning: 'bg-warning',
+  destructive: 'bg-destructive-text',
+  progress: 'bg-primary',
+  neutral: 'bg-muted-foreground',
 }

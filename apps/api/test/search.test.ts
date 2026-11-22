@@ -1,0 +1,331 @@
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { after, before, describe, test } from 'node:test'
+import { parseEnv } from 'node:util'
+import { SCORE, type SearchResult } from '@brigade/contracts'
+import { Hono } from 'hono'
+import { sessionStub } from './session-stub.js'
+
+// The dashboard's ⌘K search (src/routes/search.ts) against the API's development database
+// (apps/api/.env), in two organizations of its own removed at the end; skipped when no database
+// answers:
+// - a name found despite a typo ("launch cecklist" finds launch-checklist.md), through pg_trgm;
+// - a file named as typed scores above threads that only share a word with it;
+// - a name as typed is found before newer ones that only share its words, past the limit of each kind;
+// - another workspace's rows never turn up, whatever matches;
+// - punctuation separates words, as in a file's name, and matches nothing on its own;
+// - a query of only words under 3 characters ("pr", "#12") is found, without the typo ranking;
+// - a file says whether the document editor opens it: Markdown small enough, not a bigger one
+//   nor an image, which open in the library;
+// - a design or a tool is one result, by its manifest's title, opened by its folder: found by
+//   its name, manifest or page, never by words only in its code; a tool's Markdown stays a file,
+//   and for someone without tools (a feature flag), a tool's files stay files.
+const envFile = new URL('../.env', import.meta.url)
+if (!process.env.DATABASE_URL && existsSync(envFile))
+  process.env.DATABASE_URL = parseEnv(readFileSync(envFile, 'utf8')).DATABASE_URL || undefined
+process.env.DATABASE_URL ??= 'postgresql://localhost:1/none'
+process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
+process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
+
+const { prisma, scoped } = await import('../src/db.js')
+const database = await Promise.race([
+  prisma.$queryRaw`select 1 from pg_extension where extname = 'pg_trgm'`.then(
+    (rows) => (rows as unknown[]).length > 0,
+  ),
+  new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
+]).catch(() => false)
+
+describe('search', { skip: !database && 'no database answers, or without pg_trgm' }, () => {
+  const suffix = randomUUID().slice(0, 8)
+  const orgs = [`org-search-${suffix}`, `org-search-other-${suffix}`]
+  const user = `user-search-${suffix}`
+  const workspaces: string[] = []
+  let app: Hono
+  let restore: () => void
+  const email = `${user}@test.local`
+  let flagBefore: Awaited<ReturnType<typeof prisma.featureFlag.findUnique>> = null
+  /** Whether the member has tools (docs/tools.md): off for everyone, or as before and for them. */
+  const setTools = (on: boolean) =>
+    prisma.featureFlag.update({
+      where: { key: 'tools' },
+      data: on
+        ? {
+            everyone: flagBefore?.everyone ?? false,
+            emails: [...(flagBefore?.emails ?? []), email],
+            workspaceIds: flagBefore?.workspaceIds ?? [],
+          }
+        : { everyone: false, emails: [], workspaceIds: [] },
+    })
+
+  /** A workspace with a teammate, a computer and these threads and files. */
+  async function workspace(org: string, threads: string[], files: string[]) {
+    await prisma.organization.create({ data: { id: org, name: org, slug: org } })
+    const member = (
+      await prisma.member.create({
+        data: { id: `m-${org}`, organizationId: org, userId: user, role: 'owner' },
+      })
+    ).id
+    const id = (await prisma.workspace.create({ data: { organizationId: org, name: org } })).id
+    workspaces.push(id)
+    const db = scoped({ organizationId: org, workspaceId: id })
+    const computer = (
+      await db.computer.create({
+        data: { kind: 'member_machine', memberId: member, name: 'Laptop', status: 'running' },
+      } as never)
+    ).id
+    const teammate = (await db.teammate.create({ data: { name: 'Riley' } } as never)).id
+    for (const title of threads)
+      await db.session.create({
+        data: { title, teammateId: teammate, startedByMemberId: member, computerId: computer },
+      } as never)
+    for (const path of files)
+      await db.document.create({ data: { path, contentType: 'text/markdown', size: 0 } } as never)
+    return id
+  }
+
+  before(async () => {
+    const { auth } = await import('../src/auth.js')
+    const { search } = await import('../src/routes/search.js')
+    await prisma.user.create({ data: { id: user, name: 'Ada', email } })
+    // The release plan first, then more newer drafts than a kind shows.
+    const drafts = [1, 2, 3, 4, 5, 6, 7]
+    await workspace(
+      orgs[0]!,
+      [
+        'Checklist release officielle',
+        'Oubli de la checklist ?',
+        'Launch checklist review',
+        'Release plan',
+        ...drafts.map((n) => `Release plan draft ${n}`),
+        'AI notes on PR review',
+      ],
+      [
+        'Projects/Brigade/launch-checklist.md',
+        'Projects/Brigade/pricing.md',
+        'notes/100% done.md',
+        'Projects/Brigade/release-plan.md',
+        ...drafts.map((n) => `Projects/Brigade/release-plan-draft-${n}.md`),
+      ],
+    )
+    await scoped({ organizationId: orgs[0]!, workspaceId: workspaces[0]! }).pullRequest.create({
+      data: {
+        repository: 'acme/web',
+        number: 12,
+        title: 'Fix the login page',
+        headRef: 'fix-login',
+        baseRef: 'main',
+      },
+    } as never)
+    // Found by name, but not for the editor: too big, or not Markdown.
+    const db = scoped({ organizationId: orgs[0]!, workspaceId: workspaces[0]! })
+    await db.document.create({
+      data: { path: 'notes/oversized-notes.md', contentType: 'text/markdown', size: 3 << 20 },
+    } as never)
+    await db.document.create({
+      data: { path: 'brand/oversized-logo.png', contentType: 'image/png', size: 100 },
+    } as never)
+    // A tool and a design, each a folder of files.
+    const file = (path: string, contentType: string, text: string) =>
+      db.document.create({ data: { path, contentType, size: text.length, text } } as never)
+    const tool = 'Projects/Brigade/social/launch-tracker.tool'
+    await file(
+      `${tool}/tool.json`,
+      'application/json',
+      JSON.stringify({
+        title: 'Launch campaign tracker',
+        description: 'Posts and visits, per day',
+      }),
+    )
+    await file(`${tool}/index.html`, 'text/html', '<h1>Launch campaign tracker</h1><p>Visitors</p>')
+    await file(`${tool}/app.js`, 'text/javascript', "var CAMPAIGN_START = '2026-10'; zebrafish()")
+    await file(`${tool}/notes.md`, 'text/markdown', 'How the tracker counts')
+    const design = 'Projects/Brigade/pricing.design'
+    await file(
+      `${design}/design.json`,
+      'application/json',
+      JSON.stringify({ title: 'Pricing page' }),
+    )
+    await file(`${design}/index.html`, 'text/html', '<h1>Choose your plan</h1>')
+    await file(`${design}/knobs.json`, 'application/json', '{"accent": "flamingo"}')
+    flagBefore = await prisma.featureFlag.findUnique({ where: { key: 'tools' } })
+    await prisma.featureFlag.upsert({
+      where: { key: 'tools' },
+      create: { key: 'tools', emails: [email] },
+      update: { emails: [...(flagBefore?.emails ?? []), email] },
+    })
+    // Same names elsewhere: never shown here.
+    await workspace(orgs[1]!, ['Launch checklist elsewhere'], ['launch-checklist.md'])
+    const getSession = auth.api.getSession
+    ;(auth.api as { getSession: unknown }).getSession = sessionStub(() => ({
+      user: { id: user },
+      session: {
+        id: `session-${suffix}`,
+        activeOrganizationId: orgs[0],
+        activeWorkspaceId: workspaces[0],
+      },
+    }))
+    restore = () => ((auth.api as { getSession: unknown }).getSession = getSession)
+    app = new Hono().route('/api/search', search)
+  })
+
+  after(async () => {
+    restore?.()
+    if (flagBefore) {
+      const { key, ...rest } = flagBefore
+      await prisma.featureFlag.update({ where: { key }, data: rest })
+    } else await prisma.featureFlag.deleteMany({ where: { key: 'tools' } })
+    await prisma.workspace.deleteMany({ where: { id: { in: workspaces } } })
+    await prisma.member.deleteMany({ where: { organizationId: { in: orgs } } })
+    await prisma.organization.deleteMany({ where: { id: { in: orgs } } })
+    await prisma.user.deleteMany({ where: { id: user } })
+  })
+
+  async function find(q: string) {
+    const response = await app.request(`/api/search?q=${encodeURIComponent(q)}`)
+    assert.equal(response.status, 200, await response.clone().text())
+    return (await response.json()) as SearchResult[]
+  }
+  const titles = (results: SearchResult[], kind: SearchResult['kind']) =>
+    results.filter((r) => r.kind === kind).map((r) => r.title)
+
+  test('a typo still finds the file, and nothing that lacks a word', async () => {
+    const results = await find('launch cecklist')
+    assert.deepEqual(titles(results, 'file'), ['Projects/Brigade/launch-checklist.md'])
+    assert.deepEqual(titles(results, 'thread'), ['Launch checklist review'])
+  })
+
+  test('one word with a typo finds every title close to it', async () => {
+    const results = await find('cecklist')
+    assert.deepEqual(titles(results, 'thread').sort(), [
+      'Checklist release officielle',
+      'Launch checklist review',
+      'Oubli de la checklist ?',
+    ])
+    assert.deepEqual(titles(results, 'file'), ['Projects/Brigade/launch-checklist.md'])
+  })
+
+  test('the file named as typed scores highest', async () => {
+    const results = await find('launch checklist')
+    const best = results.reduce((a, b) => (b.score > a.score ? b : a))
+    assert.equal(best.kind, 'file')
+    assert.equal(best.title, 'Projects/Brigade/launch-checklist.md')
+    assert.ok(
+      results.filter((r) => r.kind === 'thread').every((r) => r.score < best.score),
+      'threads below it',
+    )
+  })
+
+  test('a name as typed beats newer ones that only share its words', async () => {
+    const results = await find('release plan')
+    const files = titles(results, 'file')
+    const threads = titles(results, 'thread')
+    assert.equal(files[0], 'Projects/Brigade/release-plan.md')
+    assert.equal(threads[0], 'Release plan')
+    assert.equal(files.length, 6)
+    const best = results.reduce((a, b) => (b.score > a.score ? b : a))
+    assert.equal(best.score, SCORE.exact)
+  })
+
+  test("another workspace's rows never turn up", async () => {
+    const results = await find('elsewhere')
+    assert.deepEqual(results, [])
+    const files = titles(await find('launch checklist'), 'file')
+    assert.ok(!files.includes('launch-checklist.md'))
+  })
+
+  test('punctuation separates words and matches nothing on its own', async () => {
+    assert.deepEqual(titles(await find('launch-checklist'), 'file'), [
+      'Projects/Brigade/launch-checklist.md',
+    ])
+    assert.deepEqual(titles(await find('100% done'), 'file'), ['notes/100% done.md'])
+    assert.deepEqual(await find('%_'), [])
+  })
+
+  test('a file says whether the document editor opens it', async () => {
+    const editor = (results: SearchResult[]) =>
+      Object.fromEntries(results.filter((r) => r.kind === 'file').map((r) => [r.title, r.editor]))
+    assert.deepEqual(editor(await find('launch-checklist')), {
+      'Projects/Brigade/launch-checklist.md': true,
+    })
+    assert.deepEqual(editor(await find('oversized')), {
+      'notes/oversized-notes.md': false,
+      'brand/oversized-logo.png': false,
+    })
+  })
+
+  test('a query of only short words finds rows, alone or with a longer word', async () => {
+    assert.deepEqual(titles(await find('pr'), 'thread'), ['AI notes on PR review'])
+    assert.deepEqual(titles(await find('ai pr'), 'thread'), ['AI notes on PR review'])
+    assert.deepEqual(titles(await find('pr review'), 'thread'), ['AI notes on PR review'])
+    for (const q of ['#12', '12']) {
+      const pull = (await find(q)).find((r) => r.kind === 'pull_request')
+      assert.equal(pull?.title, 'Fix the login page', q)
+      assert.equal(pull?.score, SCORE.exact, q)
+    }
+  })
+
+  test('a tool is one result, by its title, and opens by its folder', async () => {
+    const results = await find('launch campaign tracker')
+    const tools = results.filter((r) => r.kind === 'tool')
+    assert.deepEqual(
+      tools.map((r) => [r.id, r.title, r.detail]),
+      [
+        [
+          'Projects/Brigade/social/launch-tracker.tool',
+          'Launch campaign tracker',
+          'Tool · Projects/Brigade/social',
+        ],
+      ],
+    )
+    assert.ok(tools[0]!.score >= SCORE.exact, 'named as typed')
+    assert.deepEqual(
+      titles(results, 'file').filter((t) => t.includes('.tool/')),
+      [],
+      'none of its files',
+    )
+    // Found by its folder's name too, with its description.
+    const byName = (await find('launch tracker')).find((r) => r.kind === 'tool')
+    assert.equal(byName?.title, 'Launch campaign tracker')
+    // Its Markdown is a document people read: it stays a file.
+    assert.deepEqual(titles(await find('tracker counts'), 'file'), [
+      'Projects/Brigade/social/launch-tracker.tool/notes.md',
+    ])
+  })
+
+  test("words only in a tool's or design's code find nothing", async () => {
+    assert.deepEqual(await find('zebrafish'), [])
+    assert.deepEqual(await find('flamingo'), [])
+    // Nor does the name of one of its files: app.js is not the tool.
+    assert.deepEqual(
+      (await find('app')).filter((r) => r.kind === 'tool' || r.title.includes('.tool/')),
+      [],
+    )
+  })
+
+  test('a design is one result, found by its page', async () => {
+    const results = await find('choose your plan')
+    assert.deepEqual(
+      results.filter((r) => r.kind === 'design').map((r) => [r.id, r.title, r.score]),
+      [['Projects/Brigade/pricing.design', 'Pricing page', SCORE.text]],
+    )
+    assert.match(results.find((r) => r.kind === 'design')!.snippet ?? '', /«Choose»/)
+    const named = await find('pricing page')
+    assert.deepEqual(titles(named, 'design'), ['Pricing page'])
+    assert.deepEqual(
+      titles(named, 'file').filter((t) => t.includes('.design/')),
+      [],
+    )
+  })
+
+  test("without tools, a tool's files stay files", async () => {
+    await setTools(false)
+    try {
+      const results = await find('launch campaign tracker')
+      assert.deepEqual(titles(results, 'tool'), [])
+      assert.ok(titles(results, 'file').some((t) => t.endsWith('launch-tracker.tool/tool.json')))
+    } finally {
+      await setTools(true)
+    }
+  })
+})

@@ -3,8 +3,8 @@
 A skill says how the workspace does a kind of work: release notes, issue triage, a weekly
 digest. It is a `SKILL.md` (frontmatter `name` and `description`, then the instructions)
 and the text files beside it: the open Agent Skills format Claude Code, Codex and Grok
-read. Memory holds facts and is always loaded; only a skill's name and description are,
-until the work calls for it.
+read. Memory holds facts: its core is always loaded, its topics when the work touches them
+(docs/memory.md). Only a skill's name and description are loaded, until the work calls for it.
 
 ## Decisions
 
@@ -46,6 +46,8 @@ until the work calls for it.
   A manifest (`.brigade-skills.json`) names the folders Brigade wrote, so it replaces only
   those; a folder the teammate made keeps its name. Per thread, not in the teammate's
   home: threads of one teammate in different projects get different skills.
+  Imports keep no file modes, so a file that starts with `#!` is written executable
+  (a skill's launcher script runs by its path); the others are not.
 - **Teach a task.** The composer's + opens the computer over the window with a recording
   bar (`components/teach-task.tsx`). The dashboard records what it shows and logs what the
   person does there (`lib/demo-recorder.ts`): nothing runs on the computer. Done sends
@@ -53,12 +55,26 @@ until the work calls for it.
   per step; typed text only as a count). The teammate follows `brigade-teach` and proposes
   the skill with `onlyMe`. Cloud computers only for now; a member's Mac comes next.
 - **Brigade's own instructions are skills too.** How to make designs, design systems,
-  previews and learning a task (`brigade-designs`, `brigade-design-systems`, `brigade-previews`,
-  `brigade-teach`) left the
+  previews, learning a task and filing a project's documents (`brigade-designs`,
+  `brigade-design-systems`, `brigade-previews`, `brigade-teach`, `brigade-library`) left the
   generated CLAUDE.md, which keeps a line saying when to read each. Names starting with
   `brigade-` are reserved, as are the names of Brigade's own commands (`/design`, `/visual`, `/image`).
+  Their names and descriptions are `BUILTIN_SKILLS` (`packages/contracts/src/builtin-skills.ts`);
+  the runner builds their instructions per thread, except `brigade-library`'s, which read the same
+  everywhere and live there too.
+- **Brigade's own, in Settings › Skills.** Under the workspace's skills, a **Brigade's own**
+  section lists them for everyone, read-only (`GET /api/skills/builtin`): Brigade ships and
+  updates them, so they are never copied into a workspace, where a copy would keep its first
+  version for good ("Import, never sync"). `brigade-library` opens to its text and is the only
+  one with a switch, on by default: it changes what teammates do in the customer's own library,
+  and a team may have its own way of filing. Owners and admins turn it off for the workspace
+  (`PUT /api/skills/builtin/:name`, `Workspace.builtinSkillsOff`, audited, the row says who);
+  the others are always on. Off, threads that start after get neither the skill nor the line
+  pointing to it (the spec's `builtinSkillsOff`); a project's Decisions and a merge's update of
+  a spec still work for documents that have a status line (docs/projects.md, Decisions).
 - **Import, never sync.** A `SKILL.md`, a `.zip` or `.skill` (one skill folder or many), or
-  a GitHub repository or folder (`POST /api/skills/import`, `/import/github`; a private one
+  a GitHub repository or folder (an upload straight to the bucket, `POST /api/uploads` then
+  `POST /api/skills/import/upload`, read back as it streams; `/import/github`; a private one
   through the workspace's GitHub connection) is read into skills to review: their files go
   to the bucket then, the skills only once someone adds them. One new skill opens in the
   editor; several, or an update of a pack, in a checklist whose ticks are the switches.
@@ -73,5 +89,5 @@ until the work calls for it.
   `thread-spec.ts`; proposals in `library-calls.ts` and `decide.ts`.
 - Runner: `apps/runner/src/skills.ts` (writing them), `instructions.ts` (Brigade's own
   skills and the Skills section), `harness/tools.ts` (`propose_skill`).
-- Web: `components/skills.tsx` on the Connections page, the composer's `/` menu, and
+- Web: `components/skills.tsx` on Settings › Skills (`/app/skills`), the composer's `/` menu, and
   skill proposals in `ticket-row.tsx`.

@@ -41,8 +41,9 @@ export const designName = (folder: string) =>
 
 /**
  * Alternatives offered for one design sit together in a folder ending with
- * this: `acme/pricing.options/a-bold.design`. Picking one makes it the design
- * (`acme/pricing.design`) and sends the rest to the trash.
+ * this: `acme/pricing.options/a-bold.design`. Picking one copies it to the
+ * design (`acme/pricing.design`); the options stay, so the choice can still be
+ * seen and reconsidered.
  */
 export const DESIGN_OPTIONS_SUFFIX = '.options'
 
@@ -235,11 +236,17 @@ export const DesignEditResult = z.object({ sha256: z.string(), updatedAt: z.stri
 export type DesignEditResult = z.infer<typeof DesignEditResult>
 
 /** The canvas's picture of a design's first board, for the gallery, after a person's edits. */
-export const SaveDesignThumbnail = z.object({
-  path: LibraryPath,
-  /** PNG, base64 (no data: prefix). */
-  png: z.string().max(3_000_000),
-})
+export const SaveDesignThumbnail = z
+  .object({
+    path: LibraryPath,
+    /** The PNG uploaded straight to the bucket (POST /api/uploads, purpose library). */
+    uploadId: z.string().min(1).max(64).optional(),
+    /** PNG, base64 (no data: prefix): only without R2, in development. */
+    png: z.string().max(3_000_000).optional(),
+  })
+  .refine((t) => (t.uploadId === undefined) !== (t.png === undefined), {
+    message: 'Give the upload or the picture',
+  })
 
 /** Files of a design a person changed since a thread last saved them: `design_edits`. */
 export const DesignPersonEdit = z.object({
@@ -379,6 +386,12 @@ export const DesignView = z.object({
   entryId: z.string(),
   /** Its pages, by their path in the folder, to their sha256: what the canvas edits. */
   files: z.record(z.string(), z.string()),
+  /**
+   * A digest of the other files its pages may load (styles, scripts, images, fonts): not its
+   * pages, `design.json`, `knobs.json` or its picture. Another one: the pages show something
+   * new, though their own files did not change. Absent from an API before it.
+   */
+  assets: z.string().optional(),
   /** The thread that saved it last, if it is still there; comments go to it. */
   thread: z
     .object({
@@ -393,6 +406,25 @@ export const DesignView = z.object({
   expiresAt: z.string(),
 })
 export type DesignView = z.infer<typeof DesignView>
+
+/**
+ * Where a design a message names is now. An option picked from an options
+ * folder moved to the design's own folder (`path`); the others are in the trash.
+ */
+export const DesignWhere = z.object({
+  path: z.string(),
+  trashed: z.boolean(),
+})
+export type DesignWhere = z.infer<typeof DesignWhere>
+
+/** One of the options offered for a design, as its panel lists them to switch between. */
+export const DesignOption = z.object({
+  /** Its folder: `a/x.options/b.design`. */
+  path: z.string(),
+  /** Its `design.json` title, when it has one. */
+  title: z.string().nullable(),
+})
+export type DesignOption = z.infer<typeof DesignOption>
 
 /** A design system as a thread's teammate sees it, in its instructions. */
 export const ThreadDesignSystem = z.object({

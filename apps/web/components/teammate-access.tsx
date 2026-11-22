@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/select'
 import { levelOf, LEVEL_LABEL } from '@/components/credential-access'
 import { useDashboard } from '@/components/dashboard'
+import { AgentEmailRow } from '@/components/email-app'
 import { credentialHint } from '@/components/mention'
 import { ProviderTile } from '@/components/provider-logo'
 import {
@@ -32,6 +33,7 @@ import {
   type Trigger,
   type TriggerCatalog,
 } from '@/lib/api'
+import { clickSettings } from '@/lib/settings-dialog'
 
 type Scope = 'none' | 'read' | 'read_write'
 
@@ -48,7 +50,7 @@ export function TeammateAccess({
   editable: boolean
   onPolicyChange: () => void
 }) {
-  const connections = useApi<ConnectionsResponse>('/connections')
+  const connections = useApi<ConnectionsResponse>('/connections', ['connections.updated'])
   const grants = useApi<{ connectionId: string; scope: Exclude<Scope, 'none'> }[]>(
     `/teammates/${teammate.id}/grants`,
   )
@@ -105,9 +107,10 @@ export function TeammateAccess({
   }
 
   const all = connections.data?.connections ?? []
-  // A custom app only sends events: nothing to grant.
-  const list = all.filter((c) => c.kind !== 'webhook')
-  const triggers = (hooks.data ?? []).filter((w) => w.teammate.id === teammate.id)
+  // A custom app only sends events: nothing to grant. An address of the Email App is its agent's
+  // or its project's, never granted to another: the Email address row shows this teammate's.
+  const list = all.filter((c) => c.kind !== 'webhook' && c.kind !== 'email')
+  const triggers = (hooks.data ?? []).filter((w) => w.teammate?.id === teammate.id)
   return (
     <Card className="gap-0 overflow-hidden pb-0">
       <CardHeader className="pb-4">
@@ -149,10 +152,15 @@ export function TeammateAccess({
             folders={folders.data}
           />
         </div>
+        <AgentEmailRow teammate={teammate} editable={editable} />
         {list.length === 0 ? (
           <p className="border-t px-6 py-3 text-sm text-muted-foreground">
             No connections in this workspace yet.{' '}
-            <Link href="/app/connections" className="font-medium text-primary hover:underline">
+            <Link
+              href="/app/connections"
+              onClick={(e) => clickSettings(e, '/app/connections')}
+              className="font-medium text-primary hover:underline"
+            >
               Add one
             </Link>
             .
@@ -200,14 +208,22 @@ export function TeammateAccess({
         )}
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-t px-6 pt-4 pb-2">
           <h3 className="flex-1 text-sm font-bold">Secrets</h3>
-          <Link href="/app/security" className="text-xs font-medium text-primary hover:underline">
+          <Link
+            href="/app/security"
+            onClick={(e) => clickSettings(e, '/app/security')}
+            className="text-xs font-medium text-primary hover:underline"
+          >
             Every teammate&apos;s access
           </Link>
         </div>
         {credentials.data?.length === 0 ? (
           <p className="px-6 pb-3 text-sm text-muted-foreground">
             No secrets yet.{' '}
-            <Link href="/app/vault" className="font-medium text-primary hover:underline">
+            <Link
+              href="/app/vault"
+              onClick={(e) => clickSettings(e, '/app/vault')}
+              className="font-medium text-primary hover:underline"
+            >
               Add a secret
             </Link>
             .
@@ -276,7 +292,11 @@ export function TeammateAccess({
         {triggers.length === 0 ? (
           <p className="px-6 pb-3 text-sm text-muted-foreground">
             Nothing yet.{' '}
-            <Link href="/app/connections" className="font-medium text-primary hover:underline">
+            <Link
+              href="/app/connections"
+              onClick={(e) => clickSettings(e, '/app/connections')}
+              className="font-medium text-primary hover:underline"
+            >
               Add a trigger
             </Link>{' '}
             on a connection.
@@ -299,6 +319,7 @@ export function TeammateAccess({
                 </span>
                 <Link
                   href="/app/connections"
+                  onClick={(e) => clickSettings(e, '/app/connections')}
                   className="text-sm font-medium text-primary hover:underline"
                 >
                   Manage

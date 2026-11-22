@@ -6,9 +6,13 @@
 // on memory too long (PSI "full", all of it), or memory and swap are nearly
 // gone, the runner gives memory back itself, what costs least first:
 //   1. the frozen preview unused longest, when swap is what runs out;
-//   2. the running preview or turn holding the most memory, a preview counting
-//      double (it starts again at the next visit; a turn loses its work in
-//      progress), said in its thread.
+//   2. a teammate's browser no turn used for a while, the biggest: it starts
+//      again at the next browser tool call, its sign-ins kept in its profile;
+//   3. the running preview, browser or turn holding the most memory, a preview
+//      or browser counting double (it starts again at the next visit or call;
+//      a turn loses its work in progress), said in its thread. Only while the
+//      runner's own work holds a fair share of the memory in use (OWN_SHARE):
+//      a stall the rest of the computer causes does not end by losing a turn.
 // One at a time, then a pause to see what it changed. Where the runner has no
 // cgroups of its own (preview-cgroup.ts), there is nothing it could stop.
 import { readFile } from 'node:fs/promises'
@@ -22,16 +26,18 @@ export type Reading = {
   /** Swap used, as a share of all of it; 0 without swap. */
   swapUsed: number
   swapTotal: number
+  /** All of the computer's memory, in bytes; unknown in readings made by hand (tests). */
+  total?: number
   /** Processes the kernel has killed for memory since it started (/proc/vmstat oom_kill). */
   oomKills?: number
 }
 
 /** What the guard may stop to give memory back. */
 export type Candidate = {
-  kind: 'frozen' | 'preview' | 'turn'
+  kind: 'frozen' | 'preview' | 'turn' | 'browser'
   /** Its own memory in RAM. */
   memory: number
-  /** When it was last used, for frozen previews. */
+  /** When it was last used, for frozen previews and browsers. */
   lastUsed?: number
   stop: (why: string) => Promise<unknown>
 }
@@ -39,6 +45,35 @@ export type Candidate = {
 const GB = 1024 ** 3
 /** Less than this is not worth stopping: it would not change much. */
 const SMALL = 64 * 1024 ** 2
+/** A browser no turn used for this long is stopped before anything that runs. */
+const BROWSER_IDLE = 2 * 60_000
+/**
+ * The least share of the memory in use the runner's own work (its turns, previews and
+ * browsers) must hold for stopping some of it to end a stall. Below it, the stall comes from
+ * the rest of the computer: on Nov 4 the provider's own services held about 6 of 8 GB, and
+ * the guard stopped seven turns of 0.3 to 0.9 GB in an hour, some 20 s apart, each losing its
+ * work without the stall ending. Then the runner only stops what costs nothing (a frozen
+ * preview, an idle browser), and turns waiting to start wait for memory (memoryRoom).
+ */
+const OWN_SHARE = 0.3
+
+const NEARLY_OUT = 'the computer is nearly out of memory'
+
+/**
+ * The share of the memory in use that the runner's running work holds (frozen previews hold
+ * swap, hardly any memory); unknown when the reading does not say how much memory there is.
+ */
+export function ownShare(candidates: Candidate[], reading: Reading) {
+  if (!reading.total) return undefined
+  const used = reading.total * (1 - reading.available)
+  if (used <= 0) return undefined
+  const own = candidates.filter((c) => c.kind !== 'frozen').reduce((n, c) => n + c.memory, 0)
+  return own / used
+}
+
+/** Stopped, it loses nothing: a frozen preview, or a browser no turn used for a while. */
+const costsNothing = (c: Candidate, now: number) =>
+  c.kind === 'frozen' || (c.kind === 'browser' && now - (c.lastUsed ?? 0) >= BROWSER_IDLE)
 
 export class MemoryGuard {
   private since: number | undefined
@@ -84,7 +119,7 @@ export class MemoryGuard {
     if (this.killedByKernel(reading)) this.pause(now)
     if (now < this.quietUntil) return undefined
     if (reading.available < 0.03 && (reading.swapTotal === 0 || reading.swapUsed > 0.9))
-      return 'the computer is nearly out of memory'
+      return NEARLY_OUT
     if (this.since !== undefined && now - this.since >= this.duration)
       return `the computer was stuck waiting for memory for ${Math.round((now - this.since) / 1000)} s`
     return undefined
@@ -102,13 +137,18 @@ export class MemoryGuard {
   }
 
   /** What to stop for it, the least costly that helps. */
-  pick(candidates: Candidate[], reading: Reading): Candidate | undefined {
+  pick(candidates: Candidate[], reading: Reading, now = Date.now()): Candidate | undefined {
     const frozen = candidates
       .filter((c) => c.kind === 'frozen')
       .sort((a, b) => (a.lastUsed ?? 0) - (b.lastUsed ?? 0))
     // Frozen previews hold swap, hardly any memory: they help when swap is what runs out.
     if (frozen[0] && reading.swapTotal > 0 && reading.swapUsed > 0.8) return frozen[0]
-    const weight = (c: Candidate) => c.memory * (c.kind === 'preview' ? 2 : 1)
+    const idle = candidates
+      .filter((c) => c.kind === 'browser' && c.memory >= SMALL)
+      .filter((c) => now - (c.lastUsed ?? 0) >= BROWSER_IDLE)
+      .sort((a, b) => b.memory - a.memory)
+    if (idle[0]) return idle[0]
+    const weight = (c: Candidate) => c.memory * (c.kind === 'turn' ? 1 : 2)
     const running = candidates
       .filter((c) => c.kind !== 'frozen' && c.memory >= SMALL)
       .sort((a, b) => weight(b) - weight(a))
@@ -126,9 +166,24 @@ export class MemoryGuard {
       const why = this.check(reading, now)
       if (!why) return
       this.pause(now)
-      const victim = this.pick(await this.options.candidates(), reading)
+      const candidates = await this.options.candidates()
+      const victim = this.pick(candidates, reading, now)
       if (!victim) {
-        console.warn(`${why}, and no preview or turn of the runner's holds much of it`)
+        console.warn(`${why}, and no preview, browser or turn of the runner's holds much of it`)
+        return
+      }
+      // Stuck on memory the rest of the computer holds: stopping running work of ours would
+      // lose it and not end the stall. Nearly out of memory, anything that frees some helps.
+      const own = ownShare(candidates, reading)
+      if (
+        !why.startsWith(NEARLY_OUT) &&
+        own !== undefined &&
+        own < OWN_SHARE &&
+        !costsNothing(victim, now)
+      ) {
+        console.warn(
+          `${why}, but the runner's own work holds only ${Math.round(own * 100)}% of the memory in use: nothing of it stopped`,
+        )
         return
       }
       // Stuck, the kernel may have killed something meanwhile: then that was enough for now.
@@ -140,6 +195,41 @@ export class MemoryGuard {
       this.checking = false
     }
   }
+}
+
+/**
+ * Whether the computer has room for a turn to start: some memory available and not stalled on
+ * it for long. Short of that, a new turn would only push the guard to stop another.
+ */
+export function roomFor(reading: Reading) {
+  return reading.available >= 0.15 && reading.full < ROOM_FULL
+}
+
+/**
+ * Most of the time (PSI full avg10, in %) a computer may wait on memory for a turn to start: half
+ * the guard's own limit. A computer that swaps a little peaks at 15 to 25 for a few seconds
+ * whenever something reads back from swap, with a fifth of its memory still available (seen on
+ * an 8 GB cloud computer): at 10, turns waited on those peaks and said the computer was short.
+ */
+const ROOM_FULL = 20
+
+/** The most turns a runner runs at once by default where its memory decides (roomFor): a safety cap. */
+export const MOST_TURNS = 32
+
+/**
+ * How many turns a runner runs at once by default. Where it reads its memory (the guard's, on a
+ * cloud computer), that memory decides, up to MOST_TURNS. Elsewhere (a member's Mac, which runs
+ * their own apps too), one per 2 GB of memory, 8 to MOST_TURNS.
+ */
+export function turnsAtOnce(memory: number, readsMemory: boolean) {
+  if (readsMemory) return MOST_TURNS
+  return Math.min(MOST_TURNS, Math.max(8, Math.round(memory / (2 * GB))))
+}
+
+/** The computer has room for a turn (roomFor); true where it says nothing of its memory. */
+export async function memoryRoom() {
+  const reading = await readMemory()
+  return !reading || roomFor(reading)
 }
 
 /** The computer's memory, from /proc; null where it says nothing of it (not Linux). */
@@ -161,6 +251,7 @@ export function parseMemory(pressure: string, meminfo: string, vmstat = ''): Rea
   return {
     full: Number(/^full avg10=([\d.]+)/m.exec(pressure)?.[1] ?? 0),
     available: (kB('MemAvailable') || 0) / total,
+    total: total * 1024,
     swapUsed: swapTotal > 0 ? 1 - (kB('SwapFree') || 0) / swapTotal : 0,
     swapTotal: swapTotal * 1024,
     ...(/^oom_kill (\d+)$/m.test(vmstat)

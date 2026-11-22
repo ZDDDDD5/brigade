@@ -7,19 +7,23 @@ import {
   SKILL_PACK_MAX,
   SaveSkill,
   SaveSkillPack,
+  SetBuiltinSkill,
   UpdateSkillPack,
+  UploadRef,
 } from '@brigade/contracts'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
+import { directUploads, streamObject } from '../bucket.js'
+import { builtinSkillViews, setBuiltinSkill } from '../builtin-skills.js'
 import { installationToken } from '../connectors/github-app.js'
 import { workspaceGitHub } from '../git.js'
 import { parseBody, requireRole, requireUser, requireWorkspace, type AppEnv } from '../scope.js'
 import {
-  fetchGitHubZip,
   githubSourceKey,
   parseGitHubUrl,
+  readGitHubSkills,
   readSkills,
-  zipballRoot,
+  readSkillsStream,
 } from '../skill-import.js'
 import {
   deletePack,
@@ -29,17 +33,39 @@ import {
   previewImport,
   savePack,
   saveSkill,
+  skillCommands,
   toPack,
   toSkills,
   updatePack,
 } from '../skills.js'
+import { discardUpload, readyUpload, uploadBytesKey } from '../uploads.js'
 
 export const skills = new Hono<AppEnv>()
   .use(requireUser, requireWorkspace)
 
   .get('/', async (c) => c.json(await toSkills(c.var.db, await listSkills(c.var.db, c.var.scope))))
 
+  /** The skills that are on, for the composer's `/name` commands: names and descriptions only. */
+  .get('/commands', async (c) => c.json(await skillCommands(c.var.db)))
+
   .get('/packs', async (c) => c.json((await listPacks(c.var.db)).map(toPack)))
+
+  /** Brigade's own skills: what each is for, and whether it is on here (docs/skills.md). */
+  .get('/builtin', async (c) => c.json(await builtinSkillViews(c.var.db)))
+
+  /** Turn one of Brigade's switchable skills on or off for the workspace: owners and admins. */
+  .put('/builtin/:name', async (c) => {
+    requireRole(c.var.scope, 'owner', 'admin')
+    const { scope, db } = c.var
+    const { enabled } = await parseBody(c.req.raw, SetBuiltinSkill)
+    await setBuiltinSkill(
+      scope,
+      { type: 'member', id: scope.memberId },
+      c.req.param('name'),
+      enabled,
+    )
+    return c.json(await builtinSkillViews(db))
+  })
 
   .post('/', async (c) => {
     requireRole(c.var.scope, 'owner', 'admin')
@@ -50,13 +76,36 @@ export const skills = new Hono<AppEnv>()
   })
 
   /**
-   * Read an uploaded SKILL.md, .skill or .zip (one skill's folder, or a pack of
-   * them): the file's bytes as the body, its name in `?name=`. Nothing is saved
-   * but the files, in the bucket.
+   * Read a SKILL.md, .skill or .zip (one skill's folder, or a pack of them) uploaded
+   * straight to the bucket (POST /api/uploads, purpose skill_pack): unpacked as it
+   * streams back. Nothing is saved but the files, in the bucket.
+   */
+  .post('/import/upload', async (c) => {
+    requireRole(c.var.scope, 'owner', 'admin')
+    const { scope, db } = c.var
+    const { uploadId } = await parseBody(c.req.raw, UploadRef)
+    const upload = await readyUpload(db, { memberId: scope.memberId }, uploadId, 'skill_pack')
+    if (upload.size === 0) throw new HTTPException(400, { message: 'The file is empty' })
+    const stream = await streamObject(uploadBytesKey(scope, upload))
+    if (!stream) throw new HTTPException(409, { message: 'The upload is gone; upload it again' })
+    try {
+      const name = upload.name.slice(0, 200)
+      const label = name.replace(/\.(md|zip|skill)$/i, '') || 'skills'
+      const found = await readSkillsStream(name, stream)
+      return c.json(await previewImport(db, scope, `file:${name}`, label, found))
+    } finally {
+      await discardUpload(scope, upload.id)
+    }
+  })
+
+  /**
+   * The same, the file's bytes as the body, its name in `?name=`. Only without R2
+   * (development): with it, the file goes straight to the bucket (/import/upload).
    */
   .post('/import', async (c) => {
     requireRole(c.var.scope, 'owner', 'admin')
     const { scope, db } = c.var
+    if (directUploads) throw new HTTPException(400, { message: 'Upload to the bucket' })
     if (Number(c.req.header('content-length') ?? 0) > SKILL_PACK_MAX)
       throw new HTTPException(413, { message: 'Skills to import can be up to 50 MB' })
     const bytes = new Uint8Array(await c.req.arrayBuffer())
@@ -81,13 +130,7 @@ export const skills = new Hono<AppEnv>()
       })
     const reach = await workspaceGitHub(db, scope, `${source.owner}/${source.repo}`.toLowerCase())
     const token = reach ? await installationToken(reach.installationId) : undefined
-    const bytes = await fetchGitHubZip(source, token)
-    const root = zipballRoot(bytes)
-    const found = readSkills(
-      `${source.repo}.zip`,
-      bytes,
-      [root, source.path].filter(Boolean).join('/'),
-    ).map((f) => ({ ...f, folder: f.folder.slice(root.length + 1) }))
+    const found = await readGitHubSkills(source, token)
     const label = source.path ? `${source.repo}/${source.path}` : `${source.owner}/${source.repo}`
     return c.json(await previewImport(db, scope, githubSourceKey(source), label, found))
   })

@@ -1,0 +1,848 @@
+// The checks behind operators' alerts (docs/monitoring.md), run each minute in the API's jobs
+// (src/jobs.ts): failures counted as they happen (src/ops/failures.ts), cloud computers as the
+// database and the hub see them, threads whose events runners say wait, threads running with
+// nothing from their runner, commands piling up for a computer, Stripe's webhook endpoint, and
+// the Workers' failed invocations as Cloudflare counts them.
+import { billingEnabled, cloudEntitled, stripeClient } from '../billing.js'
+import { env } from '../config.js'
+import { settleAbuse } from '../computer-abuse.js'
+import { diskDetail, fullDisks, type DiskState } from '../computer-disk.js'
+import { prisma } from '../db.js'
+import { hubs } from '../hub.js'
+import type { ThreadWaiting } from '../hub/host.js'
+import { localHubs } from '../hub/memory-host.js'
+import {
+  AUTO_REPLACE_LIMIT,
+  AUTO_REPLACE_WINDOW_MS,
+  awayFor,
+  REACHABLE_REPLACE_MS,
+  RECOVER_AFTER_MS,
+  RECOVER_LIMIT,
+  RECOVER_WAIT_MS,
+  UNSAVED_MS,
+  type RunnerAway,
+} from '../runner-away.js'
+import { computersWaiting } from '../runner-commands.js'
+import { raise, resolve, seenAt, settle, type Alert } from './alerts.js'
+import { failuresOf, summary, type Failure } from './failures.js'
+import { opened, openNow } from './last-seen.js'
+
+const MINUTE = 60_000
+
+/**
+ * A kind of failure and when it is a problem: `warning` of them (or `critical`) within
+ * `windowMs`; over once none came for `quietMs`.
+ */
+export type Rule = {
+  kind: string
+  title: string
+  windowMs: number
+  warning: number
+  critical: number
+  quietMs: number
+  /** Also needs failures in this many workspaces: one workspace's own trouble is not Brigade's. */
+  workspaces?: number
+  hint?: string
+}
+
+export const RULES: Rule[] = [
+  {
+    kind: 'api',
+    title: 'API requests failing (500)',
+    windowMs: 5 * MINUTE,
+    warning: 10,
+    critical: 50,
+    quietMs: 15 * MINUTE,
+  },
+  {
+    kind: 'stripe-webhook',
+    title: 'Stripe webhook events not reconciled',
+    windowMs: 30 * MINUTE,
+    warning: 1,
+    critical: 5,
+    quietMs: 60 * MINUTE,
+    hint: 'Stripe sends them again; the plans of the workspaces involved may be out of date until then.',
+  },
+  {
+    kind: 'stripe-signature',
+    title: "Stripe webhook signatures don't match",
+    windowMs: 60 * MINUTE,
+    warning: 3,
+    critical: 10,
+    quietMs: 2 * 60 * MINUTE,
+    hint: "Check that brigade-api's STRIPE_WEBHOOK_SECRET is the endpoint's signing secret.",
+  },
+  {
+    kind: 'resend-webhook',
+    title: "Resend webhook events failing (Brigade's email)",
+    windowMs: 30 * MINUTE,
+    warning: 3,
+    critical: 20,
+    quietMs: 60 * MINUTE,
+  },
+  {
+    kind: 'trigger-webhook',
+    title: "Triggers' webhooks failing (events not starting threads)",
+    windowMs: 30 * MINUTE,
+    warning: 5,
+    critical: 30,
+    quietMs: 60 * MINUTE,
+  },
+  {
+    kind: 'turn',
+    title: "Teammates' turns failing in several workspaces",
+    windowMs: 15 * MINUTE,
+    warning: 6,
+    critical: 25,
+    workspaces: 2,
+    quietMs: 30 * MINUTE,
+    hint: 'Failing in several workspaces at once points at Brigade or a provider, not one member’s account.',
+  },
+  {
+    kind: 'hub-op',
+    title: "Workspace hubs' operations failing",
+    windowMs: 60 * MINUTE,
+    warning: 3,
+    critical: 15,
+    quietMs: 2 * 60 * MINUTE,
+    hint: 'Each is logged with its error by brigade-api ("hub <workspace>: <operation> failed"). A hub object reset mid-operation drops its sockets too (1006), and its runner reconnects.',
+  },
+  {
+    kind: 'catalog-size',
+    title: "An App's tools too large for one catalog",
+    windowMs: 6 * 60 * MINUTE,
+    warning: 1,
+    critical: 20,
+    quietMs: 12 * 60 * MINUTE,
+    hint: "Past 2 M characters an App's catalog is reported, past 8 M its last tools are left out (src/catalogs.ts). Switch off the tools its teammates do not need in the App's settings.",
+  },
+  {
+    kind: 'runner-silent',
+    title: "Cloud computers' runners going silent",
+    windowMs: 15 * MINUTE,
+    warning: 3,
+    critical: 10,
+    quietMs: 30 * MINUTE,
+    hint: 'Runners that stop sending heartbeats without closing their connection: computers crashing, or the network.',
+  },
+  {
+    kind: 'runner-reconnects',
+    title: 'Runners reconnecting again and again',
+    windowMs: 15 * MINUTE,
+    warning: 1,
+    critical: 5,
+    quietMs: 30 * MINUTE,
+    hint: 'A computer opening its connection many times a minute: the API, or its hub, dropping it each time it connects (docs/workspace-hubs-plan.md).',
+  },
+  {
+    kind: 'runner-outbox',
+    title: 'Commands refused: too many waiting for a computer',
+    windowMs: 30 * MINUTE,
+    warning: 1,
+    critical: 20,
+    quietMs: 60 * MINUTE,
+    hint: 'A computer that stays down while messages keep coming for it (src/runner-commands.ts): find out why it does not start.',
+  },
+  {
+    kind: 'account-signed-out',
+    title: "Teammates' accounts signed out (their turns fail: not logged in)",
+    windowMs: 60 * MINUTE,
+    warning: 1,
+    critical: 5,
+    quietMs: 2 * 60 * MINUTE,
+    hint: 'Each has needs_sign_in now, and its member a sign_in ticket. Several at once, in several workspaces, points at a harness update or the provider rather than one expired login.',
+  },
+  {
+    kind: 'runner-restart',
+    title: "Cloud computers' runners not back after an update's restart",
+    windowMs: 60 * MINUTE,
+    warning: 1,
+    critical: 5,
+    quietMs: 2 * 60 * MINUTE,
+  },
+  {
+    kind: 'cloud:replace-refused',
+    title: 'A cloud computer could not be replaced: boat will not stop its old VM',
+    windowMs: 60 * MINUTE,
+    warning: 1,
+    critical: 3,
+    quietMs: 6 * 60 * MINUTE,
+    hint: 'Its old VM is unreachable, was never saved, and boat refuses a plain stop: a forced stop would lose its whole disk. Ask boat to recover the machine or save its disk, or force-stop it once its data is given up, then Replace cloud computer again.',
+  },
+  {
+    kind: 'cloud:replacements-burst',
+    title: 'Cloud computers unreachable in numbers, their automatic replacements held back',
+    windowMs: 30 * MINUTE,
+    warning: 1,
+    critical: 10,
+    quietMs: 30 * MINUTE,
+    hint: "More than 5 cloud computers moved to new VMs within 30 minutes (src/cloud.ts's recoverAway): boat itself is likely failing. The next ones wait and are asked again each minute; check boat's status before replacing any by hand.",
+  },
+]
+
+/** Background jobs: each failing again and again is a problem of its own. */
+export const JOB_RULE: Omit<Rule, 'kind' | 'title'> = {
+  windowMs: 15 * MINUTE,
+  warning: 3,
+  critical: 10,
+  quietMs: 30 * MINUTE,
+}
+
+/** The hourly sweeps: failing twice in a row. */
+export const SWEEP_RULE: Omit<Rule, 'kind' | 'title'> = {
+  windowMs: 3 * 60 * MINUTE,
+  warning: 2,
+  critical: 3,
+  quietMs: 3 * 60 * MINUTE,
+}
+
+/** What a rule makes of the failures it sees: an alert, its end, or nothing new. */
+export function judge(
+  rule: Rule,
+  failures: Failure[],
+  now: number,
+  /**
+   * When one was last seen, as its open alert's row keeps it (`lastAt`): the failures above are
+   * only in memory, and a restart of the API, which forgets them, is not their end.
+   */
+  lastSeenAt = 0,
+): { alert: Alert } | 'resolve' | 'keep' {
+  const recent = failures.filter((f) => now - f.at < rule.windowMs)
+  const spread = new Set(recent.map((f) => f.workspaceId).filter(Boolean)).size
+  const enough = !rule.workspaces || spread >= rule.workspaces
+  if (enough && recent.length >= rule.warning) {
+    const minutes = Math.round(rule.windowMs / MINUTE)
+    const where = rule.workspaces ? ` in ${spread} workspaces` : ''
+    return {
+      alert: {
+        key: rule.kind,
+        severity: recent.length >= rule.critical ? 'critical' : 'warning',
+        title: rule.title,
+        detail: [
+          `${recent.length} in the last ${minutes} min${where}.`,
+          summary(recent),
+          rule.hint ?? '',
+        ]
+          .filter(Boolean)
+          .join('\n\n'),
+      },
+    }
+  }
+  if (now - lastSeenAt >= rule.quietMs && !failures.some((f) => now - f.at < rule.quietMs))
+    return 'resolve'
+  return 'keep'
+}
+
+/** Kinds no rule watches any more: an alert of one still open is resolved. */
+const RETIRED = ['api-reset']
+
+async function checkFailures(now: number) {
+  const rules: Rule[] = [...RULES]
+  // The alerts still open, with when their failures were last seen: the quiet time counts from
+  // there, not from when this object started (it restarts more often than a quiet time lasts).
+  const open = new Map(
+    (
+      await prisma.opsAlert.findMany({
+        where: { resolvedAt: null },
+        select: { key: true, lastAt: true },
+      })
+    ).map((row) => [row.key, row.lastAt.getTime()]),
+  )
+  const keys = new Set(open.keys())
+  openNow(keys)
+  // Each job seen failing lately, and each still alerted on.
+  const jobs = new Set(failuresOf('job:', 3 * 60 * MINUTE, now).map((f) => f.kind))
+  for (const key of open.keys()) if (key.startsWith('job:')) jobs.add(key)
+  for (const kind of jobs)
+    rules.push({
+      kind,
+      title: `Background job ${kind.slice(4)} failing`,
+      ...(kind.endsWith('-sweep') ? SWEEP_RULE : JOB_RULE),
+    })
+  for (const rule of rules) {
+    const seen = failuresOf(rule.kind, Math.max(rule.windowMs, rule.quietMs), now)
+    const lastSeenAt = open.get(rule.kind)
+    const verdict = judge(rule, seen, now, lastSeenAt)
+    // The newest failure counted: when it was last seen, never when it was checked.
+    const newest = Math.max(...seen.map((f) => f.at))
+    if (verdict === 'resolve') {
+      if (lastSeenAt !== undefined) await resolve(rule.kind, new Date(now))
+    } else if (verdict !== 'keep') {
+      await raise(verdict.alert, new Date(now), new Date(newest))
+      keys.add(rule.kind)
+      // Open now: its next failure is written at once, however soon.
+      opened(rule.kind)
+    } else if (lastSeenAt !== undefined) {
+      // Open, with fewer failures than raise it: they keep it open, past a restart too.
+      if (newest > lastSeenAt) await seenAt(rule.kind, new Date(newest))
+    }
+  }
+  for (const kind of RETIRED) await resolve(kind, new Date(now))
+}
+
+/** A cloud computer still creating or starting after this long is stuck. */
+export const STUCK_MS = 20 * MINUTE
+/** A cloud computer marked running whose runner stays away this long is down. */
+export const OFFLINE_MS = 10 * MINUTE
+
+type CloudComputer = {
+  id: string
+  name: string
+  status: string
+  updatedAt: Date
+  workspace: { name: string }
+}
+
+/** What is wrong with a cloud computer now, if anything. */
+export function computerProblem(
+  computer: CloudComputer,
+  online: boolean,
+  offlineFor: number,
+  now: number,
+  away: RunnerAway | null = null,
+): Alert | null {
+  const which = `${computer.name} (${computer.workspace.name}, ${computer.id})`
+  if (computer.status === 'error')
+    return {
+      key: `computer:${computer.id}`,
+      severity: 'critical',
+      title: `Cloud computer down: ${which}`,
+      detail:
+        'Its provider failed to create, start or wake it (the API logs say why). It starts again when someone sends it a message.',
+    }
+  if (
+    (computer.status === 'creating' || computer.status === 'starting') &&
+    !online &&
+    now - computer.updatedAt.getTime() >= STUCK_MS
+  )
+    return {
+      key: `computer:${computer.id}`,
+      severity: 'critical',
+      title: `Cloud computer stuck ${computer.status}: ${which}`,
+      detail: `${computer.status} for ${Math.round((now - computer.updatedAt.getTime()) / MINUTE)} min, and its runner never connected.`,
+    }
+  if (computer.status === 'running' && !online && offlineFor >= OFFLINE_MS)
+    return {
+      key: `computer:${computer.id}`,
+      severity: 'warning',
+      title: `Cloud computer's runner not connected: ${which}`,
+      detail: [
+        `Marked running, with no runner connected for ${Math.round(offlineFor / MINUTE)} min.`,
+        recoveryDetail(away, now),
+      ].join(' '),
+    }
+  return null
+}
+
+/** What Brigade does about a running computer's runner away (src/cloud.ts's recoverAway). */
+function recoveryDetail(away: RunnerAway | null, now: number) {
+  const restarts = away?.restarts ?? 0
+  const journal = 'its journal says why, as root through boat'
+  if (away?.gaveUpAt !== undefined && away.gaveUpFor === 'refused-stop')
+    return `Brigade tried to move it to a new VM, but boat refuses to stop its old one, which it cannot reach and never saved: left as it is for operators (cloud:replace-refused).`
+  if (away?.gaveUpAt !== undefined)
+    return `Brigade moved it to a new VM ${AUTO_REPLACE_LIMIT} times within ${AUTO_REPLACE_WINDOW_MS / 3_600_000} h, and no longer does: its runner does not stay up on new VMs either (${journal}).`
+  if (away?.recover === 'reachable')
+    return `boat reaches its machine but has not saved its disk lately (a full disk?): asked again, and moved to a new VM if it stays so ${REACHABLE_REPLACE_MS / MINUTE} min more (${journal}).`
+  // Only while its runner is waited for: a power-cycle after which boat saves the machine again,
+  // its runner still away, is over (recoveryStep does nothing more then).
+  if (away?.recover === 'recovering' && now - (away.recoverAskedAt ?? 0) < RECOVER_WAIT_MS)
+    return 'boat is power-cycling its machine.'
+  return [
+    `Once its runner has been away ${RECOVER_AFTER_MS / MINUTE} min and boat has not saved its disk for ${UNSAVED_MS / MINUTE} min, Brigade asks boat to recover it, then stops it with its last snapshot and starts it again (${RECOVER_LIMIT} time(s)), then moves it to a new VM`,
+    restarts
+      ? ` (restarted ${restarts} time(s) so far).`
+      : '. While boat saves it, its machine answers and its runner is the trouble.',
+  ].join('')
+}
+
+async function checkComputers(now: number) {
+  const computers = await prisma.computer.findMany({
+    where: { kind: 'cloud', status: { in: ['creating', 'starting', 'running', 'error'] } },
+    select: {
+      id: true,
+      name: true,
+      status: true,
+      updatedAt: true,
+      workspaceId: true,
+      workspace: { select: { name: true } },
+    },
+  })
+  const found: Alert[] = []
+  for (const computer of computers) {
+    const hub = hubs.get(computer.workspaceId)
+    // Since when its runner is away, as its hub keeps it: past the Api object's restarts.
+    const away = computer.status === 'running' ? await hub.runnerAway(computer.id) : null
+    const online = computer.status === 'running' ? !away : await hub.isOnline(computer.id)
+    const problem = computerProblem(computer, online, awayFor(away, computer, now), now, away)
+    // Without a plan it is meant to be off (src/cloud.ts's enforcePlans): not a problem.
+    if (problem && (!billingEnabled() || (await cloudEntitled(computer.workspaceId))))
+      found.push(problem)
+  }
+  await settle('computer:', found, new Date(now))
+
+  await settle('disk:', diskProblems(await fullDisks()), new Date(now))
+  // Raised as the runners report it (src/computer-abuse.ts); over once they stop.
+  await settleAbuse(new Date(now))
+}
+
+/** Kept on the computer while its runner says the disk stays full (src/computer-disk.ts). */
+export const diskProblems = (full: { id: string; disk: DiskState }[]): Alert[] =>
+  full.map((c) => ({
+    key: `disk:${c.id}`,
+    severity: 'warning',
+    title: `Cloud computer's disk full: ${c.id}`,
+    detail: diskDetail(c.disk),
+  }))
+
+/** A thread whose events the runner keeps sending, unacknowledged, this long: the API drops them. */
+export const EVENTS_WAITING_MS = 10 * MINUTE
+/** This long: critical. */
+export const EVENTS_WAITING_CRITICAL_MS = 30 * MINUTE
+
+/** What the runners say of their threads' events, as alerts by computer. */
+export function eventsWaitingProblems(
+  waiting: { sessionId: string; computerId: string; since: string }[],
+  names: Map<string, string>,
+  now: number,
+): Alert[] {
+  const late = waiting.filter((w) => now - Date.parse(w.since) >= EVENTS_WAITING_MS)
+  return [...Map.groupBy(late, (w) => w.computerId)].map(([computerId, threads]) => {
+    const oldest = Math.max(...threads.map((w) => now - Date.parse(w.since)))
+    return {
+      key: `events-waiting:${computerId}`,
+      severity: oldest >= EVENTS_WAITING_CRITICAL_MS ? 'critical' : 'warning',
+      title: `Threads' events not acknowledged: ${names.get(computerId) ?? computerId}`,
+      detail: [
+        `${threads.length} thread(s) whose runner has sent the same events for ${Math.round(oldest / MINUTE)} min at most, and the API never acknowledged them: their pages stop, their turns' tickets and states are not noted.`,
+        threads
+          .slice(0, 10)
+          .map((w) => `${w.sessionId} since ${w.since.slice(0, 16)}Z`)
+          .join('\n'),
+        'The API logs say why ("thread …: event … refused", "tickets and accounts of events … failed").',
+      ].join('\n\n'),
+    }
+  })
+}
+
+/** A hub object's report not renewed this long is forgotten: it renews it each tick (90 s). */
+export const REPORT_FRESH_MS = 5 * MINUTE
+
+/** What hub objects said of their threads' events, by workspace: the checks' own memory. */
+const reported = new Map<string, { at: number; waiting: ThreadWaiting[] }>()
+
+/** A hub object's threads whose events wait (HubHost.reportWaiting). */
+export function noteReportedWaiting(
+  workspaceId: string,
+  waiting: ThreadWaiting[],
+  now = Date.now(),
+) {
+  if (waiting.length) reported.set(workspaceId, { at: now, waiting })
+  else reported.delete(workspaceId)
+}
+
+/**
+ * Every hub's threads whose events wait: those of this process's hubs, and those hub objects
+ * reported lately. A hub object is never woken to ask: one with no runner connected has none.
+ */
+export function threadsWaitingEverywhere(now = Date.now()): ThreadWaiting[] {
+  const local = localHubs()
+  const here = new Set(local.map((hub) => hub.workspaceId))
+  for (const [workspaceId, report] of reported)
+    if (now - report.at >= REPORT_FRESH_MS) reported.delete(workspaceId)
+  return [
+    ...local.flatMap((hub) => hub.threadsWaiting()),
+    ...[...reported]
+      .filter(([workspaceId]) => !here.has(workspaceId))
+      .flatMap(([, report]) => report.waiting),
+  ]
+}
+
+async function checkEventsWaiting(now: number) {
+  const waiting = threadsWaitingEverywhere(now)
+  const ids = [...new Set(waiting.map((w) => w.computerId))]
+  const computers = ids.length
+    ? await prisma.computer.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true, workspace: { select: { name: true } } },
+      })
+    : []
+  const names = new Map(computers.map((c) => [c.id, `${c.name} (${c.workspace.name}, ${c.id})`]))
+  await settle('events-waiting:', eventsWaitingProblems(waiting, names, now), new Date(now))
+}
+
+/** A thread running with no event from its runner this long: its turn may be stuck. */
+export const SILENT_TURN_MS = 60 * MINUTE
+/** This long: critical. */
+export const SILENT_TURN_CRITICAL_MS = 4 * 60 * MINUTE
+
+type SilentThread = { id: string; title: string; computerId: string; lastAt: Date }
+
+/**
+ * Threads marked running whose runner, connected, has sent nothing for an hour, as alerts by
+ * computer. A turn that waits on work in the background its harness no longer runs stays open
+ * (on 2026-11-06 the cloud health check's run did for 7 hours, its report undelivered, the
+ * person's message queued behind it); the runner now ends such a turn after 5 minutes
+ * (apps/runner/src/harness/index.ts, staleWait), and this catches what it does not.
+ */
+export function silentTurnProblems(
+  threads: SilentThread[],
+  names: Map<string, string>,
+  now: number,
+): Alert[] {
+  const silent = threads.filter((t) => now - t.lastAt.getTime() >= SILENT_TURN_MS)
+  return [...Map.groupBy(silent, (t) => t.computerId)].map(([computerId, on]) => {
+    const longest = Math.max(...on.map((t) => now - t.lastAt.getTime()))
+    return {
+      key: `turn-silent:${computerId}`,
+      severity: longest >= SILENT_TURN_CRITICAL_MS ? 'critical' : 'warning',
+      title: `Threads running with nothing from their runner: ${names.get(computerId) ?? computerId}`,
+      detail: [
+        `${on.length} thread(s) marked running whose runner, connected, has sent no event for ${Math.round(longest / MINUTE)} min at most: a turn stuck open, whose reply or report waits, and the messages queued behind it.`,
+        on
+          .slice(0, 10)
+          .map(
+            (t) =>
+              `${t.id} (${t.title.slice(0, 60)}) since ${t.lastAt.toISOString().slice(0, 16)}Z`,
+          )
+          .join('\n'),
+        "A long command or Monitor can be quiet this long too. Stop in the thread ends a stuck turn; the runner's journal (journalctl -u brigade-runner) says what its harness last did.",
+      ].join('\n\n'),
+    }
+  })
+}
+
+/**
+ * Threads running, with their last event's time (heavy events stored apart have none here: the
+ * thread's last change stands for it), on computers whose runner is connected: one whose runner
+ * is away is the computer's alert (checkComputers).
+ */
+async function checkSilentTurns(now: number) {
+  const running = await prisma.$queryRaw<(SilentThread & { workspaceId: string })[]>`
+    SELECT s.id, s.title, s."computerId", s."workspaceId", COALESCE(e.at, s."updatedAt") AS "lastAt"
+    FROM "Session" s
+    LEFT JOIN "SessionEvent" e ON e."sessionId" = s.id AND e.seq = s."lastSeq"
+    WHERE s.status = 'running' AND s."archivedAt" IS NULL
+      AND COALESCE(e.at, s."updatedAt") < ${new Date(now - SILENT_TURN_MS)}
+    ORDER BY "lastAt"
+    LIMIT 100`
+  const online = new Map<string, boolean>()
+  const silent: SilentThread[] = []
+  for (const thread of running) {
+    if (!online.has(thread.computerId))
+      online.set(thread.computerId, await hubs.get(thread.workspaceId).isOnline(thread.computerId))
+    if (online.get(thread.computerId)) silent.push(thread)
+  }
+  const ids = [...online.keys()]
+  const computers = ids.length
+    ? await prisma.computer.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, name: true, workspace: { select: { name: true } } },
+      })
+    : []
+  const names = new Map(computers.map((c) => [c.id, `${c.name} (${c.workspace.name}, ${c.id})`]))
+  await settle('turn-silent:', silentTurnProblems(silent, names, now), new Date(now))
+}
+
+/** Commands waiting for a computer's runner: this many is a backlog… */
+export const BACKLOG_COUNT = 20
+/** …or the oldest this old. */
+export const BACKLOG_AGE_MS = 30 * MINUTE
+
+type Waiting = { count: number; oldest: Date }
+type Computer = CloudComputer & { kind: string }
+
+/** A computer's commands piling up while its runner does not take them, if they do. */
+export function backlogProblem(computer: Computer, waiting: Waiting, now: number): Alert | null {
+  const age = now - waiting.oldest.getTime()
+  if (waiting.count < BACKLOG_COUNT && age < BACKLOG_AGE_MS) return null
+  const critical = waiting.count >= 5 * BACKLOG_COUNT || age >= 6 * BACKLOG_AGE_MS
+  return {
+    key: `backlog:${computer.id}`,
+    severity: critical ? 'critical' : 'warning',
+    title: `Commands piling up for ${computer.name} (${computer.workspace.name}, ${computer.id})`,
+    detail: `${waiting.count} command(s) not acknowledged by its runner, the oldest for ${Math.round(age / MINUTE)} min. It is ${computer.kind === 'cloud' ? computer.status : 'a member’s machine'}. They go once its runner connects; past 24 hours each fails, with a ticket in its thread.`,
+  }
+}
+
+/** Indexed (RunnerCommand_pending_computer): one row per computer with commands waiting. */
+/**
+ * Whether a computer's backlog is one: a member's machine that is offline (a laptop asleep)
+ * keeps what was sent to it until it wakes, which is how it works.
+ */
+export const backlogMatters = (computer: { kind: string }, online: boolean) =>
+  computer.kind === 'cloud' || online
+
+async function checkBacklogs(now: number) {
+  const waiting = await computersWaiting()
+  const computers = waiting.length
+    ? await prisma.computer.findMany({
+        where: { id: { in: waiting.map((w) => w.computerId) }, status: { not: 'destroyed' } },
+        select: {
+          id: true,
+          name: true,
+          kind: true,
+          status: true,
+          updatedAt: true,
+          workspaceId: true,
+          workspace: { select: { name: true } },
+        },
+      })
+    : []
+  const found: Alert[] = []
+  for (const w of waiting) {
+    const computer = computers.find((c) => c.id === w.computerId)
+    if (!computer || !w._min.createdAt) continue
+    const problem = backlogProblem(
+      computer,
+      { count: w._count._all, oldest: w._min.createdAt },
+      now,
+    )
+    if (!problem) continue
+    if (!backlogMatters(computer, await hubs.get(computer.workspaceId).isOnline(computer.id)))
+      continue
+    // A cloud computer without a plan is meant to be off (checkComputers).
+    if (
+      computer.kind !== 'cloud' ||
+      !billingEnabled() ||
+      (await cloudEntitled(computer.workspaceId))
+    )
+      found.push(problem)
+  }
+  await settle('backlog:', found, new Date(now))
+}
+
+/** Brigade's endpoint at Stripe: there, and not disabled by Stripe after days of failures. */
+async function checkStripeEndpoint(now: number) {
+  if (!stripeClient || !env.STRIPE_WEBHOOK_SECRET) return
+  const url = `${env.API_URL.replace(/\/+$/, '')}/api/billing/webhook`
+  let endpoints
+  try {
+    endpoints = await stripeClient.webhookEndpoints.list({ limit: 100 })
+  } catch (error) {
+    // A restricted key without the Webhook Endpoints read permission: nothing to check.
+    const status = (error as { statusCode?: number }).statusCode
+    if (status === 401 || status === 403) return
+    throw error
+  }
+  const ours = endpoints.data.find((e) => e.url === url)
+  if (ours?.status === 'enabled') return resolve('stripe-endpoint', new Date(now))
+  await raise(
+    {
+      key: 'stripe-endpoint',
+      severity: 'critical',
+      title: ours
+        ? "Stripe disabled Brigade's billing webhook"
+        : "Brigade's billing webhook is missing at Stripe",
+      detail: `${url}: ${ours ? `status ${ours.status}` : 'no such endpoint'}. Subscriptions change in Stripe without Brigade hearing of it.`,
+    },
+    new Date(now),
+  )
+}
+
+/** Invocation outcomes that are not the Worker's fault. */
+const FINE = ['success', 'clientDisconnected', 'responseStreamDisconnected']
+const CF_WINDOW_MS = 10 * MINUTE
+export const CF_WARNING = 5
+export const CF_CRITICAL = 50
+
+type Outcome = { sum: { requests: number }; dimensions: { scriptName: string; status: string } }
+
+/** The Workers' (and their Durable Objects') failed invocations, as alerts by Worker. */
+export function workerProblems(rows: Outcome[]): Alert[] {
+  const byScript = new Map<string, Map<string, number>>()
+  for (const { sum, dimensions } of rows) {
+    const statuses = byScript.get(dimensions.scriptName) ?? new Map<string, number>()
+    statuses.set(dimensions.status, (statuses.get(dimensions.status) ?? 0) + sum.requests)
+    byScript.set(dimensions.scriptName, statuses)
+  }
+  const alerts: Alert[] = []
+  for (const [script, statuses] of byScript) {
+    const total = [...statuses.values()].reduce((a, b) => a + b, 0)
+    if (total < CF_WARNING) continue
+    alerts.push({
+      key: `worker:${script}`,
+      severity: total >= CF_CRITICAL ? 'critical' : 'warning',
+      title: `Worker ${script} failing`,
+      detail: `${total} failed invocations in the last ${CF_WINDOW_MS / MINUTE} min: ${[...statuses]
+        .map(([status, n]) => `${n} ${status}`)
+        .join(', ')}. Workers & Pages › ${script} › Logs in Cloudflare says why.`,
+    })
+  }
+  return alerts
+}
+
+/** Resets of Durable Objects in the window: this many is critical; one is a warning. */
+export const RESETS_CRITICAL = 5
+
+type Named = { dimensions: { scriptName: string; namespaceId: string } }
+type Resets = {
+  sum: { exceededMemoryErrors: number; exceededCpuErrors: number; fatalInternalErrors: number }
+  dimensions: { namespaceId: string }
+}
+
+/**
+ * Durable Objects reset by the runtime (past their memory, their CPU, or an internal error), by
+ * Worker. Cloudflare counts these apart from invocations: an object past its memory is reset with
+ * every socket it held, which the failed invocations alone may not show (the 2026-10-27 incident).
+ * Only the namespaces of `names`: Brigade's, as its invocations name them.
+ */
+export function objectResetProblems(names: Named[], resets: Resets[]): Alert[] {
+  const scriptOf = new Map(names.map((n) => [n.dimensions.namespaceId, n.dimensions.scriptName]))
+  const byScript = new Map<string, { memory: number; cpu: number; internal: number }>()
+  for (const { sum, dimensions } of resets) {
+    const script = scriptOf.get(dimensions.namespaceId)
+    if (!script) continue
+    const total = byScript.get(script) ?? { memory: 0, cpu: 0, internal: 0 }
+    total.memory += sum.exceededMemoryErrors
+    total.cpu += sum.exceededCpuErrors
+    total.internal += sum.fatalInternalErrors
+    byScript.set(script, total)
+  }
+  const alerts: Alert[] = []
+  for (const [script, { memory, cpu, internal }] of byScript) {
+    const total = memory + cpu + internal
+    if (!total) continue
+    alerts.push({
+      key: `worker:${script}:resets`,
+      severity: total >= RESETS_CRITICAL ? 'critical' : 'warning',
+      title: `Durable Objects of ${script} reset`,
+      detail: `${total} reset(s) in the last ${CF_WINDOW_MS / MINUTE} min: ${memory} past their memory, ${cpu} past their CPU, ${internal} by an internal error. Each drops every socket the object held. Workers & Pages › ${script} › Logs in Cloudflare says which object.`,
+    })
+  }
+  return alerts
+}
+
+async function checkWorkers(now: number) {
+  if (!env.CLOUDFLARE_API_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) return
+  const filter = `{datetime_geq: $since, datetime_leq: $until, scriptName_like: "brigade%", status_notin: ${JSON.stringify(FINE)}}`
+  const query = `query ($account: String!, $since: Time!, $until: Time!) {
+    viewer { accounts(filter: {accountTag: $account}) {
+      workers: workersInvocationsAdaptive(limit: 200, filter: ${filter}) { sum { requests } dimensions { scriptName status } }
+      objects: durableObjectsInvocationsAdaptiveGroups(limit: 200, filter: ${filter}) { sum { requests } dimensions { scriptName status } }
+      names: durableObjectsInvocationsAdaptiveGroups(limit: 200, filter: {datetime_geq: $since, datetime_leq: $until, scriptName_like: "brigade%"}) { dimensions { scriptName namespaceId } }
+      resets: durableObjectsPeriodicGroups(limit: 1000, filter: {datetimeMinute_geq: $since, datetimeMinute_leq: $until}) { sum { exceededMemoryErrors exceededCpuErrors fatalInternalErrors } dimensions { namespaceId } }
+    } }
+  }`
+  const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      query,
+      variables: {
+        account: env.CLOUDFLARE_ACCOUNT_ID,
+        since: new Date(now - CF_WINDOW_MS).toISOString(),
+        until: new Date(now).toISOString(),
+      },
+    }),
+    signal: AbortSignal.timeout(15_000),
+  })
+  const body = (await response.json()) as {
+    data?: {
+      viewer: {
+        accounts: { workers: Outcome[]; objects: Outcome[]; names: Named[]; resets: Resets[] }[]
+      }
+    }
+    errors?: { message: string }[] | null
+  }
+  if (!response.ok || body.errors?.length || !body.data)
+    throw new Error(
+      `Cloudflare analytics ${response.status}: ${body.errors?.map((e) => e.message).join('; ') ?? ''}`,
+    )
+  const account = body.data.viewer.accounts[0]
+  await settle(
+    'worker:',
+    [
+      ...workerProblems([...(account?.workers ?? []), ...(account?.objects ?? [])]),
+      ...objectResetProblems(account?.names ?? [], account?.resets ?? []),
+    ],
+    new Date(now),
+  )
+}
+
+/**
+ * When the checks that need the database last succeeded, and why they failed since: the
+ * Worker's cron (src/worker.ts) alerts when they stop. One that cannot reach the database
+ * cannot alert either, so it counts as stopped.
+ */
+export let lastChecksAt = 0
+export let lastCheckError: string | null = null
+
+let runs = 0
+let running = false
+
+/** Each check on its own: one that fails is logged, and the others still run. */
+export async function runChecks(now = Date.now()) {
+  if (running) return
+  running = true
+  try {
+    // The first four need only the database; the others, Cloudflare's and Stripe's APIs too.
+    const steps: [string, () => Promise<unknown>][] = [
+      ['failures', () => checkFailures(now)],
+      ['computers', () => checkComputers(now)],
+      ['events waiting', () => checkEventsWaiting(now)],
+      ['command backlogs', () => checkBacklogs(now)],
+      ['jobs queue', () => checkJobQueues(now)],
+      ['silent turns', () => checkSilentTurns(now)],
+    ]
+    let failed: string | null = null
+    if (runs % 5 === 0) steps.push(['workers', () => checkWorkers(now)])
+    if (runs % 30 === 0) steps.push(['stripe endpoint', () => checkStripeEndpoint(now)])
+    runs++
+    for (const [i, [name, step]] of steps.entries())
+      await step().catch((error: unknown) => {
+        console.error(`ops: ${name} check failed: ${String(error)}`)
+        if (i < 4) failed ??= `${name} check: ${String(error).slice(0, 300)}`
+      })
+    lastCheckError = failed
+    if (!failed) lastChecksAt = Date.now()
+  } finally {
+    running = false
+  }
+}
+
+/** Messages dead-lettered this many: warning; this many: critical. */
+export const DEAD_JOBS = { warning: 1, critical: 20 }
+/** The jobs' queue holding a message this long: its consumer is not keeping up, or down. */
+export const JOBS_LATE_MS = 10 * MINUTE
+
+/** The jobs' queue and its dead letters, as Cloudflare counts them (none on Node). */
+export function jobQueueProblems(
+  queues: { jobs: QueueHealth; dead: QueueHealth } | null,
+  now: number,
+): Alert[] {
+  if (!queues) return []
+  const alerts: Alert[] = []
+  const { dead, jobs } = queues
+  if (dead.backlog >= DEAD_JOBS.warning)
+    alerts.push({
+      key: 'jobs:dead',
+      severity: dead.backlog >= DEAD_JOBS.critical ? 'critical' : 'warning',
+      title: 'Background jobs dead-lettered',
+      detail: `${dead.backlog} job message(s) failed every try and wait in brigade-jobs-dlq. Read them in the dashboard (Queues), fix the cause, then send them to brigade-jobs again or delete them.`,
+    })
+  if (jobs.oldestAt && now - jobs.oldestAt.getTime() > JOBS_LATE_MS)
+    alerts.push({
+      key: 'jobs:late',
+      severity: 'warning',
+      title: 'Background jobs not keeping up',
+      detail: `${jobs.backlog} job message(s) wait in brigade-jobs, the oldest for ${Math.round((now - jobs.oldestAt.getTime()) / MINUTE)} min: its consumer is failing or slow.`,
+    })
+  return alerts
+}
+
+export type QueueHealth = { backlog: number; oldestAt: Date | null }
+
+async function checkJobQueues(now: number) {
+  const { jobQueues } = await import('../platform/node.js')
+  await settle('jobs:', jobQueueProblems(await jobQueues(), now), new Date(now))
+}
+
+/** Every minute, from the API's jobs (src/jobs.ts). */
+export const watchOps = () => {
+  setTimeout(() => void runChecks(), 30_000)
+  setInterval(() => void runChecks(), MINUTE)
+}

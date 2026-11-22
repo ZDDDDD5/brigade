@@ -1,0 +1,162 @@
+# The public demo
+
+demo.brigade.lol is the real dashboard (`apps/web`) on recorded data, for a visitor of the
+landing page to click around a believable workspace: the sample Acme workspace a preview
+has (`apps/api/prisma/seed-workspace.ts`), signed in as Ada. No API runs behind it and no
+request leaves the browser; a reload starts over.
+
+## How it works
+
+- **A build flag.** `NEXT_PUBLIC_DEMO=1` builds the demo (`lib/demo/flag.ts`). Without it,
+  nothing changes: the demo's code is a few constants and an unreached `import()`.
+- **The API answered in the browser.** `lib/config.ts` points the API at
+  `https://api.demo.invalid`, an address that does not exist, and installs
+  `lib/demo/install.ts` before anything asks it. That swaps `fetch` and `WebSocket` for
+  that address only: `api()`, the direct `fetch()` calls (library, file preview, skills,
+  design systems) and the live sockets (`use-live.ts`, `use-thread-events.ts`) all reach
+  `lib/demo/server.ts`, loaded with its fixtures on the first request.
+- **Recorded responses.** `lib/demo/fixtures.json` holds every GET the dashboard's pages
+  asked for in a fresh sample workspace. Dates move with the time the demo opens, so the
+  workspace always looks current. A GET with nothing recorded answers 404.
+- **Writes in memory**, for what a visitor will try (`lib/demo/server.ts`):
+  - approve or decline a ticket, answer a question or a teammate's ticket: the ticket
+    closes everywhere and its thread goes on as the real one would (`afterDecision` in
+    `lib/demo/scripts.ts`);
+  - merge a pull request (`lib/demo/pulls.ts`, which stands in for GitHub, unreached in a
+    preview);
+  - archive, pin or put off a thread;
+  - send a message or start a thread: the teammate answers with a scripted run, streamed
+    with its tool steps as a runner streams one (`replyTo` in `lib/demo/scripts.ts`).
+    Unknown requests get a reply that says what the demo knows, with three to click;
+  - edit a Markdown file of the library, and work through a list (below).
+
+  Any other write succeeds and changes nothing. Attaching or uploading a file says it is
+  off in the demo.
+
+- **Lists, worked out in the browser** (`lib/demo/lists.ts`). The fixtures were recorded
+  before lists existed, but the library's files were: Lists and a list's page read the
+  Markdown files with checkboxes as the API does (`parseList`), and the work on their lines
+  lives in memory. Hand to starts the teammate's thread on the line (`workOnItems` in
+  `lib/demo/scripts.ts`): it says what done means, builds it and opens a pull request that closes
+  the line (#155, then on). Merging it ticks the line with the pull request's number, credited to
+  the teammate, as the API's merge does. The Board stays empty.
+- **Documents edited without a collab server.** `POST /library/edit` answers with the file's
+  text and no `live`, so the editor edits it alone (`SavedDocument` in
+  `components/document-editor-view.tsx`). In the demo it saves on its own a moment after the
+  last change, with no Save button, as the live editor does; anywhere it has no unsaved change,
+  it shows what others change in the file (a line Brigade ticks).
+- **A calm first visit.** The sample workspace has more than a newcomer should meet (a failed
+  upgrade, a stalled thread, App writes waiting in their raw form). On load, `calm()` in
+  `lib/demo/server.ts` keeps three threads in the lists (`SHOWN_THREADS`), hides Kai, empties
+  Tickets and the pull requests that wait, and drops Today's loose ends. A hidden thread's own
+  page stays, should a link lead there.
+- **Five walkthroughs.** `/app?tour=<story>` plays one (`STORIES` in `lib/demo/tour.ts`): `bug`
+  (fix a customer's bug, the default), `feature` (ship a requested feature and announce it),
+  `call` (prep a sales call), `payment` (chase a failed payment) and `list` (work through a
+  list). The first four ask a teammate from Today, then press what waits for a person (a merge,
+  an email) until the teammate's last reply; `list` starts in Lists (below). The landing page
+  picks one with the buttons above its window (`components/landing/live-demo.tsx`), with shorter
+  labels in a window narrower than 1100px, where the long ones do not fit.
+- **What needs a computer** (the app preview, a teammate's screen, a terminal) shows
+  what it would be instead (`components/demo-machine.tsx`).
+- **The sign.** A card at the foot of the sidebar (a strip atop the page on a phone) says
+  it is a demo, with "Sign up free" to www.brigade.lol/sign-up
+  (`components/demo-banner.tsx`). Signing out goes there too; `/`, `/sign-in` and
+  `/onboarding` open Today, and the pages are `noindex` (`next.config.ts`). In the landing
+  page's frame, the sign hides (below).
+
+The scripted replies only show what Brigade does: approvals follow each teammate's
+permissions, a push opens the ticket in the app, account failover stays within one
+provider, full computer use is on a Mac, and only built-in Apps are named. Nothing in the
+demo talks about the visitor's Mac.
+
+## Recording the fixtures again
+
+```bash
+pnpm demo:record   # scripts/demo/record.sh
+```
+
+It seeds a fresh database of its own (embedded PostgreSQL on port 5499), runs the API, the
+dashboard and the preview's sign-in proxy on ports 3300 to 3302, then
+`apps/web/scripts/demo-record.mjs` opens every dashboard page in a headless Chromium as Ada,
+follows each link, and writes what the API answered to `apps/web/lib/demo/fixtures.json`.
+A running preview is left alone: its database, its ports and its `.next`. It takes about ten
+minutes, most of it Next compiling each page the first time.
+
+Record again after a change to the API's responses or to the seed, and commit the new file.
+A page that asks for something new records it on its own. A new page needs a link to it from
+one the recorder reaches, starting at `/app`.
+
+## Trying it locally
+
+```bash
+cd apps/web && NEXT_PUBLIC_DEMO=1 pnpm dev   # http://localhost:3000/app
+```
+
+It needs no database or API. `pnpm test` in `apps/web` checks the demo's server.
+
+## Deploying demo.brigade.lol
+
+The demo is its own Worker, `brigade-web-demo` (`apps/web/wrangler.demo.jsonc`), built and
+deployed like the dashboard's by `scripts/deploy/workers.sh`:
+
+```bash
+pnpm run cf:build:demo    # DEMO_RECORD=1 records the fixtures again first
+pnpm run cf:deploy:demo
+```
+
+Its custom domain, `demo.brigade.lol`, is in that file: the first deploy added the DNS record
+and the certificate on the `brigade.lol` zone. A Workers Build deploys it on each push to `main`
+that touches what it is built from, as for the other Workers
+([deployment-plan.md](deployment-plan.md)): build command `pnpm run cf:build:demo`, deploy
+command `pnpm run cf:deploy:demo`, the same watch paths and build token as `brigade-web`, and
+`PNPM_VERSION` as its build variable. It needs no secret, and it does not wait for the API.
+
+## On the landing page
+
+The landing page shows the demo right under the hero, in a window, running as soon as the page
+opens (`components/landing/live-demo.tsx`), as squad.so and x.ai/bot do. A picture of it
+(`public/landing/demo-light.webp` and `demo-dark.webp`) shows while it loads. Narrower than
+900px, the dashboard would show its phone layout in a small box, so the picture stays, with a
+button that opens the demo on its own. The demo allows only www.brigade.lol (and localhost) to
+frame it (`frame-ancestors`, `next.config.ts`); in the frame, its own sign hides, the page
+around it being the sign, and "Sign up free" opens in the whole window. Take the
+pictures again after a visible change to Today, without the demo's sign.
+
+## The walkthrough
+
+In the landing page's frame, the demo opens on `/app?tour=<story>`, the story the buttons above
+the window picked, and plays a walkthrough on its own once most of the frame is in view
+(`lib/demo/tour.ts`, `components/demo-tour.tsx`), as x.ai/bot does: a cursor marked "You" (the
+visitor, signed in as Ada) asks a teammate from Today, the teammate's side plays as scripted in
+`lib/demo/scripts.ts`, and the cursor presses what waits for a person until it is done:
+
+- `bug`: Riley fixes the export button a customer reported; the cursor merges #153, then
+  allows the replies to the three customers who asked.
+- `feature`: Riley ships the CSV export Jo at Northwind asked for; the cursor merges #154, then
+  allows the email to Jo with a demo recorded in the browser and saved to Drive.
+- `call`: Sam prepares tomorrow's call with Northwind from the calendar, the inbox, Stripe and
+  PostHog; the cursor allows the agenda to Jo.
+- `payment`: Sam finds why Globex's payment failed; the cursor allows the email with the link
+  to pay with a new card.
+- `list`: in Lists, the cursor opens Acme's launch checklist, adds "Add a changelog page linked
+  from the footer" at its end and hands it to Riley (Hand to, then Riley in the dialog). Riley's
+  thread opens, and the cursor stays there while Riley works: the list has nothing to show
+  meanwhile. It merges #155 there, then goes back to the list, where the line is ticked ("PR #155,
+  <day>"), and shows it under Done's Recently done.
+
+Each takes 15 to 40 seconds.
+
+It drives the real dashboard with events no person made: the visitor's first click, tap or
+key in the frame stops it (not a scroll: scrolling the landing page with the pointer over the
+frame sends its wheel there, and stopped the walkthrough of a visitor who only scrolled past), and a violet "Your turn · click around" pill offers a replay (Today
+again, `/app?tour=<story>`, which starts the demo over). A thread the visitor started lives in memory:
+reloaded on its address, the demo opens Today instead (`lib/demo/install.ts`). It finds what to click by what the page shows (the teammate menu,
+"Merge #153", "Merge #154", "Allow", Lists, "Hand to", the hand-off dialog's teammate, a line's
+chips, the Done filter): a change to those labels needs the same change in `lib/demo/tour.ts`.
+In a document, it puts the caret, adds the line, types and selects through the editor itself,
+which registers a handle while it shows a document in the demo (`lib/demo/editor-handle.ts`): with
+the page's selection, Safari kept the editor's own caret, typed into the line above the new one
+and never showed the toolbar.
+`pnpm test` plays every story against the demo's server; the clicks themselves are checked
+by running it in a browser.

@@ -1,0 +1,691 @@
+// Lists (docs/lists.md): a library Markdown file's checklist lines, as items work is attached
+// to. The file stays the list: its lines, their order, sections and notes, and whether each is
+// ticked. A line work is attached to carries a marker at its end, `<!-- item:<id> -->`, hidden
+// in the editor and in any Markdown viewer; Brigade keeps the rest (the threads on it, the pull
+// requests that finish it) by that id. Lines nobody handed to a teammate have no marker.
+import { z } from 'zod'
+import { formatMention } from './mentions.js'
+
+/** An item's id, in its marker. */
+export const ListItemId = z.string().regex(/^[a-z0-9]{10,32}$/)
+
+/** A new item's id: 16 characters of [a-z0-9]. */
+export function newListItemId() {
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  return Array.from(bytes, (b) => (b % 36).toString(36)).join('')
+}
+
+export const itemMarker = (id: string) => `<!-- item:${id} -->`
+const MARKER = /\s*<!--\s*item:([a-z0-9]+)\s*-->/
+const MARKERS = /\s*<!--\s*item:[a-z0-9]+\s*-->/g
+/** A checklist line: indent, bullet, box, text. */
+const CHECK = /^(\s*)([*+-]|\d+[.)])\s+\[( |x|X)\](?:\s+(.*))?$/
+const HEADING = /^(#{1,6})\s+(.*?)\s*#*\s*$/
+const FENCE = /^\s*(`{3,}|~{3,})/
+/** Any list line, a checkbox or not: it starts a block of its own, never continues a line above. */
+const BULLET = /^\s*([*+-]|\d+[.)])(\s|$)/
+/**
+ * Rows that start a block of their own and so end a line's text above them (CommonMark): a quote,
+ * a thematic break, HTML. A row holding only a marker is not one: the editor writes a marker there
+ * when a line break was typed before it, and reads it back as the line's.
+ */
+const BLOCK = /^ {0,3}(>|([-*_])( *\2){2,} *$|<(\/?[a-zA-Z]|!--))/
+const MARKER_ROW = /^\s*<!--\s*item:[a-z0-9]+\s*-->\s*\\?\s*$/
+/** A hard line break at the end of a line (a backslash, or two spaces): its text goes on below. */
+const BREAK = /(\\| {2,})$/
+
+export type ListLine = {
+  /** Its line in the file, from 0: the one with its box. */
+  line: number
+  /**
+   * Its last line in the file: past `line` when its text goes on below it (a line break typed in
+   * it), where its marker may then be.
+   */
+  end: number
+  /** Spaces before its bullet: a deeper line is nested under the one above. */
+  indent: number
+  done: boolean
+  /** Its text as written (Markdown), without box nor marker. */
+  text: string
+  /**
+   * Its item's id: its marker's, unless a line above has the same marker (a line copied with
+   * its marker is a new line, not the same item again).
+   */
+  id: string | null
+  /** The id in its marker as written, a copy's included. */
+  marker: string | null
+  /** The heading it is under, as written. */
+  section: string | null
+  /**
+   * The files put under it: uploads of the document, each on a row of its own indented under its
+   * text, as the editor writes them. They go with it when it is handed over.
+   */
+  files: LineFile[]
+  /** Its last row with anything of it on it: its text, and the lines and files under it. */
+  last: number
+}
+
+/** A file under a line: an upload of the document (`asset:<id>`), by its id. */
+export type LineFile = { id: string; name: string; kind: 'image' | 'video' | 'audio' | 'file' }
+
+/**
+ * A row holding only a file of the document, as the editor writes one (@brigade/editor): an image
+ * `![name](asset:id "caption")`, or `[name](asset:id "video")` for the others.
+ */
+const FILE_ROW =
+  /^\s*(!?)\[([^\]\n]*)\]\(asset:([A-Za-z0-9_-]{1,64})(?:\s+"((image|video|audio|file)(?::[^"\n]*)?|[^"\n]*)")?\)\s*$/
+/** Any list item's first row: where its text starts is what rows under it are indented by. */
+const ITEM_ROW = /^(\s*)([*+-]|\d+[.)])( +|$)/
+
+const widthOf = (spaces: string) => spaces.replace(/\t/g, '    ').length
+
+/** Where a list item's text starts, by its first row (CommonMark: past its bullet and a space or more). */
+function contentColumn(raw: string) {
+  const m = raw.match(ITEM_ROW)
+  if (!m) return widthOf(raw.match(/^\s*/)![0])
+  const gap = m[3]!.length
+  return widthOf(m[1]!) + m[2]!.length + (gap === 0 || gap > 4 ? 1 : gap)
+}
+
+/** The file a row holds, if it holds only one, as a line's file. */
+function fileOf(raw: string): LineFile | null {
+  const m = raw.match(FILE_ROW)
+  if (!m) return null
+  const kind = m[1] ? 'image' : (m[5] as LineFile['kind'] | undefined)
+  // A link to an upload with no kind is a link in the text, not a file block.
+  if (!kind) return null
+  return { id: m[3]!, name: m[2]!.trim(), kind }
+}
+
+export type ParsedList = {
+  /** The file's first level-one heading. */
+  title: string | null
+  lines: ListLine[]
+}
+
+/** The checklist lines of a Markdown file, outside code blocks. */
+export function parseList(markdown: string): ParsedList {
+  const lines: ListLine[] = []
+  let title: string | null = null
+  let section: string | null = null
+  let fence: string | null = null
+  const seen = new Set<string>()
+  const rows = markdown.split('\n')
+  // The checklist line whose text the next row may go on with: until a blank row or a new block.
+  let open: { item: ListLine; parts: string[] } | null = null
+  const close = () => {
+    if (!open) return
+    const { item, parts } = open
+    const all = parts.join(' ')
+    // Its marker, wherever in its text: a line break typed before it moves it to a row below.
+    const marker = all.match(MARKER)?.[1] ?? null
+    const copy = !!marker && seen.has(marker)
+    if (marker) seen.add(marker)
+    item.marker = marker
+    item.id = copy ? null : marker
+    item.text = parts
+      .map((p) => p.replace(MARKERS, '').replace(BREAK, '').trim())
+      .filter(Boolean)
+      .join(' ')
+    open = null
+  }
+  // The list items the rows below may be under, deepest last (any list item, a checklist line or
+  // not): where its text starts, past which a row is still its own (CommonMark), and its line.
+  const under: { column: number; item: ListLine | null }[] = []
+  /** The items a row less indented than their text, after a blank row or as a block of its own, is out of. */
+  const leave = (indent: number) => {
+    while (under.length && under.at(-1)!.column > indent) under.pop()
+  }
+  /** A row the items still open hold: their last one so far. */
+  const holds = (row: number) => {
+    for (const u of under) if (u.item) u.item.last = row
+  }
+  let blank = true
+  rows.forEach((raw, line) => {
+    const indent = widthOf(raw.match(/^\s*/)![0])
+    const fenced = raw.match(FENCE)
+    if (fenced) {
+      close()
+      if (!fence) {
+        leave(indent)
+        fence = fenced[1]!
+      } else if (fenced[1]!.startsWith(fence[0]!) && fenced[1]!.length >= fence.length) fence = null
+      holds(line)
+      blank = false
+      return
+    }
+    if (fence) {
+      if (raw.trim()) holds(line)
+      return
+    }
+    const heading = raw.match(HEADING)
+    if (heading) {
+      close()
+      under.length = 0
+      blank = false
+      const text = heading[2]!.replace(/\\(.)/g, '$1')
+      if (heading[1] === '#' && title === null) title = text
+      else section = text
+      return
+    }
+    const check = raw.match(CHECK)
+    if (!check) {
+      if (!raw.trim()) {
+        close()
+        blank = true
+        return
+      }
+      // A file on a row of its own: the file of the line it is indented under, never its text.
+      const file = fileOf(raw)
+      if (file) {
+        close()
+        leave(indent)
+        under.at(-1)?.item?.files.push(file)
+        holds(line)
+        blank = false
+        return
+      }
+      // A list item that is no checklist line: what is indented under it is its own.
+      if (BULLET.test(raw)) {
+        close()
+        leave(indent)
+        holds(line)
+        under.push({ column: contentColumn(raw), item: null })
+        blank = false
+        return
+      }
+      // Its text going on (a paragraph's next row), unless a blank row or another block ends it.
+      if (open && (MARKER_ROW.test(raw) || !BLOCK.test(raw))) {
+        open.parts.push(raw.trim())
+        open.item.end = line
+      } else {
+        close()
+        if (blank || BLOCK.test(raw)) leave(indent)
+      }
+      holds(line)
+      blank = false
+      return
+    }
+    close()
+    leave(indent)
+    const item: ListLine = {
+      line,
+      end: line,
+      indent: widthOf(check[1]!),
+      done: check[3] !== ' ',
+      text: '',
+      id: null,
+      marker: null,
+      section,
+      files: [],
+      last: line,
+    }
+    lines.push(item)
+    holds(line)
+    under.push({ column: contentColumn(raw), item })
+    open = { item, parts: [check[4] ?? ''] }
+    blank = false
+  })
+  close()
+  return { title, lines }
+}
+
+/** An item's text without its Markdown: for a chip, a thread's card, a teammate's prompt. */
+export function plainItemText(text: string) {
+  return text
+    .replace(MARKERS, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/@\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/(\*\*|__|\*|_|~~|`)/g, '')
+    .replace(/\\(.)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** For matching a line a teammate names by its text: case, spaces and Markdown aside. */
+const normal = (text: string) =>
+  plainItemText(text)
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+
+/** Whether two texts are the same line's, case, spaces and Markdown aside. */
+export const sameItemText = (a: string, b: string) => normal(a) === normal(b)
+
+/**
+ * The line `ref` names: its id, or its text (the whole of it, or its start when only one line
+ * starts so). A string when none or several match, saying so.
+ */
+export function findLine(list: ParsedList, ref: string): ListLine | string {
+  const byId = list.lines.find((l) => l.id === ref)
+  if (byId) return byId
+  const want = normal(ref)
+  if (!want) return 'Name a line by its id or its text'
+  const whole = list.lines.filter((l) => normal(l.text) === want)
+  if (whole.length === 1) return whole[0]!
+  const start = whole.length ? whole : list.lines.filter((l) => normal(l.text).startsWith(want))
+  if (start.length === 1) return start[0]!
+  if (start.length === 0) return `No checklist line matches "${ref}"`
+  return `${start.length} checklist lines match "${ref}": give more of its text, or its id`
+}
+
+/** The file with `edit` applied to one line. */
+function withLine(markdown: string, line: number, edit: (raw: string) => string) {
+  const rows = markdown.split('\n')
+  rows[line] = edit(rows[line]!)
+  return rows.join('\n')
+}
+
+/** The line given a marker, unless it has one. */
+export function markLine(markdown: string, line: ListLine, id: string) {
+  if (line.id) return markdown
+  return setMarker(markdown, line, id)
+}
+
+/**
+ * The line's marker set to `id`: put in place of the one it has (a copy's), on whichever of its
+ * rows that is, else added at the end of its first row.
+ */
+export function setMarker(markdown: string, line: ListLine, id: string) {
+  if (line.marker === id && line.id === id) return markdown
+  const rows = markdown.split('\n')
+  for (let row = line.line; row <= line.end; row++)
+    if (MARKER.test(rows[row]!)) {
+      rows[row] = rows[row]!.replace(MARKER, ` ${itemMarker(id)}`)
+      return rows.join('\n')
+    }
+  return withLine(markdown, line.line, (raw) => {
+    const { head, brk } = splitBreak(raw, line.end > line.line)
+    return `${head} ${itemMarker(id)}${brk}`
+  })
+}
+
+/** A line's first row without the line break that ends it when its text goes on below, and that break. */
+function splitBreak(raw: string, goesOn: boolean) {
+  const brk = goesOn ? raw.match(/(\s*\\| {2,})$/) : null
+  const head = (brk ? raw.slice(0, brk.index) : raw).replace(/\s+$/, '')
+  return { head, brk: brk ? (brk[1]!.includes('\\') ? ' \\' : '  ') : '' }
+}
+
+/**
+ * Text Brigade writes into a list (a line, a note): no HTML comment in it, so never a marker it was
+ * not given. A marker in a teammate's or a customer's words would take over another line's id, and
+ * an open comment would hide the lines below it.
+ */
+const noComments = (text: string) => text.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<!--|-->/g, ' ')
+
+/**
+ * The headings of a file by row, outside code blocks, as parseList reads them: a heading in a
+ * fenced example is no section of the list.
+ */
+function headingRows(rows: string[]) {
+  const found: { row: number; text: string }[] = []
+  let fence: string | null = null
+  rows.forEach((raw, row) => {
+    const fenced = raw.match(FENCE)
+    if (fenced) {
+      if (!fence) fence = fenced[1]!
+      else if (fenced[1]!.startsWith(fence[0]!) && fenced[1]!.length >= fence.length) fence = null
+      return
+    }
+    if (fence) return
+    const heading = raw.match(HEADING)
+    if (heading) found.push({ row, text: heading[2]! })
+  })
+  return found
+}
+
+/** Whether the file has a heading named `section`, as insertLine finds one (case, spaces and Markdown aside). */
+export function hasHeading(markdown: string, section: string) {
+  const want = normal(section)
+  return headingRows(markdown.split('\n')).some((h) => normal(h.text) === want)
+}
+
+/** A link in a note: italics around it come back from the editor broken, a little more each save. */
+const LINKISH = /(https?:\/\/|www\.|\]\()/i
+
+/**
+ * The line ticked or unticked, with a short note after its text when given (e.g. "PR #12, 29
+ * Oct"), in italics unless it holds a link. On its first row, before its marker and any line
+ * break there.
+ */
+export function setLineDone(markdown: string, line: ListLine, done: boolean, note?: string) {
+  return withLine(markdown, line.line, (raw) => {
+    let next = raw.replace(/\[( |x|X)\]/, done ? '[x]' : '[ ]')
+    const clean = (note === undefined ? undefined : noComments(note))
+      ?.replace(/[*_`\n]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (clean) {
+      const marker = next.match(MARKER)
+      const { head, brk } = splitBreak(
+        marker ? next.replace(MARKER, '') : next,
+        line.end > line.line,
+      )
+      const text = LINKISH.test(clean) ? `— ${clean}` : `*${clean}*`
+      next = `${head} ${text}${marker ? ` ${marker[0].trim()}` : ''}${brk}`
+    }
+    return next
+  })
+}
+
+/**
+ * The file with a new line after `after` (nested under it with `nested`, else beside it, after
+ * the lines nested under it), or at the end of the section `section`, or at the end of the file.
+ */
+export function insertLine(
+  markdown: string,
+  list: ParsedList,
+  at: { after?: ListLine; nested?: boolean; section?: string },
+  text: string,
+  id: string,
+) {
+  const rows = markdown.split('\n')
+  const clean = noComments(text)
+    .replace(/\s*\n\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  let index = rows.length
+  let indent = 0
+  if (at.after) {
+    const after = at.after
+    indent = after.indent + (at.nested ? 2 : 0)
+    // Under it: first, right after its text. Beside it: after all that is under it, the lines
+    // nested under it and its files, which would else be under the new line.
+    index = (at.nested ? after.end : after.last) + 1
+  } else if (at.section) {
+    const want = normal(at.section)
+    // Its heading and the next, outside code blocks: never one in a fenced example.
+    const headings = headingRows(rows)
+    const found = headings.findIndex((h) => normal(h.text) === want)
+    const start = found >= 0 ? headings[found]!.row : -1
+    if (start >= 0) {
+      const end = headings[found + 1]?.row ?? -1
+      const inSection = list.lines.filter((l) => l.line > start && (end < 0 || l.line < end))
+      // After the last of its lines, and of what is under them (a line's files).
+      index = inSection.length ? Math.max(...inSection.map((l) => l.last)) + 1 : start + 1
+      if (!inSection.length) rows.splice(index++, 0, '')
+    }
+  }
+  // Keep a list's lines together: no blank line between the new one and those above.
+  while (!at.after && !at.section && index > 0 && rows[index - 1]!.trim() === '') index--
+  const line = `${' '.repeat(indent)}* [ ] ${clean} ${itemMarker(id)}`
+  rows.splice(index, 0, line)
+  return rows.join('\n')
+}
+
+/** Counts of a list's lines, ticked and not. */
+export function listCounts(list: ParsedList) {
+  const done = list.lines.filter((l) => l.done).length
+  return { done, total: list.lines.length }
+}
+
+// ---- What the dashboard reads -----------------------------------------------------------------
+
+/** A thread working on an item, as a line's chip shows it. */
+export const ListThread = z.object({
+  id: z.string(),
+  title: z.string(),
+  status: z.string(),
+  stuck: z.boolean(),
+  teammate: z.object({ id: z.string(), name: z.string() }),
+})
+export type ListThread = z.infer<typeof ListThread>
+
+export const ListPull = z.object({
+  repository: z.string(),
+  number: z.number(),
+  state: z.string(),
+  closes: z.boolean(),
+  /** Only part of the item: what remains of it once this one is merged. */
+  remains: z.string().nullable(),
+  url: z.string(),
+})
+export type ListPull = z.infer<typeof ListPull>
+
+/** Where an item stands, from its threads: one of them waits on a person, or works. */
+export const ItemState = z.enum(['done', 'needs_you', 'in_progress', 'open'])
+export type ItemState = z.infer<typeof ItemState>
+
+export const ListItemView = z.object({
+  id: z.string(),
+  text: z.string(),
+  done: z.boolean(),
+  state: ItemState,
+  /** Gone from its file (the line deleted, or its marker): its threads still name it. */
+  missing: z.boolean(),
+  /**
+   * Still open though nothing works on it: its threads stopped (none works or waits on a person),
+   * no pull request on it is open, and no line of what remains of it is open. Someone should
+   * tick it, or say what remains.
+   */
+  stalled: z.boolean(),
+  section: z.string().nullable(),
+  doneBy: z.object({ name: z.string(), at: z.string() }).nullable(),
+  threads: z.array(ListThread),
+  pulls: z.array(ListPull),
+})
+export type ListItemView = z.infer<typeof ListItemView>
+
+export const ListSummary = z.object({
+  documentId: z.string(),
+  path: z.string(),
+  title: z.string(),
+  /** The project whose folder holds the file; null: none does. */
+  projectId: z.string().nullable(),
+  done: z.number(),
+  total: z.number(),
+  needsYou: z.number(),
+  inProgress: z.number(),
+  updatedAt: z.string(),
+  /** The items waiting on a person, then those in progress: a few, for the list's card. */
+  next: z.array(z.object({ id: z.string(), text: z.string(), state: ItemState })),
+})
+export type ListSummary = z.infer<typeof ListSummary>
+
+export const ListDetail = ListSummary.omit({ next: true, projectId: true }).extend({
+  /** The items work is attached to, in the file's order, then those gone from it. */
+  items: z.array(ListItemView),
+})
+export type ListDetail = z.infer<typeof ListDetail>
+
+/** A thread's items, for the card at its top. */
+export const ThreadListItems = z.array(
+  ListItemView.extend({ documentId: z.string(), path: z.string(), listTitle: z.string() }),
+)
+export type ThreadListItems = z.infer<typeof ThreadListItems>
+
+/** An upload of a document (`asset:<id>`), by its id. */
+export const DocumentFileId = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
+
+/**
+ * Lines picked in the editor: the id each was given there, its text, and the files under it
+ * there (by id), which go with it. Without `files`, those under it in the saved file go.
+ */
+const PickedLines = z
+  .array(
+    z.object({
+      id: ListItemId,
+      text: z.string().trim().min(1).max(2_000),
+      files: z.array(DocumentFileId).max(20).optional(),
+    }),
+  )
+  .min(1)
+  .max(50)
+
+/** Lines of a list a new thread starts on, attached before its first turn (StartThread). */
+export const StartOnLines = z.object({ documentId: z.string(), items: PickedLines })
+
+/** Hand lines to a teammate: in one thread together, or a thread each. */
+export const HandOffItems = z.object({
+  teammateId: z.string(),
+  items: PickedLines,
+  mode: z.enum(['together', 'each']).default('together'),
+  /** What the person adds to the first message. */
+  note: z.string().trim().max(4_000).optional(),
+})
+export type HandOffItems = z.infer<typeof HandOffItems>
+
+/**
+ * Attach lines to a thread that runs already. `quiet`: its teammate is not told by a note, as the
+ * person sends the hand-off as a message of theirs right after (handOffMessage); else the note
+ * carries what the person adds (`note`).
+ */
+export const LinkItems = z.object({
+  sessionId: z.string(),
+  items: PickedLines,
+  quiet: z.boolean().optional(),
+  note: z.string().trim().max(4_000).optional(),
+})
+export type LinkItems = z.infer<typeof LinkItems>
+
+/** A line handed over: its text, and the library paths of the files under it (documentFilePath). */
+export type HandedLine = string | { text: string; files?: string[] }
+
+/** Before each file of a line in a hand-off message, under the line. */
+const HANDED_FILE = '  - File in the library: '
+
+/**
+ * The message that hands lines to a teammate, in a new thread or one that runs already: the
+ * person's note, if any, then a request naming the list, then the lines, each with the files
+ * under it. The request stays with a note too, so the note reads back apart from the lines.
+ */
+export function handOffMessage(
+  file: { id: string; path: string },
+  lines: HandedLine[],
+  note?: string | null,
+) {
+  const mention = formatMention({ kind: 'document', id: file.id, label: file.path })
+  const said = note?.trim()
+  return [
+    ...(said ? [said] : []),
+    lines.length > 1
+      ? `Please take these items of ${mention}:`
+      : `Please take this item of ${mention}:`,
+    handedLines(lines),
+  ].join('\n\n')
+}
+
+/** Lines handed over as a hand-off message lists them: one each, the files under it below it. */
+export function handedLines(lines: HandedLine[]) {
+  return lines
+    .map((line) => {
+      const { text, files = [] } = typeof line === 'string' ? { text: line } : line
+      return [
+        `- ${plainItemText(text)}`,
+        ...files.map((path) => `${HANDED_FILE}${path.replace(/\s*\n\s*/g, ' ')}`),
+      ].join('\n')
+    })
+    .join('\n')
+}
+
+const HAND_OFF =
+  /^(?:([\s\S]*?)\n\n)?Please take (?:this item|these items) of @\[([^\]]*)\]\(document:([^)\s]+)\):\n\n((?:- .*(?:\n|$)(?: {2}- File in the library: .+(?:\n|$))*)+)$/
+
+/**
+ * A hand-off message as handOffMessage writes it: the person's note if they wrote one, the
+ * list's file, the lines and the files that went with them, so people see their note and what
+ * was handed over rather than the request it is worded as. Null for any other message, and for
+ * one with a note from before the request followed notes (the note, then the lines).
+ */
+export function handOffParts(text: string): {
+  note?: string
+  file: { id: string; path: string }
+  items: string[]
+  files?: string[]
+} | null {
+  const m = HAND_OFF.exec(text.trim())
+  if (!m) return null
+  const rows = m[4]!.trim().split('\n')
+  const files = rows
+    .filter((row) => row.startsWith(HANDED_FILE))
+    .map((row) => row.slice(HANDED_FILE.length))
+  const note = m[1]?.trim()
+  return {
+    ...(note ? { note } : {}),
+    file: { id: m[3]!, path: m[2]! },
+    items: rows.filter((row) => row.startsWith('- ')).map((row) => row.slice(2)),
+    ...(files.length ? { files } : {}),
+  }
+}
+
+export const SetItemDone = z.object({ done: z.boolean() })
+
+// ---- What a teammate does with them (schedule.call operations) --------------------------------
+
+const Path = z.string().trim().min(1).max(1_000)
+const Ref = z.string().trim().min(1).max(2_000)
+
+export const ListOperations = [
+  z.object({ name: z.literal('list_items'), path: Path.optional() }),
+  z.object({ name: z.literal('link_items'), path: Path, items: z.array(Ref).min(1).max(50) }),
+  z.object({
+    name: z.literal('complete_item'),
+    item: Ref,
+    path: Path.optional(),
+    /** What shows it is done: a teammate never ticks a line without saying so. */
+    note: z
+      .string({
+        error: 'Say in the note what shows it is done, e.g. "Sitemap read by Google, 31 Oct"',
+      })
+      .trim()
+      .min(1, 'Say in the note what shows it is done, e.g. "Sitemap read by Google, 31 Oct"')
+      .max(200),
+  }),
+  z.object({
+    name: z.literal('add_item'),
+    path: Path,
+    text: z.string().trim().min(1).max(2_000),
+    after: Ref.optional(),
+    nested: z.boolean().optional(),
+    section: z.string().trim().max(500).optional(),
+    /** The item this line is what remains of: nested under it, which is ticked once all are. */
+    remainsOf: Ref.optional(),
+  }),
+] as const
+
+export const LIST_OPERATIONS = ['list_items', 'link_items', 'complete_item', 'add_item'] as const
+
+/**
+ * The list every new workspace starts with, at the library's root: first steps a teammate can
+ * take on, so Lists shows how lines are handed over and ticked from day one. Its first line is
+ * the one the setup thread with the chief starts on (`setupLine`).
+ */
+export const GETTING_STARTED = {
+  path: 'getting-started.md',
+  setupLine: 'Set up your team with Chief',
+  text: [
+    '# Getting started',
+    '',
+    'Hand any line to a teammate: the list shows who is on it, and the line is ticked once it is done.',
+    '',
+    '- [ ] Set up your team with Chief',
+    '- [ ] Connect the Apps your work lives in, such as GitHub or Gmail',
+    '- [ ] Create a project for what you are building',
+    '- [ ] Hand this line to a teammate and watch it get ticked',
+    '- [ ] Invite a colleague from Members',
+    '',
+  ].join('\n'),
+} as const
+
+/**
+ * Where a new list named `name` goes: a Markdown file named after it, in `folder` (a project's)
+ * or at the library's root. "Launch plan!" -> `launch-plan.md`.
+ */
+export function newListPath(name: string, folder?: string | null) {
+  const slug =
+    name
+      .toLowerCase()
+      .normalize('NFKD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 80)
+      .replace(/-+$/, '') || 'list'
+  return `${folder ? `${folder.replace(/\/+$/, '')}/` : ''}${slug}.md`
+}
+
+/** A new list's text: its name as its title, and a first empty line to write in. */
+export const newListText = (name: string) => `# ${name.trim()}\n\n- [ ] \n`

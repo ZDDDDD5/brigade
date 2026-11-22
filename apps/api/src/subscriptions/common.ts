@@ -3,7 +3,7 @@
 import { env } from '../config.js'
 import { triggersOf } from '../connectors/index.js'
 import type { ConnectorKind } from '../connectors/types.js'
-import type { Scope, ScopedDb } from '../db.js'
+import { prisma, type Scope, type ScopedDb } from '../db.js'
 
 /** The vendor refused, or this server cannot be reached: shown to the admin as is. */
 export class SubscribeError extends Error {}
@@ -20,8 +20,10 @@ export type Target = {
     vaultSecretId: string | null
     externalAccount: string | null
   }
-  /** The connection's triggers. None: unsubscribe. */
+  /** The connection's triggers. None, and no reply awaited: unsubscribe. */
   triggers: { event: string; options: unknown }[]
+  /** Threads wait on replies in this mailbox (src/replies.ts): its inbox is read even without triggers. */
+  awaitingReplies: boolean
 }
 
 /** The vendor event types a connection's triggers listen to, sorted. */
@@ -44,4 +46,22 @@ export function serially<T>(key: string, work: () => Promise<T>): Promise<T> {
     })
     .catch(() => undefined)
   return next
+}
+
+/**
+ * When a subscription's reader tries again (Subscription.retryAt): set before each read, so the
+ * minute's tick reads again after a restart cut one off, and after a failure; cleared once read.
+ */
+export const retryLater = (subscriptionId: string, at: number | null) =>
+  prisma.subscription.updateMany({
+    where: { id: subscriptionId },
+    data: { retryAt: at === null ? null : new Date(at) },
+  })
+
+/**
+ * The triggers an account is read for: those whose teammate is not archived, and a mailbox's rules
+ * with nobody, which keep their mail in the Inbox for a person (src/triggers.ts).
+ */
+export const LISTENING = {
+  OR: [{ teammateId: null }, { teammate: { archivedAt: null } }],
 }

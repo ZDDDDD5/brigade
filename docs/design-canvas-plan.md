@@ -18,7 +18,10 @@ presence come later (end of this file).
    home, settings…), each with its title above it. A design without boards shows
    its `index.html` once per viewport in its manifest (desktop and mobile side by
    side), a deck as one board. An options set shows each option as a row with its
-   name above it, instead of tabs.
+   name above it, instead of tabs. The title's menu lists the set's options (by
+   their titles) and "All side by side" to switch between them, from the thread
+   too, where an option opens alone; ← and → go to the previous and next option
+   while the panel has the focus.
 2. Trackpad or wheel pans; pinch or Ctrl/⌘ + wheel zooms; space + drag pans;
    `⇧1` fits everything, `⇧2` the selection, `⌘0` is 100 %. A zoom menu shows the
    percentage. Over a board whose page scrolls, the wheel scrolls the page.
@@ -44,6 +47,22 @@ presence come later (end of this file).
    open-in-a-tab stay in the toolbar.
 8. In the narrow panel beside a thread the canvas pans, zooms, selects and asks;
    Edit expands the design over the page, where the properties panel has room.
+9. In Select, dragging a selected element moves it (dragging one not selected
+   selects it first); the arrow keys nudge it by 1 px, ⇧ by 10. A move is the
+   element's inline `translate` (the property, apart from `transform`, so it adds
+   to the page's own), saved like any other style and undone the same way.
+   Escape while dragging puts it back.
+10. **Comment** (C, or Comment in the bar beside a thread) picks elements to say
+    what should change on each. Beside its thread, a pick goes straight to the
+    composer's pending edits, its note focused there, as a preview's element does;
+    expanded over the page, or away from a thread, the Ask box opens on it.
+11. A save by anyone else shows at once: on `library.updated` the view is fetched
+    again and only boards whose page has another version (not one this canvas
+    saved) load it; what was selected on them goes. While the person's own
+    changes are saving, or the design is hidden, the look waits until they are done.
+12. Beside a thread, the design is kept while another thread shows, like the
+    preview and tools (`components/kept-previews.tsx`): back on the thread, its
+    canvas is as it was left, not loaded again.
 
 ## Pieces
 
@@ -266,7 +285,7 @@ the rule for saves over a person's edits.
 
 ## Not now
 
-- Deleting, duplicating, moving or resizing elements on a board; adding elements;
+- Deleting, duplicating or resizing elements on a board (moving is done, above); adding elements;
   moving, resizing or adding boards (and saving places). Ask the teammate.
 - A Layers list.
 - Telling the teammate in `check_design` how much of a page is editable.

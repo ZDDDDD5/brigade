@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build or deploy one of Brigade's Workers:
-#   scripts/deploy/workers.sh build|deploy api|api-front|web|collab
+#   scripts/deploy/workers.sh build|deploy api|api-front|web|collab|demo|preview-gateway
 # Each Worker's Workers Build runs it on a push to main (the cf:* scripts in the root
 # package.json), after installing dependencies. Deploying the API migrates the database
 # first, with DATABASE_URL from the environment (a build secret on Cloudflare). A deploy
@@ -79,7 +79,9 @@ build:api-front)
   # Nothing: wrangler bundles it when deploying.
   ;;
 deploy:api-front)
-  # The small Worker in front of the API's Durable Object (src/front.ts).
+  # The small Worker in front of the API's Durable Objects (src/front.ts). After the API's deploy:
+  # it binds to the objects brigade-api defines, a new one included (WorkspaceHubObject).
+  wait_for_api
   pnpm --filter @brigade/api exec wrangler deploy -c wrangler.front.jsonc
   ;;
 build:web)
@@ -90,14 +92,33 @@ deploy:web)
   wait_for_api
   pnpm --filter @brigade/web exec opennextjs-cloudflare deploy
   ;;
+build:demo)
+  # The public demo (docs/demo.md): the dashboard on recorded data, no API. DEMO_RECORD=1
+  # records its fixtures again first, from a fresh sample workspace (scripts/demo/record.sh).
+  pnpm --filter "@brigade/web^..." build
+  [ "${DEMO_RECORD:-}" != 1 ] || scripts/demo/record.sh
+  NEXT_PUBLIC_DEMO=1 pnpm --filter @brigade/web exec opennextjs-cloudflare build -c wrangler.demo.jsonc
+  ;;
+deploy:demo)
+  # It asks no API, so it does not wait for one.
+  pnpm --filter @brigade/web exec opennextjs-cloudflare deploy -c wrangler.demo.jsonc
+  ;;
 build:collab)
   # Nothing: wrangler bundles it when deploying.
   ;;
 deploy:collab)
   pnpm --filter @brigade/collab exec wrangler deploy --var "API_URL:$API_URL"
   ;;
+build:preview-gateway)
+  # Nothing: wrangler bundles it when deploying.
+  ;;
+deploy:preview-gateway)
+  # The previews' own site, brigade.surf (apps/preview-gateway): its table first.
+  pnpm --filter @brigade/preview-gateway exec wrangler d1 migrations apply brigade-preview-gateway --remote
+  pnpm --filter @brigade/preview-gateway exec wrangler deploy
+  ;;
 *)
-  echo "Usage: $0 build|deploy api|api-front|web|collab" >&2
+  echo "Usage: $0 build|deploy api|api-front|web|collab|demo|preview-gateway" >&2
   exit 1
   ;;
 esac

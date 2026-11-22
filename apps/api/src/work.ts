@@ -2,10 +2,17 @@
 // caps all come through here, so caps are checked in one place.
 import { randomUUID } from 'node:crypto'
 import {
+  type AgentEvent,
   type Effort,
+  type HarnessId,
+  loginName,
+  loginOf,
+  type TeammateHarness,
   mentionedIds,
   type ReplyTo,
+  RETRY_PROTOCOL,
   type ThreadAttachmentRef,
+  messageCommand,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { attachToThread, detach } from './attachments.js'
@@ -13,12 +20,18 @@ import { audit } from './audit.js'
 import { capLabel, turnCapReached } from './caps.js'
 import type { RunnerToApi } from '@brigade/contracts'
 import { scoped, type Scope, type ScopedDb } from './db.js'
-import { broadcastThreadStatus, dispatch, runnerProtocol } from './hub.js'
+import { refuseWhileDeleting } from './deletion-fence.js'
+import { describeError, hubs, threadUpdated } from './hub.js'
+import { isKept } from './runner-commands.js'
+import { goalCommandRefusal } from './goals.js'
+import { deleteThread } from './thread-delete.js'
 import { usableAccounts } from './routes/accounts.js'
 import {
+  askedBy,
   currentTeammate,
   loadThread,
   noAccount,
+  noteAsker,
   specFor,
   teammateIn,
   type LoadedThread,
@@ -40,6 +53,11 @@ type Prompt = {
   steer?: boolean
   /** The earlier message it replies to. */
   replyTo?: ReplyTo
+  /**
+   * Written by a teammate for a member's request elsewhere (message_thread, a task comment):
+   * that member asks it too (Session.askedByMemberId). A person's own message: memberId does.
+   */
+  onBehalfOf?: string | null
 }
 
 const MAX_TEAMMATES_PER_MESSAGE = 5
@@ -85,25 +103,57 @@ export async function promptThread(
     nameThread?: string
     /** The message a move takes along (src/move.ts), sent once the thread is on its new computer. */
     moving?: boolean
+    /**
+     * A stable id for the prompt (a wake-up's, a trigger delivery's): tried again after a restart,
+     * it is kept once and reaches the runner once (src/runner-commands.ts).
+     */
+    commandId?: string
   } = {},
 ): Promise<'sent' | 'queued' | 'offline' | 'paused'> {
+  // Every turn starts here: none in a workspace being deleted, whose computer and Apps are going.
+  await refuseWhileDeleting(scope.workspaceId)
+  // Whose requests it works on: Brigade's own notes (a wake-up, a report) change nothing.
+  const asker = prompt.memberId ?? prompt.onBehalfOf
+  if (asker) await noteAsker(db, thread.id, asker)
   // Moving, the thread is on neither computer for good: what is sent now could be lost on
   // the old one, or reach the new one before its runner can take the thread in.
   if (thread.move && !options.moving)
     throw new HTTPException(409, {
       message: 'This thread is moving to another computer. Send this once it is there.',
     })
+  // A prompt with a stable id tried again (after a restart): it went already, or a cap holds it.
+  if (options.commandId) {
+    if (await isKept(options.commandId)) return 'queued'
+    if (
+      !options.skipCaps &&
+      (await db.ticket.count({
+        where: {
+          sessionId: thread.id,
+          type: 'cap',
+          payload: { path: ['pending', 'commandId'], equals: options.commandId },
+        },
+      }))
+    )
+      return 'paused'
+  }
+  // `/goal` (docs/goals.md): an older runner would hand its harness the leading `/goal`, which
+  // Claude Code and Codex take for their own command, outside Brigade's loop.
+  if (prompt.memberId && messageCommand(prompt.text)?.command === 'goal') {
+    const refused = await goalCommandRefusal(scope, thread.computer.id)
+    if (refused) throw new HTTPException(409, { message: refused })
+  }
   const ids = prompt.teammateIds?.length ? prompt.teammateIds : [currentTeammate(thread).id]
   const responders = ids.map((id) => teammateIn(thread, id))
+  const hub = hubs.get(scope.workspaceId)
   if (prompt.attachments?.length) {
-    const protocol = runnerProtocol(thread.computer.id)
+    const protocol = await hub.runnerProtocol(thread.computer.id)
     if (protocol !== undefined && protocol < 7)
       throw new HTTPException(409, {
         message: "This computer's runner is too old for attached files. Update it.",
       })
   }
   if (responders.length > 1 || responders[0]!.id !== thread.teammateId) {
-    const protocol = runnerProtocol(thread.computer.id)
+    const protocol = await hub.runnerProtocol(thread.computer.id)
     if (protocol !== undefined && protocol < 2)
       throw new HTTPException(409, {
         message: "This computer's runner is too old for threads with several teammates. Update it.",
@@ -124,7 +174,12 @@ export async function promptThread(
           payload: {
             ...reached,
             teammateId: teammate.id,
-            pending: { ...prompt, teammateIds: ids },
+            pending: {
+              ...prompt,
+              teammateIds: ids,
+              // Sent with its id once allowed, so it still reaches the thread once.
+              ...(options.commandId ? { commandId: options.commandId } : {}),
+            },
           },
         } as never,
       })
@@ -135,7 +190,7 @@ export async function promptThread(
         target: { type: 'thread', id: thread.id },
         data: { ...reached, ticketId: ticket.id },
       })
-      broadcastThreadStatus(scope.workspaceId, thread.id, 'paused')
+      void hubs.get(scope.workspaceId).broadcast(threadUpdated(thread.id, 'paused'))
       return 'paused'
     }
   }
@@ -151,20 +206,83 @@ export async function promptThread(
     ),
   )
   const [first, ...then] = specs
-  return dispatch(thread.computer, {
-    type: 'thread.prompt',
-    commandId: randomUUID(),
-    thread: first!,
-    text: prompt.text,
-    memberId: prompt.memberId,
-    then,
-    ...(prompt.handoff ? { handoff: true } : {}),
-    attachments: prompt.attachments ?? [],
-    ...(prompt.messageId ? { messageId: prompt.messageId } : {}),
-    ...(prompt.steer ? { steer: true } : {}),
-    ...(prompt.replyTo ? { replyTo: prompt.replyTo } : {}),
-    ...(options.nameThread ? { nameThread: options.nameThread } : {}),
+  const commandId = options.commandId ?? randomUUID()
+  try {
+    return await hubs.get(thread.computer.workspaceId).dispatch(thread.computer, {
+      type: 'thread.prompt',
+      commandId,
+      thread: first!,
+      text: prompt.text,
+      memberId: prompt.memberId,
+      then,
+      ...(prompt.handoff ? { handoff: true } : {}),
+      attachments: prompt.attachments ?? [],
+      ...(prompt.messageId ? { messageId: prompt.messageId } : {}),
+      ...(prompt.steer ? { steer: true } : {}),
+      ...(prompt.replyTo ? { replyTo: prompt.replyTo } : {}),
+      ...(options.nameThread ? { nameThread: options.nameThread } : {}),
+    })
+  } catch (error) {
+    // Kept before it failed (a hub object reset as it sent it, say): it goes when the runner
+    // connects again, as a queued one does, so the message is not refused while it gets through.
+    if (error instanceof HTTPException || !(await isKept(commandId).catch(() => false))) throw error
+    console.warn(
+      `thread ${thread.id}: prompt ${commandId} kept, sending it failed: ${describeError(error)}`,
+    )
+    return 'queued'
+  }
+}
+
+/**
+ * Try a thread's failed turn again (POST /threads/:id/retry, a person; or Chief's daily pass in a
+ * person's name, src/chief-pass.ts, whose commandId keeps it only while their pass is on): its
+ * latest turn event must be an error. Throws a 409 when there is nothing to try again, or the
+ * computer cannot.
+ */
+export async function retryThread(
+  db: ScopedDb,
+  scope: Scope,
+  thread: Thread,
+  memberId: string,
+  commandId: string = randomUUID(),
+) {
+  const protocol = await hubs.get(thread.workspaceId).runnerProtocol(thread.computer.id)
+  if (protocol !== undefined && protocol < RETRY_PROTOCOL)
+    throw new HTTPException(409, {
+      message: "This computer's Brigade is too old to try a turn again. Send a message instead.",
+    })
+  // The thread's latest turn event: an error, with the turn it ended before it.
+  const [last, started] = await Promise.all([
+    db.sessionEvent.findFirst({
+      where: {
+        sessionId: thread.id,
+        type: { in: ['turn.started', 'turn.completed', 'error', 'message.user'] },
+      },
+      orderBy: { seq: 'desc' },
+      select: { data: true },
+    }),
+    db.sessionEvent.findFirst({
+      where: { sessionId: thread.id, type: 'turn.started' },
+      orderBy: { seq: 'desc' },
+      select: { data: true },
+    }),
+  ])
+  const error = last?.data as AgentEvent | undefined
+  if (error?.type !== 'error')
+    throw new HTTPException(409, { message: 'There is nothing to try again: no turn failed.' })
+  const turn = started?.data as AgentEvent | undefined
+  const teammate = teammateIn(thread, turn?.type === 'turn.started' ? turn.teammateId : undefined)
+  const sent = await hubs.get(thread.computer.workspaceId).dispatch(thread.computer, {
+    type: 'thread.retry',
+    commandId,
+    thread: await specFor(db, thread, { teammate }),
+    error: error.message.slice(0, 10_000),
+    memberId,
   })
+  if (sent === 'offline')
+    throw new HTTPException(409, {
+      message: 'That computer is offline. Start its runner and try again.',
+    })
 }
 
 /** The member in control hands the thread back: the teammate continues, told their note and what changed. */
@@ -175,7 +293,7 @@ export async function handBack(
   note: string,
 ) {
   await db.session.updateMany({ where: { id: thread.id }, data: { controlledByMemberId: null } })
-  const sent = await dispatch(thread.computer, {
+  const sent = await hubs.get(thread.computer.workspaceId).dispatch(thread.computer, {
     type: 'thread.handback',
     commandId: randomUUID(),
     thread: await specFor(db, thread, { requireUsage: false }),
@@ -214,7 +332,8 @@ export async function titleThread(
     where: { id: session.id, title: message.from },
     data: { title: message.title, updatedAt: session.updatedAt },
   })
-  if (count > 0) broadcastThreadStatus(runner.workspaceId, session.id, session.status)
+  if (count > 0)
+    void hubs.get(runner.workspaceId).broadcast(threadUpdated(session.id, session.status))
 }
 
 /** Teammates answering one another stop after this many turns without a member's message. */
@@ -240,8 +359,14 @@ export async function handoffThread(
   const from = thread.teammates.find((t) => t.teammateId === message.fromTeammateId)
   if (!from) return
   // The chief routes work: a teammate it mentions joins the thread to answer. Not in a playbook's
-  // run: what started it is untrusted, and only a person brings another teammate in.
-  if (from.teammate.kind === 'chief' && !session.playbookRunId) {
+  // run: what started it is untrusted, and only a person brings another teammate in. Nor in its
+  // daily pass for a person (src/chief-pass.ts), nor a decision thread of #724's: it only reads there.
+  if (
+    from.teammate.kind === 'chief' &&
+    !session.playbookRunId &&
+    !session.chiefDecisionId &&
+    !session.chiefPassId
+  ) {
     const joining = await db.teammate.findMany({
       where: {
         id: { in: message.teammateIds.filter((id) => !inThread.has(id)) },
@@ -312,6 +437,47 @@ const childOf = (
 })
 
 /**
+ * Where a member's new thread runs when nothing else says (a list's lines handed over, a thread a
+ * teammate starts for another on a computer that cannot run it): the workspace computer, else one
+ * of their own machines that is online; the first where they have an account with usage left for
+ * the teammate's login (loginOf).
+ */
+export async function computerFor(db: ScopedDb, memberId: string, login: HarnessId) {
+  const machines = await db.computer.findMany({
+    where: { kind: 'member_machine', memberId },
+    orderBy: { updatedAt: 'desc' },
+  })
+  const presence = machines.length
+    ? await hubs.get(machines[0]!.workspaceId).presence(machines.map((c) => c.id))
+    : {}
+  const candidates = [
+    ...(await db.computer.findMany({
+      where: { kind: 'cloud', status: { in: ['running', 'stopped', 'starting'] } },
+    })),
+    ...machines.filter((c) => presence[c.id]?.online),
+  ]
+  // One with usage left first; else one whose accounts are out of usage, which a
+  // new turn tries again (the plan may have been upgraded since).
+  let fallback: (typeof candidates)[number] | undefined
+  for (const computer of candidates) {
+    const accounts = await usableAccounts(db, {
+      memberId,
+      computerId: computer.id,
+      provider: login,
+    })
+    if (accounts.some((a) => !a.exhaustedUntil || a.exhaustedUntil <= new Date())) return computer
+    if (accounts.length) fallback ??= computer
+  }
+  if (fallback) return fallback
+  const name = loginName(login)
+  throw new HTTPException(409, {
+    message: candidates.length
+      ? `No ${name} account you can use is ready on the computers it could run on. Add or sign in to one under Accounts.`
+      : 'No computer is online to run it. Start your runner, or set up the cloud computer.',
+  })
+}
+
+/**
  * A new thread with a fresh context, on the starting member's accounts. For a
  * trigger, the member who set it up; for a schedule, its owner; for a child,
  * its parent's starter. Throws when they have no usable account.
@@ -320,7 +486,7 @@ export async function startThread(
   db: ScopedDb,
   scope: Scope,
   input: {
-    teammate: { id: string; name: string; harness: 'claude_code' | 'codex' }
+    teammate: { id: string; name: string; harness: TeammateHarness; model: string | null }
     computer: { id: string }
     memberId: string
     accountId?: string | null
@@ -343,130 +509,276 @@ export async function startThread(
           byTeammateId: string
           awaited: boolean
           awaitUntil?: Date
+          /** In a playbook's run: the teammate setting it works as, whose Apps alone it has. */
+          playbookTeammate?: string | null
         }
+    /**
+     * A teammate started it for the member (start_thread): the first message is the teammate's,
+     * not the member's, though the thread runs on the member's accounts.
+     */
+    byTeammateId?: string
+    /** The thread that teammate started it from (start_thread), which may still write in it. */
+    startedFromId?: string
     /** Uploaded by the member (or, for a trigger, taken from the event), given with the first message. */
     attachmentIds?: string[]
-    /** The task this thread works on, linked before its first turn so the teammate knows. */
-    taskId?: string
+    /** The files came from a connection (a member's email to an agent), not the member's uploads. */
+    connectorFiles?: boolean
+    /** The list items it works on (docs/lists.md), linked before its first turn so the teammate knows. */
+    listItemIds?: string[]
     /** The project it works in; its context comes with the first turn. */
     projectId?: string | null
+    /** The mission it belongs to (docs/missions.md): one started from a mission's thread. */
+    initiativeId?: string | null
     /** How hard its teammates think; none: the harness's default. */
     effort?: Effort | null
     /** The playbook run it is the root thread of: out of the sidebar until a person takes part. */
     playbookRunId?: string
+    /**
+     * Started by a mailbox's rule or handed over from the Inbox: out of the sidebar until a
+     * person takes part or it needs one (Session.quiet).
+     */
+    quiet?: boolean
+    /** Its first prompt's stable id (promptThread's commandId). */
+    commandId?: string
+    /**
+     * Whose request a teammate started it for (Session.askedByMemberId). Unset: the member
+     * typing it, a child's parent's asker, or no one for an event's or a schedule's.
+     */
+    askedByMemberId?: string | null
+    /**
+     * The thread's id, chosen beforehand (a trigger's delivery keeps it with its claim): started
+     * again after a restart cut it off, the thread it made then is taken up rather than a second.
+     */
+    id?: string
+    /**
+     * With `id`: the browser chose it, so a thread that has it already is never taken up as a
+     * trigger's is (else a member could write in a thread not theirs by its id): making it fails.
+     */
+    fresh?: boolean
+    /**
+     * A member's own start (POST /threads), whose message goes back to them should it not start:
+     * a thread made here that did not start is deleted rather than left failed.
+     */
+    dropUnstarted?: boolean
+    /**
+     * Chief's thread going through what waits on a person (src/chief-pass.ts): its pass. Its brief
+     * is Brigade's, quoting what teammates wrote: not the person's word, and it summons nobody.
+     */
+    chiefPassId?: string
+    /**
+     * Handed on by a thread whose work goes on Chief's word (Session.chiefWordSeq): this one's
+     * does too, from its start, and its App writes ask a person.
+     */
+    chiefWord?: boolean
   },
 ) {
-  // Teammates the first message mentions answer after the starting one. A trigger's event is untrusted: it summons nobody.
+  // Nor a new thread, before its row is made (members, triggers, schedules, teammates, children).
+  await refuseWhileDeleting(scope.workspaceId)
+  // Teammates the first message mentions answer after the starting one. A trigger's event is
+  // untrusted, and a pass's brief quotes what others wrote: they summon nobody.
   const teammateIds = [
     input.teammate.id,
-    ...(input.origin ? [] : await mentionedTeammates(db, input.text)).filter(
+    ...(input.origin || input.chiefPassId ? [] : await mentionedTeammates(db, input.text)).filter(
       (id) => id !== input.teammate.id,
     ),
   ]
   const [account] = await usableAccounts(db, {
     memberId: input.memberId,
     computerId: input.computer.id,
-    provider: input.teammate.harness,
+    provider: loginOf(input.teammate.harness, input.teammate.model),
     preferredId: input.accountId ?? null,
   })
-  if (!account) throw noAccount(input.teammate.harness)
-  const created = await db.session.create({
-    data: {
-      teammateId: input.teammate.id,
-      startedByMemberId: input.memberId,
-      computerId: input.computer.id,
-      accountId: account.id,
-      title: input.title.slice(0, 120),
-      ...(input.taskId ? { taskId: input.taskId } : {}),
-      ...(input.projectId ? { projectId: input.projectId } : {}),
-      ...(input.effort ? { effort: input.effort } : {}),
-      ...(input.playbookRunId ? { playbookRunId: input.playbookRunId } : {}),
-      ...(input.origin?.kind === 'trigger'
-        ? {
-            origin: 'trigger',
-            triggerId: input.origin.triggerId,
-            conversationKey: input.origin.conversationKey ?? null,
-          }
-        : input.origin?.kind === 'schedule'
+  if (!account) throw noAccount(loginOf(input.teammate.harness, input.teammate.model))
+  const made =
+    input.id && !input.fresh ? await db.session.findFirst({ where: { id: input.id } }) : null
+  const created =
+    made ??
+    (await db.session.create({
+      data: {
+        ...(input.id ? { id: input.id } : {}),
+        teammateId: input.teammate.id,
+        startedByMemberId: input.memberId,
+        askedByMemberId:
+          input.askedByMemberId !== undefined
+            ? input.askedByMemberId
+            : input.origin?.kind === 'child'
+              ? await askedBy(db, input.origin.parent.id)
+              : input.origin || input.byTeammateId
+                ? null
+                : input.memberId,
+        computerId: input.computer.id,
+        accountId: account.id,
+        title: input.title.slice(0, 120),
+        ...(input.startedFromId ? { startedFromId: input.startedFromId } : {}),
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(input.initiativeId ? { initiativeId: input.initiativeId } : {}),
+        ...(input.effort ? { effort: input.effort } : {}),
+        ...(input.playbookRunId ? { playbookRunId: input.playbookRunId } : {}),
+        ...(input.quiet ? { quiet: true } : {}),
+        ...(input.chiefPassId ? { chiefPassId: input.chiefPassId } : {}),
+        ...(input.chiefWord ? { chiefWordSeq: 0 } : {}),
+        ...(input.origin?.kind === 'trigger'
           ? {
-              origin: 'schedule',
-              scheduleId: input.origin.scheduleId,
-              ...(input.origin.parent
-                ? childOf(input.origin.parent, {
-                    teammateId: input.origin.parentTeammateId ?? input.teammate.id,
-                    awaited: false,
-                  })
-                : {}),
+              origin: 'trigger',
+              triggerId: input.origin.triggerId,
+              conversationKey: input.origin.conversationKey ?? null,
             }
-          : input.origin?.kind === 'child'
+          : input.origin?.kind === 'schedule'
             ? {
-                origin: 'child',
-                ...childOf(input.origin.parent, {
-                  teammateId: input.origin.byTeammateId,
-                  awaited: input.origin.awaited,
-                  ...(input.origin.awaitUntil ? { awaitUntil: input.origin.awaitUntil } : {}),
-                }),
+                origin: 'schedule',
+                scheduleId: input.origin.scheduleId,
+                ...(input.origin.parent
+                  ? childOf(input.origin.parent, {
+                      teammateId: input.origin.parentTeammateId ?? input.teammate.id,
+                      awaited: false,
+                    })
+                  : {}),
               }
-            : {}),
-    } as never,
-  })
-  // Each step below is a trip to the database: what does not wait on another goes with it.
-  const [, { refs: attachments }] = await Promise.all([
-    joinThread(db, created.id, teammateIds),
-    attachToThread(
+            : input.origin?.kind === 'child'
+              ? {
+                  origin: 'child',
+                  ...childOf(input.origin.parent, {
+                    teammateId: input.origin.byTeammateId,
+                    awaited: input.origin.awaited,
+                    ...(input.origin.awaitUntil ? { awaitUntil: input.origin.awaitUntil } : {}),
+                  }),
+                  ...(input.origin.playbookTeammate
+                    ? { playbookTeammate: input.origin.playbookTeammate }
+                    : {}),
+                }
+              : {}),
+      } as never,
+    }))
+  /**
+   * With `dropUnstarted`, a thread made here that did not start goes, rather than stay failed
+   * in the sidebar and what waits on the member: its message is given back to them. Not one
+   * whose prompt was kept for its computer, which may still run it. True once it has gone.
+   */
+  const dropUnstarted = async () => {
+    if (!input.dropUnstarted || made) return false
+    try {
+      if (await db.runnerCommand.count({ where: { sessionId: created.id } })) return false
+      // Its files were never its own: the member's still, to send again.
+      await db.threadAttachment.deleteMany({ where: { sessionId: created.id } })
+      // Not at work (deleteThread refuses a thread starting): it never was.
+      await db.session.updateMany({ where: { id: created.id }, data: { status: 'failed' } })
+      await deleteThread(db, scope, { type: 'member', id: input.memberId }, created.id)
+      void hubs.get(scope.workspaceId).broadcast(threadUpdated(created.id, 'deleted'))
+      return true
+    } catch (error) {
+      // Left failed, as it was before: the member can delete it.
+      console.warn(`thread ${created.id}: did not start, nor go: ${describeError(error)}`)
+      return false
+    }
+  }
+  try {
+    // Each step below is a trip to the database: what does not wait on another goes with it,
+    // and each has settled before a failure is acted on (the thread may go: dropUnstarted).
+    const [joined, linked, attached] = await Promise.allSettled([
+      joinThread(db, created.id, teammateIds),
+      input.listItemIds?.length
+        ? db.listItemThread.createMany({
+            data: input.listItemIds.map((itemId) => ({ itemId, sessionId: created.id })) as never,
+            skipDuplicates: true,
+          })
+        : null,
+      attachToThread(
+        db,
+        scope,
+        created.id,
+        input.attachmentIds ?? [],
+        input.origin || input.connectorFiles ? null : { memberId: input.memberId },
+      ).catch(async (error: unknown) => {
+        await db.session.updateMany({ where: { id: created.id }, data: { status: 'failed' } })
+        throw error
+      }),
+    ])
+    for (const step of [joined, linked]) if (step.status === 'rejected') throw step.reason
+    if (attached.status === 'rejected') throw attached.reason
+    const { refs: attachments, created: links } = attached.value
+    const started = made
+      ? Promise.resolve()
+      : audit({
+          ...scope,
+          actor: !input.origin
+            ? input.byTeammateId
+              ? { type: 'teammate', id: input.byTeammateId }
+              : input.chiefPassId
+                ? { type: 'system', id: `chief-pass:${input.chiefPassId}` }
+                : { type: 'member', id: input.memberId }
+            : input.origin.kind === 'trigger'
+              ? { type: 'system', id: `trigger:${input.origin.triggerId}` }
+              : input.origin.kind === 'schedule'
+                ? { type: 'system', id: `schedule:${input.origin.scheduleId}` }
+                : { type: 'teammate', id: input.origin.byTeammateId },
+          action: 'thread.started',
+          target: { type: 'thread', id: created.id },
+          track: {
+            origin:
+              input.origin?.kind ??
+              (input.chiefPassId
+                ? 'chief_pass'
+                : input.quiet
+                  ? 'email'
+                  : input.byTeammateId
+                    ? 'teammate'
+                    : 'member'),
+            harness: input.teammate.harness,
+          },
+          data: {
+            teammateId: input.teammate.id,
+            computerId: input.computer.id,
+            accountId: account.id,
+            ...(input.origin?.kind === 'trigger' ? { triggerId: input.origin.triggerId } : {}),
+            ...(input.origin?.kind === 'schedule' ? { scheduleId: input.origin.scheduleId } : {}),
+            ...(input.origin && 'parent' in input.origin && input.origin.parent
+              ? { parentId: input.origin.parent.id }
+              : {}),
+          },
+        })
+    const [, thread] = await Promise.all([started, loadThread(db, created.id)])
+    const outcome = await promptThread(
       db,
       scope,
-      created.id,
-      input.attachmentIds ?? [],
-      input.origin ? null : { memberId: input.memberId },
+      thread,
+      {
+        text: input.text,
+        memberId: input.origin || input.byTeammateId || input.chiefPassId ? null : input.memberId,
+        teammateIds,
+        attachments,
+      },
+      // A member's thread gets a better title than its first line; an event's or a schedule's keeps its own.
+      {
+        isNew: true,
+        ...(input.origin || input.chiefPassId ? {} : { nameThread: created.title }),
+        ...(input.commandId ? { commandId: input.commandId } : {}),
+      },
     ).catch(async (error: unknown) => {
-      await db.session.updateMany({ where: { id: created.id }, data: { status: 'failed' } })
+      // E.g. a mentioned teammate's harness has no account: the thread never ran. Its files leave
+      // it, as a message's do (promptWithAttachments): they can be sent again.
+      await Promise.all([
+        db.session.updateMany({ where: { id: thread.id }, data: { status: 'failed' } }),
+        detach(db, links),
+      ])
       throw error
-    }),
-  ])
-  const started = audit({
-    ...scope,
-    actor: !input.origin
-      ? { type: 'member', id: input.memberId }
-      : input.origin.kind === 'trigger'
-        ? { type: 'system', id: `trigger:${input.origin.triggerId}` }
-        : input.origin.kind === 'schedule'
-          ? { type: 'system', id: `schedule:${input.origin.scheduleId}` }
-          : { type: 'teammate', id: input.origin.byTeammateId },
-    action: 'thread.started',
-    target: { type: 'thread', id: created.id },
-    data: {
-      teammateId: input.teammate.id,
-      computerId: input.computer.id,
-      accountId: account.id,
-      ...(input.origin?.kind === 'trigger' ? { triggerId: input.origin.triggerId } : {}),
-      ...(input.origin?.kind === 'schedule' ? { scheduleId: input.origin.scheduleId } : {}),
-      ...(input.origin && 'parent' in input.origin && input.origin.parent
-        ? { parentId: input.origin.parent.id }
-        : {}),
-    },
-  })
-  const [, thread] = await Promise.all([started, loadThread(db, created.id)])
-  const outcome = await promptThread(
-    db,
-    scope,
-    thread,
-    {
-      text: input.text,
-      memberId: input.origin ? null : input.memberId,
-      teammateIds,
-      attachments,
-    },
-    // A member's thread gets a better title than its first line; an event's or a schedule's keeps its own.
-    { isNew: true, ...(input.origin ? {} : { nameThread: created.title }) },
-  ).catch(async (error: unknown) => {
-    // E.g. a mentioned teammate's harness has no account: the thread never ran.
-    await db.session.updateMany({ where: { id: thread.id }, data: { status: 'failed' } })
+    })
+    if (outcome === 'offline') {
+      await Promise.all([
+        db.session.updateMany({ where: { id: thread.id }, data: { status: 'failed' } }),
+        detach(db, links),
+      ])
+      if (await dropUnstarted()) return { thread, outcome }
+    }
+    // Every dashboard lists it now, rather than once its runner first reports (seconds later, a
+    // session to start): the sidebar, its parent's sub-threads. As it is now: its runner may
+    // have reported already.
+    const now = await db.session.findFirst({ where: { id: thread.id }, select: { status: true } })
+    if (now) void hubs.get(scope.workspaceId).broadcast(threadUpdated(thread.id, now.status))
+    return { thread, outcome }
+  } catch (error) {
+    await dropUnstarted()
     throw error
-  })
-  if (outcome === 'offline')
-    await db.session.updateMany({ where: { id: thread.id }, data: { status: 'failed' } })
-  return { thread, outcome }
+  }
 }
 
 /**
@@ -479,12 +791,13 @@ export async function promptWithAttachments(
   thread: Thread,
   prompt: Omit<Prompt, 'attachments'> & { attachmentIds: string[] },
   check: { memberId: string } | null,
+  options: { commandId?: string } = {},
 ) {
   const { attachmentIds, ...rest } = prompt
   const { refs, created } = await attachToThread(db, scope, thread.id, attachmentIds, check)
   // The thread's spec lists every file in it, these included.
   try {
-    const outcome = await promptThread(db, scope, thread, { ...rest, attachments: refs })
+    const outcome = await promptThread(db, scope, thread, { ...rest, attachments: refs }, options)
     if (outcome === 'offline') await detach(db, created)
     return outcome
   } catch (error) {

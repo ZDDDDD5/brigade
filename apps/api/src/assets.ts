@@ -1,17 +1,20 @@
 // Files put in documents from the editor: images, video, audio, PDFs. Bytes in
 // the bucket under <organization>/<workspace>/assets/<id>; the document's text
 // refers to each as `asset:<id>`. With R2 the browser uploads straight to the
-// bucket and reads through short-lived signed URLs; without it (development)
-// both go through the API. The hourly sweep keeps the bucket to what some
+// bucket and reads through short-lived signed URLs, and the API reads each upload
+// back as it streams to check it; without it (development) both go through the
+// API. The hourly sweep keeps the bucket to what some
 // document still refers to.
 import {
   ASSET_MAX,
   ASSET_MAX_THROUGH_API,
+  LIBRARY_READ_MAX,
   safeFileName,
   type DocumentAsset,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { audit } from './audit.js'
+import { createHash } from 'node:crypto'
 import {
   assetKey,
   deleteObject,
@@ -22,7 +25,9 @@ import {
   putObject,
 } from './bucket.js'
 import { prisma, type Scope, type ScopedDb } from './db.js'
+import { hubs } from './hub.js'
 import { contentTypeFor, isMarkdown, readLibraryFile } from './library.js'
+import { detectType, HEAD_BYTES, inspectObject } from './object-check.js'
 
 /** Shown in the page where it is: what cannot run script, even from the API's origin. */
 const INLINE =
@@ -76,20 +81,39 @@ export async function startAssetUpload(
   return { row, ...upload }
 }
 
-/** The browser's upload reached the bucket, at the size it announced: ready. */
+/**
+ * The browser's upload reached the bucket: read back as it streams (never held whole), it
+ * must be the size it announced. Its SHA-256 is kept, and the type its bytes bear out: a file
+ * that claims a type shown inline (an image, a PDF) but is not one is served as a download.
+ */
 export async function finishAssetUpload(db: ScopedDb, scope: Scope, id: string, memberId: string) {
   const row = await db.documentAsset.findFirst({ where: { id, uploadedByMemberId: memberId } })
   if (!row) throw new HTTPException(404, { message: 'Upload not found' })
   if (row.status === 'ready') return row
-  const size = await objectSize(assetKey(scope, id))
+  const key = assetKey(scope, id)
+  const size = await objectSize(key)
   if (size === null)
     throw new HTTPException(409, { message: 'The file has not reached storage; upload it again' })
-  if (size !== row.size || size > ASSET_MAX) {
+  const mismatch = async () => {
     await removeAsset(row.id, scope)
-    throw new HTTPException(400, { message: 'The upload does not match the file; upload it again' })
+    return new HTTPException(400, {
+      message: 'The upload does not match the file; upload it again',
+    })
   }
-  const ready = await db.documentAsset.update({ where: { id }, data: { status: 'ready' } })
+  if (size !== row.size || size > ASSET_MAX) throw await mismatch()
+  const inspected = await inspectObject(key, {
+    name: row.name,
+    contentType: row.contentType,
+    max: row.size,
+  })
+  if (!inspected || inspected.size !== row.size) throw await mismatch()
+  const ready = await db.documentAsset.update({
+    where: { id },
+    data: { status: 'ready', sha256: inspected.sha256, contentType: inspected.contentType },
+  })
   await auditAdded(scope, memberId, ready)
+  // Teammates' mirrors take it beside its document (docs/lists.md), before a hand-off names it.
+  void hubs.get(scope.workspaceId).notifyLibraryChanged()
   return ready
 }
 
@@ -103,27 +127,26 @@ export async function storeAsset(
     throw new HTTPException(413, { message: 'Files can be up to 25 MB here' })
   const document = await editableDocument(db, input.documentId)
   const name = safeFileName(input.file.name)
-  const contentType = contentTypeFor(name, input.file.type)
+  const bytes = new Uint8Array(await input.file.arrayBuffer())
+  const contentType = detectType(name, bytes.subarray(0, HEAD_BYTES), input.file.type)
   const row = await db.documentAsset.create({
     data: {
       documentId: document.id,
       name,
       contentType,
-      size: input.file.size,
+      size: bytes.byteLength,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
       uploadedByMemberId: input.memberId,
     } as never,
   })
   try {
-    await putObject(
-      assetKey(scope, row.id),
-      new Uint8Array(await input.file.arrayBuffer()),
-      contentType,
-    )
+    await putObject(assetKey(scope, row.id), bytes, contentType)
   } catch (error) {
     await db.documentAsset.delete({ where: { id: row.id } })
     throw error
   }
   await auditAdded(scope, input.memberId, row)
+  void hubs.get(scope.workspaceId).notifyLibraryChanged()
   return row
 }
 
@@ -171,31 +194,122 @@ async function removeAsset(id: string, scope: Scope) {
   )
 }
 
-/** The document of this workspace that still refers to the file, its own first. */
-async function holder(row: {
-  id: string
-  organizationId: string
-  workspaceId: string
-  documentId: string | null
-}) {
+/**
+ * The document of this workspace that still refers to the file: its own first, unless that one
+ * is in the trash and a live one refers to it too (a block copied over), which takes it on so the
+ * file stays where the library is read (teammates' mirrors, lists). One in the trash keeps it
+ * for a restore when no live one refers to it.
+ */
+async function holder(
+  row: { id: string; organizationId: string; workspaceId: string; documentId: string | null },
+  /** The long documents that refer to it past their text kept for search (laterReferrers). */
+  later: () => Promise<Referrer[]>,
+) {
   const reference = `asset:${row.id}`
   const scope = { organizationId: row.organizationId, workspaceId: row.workspaceId }
-  if (row.documentId) {
-    const own = await prisma.document.findUnique({ where: { id: row.documentId } })
-    if (own) {
-      if (own.text.includes(reference)) return own.id
-      // A long library file: its stored text stops short; read the file itself.
-      if (own.kind === 'library' && own.text.length >= INDEXED_CHARS) {
-        const bytes = await readLibraryFile(scope, own.id).catch(() => null)
-        if (!bytes || new TextDecoder().decode(bytes).includes(reference)) return own.id
-      }
-    }
-  }
+  const own = row.documentId
+    ? await prisma.document.findUnique({ where: { id: row.documentId } })
+    : null
+  const ownRefers = own ? await refersTo(scope, own, reference) : false
+  if (own && ownRefers && !own.deletedAt) return own.id
   const other = await prisma.document.findFirst({
-    where: { ...scope, text: { contains: reference } },
+    where: { ...scope, ...(own ? { id: { not: own.id } } : {}), text: { contains: reference } },
+    select: { id: true, deletedAt: true },
+    orderBy: { deletedAt: { sort: 'asc', nulls: 'first' } },
+  })
+  if (other && !other.deletedAt) return other.id
+  const past = (await later()).filter((d) => d.id !== own?.id)
+  const live = past.find((d) => !d.deletedAt)
+  if (live) return live.id
+  if (own && ownRefers) return own.id
+  return other?.id ?? past[0]?.id ?? null
+}
+
+/** A document that refers to a file, and whether it is in the trash. */
+type Referrer = { id: string; deletedAt: Date | null }
+
+/** Largest document read for the files it refers to past its text kept for search: as large as the editor opens. */
+const LATER_READ_MAX = 2 * 1024 * 1024
+
+/**
+ * The long Markdown files of the library that refer to these files past their text kept for
+ * search (INDEXED_CHARS), by file: each read once from its bytes, then let go. A file put in one
+ * by the editor is only in one it opens.
+ */
+async function laterReferrers(scope: Scope, ids: string[]) {
+  const found = new Map<string, Referrer[]>()
+  if (ids.length === 0) return found
+  const long = await prisma.document.findMany({
+    where: {
+      ...scope,
+      kind: 'library',
+      contentType: 'text/markdown',
+      size: { gte: INDEXED_CHARS, lte: LATER_READ_MAX },
+    },
+    select: { id: true, deletedAt: true, objectKey: true, size: true },
+  })
+  for (const doc of long) {
+    const bytes = await readLibraryFile(scope, doc).catch(() => null)
+    if (!bytes) continue
+    const text = new TextDecoder().decode(bytes)
+    for (const id of ids)
+      if (text.includes(`asset:${id}`))
+        found.set(id, [...(found.get(id) ?? []), { id: doc.id, deletedAt: doc.deletedAt }])
+  }
+  return found
+}
+
+/** Whether a document refers to the file, as far as can be told. */
+async function refersTo(
+  scope: Scope,
+  doc: { id: string; kind: string; text: string; size: number; objectKey: string | null },
+  reference: string,
+) {
+  if (doc.text.includes(reference)) return true
+  // A long library file: its stored text stops short; read the file itself.
+  // One too large to read whole may refer to it: kept.
+  if (doc.kind === 'library' && doc.size > LIBRARY_READ_MAX) return true
+  if (doc.kind === 'library' && doc.text.length >= INDEXED_CHARS) {
+    const bytes = await readLibraryFile(scope, doc).catch(() => null)
+    return !bytes || new TextDecoder().decode(bytes).includes(reference)
+  }
+  return false
+}
+
+/**
+ * The files of a document going to the trash that a live document refers to too (a block copied
+ * over) move to that one, so that they stay where the library is read (teammates' mirrors, a
+ * list's lines: docs/lists.md). The others stay with it, for a restore.
+ */
+export async function moveFilesOfTrashed(scope: Scope, documentId: string) {
+  const rows = await prisma.documentAsset.findMany({
+    where: { ...scope, documentId, status: 'ready' },
     select: { id: true },
   })
-  return other?.id ?? null
+  // Long documents are read once, and only when a file's search found no live one.
+  let later: Promise<Map<string, Referrer[]>> | undefined
+  for (const row of rows) {
+    const indexed = await prisma.document.findFirst({
+      where: {
+        ...scope,
+        id: { not: documentId },
+        deletedAt: null,
+        text: { contains: `asset:${row.id}` },
+      },
+      select: { id: true },
+    })
+    let live = indexed?.id
+    if (!live) {
+      later ??= laterReferrers(
+        scope,
+        rows.map((r) => r.id),
+      )
+      const past = (await later).get(row.id) ?? []
+      live = past.find((d) => !d.deletedAt && d.id !== documentId)?.id
+    }
+    if (live)
+      await prisma.documentAsset.update({ where: { id: row.id }, data: { documentId: live } })
+  }
 }
 
 /**
@@ -223,10 +337,23 @@ export async function sweepAssets(ids?: string[]) {
     orderBy: { checkedAt: { sort: 'asc', nulls: 'first' } },
     take: 500,
   })
+  // Each workspace's long documents are read once, and only when a file needs them.
+  const later = new Map<string, Promise<Map<string, Referrer[]>>>()
+  const laterFor = (scope: Scope, id: string) => async () => {
+    if (!later.has(scope.workspaceId))
+      later.set(
+        scope.workspaceId,
+        laterReferrers(
+          scope,
+          rows.filter((r) => r.workspaceId === scope.workspaceId).map((r) => r.id),
+        ),
+      )
+    return (await later.get(scope.workspaceId)!).get(id) ?? []
+  }
   let removed = 0
   for (const row of rows) {
     const scope = { organizationId: row.organizationId, workspaceId: row.workspaceId }
-    const documentId = row.status === 'ready' ? await holder(row) : null
+    const documentId = row.status === 'ready' ? await holder(row, laterFor(scope, row.id)) : null
     if (!documentId) {
       await removeAsset(row.id, scope)
       removed++

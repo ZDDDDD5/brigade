@@ -9,16 +9,20 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { setTimeout as sleep } from 'node:timers/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
-import { hostname } from 'node:os'
+import { hostname, totalmem } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 import {
+  NODE_VERSION,
+  nodeAtLeast,
   RunnerLinkResult,
+  themeFileType,
   type AgentEvent,
   type ApiToRunner,
   type ThreadSpec,
 } from '@brigade/contracts'
 import {
+  ACCOUNTS_DIR,
   ALREADY_RUNNING_EXIT_CODE,
   claimRunner,
   CLOUD,
@@ -29,25 +33,49 @@ import {
   saveConfig,
   VERSION,
 } from './config.js'
+import { watchAbuse } from './abuse.js'
+import { useWindowsTools } from './windows.js'
 import { Accounts, machineLogins } from './accounts.js'
+import { cleanRemoved, fenceRemoved } from './harness/antigravity.js'
 import { Attachments } from './attachments.js'
+import { SpecParts } from './spec-parts.js'
 import { Connection } from './connection.js'
 import { describeProject } from './describe.js'
-import { readThreadFile } from './files.js'
-import { Folders, type FolderName } from './folders.js'
+import { codeFiles } from './code-files.js'
+import { measureGoal } from './goal-measure.js'
+import { findSource, readThreadFile, writeThreadFile } from './files.js'
+import { Folders, ThreadGone, type FolderName } from './folders.js'
+import { BackupStore } from './backup-store.js'
+import { ComputerBackups } from './computer-backups.js'
 import { Library } from './library.js'
-import { BROWSER_START_PAGE, ensureBrowser, focusThreadTab } from './browsers.js'
+import {
+  BROWSER_START_PAGE,
+  browserCandidates,
+  ensureBrowser,
+  focusThreadTab,
+  startBrowsersAfter,
+  stopIdleBrowsers,
+} from './browsers.js'
 import { desktopClipboard } from './desktop.js'
 import { changedFilesSince, Terminals } from './terminals.js'
 import { stripApiKeys, usePersonPath, type Transcript } from './harness/index.js'
+import { EventFiles } from './event-files.js'
 import { Outbox } from './outbox.js'
-import { MemoryGuard } from './memory-guard.js'
+import { SeenCommands } from './seen-commands.js'
+import { imageStore } from './reply-images.js'
+import { bundleStore, cleanStaging, libraryMessage, uploadForTeammate } from './uploads.js'
+import { MemoryGuard, memoryRoom, turnsAtOnce } from './memory-guard.js'
 import { runnerCgroups } from './preview-cgroup.js'
+import { MachineHolds } from './machine-holds.js'
+import { MachineRuns } from './machine-runs.js'
 import { Previews } from './previews.js'
 import { processGroups } from './process-groups.js'
+import { teammateUser } from './teammates.js'
 import { Threads, threadFolder } from './threads.js'
-import { prefetch, sweep, type BackupName, type BundleStore } from './repos.js'
+import { prefetch, sweep } from './repos.js'
 import { Updater } from './updater.js'
+import { sendUsageRunsTo } from './usage.js'
+import { UsageLogs } from './usage-logs.js'
 import { noteHandOver, takeHandOver } from './hand-over.js'
 
 /** While an update hands its turns over, how long the calls under way get to finish on the connection. */
@@ -56,13 +84,16 @@ const CALLS_GRACE_MS = 8_000
 // Brigade sets no API key anywhere; harnesses use this computer's subscription logins.
 stripApiKeys()
 if (!CLOUD) usePersonPath()
+// Windows: Git for Windows' git and bash, which the installer put beside the runner.
+useWindowsTools()
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     api: { type: 'string', default: 'http://localhost:3001' },
     name: { type: 'string', default: hostname() },
-    concurrency: { type: 'string', default: '4' },
+    /** Turns at once at most; by default from the computer's memory (turnsAtOnce). */
+    concurrency: { type: 'string' },
     version: { type: 'boolean' },
     /** Set on a workspace cloud computer: no member's own logins live there. */
     cloud: { type: 'boolean' },
@@ -115,6 +146,7 @@ async function link(code: string | undefined) {
     token: result.token,
     computerId: result.computerId,
     workspaceName: result.workspaceName,
+    ...(result.workspaceId ? { workspaceId: result.workspaceId } : {}),
   })
   console.log(
     `Linked "${values.name}" to workspace "${result.workspaceName}". Start it with: brigade-runner start`,
@@ -134,47 +166,35 @@ async function start() {
     console.error(`A runner is already running from ${HOME} (pid ${other}). Stop it first.`)
     process.exit(ALREADY_RUNNING_EXIT_CODE)
   }
+  // The installer moves an installed runner onto it at its next update; one run from source does not.
+  if (!nodeAtLeast(process.version))
+    console.warn(
+      `running on Node.js ${process.version}, older than ${NODE_VERSION}: it misses security fixes`,
+    )
   // Before any preview starts again on a port one of them may still hold. The harnesses of
   // turns an update handed over stay, for their threads to take up.
-  await processGroups.reap(takeHandOver()).then(
+  // The apps of previews handed over too: the next runner takes them up (Previews.adopt).
+  const kept = new Set([
+    ...takeHandOver(),
+    ...Previews.handedOverGroups(join(paths.state, 'previews.json')),
+  ])
+  await processGroups.reap(kept).then(
     (left) => left && console.log(`stopped what the runner before this one left running: ${left}`),
     (error: unknown) =>
       console.warn(`could not look for what the runner before left: ${String(error)}`),
   )
   const outbox = new Outbox(paths.outbox)
+  const eventFiles = new EventFiles({ store: imageStore(config), outbox })
   const library = new Library(config)
   void library.cleanTemp()
+  // Files staged for a save the runner before never sent.
+  void cleanStaging().catch(() => undefined)
   const attachments = new Attachments(config)
   void attachments.cleanCache()
+  const specParts = new SpecParts(config)
+  void specParts.cleanCache()
   // Git backups GitHub would not take, kept in the API's bucket.
-  const bundleUrl = (b: BackupName) =>
-    new URL(
-      `/runner/backups/${[...b.repository.split('/'), b.sessionId, b.teammateId, b.folder]
-        .map(encodeURIComponent)
-        .join('/')}`,
-      config.apiUrl,
-    )
-  const bundles: BundleStore = {
-    put: async (backup, bundle) => {
-      const response = await fetch(bundleUrl(backup), {
-        method: 'PUT',
-        headers: {
-          authorization: `Bearer ${config.token}`,
-          'content-type': 'application/x-git-bundle',
-        },
-        body: new Uint8Array(bundle),
-      })
-      if (!response.ok) throw new Error(`the API refused the backup (${response.status})`)
-    },
-    get: async (backup) => {
-      const response = await fetch(bundleUrl(backup), {
-        headers: { authorization: `Bearer ${config.token}` },
-      })
-      if (response.status === 404) return null
-      if (!response.ok) throw new Error(`the API refused the backup (${response.status})`)
-      return Buffer.from(await response.arrayBuffer())
-    },
-  }
+  const bundles = bundleStore(config)
   // Thread folders archived to free disk, in the API's bucket until their thread comes back.
   // The bytes go straight to and from R2 through signed URLs.
   const folderRequest = async (f: FolderName, path: string, init: RequestInit = {}) => {
@@ -201,10 +221,12 @@ async function start() {
       body: Readable.toWeb(createReadStream(file)) as ReadableStream,
       duplex: 'half',
     }) as RequestInit
+  const backupStore = CLOUD ? new BackupStore(config, join(paths.state, 'backups-temp')) : undefined
   const folders = new Folders({
     archives: {
       put: async (f, file, size) => {
         const ticket = await folderRequest(f, '/upload', sizeBody(size))
+        if (ticket.status === 410) throw new ThreadGone(`thread ${f.sessionId} was deleted`)
         if (!ticket.ok) throw refused('API', ticket)
         const { url, headers } = (await ticket.json()) as {
           url: string | null
@@ -232,7 +254,8 @@ async function start() {
         const location = response.headers.get('location')
         if (response.status >= 300 && response.status < 400 && location)
           response = await fetch(location)
-        if (response.status === 404) return false
+        // 410: the thread was deleted, and its archive with it.
+        if (response.status === 404 || response.status === 410) return false
         if (!response.ok || !response.body) throw refused('API', response)
         await pipeline(
           Readable.fromWeb(response.body as NodeReadableStream),
@@ -244,11 +267,33 @@ async function start() {
         const response = await folderRequest(f, '', { method: 'DELETE' })
         if (!response.ok) throw refused('API', response)
       },
+      gone: async (f) => {
+        // The same request as get: it answers 410 before looking for an archive.
+        const response = await folderRequest(f, '')
+        await response.body?.cancel()
+        return response.status === 410
+      },
     },
-    inUse: (sessionId): boolean => threads.inUse(sessionId) || previews.has(sessionId),
+    inUse: (sessionId): boolean =>
+      threads.inUse(sessionId) || previews.has(sessionId) || !!machineRuns?.active(sessionId),
     quiet: (name) => previews.archive(name.sessionId),
+    // While on disk, a cloud computer's thread folders are backed up too, for a computer that
+    // replaces this one (computer-backups.ts), with what their turns run in the background.
+    ...(backupStore
+      ? {
+          backups: {
+            put: (name: FolderName, file: string, done: Parameters<BackupStore['putFolder']>[2]) =>
+              backupStore.putFolder(name, file, done),
+            get: (name: FolderName, file: string) => backupStore.getFolder(name, file),
+          },
+          background: (name: FolderName) => threads.background(name.sessionId, name.teammateId),
+        }
+      : {}),
     stateFile: join(paths.state, 'folders.json'),
     tempDir: join(paths.state, 'folder-archives'),
+    reserveFile: join(paths.state, 'disk-reserve'),
+    // Still full: kept on the computer for Brigade's operators, until there is room (DISK_PROTOCOL).
+    reportDisk: (disk) => connection.send({ type: 'disk', ...disk }),
   })
   // Before a thread's folder is used outside a turn: put back when it was archived.
   const folderReady = (sessionId: string, teammateIds: string[]) =>
@@ -284,6 +329,43 @@ async function start() {
         }),
     }
   }
+  // Threads' machines of their own (preview_machines), on a cloud computer: their previews and the
+  // commands teammates run there share each, which stops once neither uses it. Which may be up,
+  // and when each may stop, outlive the runner: the next one stops them then.
+  const holds = CLOUD
+    ? new MachineHolds(
+        {
+          up: (sessionId, publicKey) => connection.previewMachineUp(sessionId, publicKey),
+          sleep: (sessionId) => connection.previewMachine(sessionId, 'sleep'),
+          touch: (sessionId, busy) => connection.previewMachine(sessionId, 'touch', busy),
+        },
+        { stateFile: join(paths.state, 'machine-holds.json') },
+      )
+    : null
+  const machineRuns = holds
+    ? new MachineRuns({
+        holds,
+        home: paths.state,
+        stateFile: join(paths.state, 'machine-runs.json'),
+        // The thread's attached files, at the same place in the teammate's copy there: the machine
+        // fetches each from the bucket, at the signed URL the API's redirect gives the runner.
+        files: {
+          of: (seat) => threads.attachmentsFor(seat.sessionId, seat.teammateId),
+          api: config,
+        },
+        // Files a command makes for the library go there from the machine: the API signs where it
+        // PUTs each, then the hub saves it as the teammate, as it does save_to_library's.
+        library: {
+          api: config,
+          save: (seat, operation) =>
+            connection.callLibrary({
+              sessionId: seat.sessionId,
+              teammateId: seat.teammateId,
+              operation,
+            }),
+        },
+      })
+    : null
   // Apps teammates run for people to try. On a cloud computer the API has their ports hosted.
   const previews = new Previews({
     emit: (sessionId, event) => connection.sendEvent(outbox.push(sessionId, event)),
@@ -298,11 +380,56 @@ async function start() {
     }),
     stateFile: join(paths.state, 'previews.json'),
     busy: (sessionId) => threads.inUse(sessionId),
+    // Previews on a machine of their own, for threads whose starter chose them (preview_machines).
+    ...(holds
+      ? {
+          machines: {
+            up: (sessionId, publicKey) => holds.up(sessionId, 'preview', publicKey),
+            sleep: (sessionId) => holds.release(sessionId, 'preview'),
+            touch: (sessionId) => holds.touch(sessionId),
+            home: paths.state,
+          },
+        }
+      : {}),
+  })
+  // What a cloud computer keeps only on its disk, backed up to Brigade, and put back on one
+  // that replaces it before anything runs there.
+  const backups = backupStore
+    ? new ComputerBackups({
+        store: backupStore,
+        folders,
+        stateFile: join(paths.state, 'backups.json'),
+        tempDir: join(paths.state, 'backups-temp'),
+      })
+    : undefined
+  if (backups) startBrowsersAfter(() => backups.ready())
+  // On a cloud computer, the memory guard's (below): a turn waits for memory before it starts.
+  const memoryGuard = CLOUD && process.env.BRIGADE_MEMORY_GUARD !== '0'
+  const concurrency = Number(values.concurrency) || turnsAtOnce(totalmem(), memoryGuard)
+  console.log(`up to ${concurrency} turns at once${memoryGuard ? ', as memory allows' : ''}`)
+  // What teammates' turns spend, from the harness's own logs on this computer.
+  const usageLogs = new UsageLogs({
+    send: (responses) => connection.sendUsage(responses),
+    stateFile: join(paths.state, 'usage-logs.json'),
   })
   const threads = new Threads({
-    concurrency: Number(values.concurrency),
+    concurrency,
     previews,
+    ...(machineRuns ? { machineRuns } : {}),
     folders,
+    streamEnded: (teammateId, sessionId, workDir) =>
+      usageLogs.turnEnded(teammateId, sessionId, workDir),
+    ...(memoryGuard ? { memoryRoom } : {}),
+    ...(backups
+      ? {
+          restored: {
+            ready: () => backups.ready(),
+            takeNote: (teammateId: string) => backups.takeNote(teammateId),
+          },
+        }
+      : {}),
+    // The images a reply shows, straight to the API's bucket through a signed URL.
+    storeImage: imageStore(config),
     emit: (sessionId, event) => connection.sendEvent(outbox.push(sessionId, event)),
     // Connector calls go to the API. A write waiting for a person shows as an approval in the thread.
     callConnector: (sessionId, teammateId, call) =>
@@ -330,6 +457,16 @@ async function start() {
       memoryFor: (teammateId) => library.memoryFor(teammateId),
       bundles,
       uploadFile: (input) => attachments.upload(input),
+      // A theme's image or font (docs/themes.md), staged: to the bucket, checked once in.
+      uploadThemeFile: async ({ file, ...seat }) =>
+        (
+          await uploadForTeammate(config, {
+            purpose: 'theme_file',
+            ...seat,
+            contentType: themeFileType(seat.name) ?? '',
+            file,
+          })
+        ).id,
       skillFile: (hash) => attachments.skillFile(hash),
       conversation: async (sessionId, teammateId) => {
         const response = await folderRequest({ sessionId, teammateId }, '/conversation')
@@ -337,38 +474,48 @@ async function start() {
         return ((await response.json()) as { transcript: Transcript }).transcript
       },
     },
-    callLibrary: (sessionId, teammateId, { operation }) =>
-      connection.callLibrary({ sessionId, teammateId, operation }),
-    callTask: (sessionId, teammateId, { operation }) =>
-      connection.callTask({ sessionId, teammateId, operation }),
-    callSchedule: (sessionId, teammateId, { operation }) =>
-      connection.callSchedule({ sessionId, teammateId, operation }),
+    // A save's bytes and a proposal's files go to the bucket first: the socket carries only their references.
+    callLibrary: async (sessionId, teammateId, { operation }) =>
+      connection.callLibrary({
+        sessionId,
+        teammateId,
+        operation: await libraryMessage(config, { sessionId, teammateId }, operation),
+      }),
+    callSchedule: (sessionId, teammateId, { operation, toolCallId, toolName, input }) =>
+      connection.callSchedule(
+        { sessionId, teammateId, operation },
+        approvalHooks(sessionId, teammateId, { toolCallId, toolName, input }),
+      ),
     memoryUpdate: (update) => connection.send(update),
+    memoryTidy: (tidy) => connection.send(tidy),
     title: (update) => connection.send(update),
   })
-  // On a cloud computer, the computer running out of memory as a whole: a preview or a turn is
-  // stopped, with the reason, before it stops answering at all.
-  if (CLOUD && process.env.BRIGADE_MEMORY_GUARD !== '0') {
+  sendUsageRunsTo((run) => connection.send(run))
+  // A teammate's browser that nobody uses stops, unless a person has control of one of its threads.
+  const controlled = (user: string) =>
+    [...threads.controlledTeammates()].some((id) => teammateUser(id) === user)
+  if (CLOUD) stopIdleBrowsers(controlled)
+  // Teammates' abuse of the cloud computer (mail, scans, mining), for Brigade's operators.
+  if (CLOUD && process.env.BRIGADE_ABUSE_WATCH !== '0')
+    watchAbuse((report) => connection.sendIfConnected(report))
+  // On a cloud computer, the computer running out of memory as a whole: an idle browser, a preview
+  // or a turn is stopped, with the reason, before it stops answering at all.
+  if (memoryGuard) {
     new MemoryGuard({
       candidates: async () => [
         ...(await previews.memoryCandidates()),
+        ...(await browserCandidates(controlled)),
         ...(await Promise.all(
           ((await runnerCgroups())?.turns ?? []).map(async (turn) => {
             const memory = await turn.cgroup.resident()
             return {
               kind: 'turn' as const,
               memory,
+              // Its turn fails, and goes on by itself once the computer has memory again.
               stop: async (why: string) => {
+                const held = `${why}, and it held the most (${(memory / 1024 ** 3).toFixed(1)} GB)`
+                if (turn.thread) threads.stoppedForMemory(turn.thread, held)
                 await turn.cgroup.kill()
-                if (turn.thread)
-                  connection.sendEvent(
-                    outbox.push(turn.thread, {
-                      at: new Date().toISOString(),
-                      type: 'raw',
-                      source: 'runner',
-                      value: `The teammate's session in this thread was stopped to give the computer memory back: ${why}, and it held the most (${(memory / 1024 ** 3).toFixed(1)} GB). Send a message to go on.`,
-                    }),
-                  )
               },
             }
           }),
@@ -390,7 +537,7 @@ async function start() {
     event: (sessionId, event) => connection.sendEvent(outbox.push(sessionId, event)),
   })
   // A thread that moved here: its events go on after the API's, and what this runner kept of it from before goes.
-  const arrive = (spec: ThreadSpec) => {
+  const arrive = (spec: Pick<ThreadSpec, 'sessionId' | 'moved'>) => {
     if (!spec.moved || !outbox.arrive(spec.sessionId, spec.moved.at, spec.moved.seq)) return
     threads.forget(spec.sessionId)
     // The thread says where it went, numbered after the API's last event.
@@ -407,10 +554,23 @@ async function start() {
     spec.moved
       ? folders.arrive({ sessionId: spec.sessionId, teammateId: spec.teammate.id }, spec.moved)
       : Promise.resolve()
+  /** The first welcome's taking up of what the runner before this one left, then its stops. */
+  let settling: Promise<void> | undefined
   const onCommand = async (message: ApiToRunner) => {
     if ('thread' in message) arrive(message.thread)
     switch (message.type) {
       case 'welcome': {
+        // A computer that replaces another: what it had comes back before any turn starts here.
+        if (message.restore) {
+          const restore = message.restore
+          if (!backups) connection.send({ type: 'computer.restored', id: restore.id, problems: [] })
+          else
+            void backups.restore(restore).then(
+              (problems) =>
+                connection.send({ type: 'computer.restored', id: restore.id, problems }),
+              (error: unknown) => console.error('restoring the replaced computer failed', error),
+            )
+        }
         // Turns and messages a restart cut off go on, in order; what the API could not say how to continue is closed.
         const last = (sessionId: string) => outbox.lastUnacknowledged(sessionId)
         const unacknowledged = (sessionId: string) => outbox.unacknowledgedFor(sessionId)
@@ -420,8 +580,11 @@ async function start() {
         ])
           arrive(spec)
         threads.resumeLost(message.resume ?? [], message.runningThreads ?? [], last)
-        // The previews an update stopped (once, after it).
-        void previews.startAgain()
+        // The previews an update handed over or stopped (once, after it), and the commands it
+        // stopped following; once those hold their machines again, the machines nobody holds
+        // stop when the runner before this one would have stopped them (after the first welcome).
+        const tookUp = Promise.allSettled([previews.startAgain(), machineRuns?.resume()])
+        settling ??= tookUp.then(() => holds?.rearm())
         threads.requeueLost(message.requeue ?? [], unacknowledged)
         const requeued = new Set(
           (message.requeue ?? []).map((p) => `${p.thread.sessionId}:${p.messageId}`),
@@ -434,6 +597,10 @@ async function start() {
         )
         return threads.closeLost(message.runningThreads ?? [], last)
       }
+      case 'thread.settle':
+        // Numbered after the thread's history here, as a spec's arrival does.
+        arrive(message)
+        return threads.settleApproval(message)
       case 'thread.prompt':
       case 'thread.approval':
       case 'thread.answer':
@@ -441,6 +608,7 @@ async function start() {
       case 'thread.interrupt':
       case 'thread.computer.stop':
       case 'thread.queued':
+      case 'thread.retry':
         try {
           threads.handle(message)
         } catch (error) {
@@ -515,8 +683,28 @@ async function start() {
         return
       case 'account.login.cancel':
         return accounts.cancel(message.loginId)
-      case 'account.remove':
-        return accounts.remove(message.account)
+      case 'account.remove': {
+        // Nothing new starts on it, its sessions stop, then its login goes (and Antigravity's
+        // copies of it, listed until each is gone).
+        const account = message.account
+        return (account.provider === 'antigravity' ? fenceRemoved(account.id) : Promise.resolve())
+          .then(() => threads.parkAccount(account.id))
+          .then(() => accounts.remove(account))
+      }
+      case 'computer.backup': {
+        const reply = (ok: boolean, error?: string) =>
+          connection.send({
+            type: 'computer.backup.result',
+            requestId: message.requestId,
+            ok,
+            ...(error ? { error: error.slice(0, 4000) } : {}),
+          })
+        if (!backups) return reply(false, 'Not a cloud computer')
+        return backups.backUp({ closeBrowsers: true }).then(
+          (failed) => reply(failed.length === 0, failed.join('\n') || undefined),
+          (error: unknown) => reply(false, String(error)),
+        )
+      }
       case 'desktop.clipboard':
         if (!CLOUD)
           return connection.send({
@@ -571,6 +759,7 @@ async function start() {
             requestId: message.requestId,
             ok: true,
             text: previews.logs(message.sessionId),
+            origin: previews.origin(message.sessionId),
           })
         } catch (error) {
           return connection.send({
@@ -588,6 +777,20 @@ async function start() {
         return library.sync()
       case 'thread.note':
         return threads.noteFromOutside(message.sessionId, message.text)
+      case 'goal.measure':
+        // Not awaited: a test suite may take minutes, and the connection's other messages go on.
+        return void measureGoal(message)
+          .then((result) => connection.send(result))
+          .catch((error) => console.warn(`goal measurement failed: ${String(error)}`))
+      case 'thread.deleted':
+        await previews.stop(message.sessionId, 'The thread was deleted')
+        await machineRuns?.forgetThread(message.sessionId)
+        threads.forget(message.sessionId)
+        return folders
+          .removeThread(message.sessionId)
+          .catch((error) =>
+            console.warn(`could not remove the folders of a deleted thread: ${String(error)}`),
+          )
       case 'thread.file.read':
         return folderReady(message.sessionId, message.teammateIds)
           .then(() => readThreadFile(message))
@@ -596,6 +799,45 @@ async function start() {
             (error) =>
               connection.send({
                 type: 'thread.file.result',
+                requestId: message.requestId,
+                ok: false,
+                error: String(error),
+              }),
+          )
+      case 'thread.file.write':
+        return folderReady(message.sessionId, [message.teammateId])
+          .then(() => writeThreadFile(message))
+          .then(
+            (result) => connection.send(result),
+            (error) =>
+              connection.send({
+                type: 'thread.file.written',
+                requestId: message.requestId,
+                ok: false,
+                error: String(error),
+              }),
+          )
+      case 'thread.code':
+        return folderReady(message.sessionId, [message.teammateId])
+          .then(() => codeFiles(message))
+          .then(
+            (result) => connection.send(result),
+            (error) =>
+              connection.send({
+                type: 'thread.code.result',
+                requestId: message.requestId,
+                ok: false,
+                error: String(error),
+              }),
+          )
+      case 'thread.source.find':
+        return folderReady(message.sessionId, [message.teammateId])
+          .then(() => findSource(message))
+          .then(
+            (result) => connection.send(result),
+            (error) =>
+              connection.send({
+                type: 'thread.source.result',
                 requestId: message.requestId,
                 ok: false,
                 error: String(error),
@@ -633,7 +875,7 @@ async function start() {
   }
   // An update waits only for what a restart would cut short and cannot hand over: a terminal,
   // a sign-in. The turns running then go on in their harnesses, which the new runner takes up
-  // (hand-over.ts); previews start again there.
+  // (hand-over.ts); previews too, where they are (Previews.handOver).
   const updater = new Updater({
     apiUrl: config.apiUrl,
     quiet: () => terminals.count === 0 && !accounts.busy,
@@ -645,17 +887,28 @@ async function start() {
       noteHandOver(await threads.handOverTurns())
       clearTimeout(closing)
       terminals.closeAll()
-      await previews.stopForUpdate()
+      // Previews go on: the next runner takes them up where they are.
+      await previews.handOver()
+      // Commands on threads' machines go on there: the next runner follows them.
+      machineRuns?.detach()
       connection.close()
     },
   })
   connection = new Connection(
     config,
     outbox,
-    (message) => void onCommand(message),
+    // Its specs filled in first, in the order commands came.
+    specParts.inOrder(onCommand),
     hello,
     (bundle, required) => updater.offer(bundle, required),
+    // Images and PDFs in events go to the bucket first: the socket carries their names only.
+    (events, send) => eventFiles.take(events, send),
+    new SeenCommands(join(paths.state, 'commands-seen.json')),
   )
+  // The previews the runner before this one handed over as it updated go on here, before
+  // anything looks for quiet threads (their containers, their namespaces); what needs the API
+  // waits for the connection (startAgain).
+  void previews.adopt()
   connection.start()
 
   // Free disk now and then: checkouts of quiet threads that hold nothing GitHub lacks.
@@ -665,18 +918,42 @@ async function start() {
     )
   setTimeout(sweepRepos, 10 * 60_000).unref()
   setInterval(sweepRepos, 6 * 60 * 60_000).unref()
+  // Google accounts whose removal did not finish (a copy left, a restart in between): again.
+  const cleanAgy = () =>
+    void cleanRemoved({ accountsDir: ACCOUNTS_DIR, copies: CLOUD }).catch((error) =>
+      console.warn(String(error)),
+    )
+  setTimeout(cleanAgy, 60_000).unref()
+  setInterval(cleanAgy, 60 * 60_000).unref()
   // On a cloud computer, archive the folders of the threads quiet longest when the disk fills up.
   folders.start()
+  // And back up what lives only on this cloud computer's disk, now and then.
+  backups?.start()
+  // Once connected: what turns spent while the runner was away, then every few minutes.
+  setTimeout(() => usageLogs.start(), 60_000).unref()
 
   const shutdown = async () => {
     console.log('stopping: saving thread state')
     terminals.closeAll()
     // Reported before the connection closes; the outbox keeps it otherwise.
     await previews.stopAll('The computer stopped')
+    machineRuns?.detach()
     connection.close()
     await threads.stop()
     process.exit(0)
   }
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
+  // Windows has no SIGTERM: Brigade.app, which starts the runner there with an IPC channel, asks
+  // over it, and an app gone (its channel closed) stops the runner as SIGTERM would.
+  if (process.send) {
+    let stopping = false
+    const stop = () => {
+      if (stopping) return
+      stopping = true
+      void shutdown()
+    }
+    process.on('message', (message) => message === 'brigade:stop' && stop())
+    process.once('disconnect', stop)
+  }
 }

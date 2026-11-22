@@ -13,6 +13,7 @@ import {
   type PlaybookDryRunView,
   type PlaybookManifest,
   type PlaybookOutcome,
+  loginOf,
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { ingestExternal } from './attachments.js'
@@ -20,10 +21,12 @@ import { audit } from './audit.js'
 import { authorisedFetch } from './connector-calls.js'
 import { triggersOf } from './connectors/index.js'
 import type { ConnectorKind } from './connectors/types.js'
+import { hubs } from './hub.js'
+import { currentHub } from './hub/context.js'
 import { prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { hasParts, requireInstallation } from './playbooks.js'
 import { eventMessage } from './triggers.js'
-import { fireReport } from './wakeups.js'
+import { fireNow } from './wakeups.js'
 import { startThread } from './work.js'
 
 /** Runs at once: a dry run should not take the whole computer. */
@@ -186,16 +189,21 @@ export async function startDryRun(
   return dryRunView(db, dryRun.id)
 }
 
-const advancing = new Map<string, Promise<void>>()
+/** Dry runs being moved on, by id: the running hub's, as their threads' turns end there. */
+const advancing = () => currentHub().local('dry-runs', () => new Map<string, Promise<void>>())
 
-/** Start what waits while fewer than AT_ONCE run; once none is left, the report. One at a time per dry run. */
+/**
+ * In the workspace's hub: start what waits while fewer than AT_ONCE run; once none is left, the
+ * report. One at a time per dry run.
+ */
 export function advanceDryRun(scope: Scope, dryRunId: string): Promise<void> {
-  const next = (advancing.get(dryRunId) ?? Promise.resolve())
+  const advancing_ = advancing()
+  const next = (advancing_.get(dryRunId) ?? Promise.resolve())
     .then(() => advance(scope, dryRunId))
     .catch((error: unknown) => console.error(`dry run ${dryRunId}: could not go on`, error))
-  advancing.set(dryRunId, next)
+  advancing_.set(dryRunId, next)
   void next.finally(() => {
-    if (advancing.get(dryRunId) === next) advancing.delete(dryRunId)
+    if (advancing_.get(dryRunId) === next) advancing_.delete(dryRunId)
   })
   return next
 }
@@ -251,7 +259,11 @@ async function startEvent(
   const from = dryRun.sessionId
     ? await db.session.findFirst({
         where: { id: dryRun.sessionId },
-        select: { computerId: true, accountId: true, teammate: { select: { harness: true } } },
+        select: {
+          computerId: true,
+          accountId: true,
+          teammate: { select: { harness: true, model: true } },
+        },
       })
     : null
   if (!installation || !from) return failed('The thread it was started from is gone')
@@ -264,7 +276,11 @@ async function startEvent(
       teammate: installation.teammate,
       computer: { id: from.computerId },
       memberId: dryRun.startedByMemberId,
-      accountId: from.teammate.harness === installation.teammate.harness ? from.accountId : null,
+      accountId:
+        loginOf(from.teammate.harness, from.teammate.model) ===
+        loginOf(installation.teammate.harness, installation.teammate.model)
+          ? from.accountId
+          : null,
       title: `Dry run · ${replay.title}`,
       text: replay.text,
       // No conversation: a real event of the same one later starts its own run.
@@ -291,10 +307,14 @@ export async function noteDryRunEvents(
     workspaceId: string
     playbookRunId: string | null
   },
-  events: { event: { type: string; message?: string } }[],
+  events: { event: { type: string; message?: string; waiting?: boolean } }[],
 ) {
   if (!session.playbookRunId) return
-  const ended = events.find((e) => e.event.type === 'turn.completed' || e.event.type === 'error')
+  // A turn over while it still waits on a person's answer (a Codex teammate's ask holds no turn,
+  // codex-asks.ts in apps/runner) has not ended its run: it waits, as a turn paused on an ask.
+  const ended = events.find(
+    (e) => (e.event.type === 'turn.completed' && !e.event.waiting) || e.event.type === 'error',
+  )
   if (!ended) return
   const scope: Scope = { organizationId: session.organizationId, workspaceId: session.workspaceId }
   const db = scoped(scope)
@@ -325,9 +345,10 @@ export async function noteDryRunEvents(
 }
 
 /** Runs of a dry run still going past RUN_MS_MAX: cut short, so the report comes. Each minute (src/wakeups.ts). */
-export async function settleOverdueDryRuns() {
+export async function settleOverdueDryRuns(workspaceId?: string) {
   const overdue = await prisma.playbookRun.findMany({
     where: {
+      ...(workspaceId ? { workspaceId } : {}),
       dryRun: true,
       status: { in: ['running', 'waiting_person'] },
       startedAt: { lte: new Date(Date.now() - RUN_MS_MAX) },
@@ -346,7 +367,7 @@ export async function settleOverdueDryRuns() {
         endedAt: new Date(),
       },
     })
-    if (run.dryRunId) await advanceDryRun(scope, run.dryRunId)
+    if (run.dryRunId) await hubs.get(scope.workspaceId).advanceDryRun(scope, run.dryRunId)
   }
 }
 
@@ -390,7 +411,7 @@ async function reportDone(db: ScopedDb, scope: Scope, dryRunId: string) {
       wakeAt: new Date(),
     } as never,
   })
-  await fireReport(wakeup.id)
+  await fireNow(wakeup.id)
 }
 
 const minutesText = (minutes: number) =>
@@ -587,4 +608,18 @@ export async function latestDryRun(db: ScopedDb, installationId: string) {
   if (!latest)
     throw new HTTPException(404, { message: 'It has had no dry run yet: start_dry_run starts one' })
   return dryRunView(db, latest.id)
+}
+
+/** Workspaces with a dry run's event past its time (src/jobs.ts). */
+export async function dueDryRuns(now = Date.now()) {
+  const rows = await prisma.playbookRun.findMany({
+    where: {
+      dryRun: true,
+      status: { in: ['running', 'waiting_person'] },
+      startedAt: { lte: new Date(now - RUN_MS_MAX) },
+    },
+    distinct: ['workspaceId'],
+    select: { workspaceId: true },
+  })
+  return rows.map((r) => r.workspaceId)
 }

@@ -1,6 +1,7 @@
 'use client'
-// Home's "waiting on you": one ticket or pull request at a time, with the card that decides
-// it, the same as in its thread, so a person with enough context answers without opening it.
+// Home's "waiting on you": one ticket, pull request, choice to make, failed thread or failing
+// routine at a time, with the card that decides it, the same as in its thread, so a person with
+// enough context answers without opening it.
 // Answering stops on what was sent; the next one comes when they ask for it, so a ticket's
 // second ask is never mistaken for another ticket. A playbook's approvals are one item,
 // opened to decide each (PlaybookApprovals); a push about them opens Home on it (?approvals=).
@@ -12,27 +13,56 @@ import {
   type QuestionAnswer,
   type TicketAnswer,
 } from '@brigade/contracts'
-import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowUpRight, Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { TeammateAvatar, useDashboard } from '@/components/dashboard'
 import { PlaybookApprovals } from '@/components/playbook-approvals'
 import { PullCard } from '@/components/pull-card'
-import { QuestionCard, TicketCard } from '@/components/thread-view'
-import { TicketRow } from '@/components/ticket-row'
+import {
+  ChoicesCard,
+  QuestionCard,
+  TicketCard,
+  type TicketTakeover,
+} from '@/components/thread-view'
+import { useThreadPanel } from '@/components/thread-panel'
+import { resolvedLabel, TicketRow } from '@/components/ticket-row'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { api, waitingItemKey, type PullWaiting, type Ticket } from '@/lib/api'
+import { Hint } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import { wakeLabel } from '@/lib/snooze'
+import {
+  api,
+  waitingItemKey,
+  type ChoiceWaiting,
+  type FailedThread,
+  type FailingRoutine,
+  type PullWaiting,
+  type Ticket,
+} from '@/lib/api'
+import type { EditedEmail } from '@/components/email-cards'
 
 /** Others listed under the one shown; the rest are a link away. */
 const LISTED = 4
 
-/** Why a pull request waits on a person, by where its review stands. */
-const PULL_WAITS: Record<string, string> = {
-  none: 'ready for review',
-  approved: 'approved, ready to merge',
-  changes_requested: 'changes requested',
-  stuck: 'review stopped',
+/**
+ * Why a pull request waits on a person: a merge that stopped, else where its review stands.
+ * Never "ready to merge": this comes from the database alone, which does not know of commits
+ * after its review, its checks or its conflicts; its card below reads those from GitHub.
+ */
+function pullWaits(pull: PullWaiting) {
+  if (pull.mergeStatus === 'stuck') return 'merge stopped'
+  const review = pull.review
+  switch (review?.state) {
+    case 'approved':
+      return `approved by ${review.reviewer?.name ?? 'a teammate'}`
+    case 'changes_requested':
+      return `${review.reviewer?.name ?? 'a teammate'} asked for changes`
+    case 'skipped':
+      return `no review: ${review.reason}`
+  }
+  return 'ready for review'
 }
 
 /** Who asks and in which thread, above a card. */
@@ -58,7 +88,7 @@ function From({
           {teammate && <span aria-hidden>·</span>}
           <Link
             href={`/app/threads/${thread.id}`}
-            className="truncate underline-offset-4 hover:text-foreground hover:underline"
+            className="min-w-0 truncate underline-offset-4 hover:text-foreground hover:underline"
           >
             {thread.title}
           </Link>
@@ -66,26 +96,50 @@ function From({
       )}
       {note && (
         <>
-          <span aria-hidden>·</span>
-          <span className="shrink-0">{note}</span>
+          {(teammate || thread) && <span aria-hidden>·</span>}
+          {/* Shrinks with the title, so a long note never widens the page on a phone. */}
+          <span className="min-w-0 truncate" title={note}>
+            {note}
+          </span>
         </>
       )}
     </p>
   )
 }
 
+/**
+ * Answers the one shown: says what it did at once, as the next one waits, while the request
+ * goes. One that did not go comes back with why, and rejects.
+ */
+type Answer = (label: string, request: () => Promise<unknown>) => Promise<void>
+
 /** A ticket a teammate opened or a question it asked, answered as in its thread. */
 function HarnessTicket({
   ticket: t,
-  onDone,
+  onAnswer,
 }: {
   ticket: Ticket
-  /** Answered: what to say it did, before the next one. */
-  onDone: (sent: string) => Promise<void>
+  /** Answers it: what to say it did, shown at once, and the request (NeedsYou's answer). */
+  onAnswer: Answer
 }) {
-  const { teammates } = useDashboard()
+  const { me, teammates } = useDashboard()
+  const { showComputer } = useThreadPanel()
   const session = t.session!
   const asker = t.payload.teammateId ?? session.teammate.id
+  // Something to do in the teammate's browser: taken over from here as in the thread, on the
+  // cloud computer unless another member has control; doing it opens the thread's computer.
+  const controller = session.controlledByMemberId
+  const takeover: TicketTakeover | undefined =
+    session.computer?.kind === 'cloud' && me.memberId && (!controller || controller === me.memberId)
+      ? {
+          mine: controller === me.memberId,
+          open: async () => {
+            if (controller !== me.memberId)
+              await api(`/threads/${session.id}/takeover`, { body: { interrupt: false } })
+            showComputer(session.id)
+          },
+        }
+      : undefined
   const askerName = teammates.find((m) => m.id === asker)?.name ?? session.teammate.name
   const from = <From teammate={{ id: asker, name: askerName }} thread={session} />
 
@@ -103,8 +157,8 @@ function HarnessTicket({
           }}
           canAnswer
           onAnswer={(answer: QuestionAnswer) =>
-            api(`/tickets/${t.id}/answer`, { body: { answer } }).then(() =>
-              onDone(`Sent to ${askerName}`),
+            onAnswer(`Sent to ${askerName}`, () =>
+              api(`/tickets/${t.id}/answer`, { body: { answer } }),
             )
           }
         />
@@ -127,13 +181,14 @@ function HarnessTicket({
           teammateId: asker,
         }}
         canAnswer
-        takeover={undefined}
+        takeover={takeover}
         teammates={teammates}
         askerId={asker}
         askerName={askerName}
         onAnswer={(answer: TicketAnswer) =>
-          api(`/tickets/${t.id}/answer`, { body: { answer } }).then(() =>
-            onDone(answer.action === 'declined' ? 'Declined' : `Sent to ${askerName}`),
+          onAnswer(
+            answer.action === 'declined' && !answer.note ? 'Declined' : `Sent to ${askerName}`,
+            () => api(`/tickets/${t.id}/answer`, { body: { answer } }),
           )
         }
       />
@@ -168,30 +223,166 @@ type Queue = {
   teammate: { id: string; name: string } | null
 }
 
-/** One thing waiting: a ticket answered here, a ticket's row, a playbook's approvals, or a pull request. */
-type Waiting = { key: string; title: string; from?: string } & (
-  | { ticket: Ticket; pull?: undefined; queue?: undefined }
-  | { ticket?: undefined; pull: PullWaiting; queue?: undefined }
-  | { ticket?: undefined; pull?: undefined; queue: Queue }
-)
+/** What one thing waiting can be: exactly one of these. */
+type Kinds = {
+  ticket: Ticket
+  pull: PullWaiting
+  queue: Queue
+  choice: ChoiceWaiting
+  failed: FailedThread
+  routine: FailingRoutine
+}
+type OneOf<T> = {
+  [K in keyof T]: { [P in K]: T[P] } & { [P in Exclude<keyof T, K>]?: undefined }
+}[keyof T]
 
-/** Shown in place of the one just answered, until the person moves on. */
-type Sent = { label: string; next: string | undefined }
+/**
+ * One thing waiting: a ticket answered here, a ticket's row, a playbook's approvals, a pull
+ * request, choices to pick from, a failed thread or a failing routine.
+ */
+type Waiting = { key: string; title: string; from?: string } & OneOf<Kinds>
+
+/**
+ * A failure as one card: what it said, where to look, and the button that starts it again: Try
+ * again on the turn that failed, as in its thread, or Run now for a routine that could not start.
+ */
+function FailureCard({
+  error,
+  href,
+  again,
+  onAnswer,
+}: {
+  error: string | null
+  href: string
+  /** Its button and what it calls; none for a thread that never ran (nothing to try again). */
+  again: { label: string; path: string; done: string } | null
+  onAnswer: Answer
+}) {
+  return (
+    <Card className="flex-row flex-wrap items-center gap-3 px-4 py-3">
+      <p className="min-w-0 flex-1 text-sm">
+        <span className="line-clamp-2 wrap-anywhere text-destructive-text">
+          {error ?? 'It stopped on an error.'}
+        </span>
+      </p>
+      <div className="flex flex-none items-center gap-2">
+        <Button variant="outline" size="sm" asChild>
+          <Link href={href}>Open</Link>
+        </Button>
+        {again && (
+          <Button
+            size="sm"
+            onClick={() =>
+              // Needs you says why if it did not go.
+              void onAnswer(again.done, () => api(again.path, { body: {} })).catch(() => undefined)
+            }
+          >
+            {again.label}
+          </Button>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+/**
+ * Choices a teammate's reply ended on, picked here as in its thread (the pick is a message), or
+ * dismissed without picking.
+ */
+function ChoiceToMake({ choice, onAnswer }: { choice: ChoiceWaiting; onAnswer: Answer }) {
+  const { reloadThreads } = useThreadPanel()
+  return (
+    <div className="flex flex-col gap-1.5">
+      <From teammate={choice.teammate} thread={choice} note="pick one" />
+      <ChoicesCard
+        choices={choice.choices}
+        onChoose={(text, pick) =>
+          onAnswer(`Sent to ${choice.teammate.name}`, () =>
+            // With the design it makes, when the option is one in an options folder.
+            api(`/threads/${choice.id}/messages`, { body: { text, ...(pick ? { pick } : {}) } }),
+          )
+        }
+        onDismiss={() =>
+          onAnswer('Dismissed', () =>
+            api(`/threads/${choice.id}/choices/dismiss`, { body: { seq: choice.seq } }),
+          )
+        }
+        // Its thread put away for this member, as the sidebar's Snooze does: out of Needs you
+        // and the sidebar until then, or until something new happens in it.
+        onSnooze={(until) =>
+          onAnswer(`Snoozed until ${wakeLabel(until)}`, async () => {
+            await api(`/threads/${choice.id}/later`, { body: { until: until.toISOString() } })
+            void reloadThreads()
+          })
+        }
+      />
+    </div>
+  )
+}
+
+/**
+ * Shown in place of the one just answered, until the person moves on: what was done, to
+ * what, and its thread, to follow the teammate picking up.
+ */
+type Sent = {
+  /** The one it was done to. */
+  key: string
+  label: string
+  title: string
+  thread?: string
+  next: string | undefined
+}
+
+/** What was done, then the item's title, a link to its thread when it has one. */
+function SentLine({ sent }: { sent: Sent }) {
+  return (
+    <p className="flex min-w-0 flex-1 items-center gap-2 text-sm">
+      <Check className="size-4 flex-none text-success" aria-hidden />
+      <span className="flex-none font-semibold">{sent.label}</span>
+      <span aria-hidden className="flex-none text-muted-foreground">
+        ·
+      </span>
+      {sent.thread ? (
+        <Hint label="Open thread">
+          <Link
+            href={`/app/threads/${sent.thread}`}
+            className="group flex min-w-0 items-center gap-1 text-muted-foreground hover:text-foreground"
+          >
+            <span className="truncate underline decoration-muted-foreground/50 underline-offset-4 group-hover:decoration-foreground">
+              {sent.title}
+            </span>
+            <ArrowUpRight className="size-3.5 flex-none" aria-hidden />
+          </Link>
+        </Hint>
+      ) : (
+        <span className="min-w-0 truncate text-muted-foreground">{sent.title}</span>
+      )}
+    </p>
+  )
+}
 
 export function NeedsYou({
   tickets,
   pulls,
+  failed,
+  choices,
   onChange,
 }: {
   /** Open tickets waiting on this member. */
   tickets: Ticket[]
   pulls: PullWaiting[]
+  /** Failed threads and routines waiting on this member (failuresWaiting). */
+  failed: { threads: FailedThread[]; routines: FailingRoutine[] }
+  /** Choices this member has to pick from (choicesWaiting). */
+  choices: ChoiceWaiting[]
   onChange: () => Promise<void>
 }) {
   const { me, teammates } = useDashboard()
   const [error, setError] = useState<string>()
   const [currentKey, setCurrentKey] = useState<string>()
   const [sent, setSent] = useState<Sent>()
+  // Answered here, while the request goes and until the list is reloaded: out of the list.
+  const [answering, setAnswering] = useState<ReadonlySet<string>>(new Set())
   // Opened from a push about a playbook's approvals: those first.
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get('approvals')
@@ -206,7 +397,7 @@ export function NeedsYou({
     queues.set(key, [...(queues.get(key) ?? []), t])
   }
 
-  const items: Waiting[] = [
+  const waiting: Waiting[] = [
     ...tickets.flatMap((t): Waiting[] => {
       const key = waitingItemKey(t)
       const queue = queues.get(key)
@@ -246,7 +437,26 @@ export function NeedsYou({
       from: p.authorTeammate?.name,
       pull: p,
     })),
+    ...choices.map((c) => ({
+      key: `choice:${c.id}`,
+      title: c.title,
+      from: c.teammate.name,
+      choice: c,
+    })),
+    ...failed.threads.map((t) => ({
+      key: `failed:${t.id}`,
+      title: t.title,
+      from: t.teammate.name,
+      failed: t,
+    })),
+    ...failed.routines.map((r) => ({
+      key: `routine:${r.scheduleId}`,
+      title: r.title,
+      from: 'Routine',
+      routine: r,
+    })),
   ]
+  const items = waiting.filter((i) => !answering.has(i.key))
   // One answered elsewhere drops out: the first one left takes its place.
   const index = Math.max(
     0,
@@ -254,41 +464,75 @@ export function NeedsYou({
   )
   const current = items[index]
 
-  /** The one shown was answered: say so, and remember which comes next. */
-  async function done(label: string) {
-    setSent({ label, next: (items[index + 1] ?? items[index - 1])?.key })
+  /** One was answered: say so, and remember which comes next. */
+  function showSent(item: Waiting, label: string) {
+    const at = items.findIndex((i) => i.key === item.key)
+    setSent({
+      key: item.key,
+      label,
+      // A playbook's approvals by its name, not how many were left.
+      title: item.queue?.name ?? item.title,
+      thread:
+        item.ticket?.session?.id ??
+        item.pull?.session?.id ??
+        item.choice?.id ??
+        item.failed?.id ??
+        item.routine?.runId ??
+        undefined,
+      next: at < 0 ? items[0]?.key : (items[at + 1] ?? items[at - 1])?.key,
+    })
+  }
+
+  /** Answered elsewhere (a playbook's last approval): say so, then ask for the list again. */
+  async function done(item: Waiting, label: string) {
+    showSent(item, label)
     await onChange()
   }
 
-  async function resolve(id: string, approved: boolean, always?: boolean) {
-    setError(undefined)
-    try {
-      await api(`/tickets/${id}/resolve`, { body: { approved, ...(always ? { always } : {}) } })
-    } catch (e) {
-      setError((e as Error).message)
-      await onChange()
-      return
+  /**
+   * Answers this one: said at once, while its card stays mounted out of sight (what was written
+   * in it is kept), until the list is reloaded; one that did not go brings the card back.
+   */
+  const answerFor =
+    (item: Waiting): Answer =>
+    async (label, request) => {
+      const key = item.key
+      const drop = () =>
+        setAnswering((a) => {
+          const next = new Set(a)
+          next.delete(key)
+          return next
+        })
+      showSent(item, label)
+      setError(undefined)
+      setAnswering((a) => new Set(a).add(key))
+      try {
+        await request()
+      } catch (e) {
+        // Back to it, as it was, with why: whatever was shown since.
+        drop()
+        setSent((s) => (s?.key === key ? undefined : s))
+        setCurrentKey(key)
+        setError(e instanceof Error ? e.message : String(e))
+        throw e
+      }
+      try {
+        await onChange()
+      } finally {
+        drop()
+      }
     }
-    // In the words of the button that was clicked.
-    const t = tickets.find((x) => x.id === id)
-    await done(
-      t?.payload.skillAction
-        ? approved
-          ? 'Skill added'
-          : 'Declined'
-        : t?.payload.playbookActivation
-          ? approved
-            ? 'Activated'
-            : 'Declined'
-          : t?.payload.source === 'harness'
-            ? 'Declined'
-            : t?.type === 'sign_in' || t?.type === 'usage_limit' || t?.payload.pullRequest
-              ? 'Dismissed'
-              : approved
-                ? 'Allowed'
-                : 'Denied',
-    )
-  }
+
+  const resolveFor =
+    (item: Waiting) => (id: string, approved: boolean, always?: boolean, edited?: EditedEmail) => {
+      const t = tickets.find((x) => x.id === id)
+      // In the words of the button that was clicked.
+      return answerFor(item)(t ? resolvedLabel(t, approved) : approved ? 'Allowed' : 'Denied', () =>
+        api(`/tickets/${id}/resolve`, {
+          body: { approved, ...(always ? { always } : {}), ...(edited ? { edited } : {}) },
+        }),
+      )
+    }
 
   function go(key: string | undefined) {
     setSent(undefined)
@@ -297,12 +541,121 @@ export function NeedsYou({
   }
 
   // Nothing waiting: the line under Home's greeting says so.
-  if (!current && !sent) return null
+  // Not while an answer goes: its card stays mounted until it settles (answerFor).
+  if (!current && !sent && answering.size === 0) return null
+
+  // The last one decided: one calm line, no yellow. The line under Home's greeting
+  // already says nothing else is waiting.
+  if (sent && items.length === 0 && answering.size === 0)
+    return (
+      <div role="status" className="flex rounded-2xl border px-4 py-3 sm:px-5">
+        <SentLine sent={sent} />
+      </div>
+    )
+
+  /** The card that decides one, the same as in its thread. */
+  function cardFor(item: Waiting) {
+    return item.pull ? (
+      <div className="flex flex-col gap-1.5">
+        <From
+          teammate={item.pull.authorTeammate}
+          thread={item.pull.session}
+          note={pullWaits(item.pull)}
+        />
+        <PullCard
+          key={item.key}
+          repository={item.pull.repository}
+          number={item.pull.number}
+          title={item.pull.title}
+          open
+        />
+      </div>
+    ) : item.queue ? (
+      <div className="flex flex-col gap-1.5">
+        <From
+          teammate={item.queue.teammate}
+          note={`${item.queue.name} · ${toApprove(item.queue.count)}`}
+        />
+        <PlaybookApprovals
+          key={item.key}
+          installationId={item.queue.id}
+          onDecided={onChange}
+          onEmptied={(label) => done(item, label)}
+        />
+      </div>
+    ) : item.choice ? (
+      <ChoiceToMake key={item.key} choice={item.choice} onAnswer={answerFor(item)} />
+    ) : item.failed ? (
+      <div className="flex flex-col gap-1.5">
+        <From teammate={item.failed.teammate} thread={item.failed} note="failed" />
+        <FailureCard
+          key={item.key}
+          error={item.failed.error}
+          href={`/app/threads/${item.failed.id}`}
+          again={
+            // Never ran (its computer was offline): no turn to try again, a message starts it.
+            item.failed.error
+              ? {
+                  label: 'Try again',
+                  path: `/threads/${item.failed.id}/retry`,
+                  done: 'Tried again',
+                }
+              : null
+          }
+          onAnswer={answerFor(item)}
+        />
+      </div>
+    ) : item.routine ? (
+      <div className="flex flex-col gap-1.5">
+        <From
+          note={`Routine ${item.routine.title} · ${
+            item.routine.couldNotStart ? "couldn't start" : 'last run failed'
+          }`}
+        />
+        <FailureCard
+          key={item.key}
+          error={item.routine.error}
+          href={item.routine.runId ? `/app/threads/${item.routine.runId}` : '/app/routines'}
+          again={
+            item.routine.couldNotStart
+              ? {
+                  label: 'Run now',
+                  path: `/schedules/${item.routine.scheduleId}/run`,
+                  done: 'Started',
+                }
+              : item.routine.runId && item.routine.error
+                ? {
+                    label: 'Try again',
+                    path: `/threads/${item.routine.runId}/retry`,
+                    done: 'Tried again',
+                  }
+                : null
+          }
+          onAnswer={answerFor(item)}
+        />
+      </div>
+    ) : item.ticket && answersHere(item.ticket) ? (
+      <HarnessTicket key={item.key} ticket={item.ticket} onAnswer={answerFor(item)} />
+    ) : item.ticket ? (
+      // Approvals, caps and logins keep their row, which has their buttons.
+      <Card key={item.key} className="gap-0 overflow-hidden py-0">
+        <ul>
+          <TicketRow ticket={item.ticket} me={me} onResolve={resolveFor(item)} />
+        </ul>
+      </Card>
+    ) : null
+  }
+  // The one shown, unless what was done to it is; and those answered here, until they settle.
+  const shown = sent ? undefined : current
+  const cards = waiting.filter((i) => i === shown || answering.has(i.key))
 
   const others = sent ? items : items.filter((i) => i.key !== current?.key)
   const listed = others.slice(0, LISTED)
-  const moreTickets = others.slice(LISTED).filter((i) => !i.pull).length
-  const morePulls = others.length - listed.length - moreTickets
+  const rest = others.slice(LISTED)
+  const moreTickets = rest.filter((i) => i.ticket || i.queue).length
+  const morePulls = rest.filter((i) => i.pull).length
+  const moreChoices = rest.filter((i) => i.choice).length
+  const moreFailed = rest.length - moreTickets - morePulls - moreChoices
 
   return (
     // Yellow, as needs-you is in the sidebar: what blocks a teammate comes first.
@@ -313,7 +666,7 @@ export function NeedsYou({
       <div className="flex items-center gap-2">
         <h2 id="needs-you" className="flex items-center gap-2 text-lg font-bold">
           <span aria-hidden className="size-2 rounded-full bg-warning" />
-          Waiting on you
+          Needs you
         </h2>
         {items.length > 1 && !sent && (
           // Which one of how many: the card's own count is its asks.
@@ -349,62 +702,28 @@ export function NeedsYou({
       </div>
       {error && <p className="text-sm text-destructive-text">{error}</p>}
 
-      {sent ? (
-        <Card className="items-center gap-3 px-5 py-6 text-center">
-          <p className="flex items-center gap-2 font-semibold">
-            <Check className="size-4 text-success" aria-hidden />
-            {sent.label}
-          </p>
-          {items.length > 0 ? (
+      {sent && (
+        <Card role="status" className="flex-row items-center gap-3 px-4 py-2.5">
+          <SentLine sent={sent} />
+          {/* None left: nothing next, and the one answered stays said until it settles. */}
+          {items.length > 0 && (
             <Button
+              className="flex-none"
               size="sm"
               onClick={() => go(items.some((i) => i.key === sent.next) ? sent.next : items[0]?.key)}
             >
               Next
               <ChevronRight aria-hidden />
             </Button>
-          ) : (
-            <p className="text-sm text-muted-foreground">Nothing else is waiting on you.</p>
           )}
         </Card>
-      ) : current?.pull ? (
-        <div className="flex flex-col gap-1.5">
-          <From
-            teammate={current.pull.authorTeammate}
-            thread={current.pull.session}
-            note={PULL_WAITS[current.pull.reviewStatus]}
-          />
-          <PullCard
-            key={current.key}
-            repository={current.pull.repository}
-            number={current.pull.number}
-            title={current.pull.title}
-            open
-          />
+      )}
+      {/* The card shown, and those answered here whose requests go, mounted out of sight. */}
+      {cards.map((item) => (
+        <div key={item.key} hidden={item !== shown}>
+          {cardFor(item)}
         </div>
-      ) : current?.queue ? (
-        <div className="flex flex-col gap-1.5">
-          <From
-            teammate={current.queue.teammate}
-            note={`${current.queue.name} · ${toApprove(current.queue.count)}`}
-          />
-          <PlaybookApprovals
-            key={current.key}
-            installationId={current.queue.id}
-            onDecided={onChange}
-            onEmptied={done}
-          />
-        </div>
-      ) : current?.ticket && answersHere(current.ticket) ? (
-        <HarnessTicket key={current.key} ticket={current.ticket} onDone={done} />
-      ) : current?.ticket ? (
-        // Approvals, caps and logins keep their row, which has their buttons.
-        <Card key={current.key} className="gap-0 overflow-hidden py-0">
-          <ul>
-            <TicketRow ticket={current.ticket} me={me} onResolve={resolve} />
-          </ul>
-        </Card>
-      ) : null}
+      ))}
 
       {listed.length > 0 && (
         <ul className="flex flex-col">
@@ -415,7 +734,13 @@ export function NeedsYou({
                 onClick={() => go(i.key)}
                 className="flex w-full min-w-0 items-center gap-2 rounded-md px-1 py-1 text-left text-sm text-muted-foreground hover:bg-warning/10 hover:text-foreground"
               >
-                <span aria-hidden className="size-1.5 flex-none rounded-full bg-warning" />
+                <span
+                  aria-hidden
+                  className={cn(
+                    'size-1.5 flex-none rounded-full',
+                    i.failed || i.routine ? 'bg-destructive' : 'bg-warning',
+                  )}
+                />
                 <span className="truncate text-foreground">{i.title}</span>
                 {i.from && <span className="flex-none text-xs">· {i.from}</span>}
               </button>
@@ -423,7 +748,7 @@ export function NeedsYou({
           ))}
         </ul>
       )}
-      {(moreTickets > 0 || morePulls > 0) && (
+      {rest.length > 0 && (
         <p className="flex flex-wrap gap-x-4 px-1 text-sm">
           {moreTickets > 0 && (
             <Link href="/app/tickets" className="font-medium text-primary hover:underline">
@@ -434,6 +759,15 @@ export function NeedsYou({
             <Link href="/app/pulls" className="font-medium text-primary hover:underline">
               {morePulls} more pull {morePulls === 1 ? 'request' : 'requests'}
             </Link>
+          )}
+          {/* Choices and failed ones have no page of their own: the arrows above go through them. */}
+          {moreChoices > 0 && (
+            <span className="text-muted-foreground">
+              {moreChoices} more {moreChoices === 1 ? 'choice' : 'choices'} to make
+            </span>
+          )}
+          {moreFailed > 0 && (
+            <span className="text-muted-foreground">{moreFailed} more failed</span>
           )}
         </p>
       )}

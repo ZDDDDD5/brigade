@@ -1,21 +1,33 @@
 'use client'
-import { ArrowRight, Check, ChevronDown, FolderKanban, List, Monitor, Plus } from 'lucide-react'
+import { ArrowUp, Check, ChevronDown, CircleUser, FolderKanban, List, Plus, X } from 'lucide-react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { defaultEffort, type Effort } from '@brigade/contracts'
+import { defaultEffort, loginName, loginOf, type Effort } from '@brigade/contracts'
 import {
   ComposerMenu,
+  ComputerIcon,
   UploadList,
   useFileDrop,
   useUploads,
+  type ComposerSetting,
+  type Upload,
 } from '@/components/attachments'
 import { Composer } from '@/components/composer'
+import {
+  DictationBar,
+  DictationButton,
+  useDictation,
+  useDictationStatus,
+  withDictated,
+} from '@/components/dictation'
 import { EffortButton, type EffortPick } from '@/components/effort'
 import { TeammateAvatar, timeAgo, useDashboard } from '@/components/dashboard'
+import { AskedDocument } from '@/components/document-panel'
 import { StatusDot } from '@/components/status-badge'
 import { ProjectIcon } from '@/components/projects'
 import { TeachTask } from '@/components/teach-task'
+import { TeammateTitle } from '@/components/teammate-title'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
@@ -38,10 +50,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Hint } from '@/components/ui/tooltip'
 import {
   api,
   computerName,
-  harnessLabel,
+  isList,
+  preload,
+  preloadSettled,
   teammateModelLabel,
   usableComputers,
   useApi,
@@ -50,11 +65,52 @@ import {
   type Teammate,
   type ThreadSummary,
 } from '@/lib/api'
+import { defaultAccount, pickAccount } from '@/lib/account-pick'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { newThreadId, pendingRow, pendingThreads } from '@/lib/pending-threads'
+import { preloadThreadEvents } from '@/lib/use-thread-events'
 import { cn } from '@/lib/utils'
+import { captures, desktopPlatform } from '@/lib/brigade-app'
+import { clickSettings } from '@/lib/settings-dialog'
 
 const quietSelect =
   'h-8 border-transparent bg-transparent shadow-none hover:bg-accent dark:bg-transparent dark:hover:bg-accent/50'
+
+/** Where a new thread runs, when it is not the default: shown in the row, one click from the default. */
+function NotDefault({
+  icon,
+  label,
+  title,
+  onReset,
+}: {
+  icon: React.ReactNode
+  label: string
+  title: string
+  onReset: () => void
+}) {
+  return (
+    <span className="flex h-8 max-w-44 min-w-0 items-center gap-1.5 rounded-md pr-0.5 pl-2 text-sm text-muted-foreground [&_svg:not([class*='size-'])]:size-4">
+      {/* The tooltip is on the name alone: the reset button has its own. */}
+      <Hint label={title}>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {icon}
+          <span className="truncate text-foreground">{label}</span>
+        </span>
+      </Hint>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="size-6 shrink-0"
+        aria-label={`Back to the default instead of ${label}`}
+        tooltip="Back to the default"
+        onClick={onReset}
+      >
+        <X aria-hidden />
+      </Button>
+    </span>
+  )
+}
 
 /** What a teammate is doing: working, or waiting on a person. */
 export type TeammateActivity = 'busy' | 'waiting'
@@ -75,6 +131,8 @@ function RecentThreads({
 }) {
   const threads = useApi<ThreadSummary[]>(
     `/threads?teammateId=${teammate.id}&limit=5&sort=activity`,
+    undefined,
+    isList,
   )
   return (
     <>
@@ -123,6 +181,7 @@ export function TeammatePicker({
   heading = 'Send to',
   recent,
   compact = false,
+  withTitle = false,
   numbered = false,
   onPicked,
 }: {
@@ -138,6 +197,8 @@ export function TeammatePicker({
   recent?: RecentThreadActions
   /** The avatar alone on the button, where there is no room for the name. */
   compact?: boolean
+  /** The teammate's title as a badge beside its name. */
+  withTitle?: boolean
   /** 1–9 pick the first nine while the menu is open, shown beside each. */
   numbered?: boolean
   /** Where focus goes once the menu closes, instead of back to its button. */
@@ -156,6 +217,7 @@ export function TeammatePicker({
         >
           <TeammateAvatar teammate={value} className="size-5" />
           {!compact && <span className="max-w-40 truncate">{value.name}</span>}
+          {!compact && withTitle && <TeammateTitle title={value.title} />}
           <ChevronDown className="opacity-60" aria-hidden />
         </Button>
       </DropdownMenuTrigger>
@@ -271,6 +333,8 @@ export function useThreadDraft() {
   const [text, setText] = useState('')
   const [computerId, setComputerId] = useState<string>()
   const [accountId, setAccountId] = useState<string>()
+  // The project picked in the box; unset: the page's, else the one picked last.
+  const [projectId, setProjectId] = useState<string>()
   // How hard its teammates think, from the + menu; null: the harness's default.
   const [effort, setEffort] = useState<Effort | null>(null)
   const files = useUploads()
@@ -281,6 +345,8 @@ export function useThreadDraft() {
     setComputerId,
     accountId,
     setAccountId,
+    projectId,
+    setProjectId,
     effort,
     setEffort,
     files,
@@ -290,9 +356,29 @@ export function useThreadDraft() {
 export type ThreadDraft = ReturnType<typeof useThreadDraft>
 
 /**
+ * A message out of a box while its thread starts (NewThread's), or one set aside, with where and how it runs,
+ * as the box's draft holds them: unset, the box's default.
+ */
+export type SentMessage = {
+  teammateId: string
+  text: string
+  uploads: Upload[]
+  effort: Effort | null
+  projectId?: string
+  computerId?: string
+  accountId?: string
+}
+
+/**
  * The box a new thread starts from: a message, files, where it runs and on which account.
  * With `picker`, the member also chooses the teammate it goes to. With `draft`, what is
  * written is kept outside; with `onStarted`, the box stays put instead of opening the thread.
+ * With `onSending` or `openAtOnce`, it does not wait for the thread either: the box empties at
+ * once, and the sidebar lists the thread before it exists (lib/pending-threads.ts). With
+ * `onSending`, the caller hears how it went; with `openAtOnce`, the thread opens at once, through
+ * `onStarted` if given. Should it not start, it leaves the sidebar and the message comes back here
+ * with `giveBackHere` (a page's own box, there again when its page is), else it is kept aside for
+ * the new-thread dialog to take up.
  */
 export function NewThread({
   teammate,
@@ -301,6 +387,9 @@ export function NewThread({
   rows = 3,
   draft,
   onStarted,
+  onSending,
+  openAtOnce,
+  giveBackHere,
   autoFocus,
   typeToFocus,
   projectId: initialProject,
@@ -320,6 +409,19 @@ export function NewThread({
   rows?: number
   draft?: ThreadDraft
   onStarted?: (thread: { id: string }) => void
+  /**
+   * Sent, the thread still starting: it settles with the thread, or the reason it did not. What
+   * was sent is not put back in the box (another message may be written there meanwhile): it is
+   * kept aside for the new-thread dialog.
+   */
+  onSending?: (thread: Promise<{ id: string }>) => void
+  /** Opens the thread at once, before it exists. */
+  openAtOnce?: boolean
+  /**
+   * With `openAtOnce`, a message whose thread did not start comes back to this box, rather than
+   * aside for the new-thread dialog: for a page's own box (Home, a project's).
+   */
+  giveBackHere?: boolean
   /** Puts the cursor in the message as soon as the box appears. */
   autoFocus?: boolean
   /** The page's main message box: typing with nothing focused lands in it (Composer). */
@@ -333,12 +435,33 @@ export function NewThread({
   fill?: boolean
 }) {
   const router = useRouter()
+  const pathname = usePathname()
   const { me, projects } = useDashboard()
   const pickable = projects.filter((p) => !p.archivedAt)
   // A project page's own project first; else the one picked last, while it is still pickable.
   const [last, remember] = useLastProject()
-  const [picked, setPicked] = useState<string>()
-  useEffect(() => setPicked(undefined), [initialProject])
+  const own = useThreadDraft()
+  const {
+    text,
+    setText,
+    computerId,
+    setComputerId,
+    accountId,
+    setAccountId,
+    projectId: picked,
+    setProjectId: setPicked,
+    effort: effortValue,
+    setEffort: setEffortValue,
+    files,
+  } = draft ?? own
+  // Another page's project: what was picked for the last one no longer holds. Not as the box
+  // mounts: a draft that outlives it (the threads panel's) keeps its pick.
+  const pageProject = useRef(initialProject)
+  useEffect(() => {
+    if (pageProject.current === initialProject) return
+    pageProject.current = initialProject
+    setPicked(undefined)
+  }, [initialProject, setPicked])
   const projectId =
     picked ?? initialProject ?? (last && pickable.some((p) => p.id === last) ? last : 'none')
   const chosenProject = pickable.find((p) => p.id === projectId)
@@ -350,18 +473,6 @@ export function NewThread({
   }
   const computers = useApi<ComputersResponse>('/computers')
   const accounts = useApi<Account[]>('/accounts')
-  const own = useThreadDraft()
-  const {
-    text,
-    setText,
-    computerId,
-    setComputerId,
-    accountId,
-    setAccountId,
-    effort: effortValue,
-    setEffort: setEffortValue,
-    files,
-  } = draft ?? own
   const effort: EffortPick = {
     value: effortValue,
     fallback: defaultEffort(teammate.harness, teammate.model),
@@ -369,30 +480,64 @@ export function NewThread({
   }
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  // A message whose thread did not start, back from it (lib/pending-threads.ts).
+  useEffect(() => {
+    if (!openAtOnce || !giveBackHere) return
+    const back = pendingThreads.takeReturned(pathname)?.message
+    if (!back) return
+    // To whom and where it was to run as well: sent again, it goes there.
+    if (back.teammateId !== teammate.id && picker?.teammates.some((t) => t.id === back.teammateId))
+      picker.onChange(back.teammateId)
+    setText(back.text)
+    files.put(back.uploads)
+    setEffortValue(back.effort)
+    setPicked(back.projectId)
+    setComputerId(back.computerId)
+    setAccountId(back.accountId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const drop = useFileDrop(files.add)
   // Teach a task: recorded on the cloud computer, and the thread starts once it is sent.
   const [teaching, setTeaching] = useState(false)
   const phone = useIsMobile()
 
+  // The login the teammate runs on: its harness's own, or for Pi its model's vendor's (loginOf).
+  const login = loginOf(teammate.harness, teammate.model)
   const online = usableComputers(computers.data)
   const computer = online.find((c) => c.id === computerId) ?? online[0]
   const usable = (accounts.data ?? []).filter(
     (a) =>
       a.computer.id === computer?.id &&
-      a.provider === teammate.harness &&
+      a.provider === login &&
       (a.status === 'ready' || a.status === 'unverified') &&
       !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()),
   )
-  const account =
-    usable.find((a) => a.id === accountId) ?? usable.find((a) => a.isDefault) ?? usable[0]
+  const account = pickAccount(usable, accountId)
 
   const loaded = computers.data && accounts.data
   const ready =
     (text.trim() || files.ids.length > 0) && !files.busy && !files.failed && computer && account
 
-  const create = (message: string, attachmentIds: string[]) =>
+  // Dictation: its words go in the box; with send pressed while recording, they go at once.
+  const dictationStatus = useDictationStatus()
+  const sendDictated = useRef(false)
+  const dictation = useDictation((words, sendNow) => {
+    sendDictated.current = sendNow
+    setText(withDictated(text, words))
+    if (!sendNow) focusMessage()
+  })
+  useEffect(() => {
+    dictation.clearError()
+    if (!sendDictated.current || !text.trim()) return
+    sendDictated.current = false
+    void start()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- starts once, as the words land
+  }, [text])
+
+  const create = (message: string, attachmentIds: string[], id?: string) =>
     api<{ id: string }>('/threads', {
       body: {
+        ...(id && { id }),
         teammateId: teammate.id,
         computerId: computer!.id,
         accountId: account!.id,
@@ -406,6 +551,68 @@ export function NewThread({
   async function start(e?: FormEvent) {
     e?.preventDefault()
     if (busy || !ready) return
+    if (onSending || openAtOnce) {
+      // In the sidebar at once, under an id chosen here; opened at once too with `openAtOnce`,
+      // showing this message until it has started, then its conversation (lib/pending-threads.ts).
+      const id = newThreadId()
+      const sending = create(text, files.ids, id)
+      const taken = files.take()
+      pendingThreads.add(
+        id,
+        {
+          teammate,
+          text,
+          files: taken.uploads,
+          from: pathname,
+          giveBack: openAtOnce && giveBackHere ? 'box' : 'dialog',
+        },
+        // Where it was to run, as sent: given back, it runs there again.
+        {
+          teammateId: teammate.id,
+          text,
+          uploads: taken.uploads,
+          effort: effortValue,
+          projectId,
+          computerId: computer!.id,
+          accountId: account!.id,
+        },
+        pendingRow(id, {
+          teammate,
+          startedBy: { id: me.memberId ?? '', name: me.user.name },
+          computer: computer!,
+          projectId: projectId === 'none' ? null : projectId,
+          text,
+          files: taken.uploads,
+        }),
+      )
+      setText('')
+      setEffortValue(null)
+      const started = sending.then(
+        async () => {
+          // Its conversation takes over once what it opens on is in: no blank in between.
+          preload(`/threads/${id}`)
+          preloadThreadEvents(id)
+          await Promise.all([
+            preloadSettled(`/threads/${id}`),
+            preloadSettled(`/threads/${id}/events`),
+          ])
+          // Its files' previews go once its conversation has the message (pendingThreads.delivered).
+          pendingThreads.started(id)
+          return { id }
+        },
+        (error: unknown) => {
+          // Out of the sidebar; its message back to its box, or aside for the dialog.
+          pendingThreads.failed(id, (error as Error).message)
+          throw error
+        },
+      )
+      if (onSending) return onSending(started)
+      // Its page says why, should it not start.
+      started.catch(() => {})
+      if (onStarted) onStarted({ id })
+      else router.push(`/app/threads/${id}`)
+      return
+    }
     setBusy(true)
     setError(undefined)
     try {
@@ -436,16 +643,36 @@ export function NewThread({
     : computer.kind !== 'cloud'
       ? 'Not yet on threads that run on a member’s machine'
       : !account
-        ? `No ${harnessLabel(teammate.harness)} account on the cloud computer`
+        ? `No ${loginName(login)} account on the cloud computer`
         : () => setTeaching(true)
 
   const link = 'font-medium text-primary hover:underline'
   let notice: React.ReactNode = null
-  if (loaded && !computer)
+  const hoursUsedUp = computers.data?.cloudHoursUsedUp
+  if (loaded && !computer && hoursUsedUp)
+    notice = (
+      <>
+        This month’s Starter hours are used up: the cloud computer sleeps until{' '}
+        {new Date(hoursUsedUp).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}.{' '}
+        <Link
+          href="/app/billing"
+          onClick={(e) => clickSettings(e, '/app/billing')}
+          className={link}
+        >
+          Upgrade to Max
+        </Link>{' '}
+        to keep going.
+      </>
+    )
+  else if (loaded && !computer)
     notice = (
       <>
         No computer is online.{' '}
-        <Link href="/app/computers" className={link}>
+        <Link
+          href="/app/computers"
+          onClick={(e) => clickSettings(e, '/app/computers')}
+          className={link}
+        >
           Link your machine
         </Link>{' '}
         to run threads on it.
@@ -454,8 +681,12 @@ export function NewThread({
   else if (loaded && !account)
     notice = (
       <>
-        No {harnessLabel(teammate.harness)} account on {computerName(computer!)}.{' '}
-        <Link href="/app/accounts" className={link}>
+        No {loginName(login)} account on {computerName(computer!)}.{' '}
+        <Link
+          href="/app/accounts"
+          onClick={(e) => clickSettings(e, '/app/accounts')}
+          className={link}
+        >
           Add one
         </Link>
       </>
@@ -465,23 +696,32 @@ export function NewThread({
   const form = useRef<HTMLFormElement>(null)
   const focusMessage = () =>
     form.current?.querySelector<HTMLElement>('[contenteditable="true"]')?.focus()
-  const uploads = <UploadList uploads={files.uploads} onRemove={files.remove} />
-  const composer = (
-    <Composer
-      bare
-      fill={fill}
-      rows={rows}
-      value={text}
-      onChange={setText}
-      onSubmit={() => void start()}
-      disabled={busy}
-      autoFocus={autoFocus}
-      typeToFocus={typeToFocus}
-      placeholder={
-        placeholder ?? `Chat with ${teammate.name}`
-      }
-    />
+  const uploads = (
+    <>
+      <AskedDocument text={text} />
+      <UploadList uploads={files.uploads} onRemove={files.remove} />
+    </>
   )
+  const composer = (
+    <>
+      {dictation.active && <DictationBar dictation={dictation} />}
+      <div className={dictation.active ? 'hidden' : 'contents'}>
+        <Composer
+          bare
+          fill={fill}
+          rows={rows}
+          value={text}
+          onChange={setText}
+          onSubmit={() => void start()}
+          disabled={busy}
+          autoFocus={autoFocus}
+          typeToFocus={typeToFocus}
+          placeholder={placeholder ?? `Chat with ${teammate.name}`}
+        />
+      </div>
+    </>
+  )
+  const mic = <DictationButton status={dictationStatus} dictation={dictation} />
   const teammatePicker = picker && (
     <TeammatePicker
       teammates={picker.teammates}
@@ -527,37 +767,60 @@ export function NewThread({
       </SelectContent>
     </Select>
   )
+  // Where it runs is rarely changed: picked in the + menu, and shown in the row only when it
+  // is not the default, so a thread does not go to another computer or account unnoticed.
+  const settings: ComposerSetting[] = [
+    ...(online.length > 1
+      ? [
+          {
+            id: 'computer',
+            label: 'Run on',
+            icon: <ComputerIcon cloud={computer?.kind === 'cloud'} />,
+            value: computer?.id,
+            options: online.map((c) => ({
+              id: c.id,
+              label: computerName(c),
+              icon: <ComputerIcon cloud={c.kind === 'cloud'} />,
+            })),
+            onPick: setComputerId,
+          },
+        ]
+      : []),
+    ...(usable.length > 1
+      ? [
+          {
+            id: 'account',
+            label: 'Account',
+            icon: <CircleUser aria-hidden />,
+            value: account?.id,
+            options: usable.map((a) => ({
+              id: a.id,
+              label: a.label,
+              ...(a.email && { detail: a.email }),
+            })),
+            onPick: setAccountId,
+          },
+        ]
+      : []),
+  ]
+  const byDefault = defaultAccount(usable)
   const where = (
     <>
-      {online.length > 1 && (
-        <Select value={computer?.id} onValueChange={setComputerId}>
-          <SelectTrigger size="sm" aria-label="Run on" className={quietSelect}>
-            <Monitor aria-hidden />
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {online.map((c) => (
-              <SelectItem key={c.id} value={c.id}>
-                {computerName(c)}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {computer && computer !== online[0] && (
+        <NotDefault
+          icon={<ComputerIcon cloud={computer.kind === 'cloud'} />}
+          label={computerName(computer)}
+          title={`Runs on ${computerName(computer)}`}
+          onReset={() => setComputerId(undefined)}
+        />
       )}
-      {usable.length > 1 && (
-        <Select key={computer?.id} value={account?.id} onValueChange={setAccountId}>
-          <SelectTrigger size="sm" aria-label="Account" className={cn(quietSelect, 'max-w-60')}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {usable.map((a) => (
-              <SelectItem key={a.id} value={a.id}>
-                {a.label}
-                {a.email ? ` (${a.email})` : ''}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {account && byDefault && account !== byDefault && (
+        <NotDefault
+          icon={<CircleUser aria-hidden />}
+          label={account.label}
+          title={account.email ? `${account.label} (${account.email})` : account.label}
+          onReset={() => setAccountId(undefined)}
+        />
       )}
     </>
   )
@@ -566,6 +829,7 @@ export function NewThread({
   const add = (
     <ComposerMenu
       onFiles={files.add}
+      settings={settings}
       effort={effort}
       {...(phone || layout === 'dialog' ? {} : { teach })}
     />
@@ -578,15 +842,22 @@ export function NewThread({
       onClose={() => setTeaching(false)}
     />
   )
-  const send = (
-    <Button size="sm" className="ml-auto" disabled={busy || !ready}>
-      {busy ? 'Starting…' : 'Send'}
-      <ArrowRight aria-hidden />
+  // As in a thread, the send button shows once there is something to send.
+  const send = (text.trim() || files.uploads.length > 0) && (
+    <Button
+      size="icon-sm"
+      className="ml-auto rounded-full [&_svg:not([class*='size-'])]:size-5"
+      disabled={busy || !ready}
+      aria-label={busy ? 'Starting…' : 'Send'}
+      tooltip={busy ? 'Starting…' : 'Send (↵)'}
+    >
+      <ArrowUp aria-hidden />
     </Button>
   )
-  const message = (error || notice) && (
-    <p className={cn('px-1 text-sm', error ? 'text-destructive-text' : 'text-muted-foreground')}>
-      {error ?? notice}
+  const problem = error ?? (dictation.active ? undefined : dictation.error)
+  const message = (problem || notice) && (
+    <p className={cn('px-1 text-sm', problem ? 'text-destructive-text' : 'text-muted-foreground')}>
+      {problem ?? notice}
     </p>
   )
 
@@ -607,12 +878,14 @@ export function NewThread({
         {...drop.props}
       >
         <div
-          // A whole window has no title bar: its macOS buttons sit at the start of this row
-          // (capture.rs), and the row drags the window, its pickers aside.
-          data-tauri-drag-region={fill ? 'deep' : undefined}
+          // A whole window has no title bar on macOS: its buttons sit at the start of this row
+          // (apps/desktop/src/capture.ts), and the row moves the window, its pickers aside.
+          onMouseDown={fill ? captures.drag : undefined}
+          data-window-drag={fill || undefined}
           className={cn(
             'flex min-w-0 flex-wrap items-center gap-1 px-3 py-2 text-sm text-muted-foreground',
-            fill && 'min-h-[52px] pl-[78px] select-none',
+            fill && 'min-h-[52px] select-none',
+            fill && (desktopPlatform() ?? 'darwin') === 'darwin' && 'pl-[78px]',
           )}
         >
           <span className="pl-1">New thread for</span>
@@ -629,7 +902,12 @@ export function NewThread({
           {composer}
         </div>
         {message && <div className="px-3 pb-2">{message}</div>}
-        <div className="flex flex-wrap items-center gap-1 border-t px-3 py-2">
+        <div
+          className={cn(
+            'flex flex-wrap items-center gap-1 border-t px-3 py-2',
+            dictation.active && 'hidden',
+          )}
+        >
           {add}
           {where}
           <div className="ml-auto flex items-center gap-3">
@@ -638,6 +916,7 @@ export function NewThread({
             </span>
             <div className="flex items-center gap-1">
               <EffortButton effort={effort} />
+              {mic}
               {send}
             </div>
           </div>
@@ -648,24 +927,26 @@ export function NewThread({
   // The recording outside the form: its events would reach the form through the portal.
   return (
     <>
-      <form onSubmit={(e) => void start(e)} className="flex flex-col gap-2">
+      <form ref={form} onSubmit={(e) => void start(e)} className="flex flex-col gap-2">
         <Card
           data-composer-frame
+          data-look="composer"
           className={cn(
-            'relative gap-2 rounded-xl p-3 shadow-md focus-within:border-ring',
+            'relative gap-2 rounded-xl p-3 shadow-md',
             drop.dragging && 'border-primary ring-[3px] ring-primary/30',
           )}
           {...drop.props}
         >
           {uploads}
           {composer}
-          <div className="flex flex-wrap items-center gap-1">
+          <div className={cn('flex flex-wrap items-center gap-1', dictation.active && 'hidden')}>
             {add}
             {teammatePicker}
             {projectPicker}
             {where}
             <div className="ml-auto flex items-center gap-1">
               <EffortButton effort={effort} />
+              {mic}
               {send}
             </div>
           </div>

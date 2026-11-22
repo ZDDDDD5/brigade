@@ -5,14 +5,14 @@ import {
   MESSAGE_COMMANDS,
   messageCommand,
   skillCommand,
-  type Skill,
+  type SkillCommand,
   type DesignSystem,
   parseMentions,
   type Mention,
-  type MentionKind,
   type MessageCommand,
+  type SearchResult,
 } from '@brigade/contracts'
-import { Extension, Node, type JSONContent } from '@tiptap/core'
+import { Extension, Node, type Editor, type JSONContent } from '@tiptap/core'
 import Document from '@tiptap/extension-document'
 import HardBreak from '@tiptap/extension-hard-break'
 import MentionNode from '@tiptap/extension-mention'
@@ -27,15 +27,24 @@ import {
   useEditor,
   type ReactNodeViewProps,
 } from '@tiptap/react'
-import { PluginKey, Selection } from '@tiptap/pm/state'
+import { Plugin, PluginKey, Selection, type EditorState } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Suggestion, type SuggestionProps } from '@tiptap/suggestion'
-import { BookOpenText, GraduationCap, ImageIcon, Palette, Shapes } from 'lucide-react'
+import { BookOpenText, GraduationCap, ImageIcon, Palette, Shapes, Target } from 'lucide-react'
 import { Fragment, useEffect, useMemo, useRef, type ComponentType } from 'react'
 import { useDashboard } from '@/components/dashboard'
-import { credentialHint, MentionChip, MentionIcon, type ConnectionKind } from '@/components/mention'
+import { libraryDocument, useOptionalDocumentPanel } from '@/components/document-panel'
+import {
+  connectionMentionLabel,
+  credentialHint,
+  MentionChip,
+  MentionIcon,
+} from '@/components/mention'
 import { editable, OPEN_LAYER } from '@/components/side-panel'
 import {
+  api,
   computerName,
+  isList,
   useApi,
   type Account,
   type ComputersResponse,
@@ -45,30 +54,34 @@ import {
   type RepositoryOption,
   type ThreadSummary,
 } from '@/lib/api'
+import {
+  foundThreads,
+  MENTION_GROUPS,
+  searchesThreads,
+  searchMentions,
+  THREAD_SEARCH_DELAY,
+  withFoundThreads,
+  type FoundThreads,
+  type MentionOption,
+} from '@/lib/mention-search'
 import { cn } from '@/lib/utils'
 
-/** Something to mention, with what the menu shows beside it. */
-export type MentionOption = Mention & { hint?: string; connectionKind?: ConnectionKind }
 type Option = MentionOption
 
-export const MENTION_GROUPS: { kind: MentionKind; title: string; max: number }[] = [
-  { kind: 'teammate', title: 'Teammates', max: 5 },
-  { kind: 'project', title: 'Projects', max: 5 },
-  { kind: 'connection', title: 'Apps', max: 5 },
-  { kind: 'repository', title: 'Repositories', max: 5 },
-  { kind: 'design-system', title: 'Design systems', max: 5 },
-  { kind: 'design', title: 'Designs', max: 5 },
-  { kind: 'document', title: 'Library', max: 5 },
-  { kind: 'credential', title: 'Secrets', max: 5 },
-  { kind: 'thread', title: 'Threads', max: 4 },
-  { kind: 'computer', title: 'Computers', max: 3 },
-]
+/**
+ * The threads the workspace search finds for what follows `@`: every thread, where the menu's
+ * own list (useMentionOptions) has only the latest. Never `exclude`, the thread being replied in.
+ */
+export async function findThreads(query: string, exclude?: string): Promise<FoundThreads> {
+  const results = await api<SearchResult[]>(`/search?q=${encodeURIComponent(query.trim())}`)
+  return foundThreads(query, results, exclude)
+}
 
 /** Everything in the workspace a message can mention. */
 export function useMentionOptions(threadId?: string): Option[] {
   const { teammates, projects } = useDashboard()
-  const connections = useApi<ConnectionsResponse>('/connections')
-  const threads = useApi<ThreadSummary[]>('/threads')
+  const connections = useApi<ConnectionsResponse>('/connections', ['connections.updated'])
+  const threads = useApi<ThreadSummary[]>('/threads', undefined, isList)
   const computers = useApi<ComputersResponse>('/computers')
   const credentials = useApi<Credential[]>('/credentials')
   const repositories = useApi<RepositoryOption[]>('/repositories')
@@ -91,8 +104,9 @@ export function useMentionOptions(threadId?: string): Option[] {
         .map((c) => ({
           kind: 'connection' as const,
           id: c.id,
-          label: c.label,
-          hint: c.externalAccount ?? undefined,
+          // The account goes into the mention itself, for people and the teammate alike.
+          label: connectionMentionLabel(c),
+          hint: 'App',
           connectionKind: c.kind,
         })),
       ...(repositories.data ?? []).map((r) => ({
@@ -157,27 +171,14 @@ export function useMentionOptions(threadId?: string): Option[] {
   )
 }
 
-/** Matches for a query, grouped by kind; names that start with it first. */
-export function searchMentions(options: Option[], query: string) {
-  const q = query.trim().toLowerCase()
-  return MENTION_GROUPS.flatMap((g) =>
-    options
-      .filter((o) => o.kind === g.kind && o.label.toLowerCase().includes(q))
-      .sort(
-        (a, b) =>
-          Number(!a.label.toLowerCase().startsWith(q)) -
-          Number(!b.label.toLowerCase().startsWith(q)),
-      )
-      .slice(0, g.max),
-  )
-}
-
 type MenuProps<T = Option> = {
   items: T[]
   selected: number
   query: string
   onPick: (option: T) => void
   onHover: (index: number) => void
+  /** More may come for this query: the workspace search has not answered yet. */
+  searching?: boolean
 }
 
 /** max-h-80, in px: whether the menu fits above the composer. */
@@ -186,13 +187,15 @@ const MENU_MAX_HEIGHT = 320
 const menuClass =
   'max-h-80 w-full overflow-y-auto rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg'
 
-function MentionMenu({ items, selected, query, onPick, onHover }: MenuProps) {
+function MentionMenu({ items, selected, query, onPick, onHover, searching }: MenuProps) {
   // Only a moving pointer selects: rows scrolling under a still one (arrow keys) do not.
   const pointer = useRef('')
   if (!items.length)
     return (
       <div className={menuClass}>
-        <p className="px-2 py-1.5 text-sm text-muted-foreground">Nothing matches “{query}”</p>
+        <p className="px-2 py-1.5 text-sm text-muted-foreground">
+          {searching ? 'Searching threads…' : `Nothing matches “${query}”`}
+        </p>
       </div>
     )
   return (
@@ -242,10 +245,17 @@ function MentionMenu({ items, selected, query, onPick, onHover }: MenuProps) {
 
 function MentionView({ node, selected }: ReactNodeViewProps) {
   const { kind, id, label } = node.attrs as Mention
+  // A library file opens in the panel, as it does once sent.
+  const documents = useOptionalDocumentPanel()
+  const open =
+    kind === 'document' && documents
+      ? () => documents.open(libraryDocument({ id, path: label }))
+      : undefined
   return (
     <NodeViewWrapper as="span">
       <MentionChip
         mention={{ kind, id, label }}
+        onOpen={open}
         className={selected ? 'rounded-md outline-2 outline-offset-1 outline-primary' : undefined}
       />
     </NodeViewWrapper>
@@ -255,30 +265,75 @@ function MentionView({ node, selected }: ReactNodeViewProps) {
 /** Editors whose `@` or `/` menu is open with something to pick: Enter picks rather than sends. */
 const picking = new WeakSet<object>()
 
+/**
+ * What a menu finds once typing pauses, beyond what it matched at once (the threads the
+ * workspace search finds): `wants` says whether to look for a query, and `find` looks, then
+ * gives what the menu shows in place of what it shows: every row it shows, and more.
+ */
+type Later<T> = {
+  wants: (query: string) => boolean
+  find: (query: string) => Promise<(shown: T[]) => T[]>
+}
+
 /** A suggestion menu (`@`, `/`): arrows move, Enter or Tab picks, Escape closes. */
 function renderMenu<T, P extends object>(
   Menu: ComponentType<MenuProps<T>>,
   pick: (props: SuggestionProps<T, P>, item: T) => void,
+  later?: Later<T>,
 ) {
   let component: ReactRenderer<unknown, MenuProps<T>> | undefined
   let unmount: (() => void) | undefined
   let current: SuggestionProps<T, P>
   let selected = 0
+  // The query `later` looks for, until it answers.
+  let searching: string | undefined
+  let pause: ReturnType<typeof setTimeout> | undefined
   const menuProps = (): MenuProps<T> => ({
     items: current.items,
     selected,
     query: current.query,
+    searching: searching !== undefined,
     onPick: (item) => pick(current, item),
     onHover: (index) => {
       selected = index
       component?.updateProps(menuProps())
     },
   })
+  /** What `later` finds for the query shown, once typing pauses, if the menu still shows it. */
+  const lookLater = () => {
+    clearTimeout(pause)
+    const { query } = current
+    searching = later?.wants(query) ? query : undefined
+    if (!later || searching === undefined) return
+    const answered = (add?: (shown: T[]) => T[]) => {
+      if (!component || current.query !== query) return
+      searching = undefined
+      if (add) {
+        const items = add(current.items)
+        // The row selected stays selected (the groups after it may move): Enter picks what the
+        // person saw.
+        const at = current.items.length ? items.indexOf(current.items[selected]!) : 0
+        current = { ...current, items }
+        selected = Math.max(at, 0)
+        if (items.length) picking.add(current.editor)
+      }
+      component.updateProps(menuProps())
+    }
+    pause = setTimeout(
+      () =>
+        later.find(query).then(answered, () => {
+          // The menu keeps what it shows.
+          answered()
+        }),
+      THREAD_SEARCH_DELAY,
+    )
+  }
   return {
     onStart(props: SuggestionProps<T, P>) {
       current = props
       selected = 0
       if (props.items.length) picking.add(props.editor)
+      lookLater()
       component = new ReactRenderer(Menu, { props: menuProps(), editor: props.editor })
       // Like a chat app's command menu: docked to the composer's frame, full width, above
       // it (below when there's no room above), rather than floating at the caret.
@@ -298,6 +353,7 @@ function renderMenu<T, P extends object>(
       selected = 0
       if (props.items.length) picking.add(props.editor)
       else picking.delete(props.editor)
+      lookLater()
       component?.updateProps(menuProps())
     },
     onKeyDown({ event }: { event: KeyboardEvent }) {
@@ -315,6 +371,8 @@ function renderMenu<T, P extends object>(
       return false
     },
     onExit() {
+      clearTimeout(pause)
+      searching = undefined
       if (current) picking.delete(current.editor)
       unmount?.()
       component?.destroy()
@@ -329,6 +387,7 @@ const COMMAND_ICON: Record<MessageCommand, ComponentType<{ className?: string }>
   visual: Shapes,
   design: Palette,
   image: ImageIcon,
+  goal: Target,
   teach: GraduationCap,
 }
 /** A command to pick: what to make, or a workspace skill to follow. */
@@ -353,12 +412,15 @@ const isMessageCommand = (name: string): name is MessageCommand => name in MESSA
 
 /** The workspace's skills that are on (and their packs): each a command, `/name`. */
 export function useSkillCommands(): CommandOption[] {
-  const skills = useApi<Skill[]>('/skills')
+  const skills = useApi<SkillCommand[]>('/skills/commands')
   return useMemo(
     () =>
-      (skills.data ?? [])
-        .filter((s) => s.active)
-        .map((s) => ({ name: s.name, label: s.name, description: s.description, skill: true })),
+      (skills.data ?? []).map((s) => ({
+        name: s.name,
+        label: s.name,
+        description: s.description,
+        skill: true,
+      })),
     [skills.data],
   )
 }
@@ -548,6 +610,44 @@ function toDoc(text: string, skills: readonly string[]): JSONContent {
 const touchScreen = () =>
   typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches
 
+/** Nothing written: one empty line, which a suggestion may fill. */
+const blank = (state: EditorState) =>
+  state.doc.childCount === 1 &&
+  state.doc.firstChild!.isTextblock &&
+  state.doc.firstChild!.content.size === 0
+
+/**
+ * A suggested message, grey after the caret, with the Tab key that puts it in the box (a
+ * click on it too). A touch screen has no Tab key: its Use button sits beside the box, where
+ * the send button comes after (thread-conversation). The words let a click or tap through to
+ * the box, to write something else.
+ */
+function suggestionView(text: string, take?: () => void) {
+  const view = document.createElement('span')
+  view.contentEditable = 'false'
+  view.className = 'pointer-events-none text-muted-foreground'
+  const words = document.createElement('span')
+  words.setAttribute('aria-hidden', 'true')
+  words.textContent = text
+  view.append(words)
+  if (!take) return view
+  const key = document.createElement('button')
+  key.type = 'button'
+  key.textContent = 'Tab'
+  key.title = 'Use this message (Tab)'
+  key.setAttribute('aria-label', `Use the suggested message: ${text}`)
+  key.className =
+    'pointer-events-auto ml-1.5 inline-flex h-5 cursor-pointer items-center rounded-md border bg-muted px-1.5 align-text-bottom font-sans text-xs hover:text-foreground'
+  // The box keeps its caret and focus: the click alone takes the suggestion.
+  key.addEventListener('mousedown', (event) => event.preventDefault())
+  key.addEventListener('click', (event) => {
+    event.preventDefault()
+    take()
+  })
+  view.append(key)
+  return view
+}
+
 /**
  * A message box where `@` mentions teammates, connections, repositories, library files,
  * credentials, threads and computers, and `/` first in it picks a command (what to make).
@@ -568,6 +668,7 @@ export function Composer({
   fill,
   autoFocus,
   typeToFocus,
+  suggestion,
 }: {
   value: string
   onChange: (text: string) => void
@@ -592,15 +693,49 @@ export function Composer({
    * screen, where that opens the keyboard), and typing with nothing else focused lands in it.
    */
   typeToFocus?: boolean
+  /**
+   * What the person may write next, like Claude's: grey in the empty box in place of the
+   * placeholder. Tab (or →, or a click on its key) puts it in the box to edit and send; a
+   * touch screen has a Use button beside the box instead. Typing writes over it, and Enter
+   * never sends it as it is.
+   */
+  suggestion?: string
 }) {
   const options = useMentionOptions(threadId)
   const commands = useCommandOptions()
   const skills = useSkillCommands()
   // The editor is built once; these keep its callbacks current.
-  const latest = useRef({ options, commands, skills, onChange, onSubmit, placeholder })
-  latest.current = { options, commands, skills, onChange, onSubmit, placeholder }
+  const latest = useRef({
+    options,
+    commands,
+    skills,
+    onChange,
+    onSubmit,
+    placeholder,
+    suggestion,
+    threadId,
+  })
+  latest.current = {
+    options,
+    commands,
+    skills,
+    onChange,
+    onSubmit,
+    placeholder,
+    suggestion,
+    threadId,
+  }
   const skillNames = () => latest.current.skills.map((s) => s.name)
   const text = useRef(value)
+
+  /** The suggestion goes in the empty box, the caret after it. */
+  const takeSuggestion = (editor: Editor) => {
+    const suggested = latest.current.suggestion
+    if (!suggested || !editor.isEditable || !blank(editor.state)) return false
+    editor.commands.setContent(toDoc(suggested, skillNames()), { emitUpdate: true })
+    editor.commands.focus('end')
+    return true
+  }
 
   const editor = useEditor({
     immediatelyRender: false,
@@ -612,7 +747,53 @@ export function Composer({
       Text,
       HardBreak,
       UndoRedo,
-      Placeholder.configure({ placeholder: () => latest.current.placeholder ?? '' }),
+      // A suggestion takes the placeholder's place.
+      Placeholder.configure({
+        placeholder: () => (latest.current.suggestion ? '' : (latest.current.placeholder ?? '')),
+      }),
+      Extension.create({
+        name: 'suggestion',
+        addKeyboardShortcuts() {
+          const take = () => takeSuggestion(this.editor)
+          return { Tab: take, ArrowRight: take }
+        },
+        addProseMirrorPlugins() {
+          const editor = this.editor
+          return [
+            new Plugin({
+              key: new PluginKey('suggestion'),
+              props: {
+                // A click on the grey words would put the caret in them, where nothing can be
+                // written; it goes before them, so typing writes over the suggestion.
+                handleDOMEvents: {
+                  mousedown: (view, event) => {
+                    if (!latest.current.suggestion || !editor.isEditable) return false
+                    if (!blank(view.state) || event.button !== 0) return false
+                    if ((event.target as Element | null)?.closest('button')) return false
+                    event.preventDefault()
+                    editor.commands.focus('start')
+                    return true
+                  },
+                },
+                decorations: (state) => {
+                  const suggested = latest.current.suggestion
+                  if (!suggested || !editor.isEditable || !blank(state)) return null
+                  const take = touchScreen() ? undefined : () => takeSuggestion(editor)
+                  const view = () => suggestionView(suggested, take)
+                  return DecorationSet.create(state.doc, [
+                    Decoration.widget(1, view, {
+                      side: 1,
+                      ignoreSelection: true,
+                      stopEvent: () => true,
+                      key: `suggestion:${suggested}`,
+                    }),
+                  ])
+                },
+              },
+            }),
+          ]
+        },
+      }),
       MentionNode.extend({
         addAttributes() {
           return {
@@ -633,8 +814,17 @@ export function Composer({
           char: '@',
           items: ({ query }) => searchMentions(latest.current.options, query),
           render: () =>
-            renderMenu<Option, Mention>(MentionMenu, (p, { kind, id, label }) =>
-              p.command({ kind, id, label }),
+            renderMenu<Option, Mention>(
+              MentionMenu,
+              (p, { kind, id, label }) => p.command({ kind, id, label }),
+              // The menu's own threads are the latest only: the search finds the others.
+              {
+                wants: searchesThreads,
+                find: async (query) => {
+                  const { threads } = await findThreads(query, latest.current.threadId)
+                  return (shown) => withFoundThreads(shown, threads, query)
+                },
+              },
             ),
         },
       }),
@@ -715,15 +905,16 @@ export function Composer({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [editor, typeToFocus])
 
-  // The placeholder reads `latest`; redraw when it changes.
+  // The placeholder and the suggestion read `latest`; redraw when they change.
   useEffect(() => {
     if (editor) editor.view.dispatch(editor.state.tr)
-  }, [editor, placeholder])
+  }, [editor, placeholder, suggestion])
 
   return (
     // `relative`: the mention menu docks here unless an ancestor is marked
     // `data-composer-frame` (a card around a bare composer).
-    <div className={cn('relative', fill && 'flex min-h-0 flex-1 flex-col')}>
+    // `data-composer`: ⌥↑ / ⌥↓ walk the sidebar from here too (sidebar-keys.tsx).
+    <div data-composer className={cn('relative', fill && 'flex min-h-0 flex-1 flex-col')}>
       <EditorContent
         editor={editor}
         className={fill ? 'flex min-h-0 flex-1 flex-col' : undefined}

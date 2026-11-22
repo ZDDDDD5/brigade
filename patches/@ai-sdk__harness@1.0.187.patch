@@ -1,0 +1,191 @@
+diff --git a/dist/agent/index.js b/dist/agent/index.js
+index 36a3d8673f3ae90d46161b61682b1cab97128951..c43aedde7be615657f0f9ede3330f8dd97e4c653 100644
+--- a/dist/agent/index.js
++++ b/dist/agent/index.js
+@@ -1756,6 +1756,21 @@ function runPrompt(input) {
+ 		let ignoredFinishStep;
+ 		const hostToolCallIdsAwaitingEcho = /* @__PURE__ */ new Set();
+ 		const submittedHostToolResults = /* @__PURE__ */ new Map();
++		// Brigade: the tool calls whose result the harness already echoed. One it settled on its own
++		// (Claude Code rejects input its MCP schema refuses) echoes before our own result goes in,
++		// which then would wait for an echo that never comes, and keep every later pause from
++		// happening; nor is that result one to hand over at the next pause, to go in again.
++		const echoedHostToolCallIds = /* @__PURE__ */ new Set();
++		// Brigade: a pause for host input (a ticket, a question) waits for the echo of the host
++		// results already given to the harness, but not for ever. Claude Code runs a step's MCP calls
++		// one after the other, so a result given for a call after the one that waits on a person
++		// echoes only once that person answered, which only the pause lets them do: waited for, it
++		// kept the turn running with its ticket answered and never given. Past this, the pause goes
++		// ahead, and those results go in again with the answer (pauseForHostInput keeps them).
++		const HOST_INPUT_ECHO_WAIT_MS = 3e3;
++		const heldEcho = Symbol("held echo");
++		let deferredPauseDeadline;
++		let pendingRead;
+ 		const buildModelCallContent = () => {
+ 			const parts = [];
+ 			if (stepText) parts.push({
+@@ -1959,8 +1974,10 @@ function runPrompt(input) {
+ 				});
+ 			}
+ 			if (!input.isTurnSuspending?.()) {
+-				if (!settledHostToolCallIds.has(submission.toolCallId)) hostToolCallIdsAwaitingEcho.add(submission.toolCallId);
+-				submittedHostToolResults.set(submission.toolCallId, submission);
++				if (!echoedHostToolCallIds.has(submission.toolCallId)) {
++					if (!settledHostToolCallIds.has(submission.toolCallId)) hostToolCallIdsAwaitingEcho.add(submission.toolCallId);
++					submittedHostToolResults.set(submission.toolCallId, submission);
++				}
+ 				return control.submitToolResult(submission);
+ 			}
+ 			const toolCall = rawToolCallsByToolCallId.get(submission.toolCallId) ?? pendingResultsByToolCallId.get(submission.toolCallId) ?? pendingToolApprovals.find((approval) => approval.toolCallId === submission.toolCallId);
+@@ -2154,7 +2171,20 @@ function runPrompt(input) {
+ 					await pauseForHostInput(deferredPauseFinishStep);
+ 					return;
+ 				}
+-				const { value, done } = await reader.read();
++				pendingRead ??= reader.read();
++				let read;
++				if (deferredPauseFinishStep != null) {
++					let timer;
++					read = await Promise.race([pendingRead, new Promise((resolve) => {
++						timer = setTimeout(() => resolve(heldEcho), Math.max(0, deferredPauseDeadline - Date.now()));
++					})]).finally(() => clearTimeout(timer));
++					if (read === heldEcho) {
++						await pauseForHostInput(deferredPauseFinishStep);
++						return;
++					}
++				} else read = await pendingRead;
++				pendingRead = void 0;
++				const { value, done } = read;
+ 				if (done) {
+ 					releasePendingStopBoundary();
+ 					break;
+@@ -2168,6 +2198,7 @@ function runPrompt(input) {
+ 					hostToolCallIdsAwaitingEcho.delete(value.toolCallId);
+ 					submittedHostToolResults.delete(value.toolCallId);
+ 					pendingResultsByToolCallId.delete(value.toolCallId);
++					echoedHostToolCallIds.add(value.toolCallId);
+ 				}
+ 				if (pendingStopBoundary != null) {
+ 					if (value.type === "finish") releasePendingStopBoundary();
+@@ -2205,6 +2236,7 @@ function runPrompt(input) {
+ 							await pauseForHostInput(value);
+ 							return;
+ 						}
++						if (deferredPauseFinishStep == null) deferredPauseDeadline = Date.now() + HOST_INPUT_ECHO_WAIT_MS;
+ 						deferredPauseFinishStep = value;
+ 						continue;
+ 					}
+@@ -3409,22 +3441,63 @@ function bootstrapMarkerPath({ recipe, identity, stateDirectory }) {
+ * recipe (resumed from snapshot, reused across sessions, or applied by
+ * an earlier process) this is a single fast read.
+ */
+-async function applyBootstrapRecipe({ session, recipe, identity, stateDirectory, abortSignal }) {
++// Brigade: the installs under way, by marker. Two turns starting together on one computer (two
++// threads opened a minute apart on a new member's Mac) each ran the recipe's pnpm install into the
++// same folder, and one failed on the other's half-renamed packages (ERR_PNPM_ENOTEMPTY). One runs at
++// a time per folder: the next one waits for it, then finds its marker and installs nothing.
++const bootstrapsUnderWay = /* @__PURE__ */ new Map();
++async function applyBootstrapRecipe(input) {
++	const key = bootstrapMarkerPath(input);
++	const before = bootstrapsUnderWay.get(key);
++	// A turn stopped while it waited runs nothing once its turn comes: its session is gone.
++	const mine = (before ?? Promise.resolve()).catch(() => void 0).then(() => {
++		input.abortSignal?.throwIfAborted();
++		return applyBootstrapRecipeAlone(input);
++	});
++	const settled = mine.catch(() => void 0);
++	bootstrapsUnderWay.set(key, settled);
++	settled.then(() => {
++		if (bootstrapsUnderWay.get(key) === settled) bootstrapsUnderWay.delete(key);
++	});
++	if (!input.abortSignal) return mine;
++	// A turn stopped while it waits stops waiting; the install it waited behind goes on.
++	input.abortSignal.throwIfAborted();
++	let onAbort;
++	return Promise.race([mine, new Promise((_, reject) => {
++		onAbort = () => reject(input.abortSignal.reason);
++		input.abortSignal.addEventListener("abort", onAbort, { once: true });
++	})]).finally(() => input.abortSignal.removeEventListener("abort", onAbort));
++}
++async function applyBootstrapRecipeAlone({ session, recipe, identity, stateDirectory, abortSignal }) {
+ 	const markerPath = bootstrapMarkerPath({
+ 		recipe,
+ 		identity,
+ 		stateDirectory
+ 	});
+-	if (await session.readTextFile({
+-		path: markerPath,
+-		abortSignal
+-	}) !== null) return;
+ 	const bootstrapDir = resolveBootstrapPath({
+ 		path: recipe.bootstrapDir,
+ 		stateDirectory
+ 	});
++	// Brigade: its marker says the folder holds this recipe only while the recipe's files are there
++	// as it wrote them. A runner of another version on the same home (one rolled back, then forward
++	// again) may have written its own over them since, whether its install then went through or
++	// not, and leaves this marker as it is.
++	if (await session.readTextFile({
++		path: markerPath,
++		abortSignal
++	}) !== null && await recipeFilesInPlace({
++		session,
++		recipe,
++		stateDirectory,
++		abortSignal
++	})) return;
++	// Brigade: the folder is the harness's, whatever its recipe: the files written next replace
++	// those of the recipe installed before, whose marker goes first. Kept, it would tell a runner
++	// of that recipe (back after an update, or one of another version on the same home) that its
++	// install is there, and that runner would start this recipe's bridge, which it may not speak
++	// to (a token one after the key-pair bridges of harness 1.0.187).
+ 	const mkdirResult = await session.run({
+-		command: "mkdir -p \"$BOOTSTRAP_DIR\"",
++		command: "mkdir -p \"$BOOTSTRAP_DIR\" && rm -f \"$BOOTSTRAP_DIR\"/.bootstrap-*.ok",
+ 		env: { BOOTSTRAP_DIR: bootstrapDir },
+ 		abortSignal
+ 	});
+@@ -3451,6 +3524,17 @@ async function applyBootstrapRecipe({ session, recipe, identity, stateDirectory,
+ 		abortSignal
+ 	});
+ }
++// Brigade: whether each file of the recipe is in its folder as the recipe writes it (applyBootstrapRecipeAlone).
++async function recipeFilesInPlace({ session, recipe, stateDirectory, abortSignal }) {
++	for (const file of recipe.files) if (await session.readTextFile({
++		path: resolveBootstrapPath({
++			path: file.path,
++			stateDirectory
++		}),
++		abortSignal
++	}) !== file.content) return false;
++	return true;
++}
+ function resolveBootstrapPath({ path, stateDirectory }) {
+ 	return posix.isAbsolute(path) ? path : posix.resolve(stateDirectory, path);
+ }
+diff --git a/dist/utils/index.js b/dist/utils/index.js
+index 900bc8bfd7d4fad262342eb5939062edab52ddca..05baca224cebbeac468a9425dfb193a913929d07 100644
+--- a/dist/utils/index.js
++++ b/dist/utils/index.js
+@@ -1019,7 +1019,9 @@ function isInstructionsMetadata(value) {
+ 	return candidate.version === INSTRUCTIONS_METADATA_VERSION && (candidate.originalContent === null || typeof candidate.originalContent === "string") && typeof candidate.instructions === "string" && typeof candidate.appliedContent === "string";
+ }
+ async function writeInstructionsMetadata({ sandbox, metadataPath, metadata, abortSignal }) {
+-	const temporaryPath = `${metadataPath}.tmp`;
++	// Brigade: a temporary file of its own, so two sessions writing at once (a turn and its
++	// title on one computer) never move each other's.
++	const temporaryPath = `${metadataPath}.${randomBytes(8).toString("hex")}.tmp`;
+ 	await sandbox.writeTextFile({
+ 		path: temporaryPath,
+ 		content: `${JSON.stringify(metadata, null, 2)}\n`,
+@@ -1261,7 +1263,9 @@ function isSkillsManifest(value) {
+ 	return true;
+ }
+ async function writeSkillsManifest({ sandbox, manifestPath, manifest, abortSignal }) {
+-	const temporaryPath = `${manifestPath}.tmp`;
++	// Brigade: a temporary file of its own, so two sessions writing at once (a turn and its
++	// title on one computer) never move each other's.
++	const temporaryPath = `${manifestPath}.${randomBytes(8).toString("hex")}.tmp`;
+ 	await sandbox.writeTextFile({
+ 		path: temporaryPath,
+ 		content: `${JSON.stringify(manifest, null, 2)}\n`,

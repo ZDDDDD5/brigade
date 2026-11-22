@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { MemoryGuard, parseMemory, type Candidate, type Reading } from '../src/memory-guard.js'
+import {
+  MemoryGuard,
+  MOST_TURNS,
+  ownShare,
+  parseMemory,
+  roomFor,
+  turnsAtOnce,
+  type Candidate,
+  type Reading,
+} from '../src/memory-guard.js'
 
 const MB = 1024 ** 2
 const calm: Reading = { full: 2, available: 0.4, swapUsed: 0.1, swapTotal: 8 * 1024 * MB }
@@ -19,6 +28,7 @@ test('memory and pressure read from /proc', () => {
     available: 0.05,
     swapUsed: 0.75,
     swapTotal: 4000000 * 1024,
+    total: 8000000 * 1024,
   })
   // Not Linux, or no PSI: nothing to go on.
   assert.equal(parseMemory('', 'MemTotal: 8000000 kB\n'), null)
@@ -105,6 +115,24 @@ test('frozen previews go first when swap is what runs out, the one unused longes
   assert.equal(g.pick([newer, older], calm), older)
 })
 
+test('a browser no turn used for a while goes before anything that runs', () => {
+  const g = guard()
+  const now = 10 * 60_000
+  const idle = candidate('browser', 500, now - 5 * 60_000)
+  const busy = candidate('browser', 800, now - 10_000)
+  const turn = candidate('turn', 3000)
+  const preview = candidate('preview', 1000)
+  assert.equal(g.pick([turn, preview, busy, idle], calm, now), idle)
+  // In use: weighed as a preview is, since it starts again at the next call.
+  assert.equal(g.pick([turn, busy], calm, now), turn)
+  assert.equal(g.pick([candidate('turn', 1200), busy], calm, now), busy)
+  // Frozen previews still go first when swap is what runs out.
+  const frozen = candidate('frozen', 10, 1_000)
+  assert.equal(g.pick([idle, frozen], { ...calm, swapUsed: 0.85 }, now), frozen)
+  // Too small to matter: not stopped for nothing.
+  assert.equal(g.pick([candidate('browser', 20, 0), turn], calm, now), turn)
+})
+
 test('checks that pile up on a stuck computer stop one thing, not one each', async () => {
   let stopped = 0
   let release!: () => void
@@ -149,4 +177,73 @@ test('after the kernel killed something for memory, the guard waits instead of a
     )?.oomKills,
     7,
   )
+})
+
+test('stuck on memory the rest of the computer holds, it stops nothing that loses work', async () => {
+  const GB = 1024 * MB
+  // 8 GB, 15% of it available: 6.8 GB in use, the provider's services holding most of it.
+  const busy: Reading = { ...stuck, total: 8 * GB, available: 0.15 }
+  const stopped: string[] = []
+  const turns = [candidate('turn', 500), candidate('turn', 400)].map((c, i) => ({
+    ...c,
+    stop: async () => void stopped.push(`turn${i}`),
+  }))
+  const run = async (list: Candidate[], reading: Reading) => {
+    const g = new MemoryGuard({
+      candidates: async () => list,
+      read: async () => reading,
+      limit: 40,
+      duration: 10_000,
+      cooldown: 20_000,
+    })
+    // Well after any browser was last used.
+    const t = 10 * 60_000
+    await g.tick(t)
+    await g.tick(t + 10_000)
+  }
+  // 0.9 GB of 6.8: a turn lost would not end the stall.
+  assert.ok(ownShare(turns, busy)! < 0.3)
+  await run(turns, busy)
+  assert.deepEqual(stopped, [])
+  // An idle browser costs nothing to stop: it still goes.
+  const idle = { ...candidate('browser', 300, 0), stop: async () => void stopped.push('browser') }
+  await run([...turns, idle], busy)
+  assert.deepEqual(stopped, ['browser'])
+  // The runner's own work holding much of it: its biggest turn goes, as before.
+  stopped.length = 0
+  const big = [{ ...candidate('turn', 2500), stop: async () => void stopped.push('big') }]
+  await run([...big, ...turns], busy)
+  assert.deepEqual(stopped, ['big'])
+  // Nearly out of memory and swap: anything that frees some, whoever holds the rest.
+  stopped.length = 0
+  await run(turns, { ...busy, full: 5, available: 0.01, swapUsed: 0.95 })
+  assert.deepEqual(stopped, ['turn0'])
+  // A reading that does not say how much memory there is: as before.
+  stopped.length = 0
+  await run(turns, stuck)
+  assert.deepEqual(stopped, ['turn0'])
+  assert.equal(
+    parseMemory(
+      'full avg10=1.00 avg60=0 avg300=0 total=0\n',
+      'MemTotal: 100 kB\nMemAvailable: 50 kB\n',
+    )?.total,
+    100 * 1024,
+  )
+})
+
+test('room for a turn: some memory available, not stalled on it for long', () => {
+  assert.equal(roomFor(calm), true)
+  assert.equal(roomFor({ ...calm, available: 0.1 }), false)
+  // A computer that swaps a little peaks this high for a few seconds: a turn still starts.
+  assert.equal(roomFor({ ...calm, full: 15 }), true)
+  assert.equal(roomFor({ ...calm, full: 25 }), false)
+})
+
+test('turns at once: memory decides where the runner reads it, else one per 2 GB', () => {
+  const GB = 1024 ** 3
+  assert.equal(turnsAtOnce(8 * GB, true), MOST_TURNS)
+  assert.equal(turnsAtOnce(8 * GB, false), 8)
+  assert.equal(turnsAtOnce(16 * GB, false), 8)
+  assert.equal(turnsAtOnce(36 * GB, false), 18)
+  assert.equal(turnsAtOnce(128 * GB, false), MOST_TURNS)
 })

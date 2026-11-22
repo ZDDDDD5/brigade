@@ -7,6 +7,7 @@
 // it; the store is the runner's alone.
 import { createHash, randomUUID } from 'node:crypto'
 import { execFile } from 'node:child_process'
+import { createWriteStream } from 'node:fs'
 import {
   copyFile,
   link,
@@ -20,9 +21,13 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import type { ReadableStream as WebReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 import { libraryAccessFor, LibraryManifest } from '@brigade/contracts'
 import { CLOUD, HOME, paths, type RunnerConfig } from './config.js'
+import type { MemorySnapshot } from './memory-layers.js'
 import { teammateUser } from './teammates.js'
 
 /** Where the library is mirrored: a folder per teammate, and the store. */
@@ -59,9 +64,15 @@ export class Library {
     setInterval(() => void this.sync(), RESYNC_MS).unref()
   }
 
-  /** The memory a teammate loads: the workspace's and its own. */
-  memoryFor(teammateId: string) {
-    return { workspace: this.memory.workspace, teammate: this.memory.teammates[teammateId] ?? '' }
+  /** The memory a teammate loads: the workspace's and its own, with projects' and every line's date. */
+  memoryFor(teammateId: string): MemorySnapshot {
+    return {
+      workspace: this.memory.workspace,
+      teammate: this.memory.teammates[teammateId] ?? '',
+      ...(this.memory.projects ? { projects: this.memory.projects } : {}),
+      ...(this.memory.lines ? { lines: this.memory.lines } : {}),
+      ...(this.memory.tidied ? { tidied: this.memory.tidied } : {}),
+    }
   }
 
   /**
@@ -197,12 +208,32 @@ export class Library {
     if (!/^[0-9a-f]{64}$/.test(sha)) return false
     const target = join(STORE, sha)
     if (await exists(target)) return false
+    // A large file comes as a redirect to the bucket, where fetch does not send the token.
     const response = await this.get(`/runner/library/files/${encodeURIComponent(fileId)}`)
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    if (createHash('sha256').update(bytes).digest('hex') !== sha) return false // changed meanwhile
+    if (!response.body) throw new Error(`the file ${fileId} came with no bytes`)
+    // Written as it arrives, never held whole: a file can be hundreds of MB.
     const tmp = join(STORE, `.tmp-${randomUUID()}`)
-    await writeFile(tmp, bytes, { mode: 0o640 })
-    await rename(tmp, target)
+    const hash = createHash('sha256')
+    try {
+      await pipeline(
+        Readable.fromWeb(response.body as WebReadableStream<Uint8Array>),
+        async function* (chunks: AsyncIterable<Buffer>) {
+          for await (const chunk of chunks) {
+            hash.update(chunk)
+            yield chunk
+          }
+        },
+        createWriteStream(tmp, { mode: 0o640 }),
+      )
+      if (hash.digest('hex') !== sha) {
+        await rm(tmp, { force: true })
+        return false // changed meanwhile
+      }
+      await rename(tmp, target)
+    } catch (error) {
+      await rm(tmp, { force: true })
+      throw error
+    }
     return true
   }
 

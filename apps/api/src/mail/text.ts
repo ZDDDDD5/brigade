@@ -1,0 +1,189 @@
+// An email's words as a teammate reads them: plain text from HTML (links kept, since a sign-up's
+// link is the point), the few headers that say what kind of mail it is, and the checks run on
+// what a teammate sends.
+
+const ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  hellip: '…',
+  mdash: '—',
+  ndash: '–',
+  rsquo: '’',
+  lsquo: '‘',
+  rdquo: '”',
+  ldquo: '“',
+  eacute: 'é',
+  egrave: 'è',
+  agrave: 'à',
+  ccedil: 'ç',
+}
+
+export function decodeEntities(text: string) {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, code: string) => {
+    if (code[0] === '#') {
+      const n =
+        code[1] === 'x' || code[1] === 'X' ? parseInt(code.slice(2), 16) : Number(code.slice(1))
+      return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : whole
+    }
+    return ENTITIES[code.toLowerCase()] ?? whole
+  })
+}
+
+/** The longest HTML the Inbox keeps: a longer one is left out whole, never cut mid-tag. */
+export const HTML_MAX = 1_000_000
+
+/** A received mail's HTML as the Inbox keeps it: none when empty or too long. */
+export function keptHtml(html: string | null | undefined) {
+  return html?.trim() && html.length <= HTML_MAX ? html : null
+}
+
+/** A Content-ID without its angle brackets, as an HTML body's cid: link names it. */
+export const contentIdOf = (value: string | null | undefined) =>
+  value?.trim().replace(/^<|>$/g, '').trim() || undefined
+
+/** HTML as plain text: blocks on their own lines, each link as "text (url)", no styles or scripts. */
+export function htmlToText(html: string | null | undefined) {
+  if (!html) return ''
+  const text = html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<(style|script|head|title)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(
+      /<a\b[^>]*?href\s*=\s*("([^"]*)"|'([^']*)')[^>]*>([\s\S]*?)<\/a>/gi,
+      (_, __, dq, sq, inner) => {
+        const href = decodeEntities(String(dq ?? sq ?? '')).trim()
+        const label = String(inner)
+          .replace(/<[^>]+>/g, '')
+          .replace(/\s+/g, ' ')
+          .trim()
+        if (!href || /^(mailto:|#)/i.test(href)) return label
+        // In parentheses: angle brackets would read as a tag below.
+        return label && decodeEntities(label) !== href ? `${label} (${href})` : href
+      },
+    )
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote|section|table)>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, '')
+  return decodeEntities(text)
+    .replace(/[ \t ]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** The Message-IDs in an In-Reply-To or References header, in order. */
+export function messageIds(value: string | string[] | undefined | null) {
+  const text = Array.isArray(value) ? value.join(' ') : (value ?? '')
+  return text.match(/<[^<>\s]+>/g) ?? []
+}
+
+/** A header's value from Resend's headers object, whatever its case; several values joined. */
+export function headerOf(
+  headers: Record<string, string | string[]> | null | undefined,
+  name: string,
+) {
+  if (!headers) return undefined
+  const key = Object.keys(headers).find((k) => k.toLowerCase() === name)
+  if (!key) return undefined
+  const value = headers[key]
+  return Array.isArray(value) ? value.join(' ') : value
+}
+
+/** The addresses in a To or Cc header ("Name <a@b>, c@d"), bare and lower-cased. */
+export const addressesIn = (value: string | undefined) =>
+  (value ?? '').match(/[^\s<>,;"()]+@[^\s<>,;"()]+/g)?.map((a) => a.toLowerCase()) ?? []
+
+/** The headers Brigade keeps with an email, lower-cased and short. */
+export const KEPT_HEADERS = [
+  'auto-submitted',
+  'precedence',
+  'x-autoreply',
+  'x-autorespond',
+  'list-id',
+  'list-unsubscribe',
+  'content-type',
+  'from',
+  'reply-to',
+  'date',
+  'return-path',
+  'x-brigade-test',
+]
+
+/**
+ * The List-* headers, as Resend gives them: not under their own names but folded into one `list`
+ * header, a JSON object ({"unsubscribe":{"url","mail"},"id":{"id","name"},…}), as mailparser
+ * parses them. Back under their names (list-unsubscribe, list-id…), as the mail wrote them.
+ */
+export function listHeadersOf(headers: Record<string, string | string[]> | null | undefined) {
+  const raw = headerOf(headers, 'list') as unknown
+  let list: unknown = raw
+  if (typeof raw === 'string') {
+    try {
+      list = JSON.parse(raw)
+    } catch {
+      return {}
+    }
+  }
+  if (!list || typeof list !== 'object' || Array.isArray(list)) return {}
+  const found: Record<string, string> = {}
+  for (const [key, value] of Object.entries(list as Record<string, unknown>)) {
+    if (value === null || value === undefined) continue
+    const part = value as { url?: unknown; mail?: unknown; id?: unknown; name?: unknown }
+    const text =
+      typeof value === 'string'
+        ? value
+        : typeof value !== 'object'
+          ? String(value)
+          : typeof part.url === 'string' || typeof part.mail === 'string'
+            ? [
+                typeof part.url === 'string' ? `<${part.url}>` : '',
+                typeof part.mail === 'string' ? `<mailto:${part.mail}>` : '',
+              ]
+                .filter(Boolean)
+                .join(', ')
+            : typeof part.id === 'string'
+              ? `${typeof part.name === 'string' && part.name ? `${part.name} ` : ''}<${part.id}>`
+              : JSON.stringify(value)
+    if (text) found[`list-${key.toLowerCase()}`] = text
+  }
+  return found
+}
+
+/** Sent by a machine (an out-of-office, a notification), by its headers, as Gmail's trigger tells. */
+export function automaticHeaders(headers: Record<string, string>) {
+  const submitted = headers['auto-submitted']?.trim().toLowerCase()
+  const precedence = headers.precedence?.trim().toLowerCase()
+  return (
+    (!!submitted && submitted !== 'no') ||
+    headers['x-autoreply'] !== undefined ||
+    headers['x-autorespond'] !== undefined ||
+    precedence === 'auto_reply' ||
+    precedence === 'bulk' ||
+    precedence === 'list' ||
+    headers['list-id'] !== undefined
+  )
+}
+
+/**
+ * Mail nobody writes by hand: sent by a machine, or to a list (a newsletter, a campaign, which
+ * says how to unsubscribe). Keeps it out of the Inbox's To do when nobody took it; never decides
+ * where it goes (automaticHeaders does).
+ */
+export const bulkHeaders = (headers: Record<string, string>) =>
+  automaticHeaders(headers) || headers['list-unsubscribe'] !== undefined
+
+/** A delivery status notification: a mail server saying an email could not be delivered. */
+export function bounceOf(from: string, headers: Record<string, string>) {
+  const type = headers['content-type']?.toLowerCase() ?? ''
+  return (
+    /report-type\s*=\s*"?delivery-status/.test(type) ||
+    /^(mailer-daemon|postmaster)@/i.test(from.trim())
+  )
+}
+
+/** What secret the text holds, if any: the same list that masks them in thread events. */
+export { secretIn } from '../secrets.js'

@@ -1,14 +1,24 @@
 'use client'
 // Child threads, shown in their parent: they are out of the sidebar. A line each
-// where a teammate started one, the runs of a schedule that reports here, the
-// asks of a child waiting on a person, and in a child, the way back to its parent.
-import type { NoteThread } from '@brigade/contracts'
-import { ChevronRight, CornerUpLeft, Eye, Send } from 'lucide-react'
+// where a teammate started one, the runs of a schedule that reports here, those at
+// work and the asks of a child waiting on a person at the end of the conversation,
+// and in a child, the way back to its parent.
+import {
+  childNote,
+  type NoteThread,
+  noteThreads,
+  type QueuedMessageAction,
+} from '@brigade/contracts'
+import { ChevronRight, Clock, CornerDownRight, CornerUpLeft, Eye, Send } from 'lucide-react'
 import Link from 'next/link'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { Markdown } from '@/components/markdown'
+import { TeammateAvatar } from '@/components/dashboard'
 import { ThreadStatusIcon } from '@/components/sidebar-threads'
+import type { QueuedMessage } from '@/components/thread-view'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Hint } from '@/components/ui/tooltip'
 import { api, type ThreadChild } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -55,7 +65,7 @@ export function SendToParent({ threadId, className }: { threadId: string; classN
       size="sm"
       className={className}
       disabled={state === 'sending'}
-      title="Send its last message to the parent thread now, as its report"
+      tooltip="Send its last message to the parent thread now, as its report"
       onClick={() => {
         setState('sending')
         api(`/threads/${threadId}/report`, { body: {} }).then(
@@ -92,6 +102,8 @@ export function ChildLine({ child, className }: { child: ThreadChild; className?
       )}
     >
       <span className="flex min-w-0 items-center gap-1.5">
+        {/* Marks it as a child of this thread; its state stays the label at the end. */}
+        <CornerDownRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="shrink-0 text-muted-foreground">{child.teammate.name}</span>
         <span className="min-w-0 flex-1 truncate font-medium">{child.title}</span>
         <span
@@ -134,11 +146,73 @@ const plain = (markdown: string) =>
     .trim()
 
 /**
- * A thread a report note tells about, as one card that opens it: its dot, who, its title,
- * then the start of what it said, which Show more unfolds in place.
+ * "Verdict posted on GitHub: changes requested (#698, commit 945a87d)." or "No verdict posted
+ * on GitHub (#698)." (verdictLine): what Brigade puts ahead of a review's report.
+ */
+const VERDICT =
+  /^(?:Verdict posted on GitHub: (approved|changes requested) \([^)]*\)|No verdict posted on GitHub \([^)]*\))\.\s*/
+
+/** What a review's line says happened, by how it ended. */
+const REVIEW_ENDS: Record<string, string> = {
+  report: 'came in',
+  nothing: 'came in',
+  needs_person: 'needs you',
+  failed: 'failed',
+  cancelled: 'was cancelled',
+}
+
+/**
+ * A review's report, as a plain grey line like Worked's: its pull request's card says the
+ * verdict already, so the line only says the review came in, and unfolds what it said.
+ */
+function ReviewReported({ thread, summary }: { thread: NoteThread; summary: string }) {
+  const who = thread.teammate ? `${thread.teammate}'s review` : 'The review'
+  const end = thread.status ? (REVIEW_ENDS[thread.status] ?? thread.status) : 'is under way'
+  return (
+    <Collapsible className="flex flex-col gap-2">
+      <CollapsibleTrigger
+        disabled={!summary}
+        className="group flex items-center gap-1 self-start text-left text-xs text-muted-foreground hover:text-foreground disabled:hover:text-muted-foreground"
+      >
+        {who} {end}
+        {summary && (
+          <ChevronRight
+            className="size-3 flex-none transition-transform group-data-[state=open]:rotate-90"
+            aria-hidden
+          />
+        )}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="flex flex-col gap-2">
+        <Markdown text={summary} className="text-sm text-muted-foreground" />
+        <Link
+          href={`/app/threads/${thread.id}`}
+          className="flex items-center gap-1 self-start text-xs font-medium text-muted-foreground hover:text-foreground"
+        >
+          Open the review
+          <ChevronRight aria-hidden className="size-3" />
+        </Link>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+/**
+ * A thread a report note tells about: a review as a grey line, any other as a card that opens
+ * it (ReportCard).
  */
 export function ReportedThread({ thread }: { thread: NoteThread }) {
-  const summary = thread.summary.trim()
+  // A review's verdict, which Brigade puts ahead of its report (verdictLine), says it is one.
+  const verdict = VERDICT.exec(thread.summary.trim())
+  const summary = (verdict ? thread.summary.trim().slice(verdict[0].length) : thread.summary).trim()
+  if (verdict) return <ReviewReported thread={thread} summary={summary} />
+  return <ReportCard thread={thread} summary={summary} />
+}
+
+/**
+ * Any other thread a report note tells about, as one card that opens it: its dot, who, its
+ * title, then the start of what it said, which Show more unfolds in place.
+ */
+function ReportCard({ thread, summary }: { thread: NoteThread; summary: string }) {
   const [open, setOpen] = useState(false)
   // Show more only when the report runs past its two lines.
   const [long, setLong] = useState(false)
@@ -175,14 +249,15 @@ export function ReportedThread({ thread }: { thread: NoteThread }) {
         )}
       >
         {thread.status === 'report' ? (
-          <span
-            role="img"
-            aria-label="reported"
-            title="reported"
-            className="flex size-4 shrink-0 items-center justify-center"
-          >
-            <span className="size-2 rounded-full bg-success" />
-          </span>
+          <Hint label="reported">
+            <span
+              role="img"
+              aria-label="reported"
+              className="flex size-4 shrink-0 items-center justify-center"
+            >
+              <span className="size-2 rounded-full bg-success" />
+            </span>
+          </Hint>
         ) : (
           <ThreadStatusIcon
             status={thread.status ? (NOTE_DOTS[thread.status] ?? 'done') : 'running'}
@@ -221,6 +296,95 @@ export function ReportedThread({ thread }: { thread: NoteThread }) {
   )
 }
 
+/**
+ * A report note (a child's, or a thread this one follows) as people read it: the threads it
+ * tells about, and a line above them when it says more than the cards. null for any other text.
+ */
+export function reportNote(text: string) {
+  const kind = childNote(text)
+  if (kind !== 'report' && kind !== 'follow') return null
+  const reported = noteThreads(text)
+  if (!reported) return null
+  // “… has finished:” only repeats the cards; a schedule's run or a late one says more.
+  const head =
+    kind === 'follow'
+      ? 'From a thread this one follows'
+      : reported.head && !/finished:$/.test(reported.head)
+        ? reported.head
+        : null
+  return { head, threads: reported.threads }
+}
+
+/** A queued message that is a report: it waits in the conversation, not with people's messages. */
+export const isQueuedReport = (m: QueuedMessage) => m.memberId === null && !!reportNote(m.text)
+
+/**
+ * Reports queued for the teammate, at the end of the conversation: the cards they become
+ * once read, faded, with when the teammate reads them and Steer to give one now.
+ */
+export function QueuedReports({
+  queued,
+  teammateName,
+  canSteer,
+  onAction,
+}: {
+  queued: QueuedMessage[]
+  teammateName: string
+  /** A turn runs that a report could be steered into. */
+  canSteer: boolean
+  onAction: (messageId: string, action: QueuedMessageAction) => Promise<void>
+}) {
+  const [busy, setBusy] = useState<string>()
+  const reports = queued.flatMap((m) => {
+    const note = m.memberId === null ? reportNote(m.text) : null
+    return note ? [{ m, note }] : []
+  })
+  if (!reports.length) return null
+  return (
+    <div className="mt-4 flex flex-col gap-4">
+      {reports.map(({ m, note }) => (
+        <div key={m.messageId} className="flex flex-col gap-2">
+          <div className="flex min-h-6 items-center gap-1.5 text-xs text-muted-foreground">
+            <Clock aria-hidden className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              {[
+                note.head,
+                m.waitingFor === 'person'
+                  ? `${teammateName} reads it once the pending request is answered`
+                  : `${teammateName} reads it after this turn`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+            {canSteer && m.waitingFor === 'turn' && (
+              <Button
+                type="button"
+                variant="outline"
+                size="xs"
+                disabled={busy === m.messageId}
+                onClick={() => {
+                  setBusy(m.messageId)
+                  void onAction(m.messageId, { action: 'steer' }).finally(() => setBusy(undefined))
+                }}
+                tooltip={`Give it to ${teammateName} now, during this turn`}
+              >
+                <CornerDownRight aria-hidden />
+                Steer
+              </Button>
+            )}
+          </div>
+          {m.note && <p className="text-xs text-warning">{m.note}</p>}
+          <div className="flex flex-col gap-2 opacity-70">
+            {note.threads.map((t) => (
+              <ReportedThread key={t.id} thread={t} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /** Where a start_child call went: the child's line, live, or a plain one while it loads. */
 export function StartedChild({
   threadId,
@@ -232,17 +396,107 @@ export function StartedChild({
   children: ThreadChild[]
 }) {
   const child = children.find((c) => c.id === threadId)
+  // At work or waiting on a person, its line is at the end of the conversation: only there.
+  if (child && atEnd(child)) return null
   if (child) return <ChildLine child={child} className="-mx-2" />
   return (
     <Link
       href={`/app/threads/${threadId}`}
-      className="-mx-2 flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-accent"
+      className="-mx-2 flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm hover:bg-accent"
     >
+      <CornerDownRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
       <span className="shrink-0 rounded-md bg-primary/15 px-1.5 py-0.5 text-xs leading-none font-medium text-primary">
         working
       </span>
     </Link>
+  )
+}
+
+const working = (c: ThreadChild) =>
+  (c.status === 'starting' || c.status === 'running') && !c.tickets.length
+
+/** At work, without a ticket: its line hangs under its parent's, at the end of the conversation. */
+export const isChildWorking = working
+
+/** Shown at the end of the conversation, by ChildrenWorking or ChildrenWaiting. */
+export const atEnd = (c: ThreadChild) => working(c) || c.tickets.length > 0
+
+/**
+ * A child's branch: a line down from its parent's avatar, which the last one ends in a rounded
+ * elbow at its own row, as the sidebar draws child threads.
+ */
+const BRANCH =
+  'relative pl-3.5 before:pointer-events-none before:absolute before:top-0 before:bottom-0 before:left-0 before:border-l before:border-border last:before:bottom-auto last:before:h-4 last:before:w-2 last:before:rounded-bl-lg last:before:border-b'
+
+/**
+ * The children at work, each a branch under the line above it (its parent's): who, what, a dot
+ * while it works. Each goes once it stops, and its report follows.
+ */
+export function SubThreadsWorking({ children }: { children: ThreadChild[] }) {
+  const busy = children.filter(working)
+  if (!busy.length) return null
+  return (
+    // The line starts under the centre of the parent's avatar (size-5).
+    <div className="ml-2.5 flex flex-col">
+      {busy.map((child) => (
+        <div key={child.id} className={BRANCH}>
+          <Link
+            href={`/app/threads/${child.id}`}
+            className="flex h-8 min-w-0 items-center gap-2 rounded-lg px-1.5 text-sm hover:bg-accent"
+          >
+            <TeammateAvatar teammate={child.teammate} className="size-5 flex-none" />
+            <span className="shrink-0 text-foreground">{child.teammate.name}</span>
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">{child.title}</span>
+            <Hint label="Working">
+              <span
+                role="img"
+                aria-label="working"
+                className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary"
+              />
+            </Hint>
+            <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+          </Link>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * The children at work while their parent's teammate is not: a line for the teammate, saying
+ * whom it waits for, and theirs as branches under it. While its turn runs, its Working line
+ * is their parent instead.
+ */
+export function ChildrenWorking({
+  children,
+  teammate,
+  className,
+}: {
+  children: ThreadChild[]
+  teammate: { id: string; name: string }
+  className?: string
+}) {
+  const busy = children.filter(working)
+  if (!busy.length) return null
+  const awaited = busy.filter((c) => c.awaited)
+  const status =
+    awaited.length === 1
+      ? `Waiting for ${awaited[0]!.teammate.name}`
+      : awaited.length > 1
+        ? `Waiting for ${awaited.length} sub-threads`
+        : busy.length === 1
+          ? '1 sub-thread working'
+          : `${busy.length} sub-threads working`
+  return (
+    <div data-look="sub-threads" className={cn('flex min-w-0 flex-col text-sm', className)}>
+      <div className="flex h-8 min-w-0 items-center gap-2">
+        <TeammateAvatar teammate={teammate} className="size-5 flex-none" />
+        <span className="shrink-0 text-foreground">{teammate.name}</span>
+        <span className="min-w-0 truncate text-muted-foreground">{status}</span>
+      </div>
+      <SubThreadsWorking children={busy} />
+    </div>
   )
 }
 

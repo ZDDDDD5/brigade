@@ -1,0 +1,566 @@
+import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { after, before, describe, test } from 'node:test'
+import { parseEnv } from 'node:util'
+
+// The Board (src/board.ts, docs/board.md): its cards, routines and stopped threads, computed
+// from a workspace's lists, threads and schedules. The rules first, then against the API's
+// development database (apps/api/.env), in an organization of its own removed at the end;
+// skipped when no database answers.
+const envFile = new URL('../.env', import.meta.url)
+if (!process.env.DATABASE_URL && existsSync(envFile))
+  process.env.DATABASE_URL = parseEnv(readFileSync(envFile, 'utf8')).DATABASE_URL || undefined
+process.env.DATABASE_URL ??= 'postgresql://localhost:1/none'
+process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
+process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
+
+const { prisma, scoped } = await import('../src/db.js')
+const { board, byBoardOrder, dayIn, healthOf, outcomeOf } = await import('../src/board.js')
+const database = await Promise.race([
+  prisma.$queryRaw`select 1 from "Session" limit 1`.then(() => true),
+  new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
+]).catch(() => false)
+
+const DAY = 24 * 60 * 60_000
+
+test("a run's outcome: its report when it reports to a thread, else its status", () => {
+  assert.equal(outcomeOf({ status: 'running', report: null }), 'running')
+  assert.equal(
+    outcomeOf({
+      status: 'idle',
+      report: { status: 'nothing', summary: 'Nothing new', at: new Date().toISOString() },
+    }),
+    'nothing',
+  )
+  assert.equal(outcomeOf({ status: 'failed', report: null }), 'failed')
+  assert.equal(outcomeOf({ status: 'idle', report: null }), 'ended')
+})
+
+test("a routine's health: paused, failed when its last run failed or it couldn't start, degraded after a failure this week", () => {
+  const live = { pausedAt: null, lastError: null }
+  assert.equal(healthOf({ pausedAt: new Date(), lastError: null }, ['failed'], true), 'paused')
+  assert.equal(healthOf({ pausedAt: null, lastError: 'Its computer is off' }, [], true), 'failed')
+  assert.equal(
+    healthOf(live, ['running', 'failed', 'report'], true),
+    'failed',
+    'the last finished run',
+  )
+  assert.equal(healthOf(live, ['report', 'failed', 'nothing'], true), 'degraded')
+  assert.equal(healthOf(live, ['nothing', 'report'], true), 'ok')
+  assert.equal(healthOf(live, [], false), 'new')
+  assert.equal(healthOf(live, [], true), 'ok', 'no run this week, but it ran before')
+})
+
+test('In progress: at work first, then waiting on a review, then on a wake-up, the soonest first', () => {
+  const card = (
+    key: string,
+    column: 'needs_you' | 'in_progress' | 'done',
+    reason: 'working' | 'review' | 'wakeup' | 'ticket' | null,
+    at: string,
+    wakeAt: string | null = null,
+  ) => ({ key, column, reason, at, wakeAt })
+  const cards = [
+    card('wakes-sunday', 'in_progress', 'wakeup', '2026-11-04T15:00:00Z', '2026-11-08T15:37:00Z'),
+    card('review-old', 'in_progress', 'review', '2026-11-02T10:00:00Z'),
+    card('asking', 'needs_you', 'ticket', '2026-11-04T09:00:00Z'),
+    card('working-old', 'in_progress', 'working', '2026-11-03T10:00:00Z'),
+    // A line whose threads are idle with a wake-up: it waits on the wake-up.
+    card(
+      'line-wakes-tonight',
+      'in_progress',
+      'review',
+      '2026-11-04T14:00:00Z',
+      '2026-11-04T17:15:00Z',
+    ),
+    card('review-new', 'in_progress', 'review', '2026-11-04T12:00:00Z'),
+    // At work with a wake-up set too: it is at work.
+    card('working-new', 'in_progress', 'working', '2026-11-04T13:00:00Z', '2026-11-05T12:40:00Z'),
+    card('wakes-thursday', 'in_progress', 'wakeup', '2026-11-01T08:00:00Z', '2026-11-05T12:40:00Z'),
+    card('done', 'done', null, '2026-11-04T11:00:00Z'),
+  ]
+  const order = (column: string) =>
+    [...cards]
+      .sort(byBoardOrder)
+      .filter((c) => c.column === column)
+      .map((c) => c.key)
+  assert.deepEqual(order('in_progress'), [
+    'working-new',
+    'working-old',
+    'review-new',
+    'review-old',
+    'line-wakes-tonight',
+    'wakes-thursday',
+    'wakes-sunday',
+  ])
+  assert.deepEqual(order('needs_you'), ['asking'])
+  assert.deepEqual(order('done'), ['done'])
+})
+
+test("today is the routine's own day, in its time zone", () => {
+  const at = new Date('2026-11-01T23:30:00Z')
+  assert.equal(dayIn('Europe/Paris', at), '2026-11-02')
+  assert.equal(dayIn('America/New_York', at), '2026-11-01')
+  assert.equal(dayIn('Not/AZone', at), '2026-11-01')
+})
+
+describe('the Board', { skip: !database && 'no database answers' }, () => {
+  const suffix = randomUUID().slice(0, 8)
+  const ids = {} as Record<
+    'org' | 'user' | 'member' | 'workspace' | 'computer' | 'riley' | 'file',
+    string
+  >
+  let db: ReturnType<typeof scoped>
+  let scope: { organizationId: string; workspaceId: string; memberId: string; role: 'owner' }
+  const now = new Date()
+
+  /** A top-level thread of Riley's, as Ada started it, last changed `ago` ms before now. */
+  async function thread(title: string, data: Record<string, unknown> = {}, ago = 60_000) {
+    const row = await db.session.create({
+      data: {
+        teammateId: ids.riley,
+        startedByMemberId: ids.member,
+        computerId: ids.computer,
+        title,
+        status: 'idle',
+        ...data,
+      },
+    } as never)
+    await prisma.$executeRaw`update "Session" set "updatedAt" = ${new Date(now.getTime() - ago)} where id = ${row.id}`
+    return row.id as string
+  }
+
+  before(async () => {
+    const library = await import('../src/library.js')
+    ids.org = `org-board-${suffix}`
+    ids.user = `user-board-${suffix}`
+    ids.member = `m-board-${suffix}`
+    await prisma.organization.create({
+      data: { id: ids.org, name: 'Board', slug: `board-${suffix}` },
+    })
+    await prisma.user.create({
+      data: { id: ids.user, name: 'Ada', email: `${ids.user}@test.local` },
+    })
+    await prisma.member.create({
+      data: { id: ids.member, organizationId: ids.org, userId: ids.user, role: 'owner' },
+    })
+    ids.workspace = (
+      await prisma.workspace.create({ data: { organizationId: ids.org, name: 'Board' } })
+    ).id
+    const base = { organizationId: ids.org, workspaceId: ids.workspace }
+    scope = { ...base, memberId: ids.member, role: 'owner' }
+    db = scoped(base)
+    ids.computer = (
+      await db.computer.create({
+        data: { kind: 'member_machine', memberId: ids.member, name: 'Laptop', status: 'running' },
+      } as never)
+    ).id
+    ids.riley = (await db.teammate.create({ data: { name: `Riley ${suffix}` } } as never)).id
+    ids.file = (
+      await library.saveLibraryFile(
+        db,
+        base,
+        { type: 'member', id: ids.member },
+        {
+          path: 'Projects/Acme/launch.md',
+          bytes: new TextEncoder().encode(
+            [
+              '# Launch',
+              '',
+              '## Tech',
+              '',
+              '* [ ] Ship the **board** <!-- item:aaaaaaaaaaaaaaaa -->',
+              '* [x] Write the docs <!-- item:bbbbbbbbbbbbbbbb -->',
+              '* [ ] Light load test',
+              '',
+            ].join('\n'),
+          ),
+        },
+      )
+    ).id
+  })
+
+  after(async () => {
+    if (ids.workspace) await prisma.workspace.deleteMany({ where: { id: ids.workspace } })
+    await prisma.libraryObject.deleteMany({ where: { organizationId: ids.org } })
+    await prisma.libraryObjectFolder.deleteMany({ where: { organizationId: ids.org } })
+    await prisma.member.deleteMany({ where: { organizationId: ids.org } })
+    await prisma.organization.deleteMany({ where: { id: ids.org } })
+    await prisma.user.deleteMany({ where: { id: ids.user } })
+  })
+
+  test('each thread on no list lands where it stands', async () => {
+    const asking = await thread('Connect Slack')
+    await db.ticket.create({
+      data: { sessionId: asking, type: 'question', title: 'Which workspace?' },
+    } as never)
+    const working = await thread('Neon metrics', { status: 'running' })
+    const waking = await thread('Check the deploy')
+    await db.wakeup.create({
+      data: {
+        sessionId: waking,
+        teammateId: ids.riley,
+        note: 'Check it',
+        wakeAt: new Date(now.getTime() + DAY),
+      },
+    } as never)
+    const done = await thread('Wake up button', {
+      doneAt: new Date(now.getTime() - DAY),
+      doneSummary: 'The panel shows Wake up instead of the error.',
+      doneByType: 'teammate',
+      doneById: ids.riley,
+    })
+    const doneLongAgo = await thread(
+      'Old work',
+      { doneAt: new Date(now.getTime() - 9 * DAY) },
+      9 * DAY,
+    )
+    const stopped = await thread('UI inspiration', {}, 2 * DAY)
+    const closed = await thread('Teammate context', {}, 10 * DAY)
+    const archived = await thread('Archived', { archivedAt: new Date() })
+
+    const b = await board(db, scope, now)
+    const card = (id: string) => b.cards.find((c) => c.key === `thread:${id}`)
+    assert.equal(card(asking)?.column, 'needs_you')
+    assert.equal(card(asking)?.reason, 'ticket')
+    assert.equal(card(working)?.column, 'in_progress')
+    assert.equal(card(working)?.reason, 'working')
+    assert.equal(card(waking)?.column, 'in_progress')
+    assert.equal(card(waking)?.reason, 'wakeup')
+    assert.equal(card(waking)?.wakeAt, new Date(now.getTime() + DAY).toISOString())
+    assert.equal(card(asking)?.wakeAt, null)
+    assert.equal(card(done)?.column, 'done')
+    assert.equal(card(done)?.note, 'The panel shows Wake up instead of the error.')
+    assert.equal(card(done)?.done?.by, `Riley ${suffix}`)
+    assert.equal(card(doneLongAgo), undefined, 'done before this week: off the Board')
+    assert.equal(card(stopped), undefined)
+    assert.deepEqual(
+      b.stopped.filter((s) => s.key === `thread:${stopped}`).map((s) => [s.canClose, s.list]),
+      [[true, null]],
+    )
+    assert.ok(
+      b.closed.some((c) => c.id === closed),
+      'quiet for 7 days: closed with no activity',
+    )
+    assert.ok(!b.stopped.some((s) => s.threadId === closed))
+    assert.equal(card(archived), undefined)
+    assert.ok(!b.stopped.some((s) => s.threadId === archived))
+  })
+
+  test("a list's line is the card, never its thread; a routine's runs are never cards", async () => {
+    const onLine = await thread('Ship the board', { status: 'running' })
+    await db.listItem.create({
+      data: { id: 'aaaaaaaaaaaaaaaa', documentId: ids.file, text: 'Ship the **board**' },
+    } as never)
+    await db.listItemThread.create({
+      data: { itemId: 'aaaaaaaaaaaaaaaa', sessionId: onLine },
+    } as never)
+    const ticked = await thread('Docs', { status: 'idle' })
+    await db.listItem.create({
+      data: {
+        id: 'bbbbbbbbbbbbbbbb',
+        documentId: ids.file,
+        text: 'Write the docs',
+        doneAt: new Date(now.getTime() - DAY),
+        doneByType: 'teammate',
+        doneById: ids.riley,
+      },
+    } as never)
+    await db.listItemThread.create({
+      data: { itemId: 'bbbbbbbbbbbbbbbb', sessionId: ticked },
+    } as never)
+    const schedule = await db.schedule.create({
+      data: {
+        teammateId: ids.riley,
+        ownerMemberId: ids.member,
+        title: 'Builder',
+        instructions: 'Take the first line',
+        cron: '0 */3 * * *',
+        timezone: 'Europe/Paris',
+      },
+    } as never)
+    const run = await thread('Scheduled run of Builder', {
+      scheduleId: schedule.id,
+      origin: 'schedule',
+      status: 'running',
+    })
+
+    const b = await board(db, scope, now)
+    const line = b.cards.find((c) => c.key === 'item:aaaaaaaaaaaaaaaa')
+    assert.equal(line?.column, 'in_progress')
+    assert.equal(line?.title, 'Ship the board', 'plain text')
+    assert.deepEqual(line?.list, { documentId: ids.file, title: 'Launch', section: 'Tech' })
+    assert.equal(line?.href, `/app/threads/${onLine}`)
+    assert.equal(
+      b.cards.find((c) => c.key === `thread:${onLine}`),
+      undefined,
+    )
+    const docs = b.cards.find((c) => c.key === 'item:bbbbbbbbbbbbbbbb')
+    assert.equal(docs?.column, 'done')
+    assert.equal(docs?.done?.by, `Riley ${suffix}`)
+    assert.equal(
+      b.cards.find((c) => c.key === `thread:${run}`),
+      undefined,
+      'a run is no card',
+    )
+    assert.ok(b.lists.some((l) => l.documentId === ids.file))
+    const routine = b.routines.find((r) => r.id === schedule.id)
+    assert.equal(routine?.running?.id, run)
+  })
+
+  test("a routine's row: today's runs, those that found nothing counted, and its health", async () => {
+    const schedule = await db.schedule.create({
+      data: {
+        teammateId: ids.riley,
+        ownerMemberId: ids.member,
+        title: 'Triage',
+        instructions: 'Read the sources',
+        cron: '0 7 * * *',
+        timezone: 'UTC',
+      },
+    } as never)
+    const report = (status: string) => ({
+      status,
+      summary: `${status} summary`,
+      at: now.toISOString(),
+    })
+    for (const status of ['nothing', 'nothing', 'report'])
+      await thread(`Run ${status}`, {
+        scheduleId: schedule.id,
+        origin: 'schedule',
+        report: report(status),
+      })
+    let r = (await board(db, scope, now)).routines.find((x) => x.id === schedule.id)!
+    assert.equal(r.health, 'ok')
+    assert.deepEqual([r.week.runs, r.week.failed, r.today.runs, r.today.nothing], [3, 0, 3, 2])
+
+    await thread('Run that failed', {
+      scheduleId: schedule.id,
+      origin: 'schedule',
+      status: 'failed',
+    })
+    const b = await board(db, scope, new Date(now.getTime() + 1000))
+    r = b.routines.find((x) => x.id === schedule.id)!
+    assert.equal(r.health, 'failed')
+    assert.equal(r.last?.outcome, 'failed')
+    const card = b.cards.find((c) => c.key === `routine:${schedule.id}`)
+    assert.equal(card?.column, 'needs_you', 'a failing routine waits on a person, as one card')
+    assert.equal(card?.reason, 'routine_failed')
+  })
+
+  test('routine runs, however many, never push out a thread that waits on a person', async () => {
+    const waiting = await thread('Waiting on a person', { status: 'waiting' }, 3 * DAY)
+    const schedule = await db.schedule.create({
+      data: {
+        teammateId: ids.riley,
+        ownerMemberId: ids.member,
+        title: 'Hourly',
+        instructions: 'Read',
+        cron: '0 * * * *',
+        timezone: 'UTC',
+      },
+    } as never)
+    await db.session.createMany({
+      data: Array.from({ length: 520 }, (_, i) => ({
+        teammateId: ids.riley,
+        startedByMemberId: ids.member,
+        computerId: ids.computer,
+        title: `Run ${i}`,
+        origin: 'schedule',
+        scheduleId: schedule.id,
+        status: 'idle',
+      })),
+    } as never)
+    const b = await board(db, scope, now)
+    assert.equal(b.cards.find((c) => c.key === `thread:${waiting}`)?.column, 'needs_you')
+  })
+
+  test('a thread whose line left its list, or whose list was deleted, is a card of its own', async () => {
+    const gone = await thread('Line removed', { status: 'running' })
+    // A row for a line no longer in the file: its marker was removed.
+    await db.listItem.create({
+      data: { id: 'cccccccccccccccc', documentId: ids.file, text: 'Removed line' },
+    } as never)
+    await db.listItemThread.create({
+      data: { itemId: 'cccccccccccccccc', sessionId: gone },
+    } as never)
+    const deleted = await thread('List deleted', { status: 'running' })
+    const other = await db.document.create({
+      data: {
+        path: 'Projects/Acme/old.md',
+        contentType: 'text/markdown',
+        size: 1,
+        text: '# Old\n\n* [ ] Ship <!-- item:dddddddddddddddd -->\n',
+        deletedAt: new Date(),
+      },
+    } as never)
+    await db.listItem.create({
+      data: { id: 'dddddddddddddddd', documentId: other.id, text: 'Ship' },
+    } as never)
+    await db.listItemThread.create({
+      data: { itemId: 'dddddddddddddddd', sessionId: deleted },
+    } as never)
+    const b = await board(db, scope, now)
+    assert.equal(b.cards.find((c) => c.key === `thread:${gone}`)?.column, 'in_progress')
+    assert.equal(b.cards.find((c) => c.key === `thread:${deleted}`)?.column, 'in_progress')
+  })
+
+  test('a thread this member put away for later is no card for them, except in Done', async () => {
+    const pull = (sessionId: string, number: number) =>
+      db.pullRequest.create({
+        data: {
+          repository: 'acme/app',
+          number,
+          title: 'Ready',
+          headRef: `ready-${number}`,
+          baseRef: 'main',
+          sessionId,
+          authorTeammateId: ids.riley,
+        },
+      } as never)
+    const later = (sessionId: string) =>
+      db.threadLater.create({
+        data: {
+          organizationId: ids.org,
+          workspaceId: ids.workspace,
+          memberId: ids.member,
+          sessionId,
+        },
+      } as never)
+    const toMerge = await thread('Videopal V2')
+    await pull(toMerge, 15)
+    // Its child waits on a person: it goes with its parent.
+    const child = await thread('Which voice?', {
+      parentId: toMerge,
+      origin: 'child',
+      status: 'waiting',
+    })
+    const asking = await thread('Remote computer use')
+    await db.ticket.create({
+      data: { sessionId: asking, type: 'question', title: 'Which screen?' },
+    } as never)
+    const idle = await thread('Quiet', {}, DAY)
+    const done = await thread('Shipped', {
+      doneAt: new Date(now.getTime() - DAY),
+      doneByType: 'teammate',
+      doneById: ids.riley,
+    })
+    let b = await board(db, scope, now)
+    const card = (id: string) => b.cards.find((c) => c.key === `thread:${id}`)
+    assert.equal(card(toMerge)?.column, 'needs_you')
+    assert.equal(card(asking)?.column, 'needs_you')
+    for (const id of [toMerge, asking, idle, done]) await later(id)
+
+    // A list's line whose only thread is put away: no card, not stopped.
+    const library = await import('../src/library.js')
+    const file = await library.saveLibraryFile(
+      db,
+      { organizationId: ids.org, workspaceId: ids.workspace },
+      { type: 'member', id: ids.member },
+      {
+        path: 'Projects/Acme/later.md',
+        bytes: new TextEncoder().encode(
+          '# Later\n\n* [ ] Merge it <!-- item:ffffffffffffffff -->\n',
+        ),
+      },
+    )
+    const onLine = await thread('Merge it')
+    await pull(onLine, 16)
+    await db.listItem.create({
+      data: { id: 'ffffffffffffffff', documentId: file.id, text: 'Merge it' },
+    } as never)
+    await db.listItemThread.create({
+      data: { itemId: 'ffffffffffffffff', sessionId: onLine },
+    } as never)
+    await db.listItemThread.create({
+      data: { itemId: 'ffffffffffffffff', sessionId: child },
+    } as never)
+    b = await board(db, scope, now)
+    assert.equal(b.cards.find((c) => c.key === 'item:ffffffffffffffff')?.column, 'needs_you')
+    await later(onLine)
+
+    b = await board(db, scope, now)
+    assert.equal(card(toMerge), undefined, 'its pull request no longer waits on them')
+    assert.equal(card(asking), undefined, 'nor its ticket')
+    assert.ok(!b.stopped.some((s) => s.threadId === idle), 'nor is it stopped')
+    assert.equal(card(done)?.column, 'done', 'what it did this week stays')
+    assert.equal(
+      b.cards.find((c) => c.key === 'item:ffffffffffffffff'),
+      undefined,
+    )
+    assert.ok(!b.stopped.some((s) => s.key === 'item:ffffffffffffffff'))
+
+    // Another member still sees them wait.
+    const other = await board(db, { ...scope, memberId: 'another-member' }, now)
+    assert.equal(other.cards.find((c) => c.key === `thread:${toMerge}`)?.column, 'needs_you')
+    assert.equal(other.cards.find((c) => c.key === 'item:ffffffffffffffff')?.column, 'needs_you')
+    await db.threadLater.deleteMany({ where: { memberId: ids.member } })
+  })
+
+  test('a line whose thread stopped shows as stopped, until that thread is marked done', async () => {
+    const library = await import('../src/library.js')
+    const file = await library.saveLibraryFile(
+      db,
+      { organizationId: ids.org, workspaceId: ids.workspace },
+      { type: 'member', id: ids.member },
+      {
+        path: 'Projects/Acme/stopped.md',
+        bytes: new TextEncoder().encode(
+          '# Stopped\n\n* [ ] Load test <!-- item:eeeeeeeeeeeeeeee -->\n',
+        ),
+      },
+    )
+    const idle = await thread('Load test', {}, DAY)
+    await db.listItem.create({
+      data: { id: 'eeeeeeeeeeeeeeee', documentId: file.id, text: 'Load test' },
+    } as never)
+    await db.listItemThread.create({
+      data: { itemId: 'eeeeeeeeeeeeeeee', sessionId: idle },
+    } as never)
+    let b = await board(db, scope, now)
+    assert.equal(b.stopped.find((s) => s.key === 'item:eeeeeeeeeeeeeeee')?.threadId, idle)
+    assert.equal(
+      b.cards.find((c) => c.key === `thread:${idle}`),
+      undefined,
+      'its line shows it',
+    )
+    await db.session.updateMany({
+      where: { id: idle },
+      data: { doneAt: new Date(), doneByType: 'member', doneById: ids.member },
+    })
+    b = await board(db, scope, now)
+    assert.equal(
+      b.stopped.find((s) => s.key === 'item:eeeeeeeeeeeeeeee'),
+      undefined,
+    )
+  })
+
+  // A child thread's pull request is reviewed in a child of that child (src/reviews.ts): what
+  // happens there shows on the card of the thread at the top, as a child's own would.
+  test('the review under a child: its ticket puts the thread at the top in Needs you, its work in progress', async () => {
+    const top = await thread('Large files')
+    const child = await thread('Send files up to 2 GB', {
+      parentId: top,
+      origin: 'child',
+      awaited: true,
+    })
+    const review = await thread('Review #9: Send files', {
+      parentId: child,
+      origin: 'child',
+      awaited: true,
+      status: 'running',
+    })
+    let b = await board(db, scope, now)
+    const card = (id: string) => b.cards.find((c) => c.key === `thread:${id}`)
+    assert.equal(card(top)?.column, 'in_progress')
+    assert.equal(card(top)?.reason, 'working')
+    await db.session.updateMany({ where: { id: review }, data: { status: 'idle' } })
+    await db.ticket.create({
+      data: { sessionId: review, type: 'question', title: 'Which branch?' },
+    } as never)
+    b = await board(db, scope, now)
+    assert.equal(card(top)?.column, 'needs_you')
+    assert.equal(card(top)?.reason, 'ticket')
+    assert.equal(card(child), undefined, 'a child is no card of its own')
+  })
+})

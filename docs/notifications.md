@@ -1,22 +1,44 @@
 # Notifications
 
 Web push to the dashboard, installed as an app (Add to Home Screen on iPhone,
-Install in Chrome or Edge) or open in a browser. No email or other channel for
-now. The rule: **a push means something waits on you.** Everything else stays
+Install in Chrome or Edge) or open in a browser, and Brigade.app's own (below). No
+email or other channel for now. The rule: **a push means something waits on you.** Everything else stays
 in the dashboard.
 
 ## Decisions
 
-- **Presets, not a grid of checkboxes.** In the member's menu, Notifications:
+- **Presets, not a grid of checkboxes.** In Settings, Notifications:
   - _Only when I'm needed_ (default): the Needs you items that are theirs.
-  - _Needed + finished work_: also each task done and pull request merged, as
-    soon as it is (its own push; a merge whose task is done is said once).
-  - _Everything_: also replies in threads they started (not a task's thread).
+  - _Needed + finished work_: also each thread its teammate declared done and
+    each pull request merged, as soon as it is (its own push; a merge whose
+    thread is done by then is said once, by the thread).
+  - _Everything_: also replies in threads they started.
 - **Whose it is.** A ticket notifies who it waits on (`waitsOn` in
   `apps/web/lib/api.ts`), but admins only for what only they decide (spending
-  caps, a credential without an owner) or what has nobody else. A task in Needs
-  you without a ticket (waiting, or a pull request to review) notifies its
-  thread's starter.
+  caps, a credential without an owner) or what has nobody else. A pull request
+  to review notifies who asked for the work, else its thread's starter.
+- **A failed thread waits on whoever started it**, everywhere at once: Today's
+  Needs you and the count beside Today, the sidebar (where its dot stays
+  red), the app badge, pushes ("Riley's thread failed"), a list line's state
+  and the Board. One rule, `apps/api/src/failed.ts`: a
+  thread of the last 14 days, not a child (its parent's teammate hears of it),
+  archived, snoozed, a playbook's run nobody joined or a routine's
+  run. After an error its runner tries again on its own (the network, an
+  overloaded API, memory; `PASSING_ERROR` in `@brigade/contracts`), it waits
+  only once those tries are over, 16 minutes after that error, so a turn that
+  comes back by itself never notifies. It counts once, by its thread: its pull
+  requests wait with it, not on their own. Today no longer offers to dismiss it:
+  Snooze or Archive puts it away.
+- **Choices nobody picked wait on whoever started the thread** the same way
+  (`apps/api/src/choices-waiting.ts`): a teammate's reply that ends on a
+  choices card ("Riley needs you to pick one", with the card's question). It
+  waits while the thread is idle, until a message comes in it, for 7 days at
+  most. Today's Needs you shows the card itself, picked or dismissed there as in
+  the thread.
+- **A routine waits on its owner** when its last firing could not start (unless
+  the question ticket it opened is still open: that ticket is the item), or its
+  latest run failed (with the same wait after a passing error), until it runs
+  again or is paused. One item per routine ("Routine Morning digest failed").
 - **Sparse.**
   - A Needs you item is sent once it has lasted a minute, so a burst settles
     into one push, and things resolved within the minute never notify.
@@ -49,7 +71,34 @@ in the dashboard.
   thread on click. `apps/web/app/manifest.ts` and the icons make the dashboard
   installable.
 - Presence: each dashboard socket says when it is in view (`presence`), so the
-  API knows who is looking (`isLooking` in `hub.ts`).
+  API knows who is looking (`isLooking` in `hub.ts`). In Brigade.app's dashboard
+  window, "in view" is the window having the keyboard, as the app tells the page
+  (`brigadeDesktop.focus`), not the page's own `document.hasFocus()`.
+
+## Brigade.app
+
+Electron has no push service, so web push can't reach Brigade.app's windows. The
+app shows notifications itself, from the menu bar, its windows open or not:
+
+- Settings, Notifications, This device, **Turn on** in the app registers a
+  `DesktopDevice` (`POST /api/notifications/desktop-devices`), whose token,
+  given once, the app keeps in `~/.brigade/notifications.json`, readable by the
+  person alone, as the runner keeps its token (`apps/desktop/src/notifications.ts`).
+  Not the system keychain: a locked one asks for a password mid-fetch.
+- The sweep treats a running app (one that fetched in the last 2 minutes) as a
+  device: what it would push is queued for it as a `DesktopMessage`, by the same
+  rules and limits as web push. No VAPID keys needed.
+- The app fetches every 20 seconds (`GET /api/desktop-notifications`, its token
+  alone, no session), which takes what is queued and says it runs. Each push is a
+  system notification (Notification Center on macOS), one per thread by its tag;
+  a click opens the thread in the dashboard window; `close` and `badge` work as in
+  `sw.js`. Queued pushes older than 15 minutes are dropped, and apps that haven't
+  fetched for 30 days are removed.
+- Turn off, or signing out in the app, deletes the device (`DELETE
+/api/desktop-notifications` with its token). An app the API no longer knows
+  (401) forgets its token.
+- macOS asks once whether Brigade may show notifications: turning them on shows
+  one at once, so it asks then.
 
 ## Setup
 
@@ -60,5 +109,5 @@ says notifications are not set up. Keep the pair once set: a new one
 unsubscribes every device. `scripts/preview/setup.sh` adds one locally.
 
 On iPhone (iOS 16.4 or later): open the dashboard in Safari, Share, Add to
-Home Screen, open Brigade from there, then Notifications in the member's menu,
+Home Screen, open Brigade from there, then Settings, Notifications,
 Turn on. Push needs HTTPS: localhost works on a computer, not from a phone.

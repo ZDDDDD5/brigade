@@ -10,15 +10,16 @@ import {
   TeachRecording,
   type TeachState,
 } from '@brigade/contracts'
-import { desktopClipboard, dispatch } from '../hub.js'
+import { hubs } from '../hub.js'
 import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { requireAccountManager } from '../apps.js'
 import { audit } from '../audit.js'
-import { ensureRunning } from '../cloud.js'
+import { computerStarting, desktopClipboard } from '../cloud.js'
 import type { ScopedDb } from '../db.js'
-import { watchDesktop } from '../desktop-proxy.js'
+import { COMPUTER_ASLEEP, watchDesktop } from '../desktop-proxy.js'
 import { refuseChiefName } from '../chief.js'
+import { featuresOfMember } from '../features.js'
 import { deleteTriggers, resync } from './triggers.js'
 import { usageToday } from '../caps.js'
 import { endRecording, holdRecording, recorder } from '../teaching.js'
@@ -63,16 +64,21 @@ export const teammates = new Hono<AppEnv>()
   /**
    * The workspace computer's desktop, from a teammate: the screen its threads run
    * on, its own browser among them. To watch, or to record a task on it (Teach a
-   * task), which wakes a stopped computer as a thread's control does.
+   * task), which wakes a stopped computer as a thread's control does, and so does
+   * `?wake=1`, the panel's Wake up button.
    */
   .post('/:id/desktop', async (c) => {
     const { scope, db } = c.var
     const { teammate, computer } = await teammateComputer(db, c.req.param('id'))
-    if (computer.status !== 'running' && recorder(computer.id) === scope.memberId) {
-      await ensureRunning(computer.id)
-      // 503: the dashboard asks again until the computer is up.
-      throw new HTTPException(503, { message: 'Starting the cloud computer…' })
+    if (
+      computer.status !== 'running' &&
+      (recorder(computer.id) === scope.memberId || c.req.query('wake') === '1')
+    ) {
+      await hubs.get(computer.workspaceId).ensureRunning(computer.id)
+      // 503: the dashboard asks again until the computer is up (not sent as an error).
+      throw computerStarting()
     }
+    if (computer.status !== 'running') return c.json({ error: COMPUTER_ASLEEP, asleep: true }, 409)
     const view = await watchDesktop(computer)
     await audit({
       ...scope,
@@ -91,7 +97,7 @@ export const teammates = new Hono<AppEnv>()
       throw new HTTPException(409, { message: 'Start recording to use the desktop clipboard' })
     const { text } = await parseBody(c.req.raw, DesktopClipboard)
     try {
-      return c.json({ text: await desktopClipboard(computer.id, text) })
+      return c.json({ text: await desktopClipboard(computer, text) })
     } catch (error) {
       throw new HTTPException(503, { message: (error as Error).message })
     }
@@ -120,7 +126,10 @@ export const teammates = new Hono<AppEnv>()
       throw new HTTPException(409, {
         message: `${await memberName(db, other)} is recording a task on the cloud computer. Try again once they’re done.`,
       })
-    void ensureRunning(computer.id).catch(() => undefined)
+    void hubs
+      .get(computer.workspaceId)
+      .ensureRunning(computer.id)
+      .catch(() => undefined)
     return c.json(await teachState(db, computer.id, scope.memberId, threadId))
   })
   .post('/:id/teach/end', async (c) => {
@@ -148,7 +157,7 @@ export const teammates = new Hono<AppEnv>()
       throw new HTTPException(409, {
         message: 'Teammate browsers live on the cloud computer, and this workspace has none',
       })
-    await dispatch(computer, {
+    await hubs.get(computer.workspaceId).dispatch(computer, {
       type: 'browser.open',
       commandId: randomUUID(),
       teammateId: teammate.id,
@@ -169,6 +178,8 @@ export const teammates = new Hono<AppEnv>()
     requireRole(c.var.scope, 'owner', 'admin')
     const input = await parseBody(c.req.raw, CreateTeammate)
     refuseChiefName(input.name)
+    if (input.harness === 'pi') await refuseWithoutPi(c.var.scope)
+    if (input.harness === 'antigravity') await refuseWithoutAntigravity(c.var.scope)
     const row = await c.var.db.teammate.create({ data: input as never })
     await audit({
       ...c.var.scope,
@@ -251,6 +262,9 @@ export const teammates = new Hono<AppEnv>()
       })
       if (!current) throw new HTTPException(404, { message: 'Teammate not found' })
       const harness = input.harness ?? current.harness
+      if (harness === 'pi' && current.harness !== 'pi') await refuseWithoutPi(c.var.scope)
+      if (harness === 'antigravity' && current.harness !== 'antigravity')
+        await refuseWithoutAntigravity(c.var.scope)
       const model = input.model === undefined ? current.model : input.model
       // A model saved before the list existed stays until someone changes it.
       const unchanged = harness === current.harness && model === current.model
@@ -304,6 +318,14 @@ export const teammates = new Hono<AppEnv>()
       throw new HTTPException(400, {
         message: 'A custom app only sends events; there is nothing to grant',
       })
+    // An agent's email address is that agent's alone; a project's inbox may be given to any.
+    if (connection.kind === 'email') {
+      const address = await db.mailAddress.findFirst({ where: { connectionId: connection.id } })
+      if (address?.kind === 'agent')
+        throw new HTTPException(400, {
+          message: 'An agent’s address is its own: turn it on or off from that agent’s page',
+        })
+    }
     await db.grant.deleteMany({ where: { teammateId: teammate.id, connectionId: connection.id } })
     if (input.scope !== 'none') {
       await db.grant.create({
@@ -346,6 +368,18 @@ export const teammates = new Hono<AppEnv>()
   })
 
 /** The teammate, and the workspace's cloud computer its threads run on. */
+/** Pi is a choice only where the pi_harness feature is open (docs/harnesses.md). */
+async function refuseWithoutPi(scope: { memberId: string; workspaceId: string }) {
+  if (!(await featuresOfMember(scope.memberId, scope.workspaceId)).has('pi_harness'))
+    throw new HTTPException(400, { message: 'Pi is not available in this workspace' })
+}
+
+/** Antigravity is a choice only where the antigravity_harness feature is open (docs/harnesses.md). */
+async function refuseWithoutAntigravity(scope: { memberId: string; workspaceId: string }) {
+  if (!(await featuresOfMember(scope.memberId, scope.workspaceId)).has('antigravity_harness'))
+    throw new HTTPException(400, { message: 'Antigravity is not available in this workspace' })
+}
+
 async function teammateComputer(db: ScopedDb, id: string) {
   const teammate = await db.teammate.findFirst({ where: { id, archivedAt: null } })
   if (!teammate) throw new HTTPException(404, { message: 'Teammate not found' })

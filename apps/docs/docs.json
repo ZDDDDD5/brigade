@@ -1,0 +1,86 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Brigade",
+  "description": "AI teammates that run your whole company, on the Claude or ChatGPT plan you already pay for.",
+  "colors": {
+    "primary": "#6c43e6",
+    "light": "#a58af9",
+    "dark": "#6c43e6"
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg",
+    "href": "https://www.brigade.lol"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get started",
+        "pages": ["index", "quickstart", "computers", "concepts"]
+      },
+      {
+        "group": "Teammates",
+        "pages": ["teammates", "threads", "goals", "needs-you", "ai-accounts"]
+      },
+      {
+        "group": "Organize work",
+        "pages": ["projects", "lists", "library", "memory", "skills"]
+      },
+      {
+        "group": "Automate",
+        "pages": ["routines", "triggers", "playbooks"]
+      },
+      {
+        "group": "Apps",
+        "pages": ["apps", "email", "code-and-previews"]
+      },
+      {
+        "group": "Workspace",
+        "pages": ["members", "notifications", "usage-and-limits", "billing"]
+      },
+      {
+        "group": "Trust",
+        "pages": ["security"]
+      },
+      {
+        "group": "Open source",
+        "pages": ["self-hosting"]
+      },
+      {
+        "group": "Help",
+        "pages": ["faq"]
+      }
+    ]
+  },
+  "redirects": [{ "source": "/tasks", "destination": "/lists" }],
+  "navbar": {
+    "links": [
+      {
+        "label": "Live demo",
+        "href": "https://demo.brigade.lol/app"
+      },
+      {
+        "label": "GitHub",
+        "href": "https://github.com/gmpetrov/brigade"
+      }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Sign up",
+      "href": "https://www.brigade.lol/sign-up"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/gmpetrov/brigade"
+    }
+  },
+  "seo": {
+    "indexing": "navigable",
+    "metatags": {
+      "canonical": "https://www.brigade.lol/docs"
+    }
+  }
+}

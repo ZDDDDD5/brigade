@@ -1,13 +1,16 @@
 'use client'
 import {
   type Effort,
-  HarnessId,
+  TeammateHarness,
   modelLabel,
   playbookApprovalOf,
   type FolderRule,
 } from '@brigade/contracts'
 import type {
+  ApiToBrowser,
   ChildReport,
+  OnboardingAnswers,
+  Choices,
   ProjectSummary,
   AssetTicket,
   AttachmentInfo,
@@ -15,15 +18,26 @@ import type {
   CredentialKind,
   CredentialSummary,
   DocumentAsset,
+  Feature,
+  FileUploadInfo,
+  FileUploadTicket,
+  LibraryFile,
+  MergeStatus,
   PlaybookHomeLine,
   PlaybookPromotionPayload,
+  ChiefDecisionView,
+  GoalView,
+  PullReview,
+  RunOutcome,
+  ReviewPolicy,
   SkillProposalPayload,
-  TaskColumn,
-  TaskPriority,
+  TriggerProposalPayload,
+  UploadPurpose,
   UploadTicket,
 } from '@brigade/contracts'
-import { useCallback, useEffect, useState } from 'react'
+import { type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
 import { API_URL } from './config'
+import { listen } from './use-live'
 
 export type { AttachmentInfo } from '@brigade/contracts'
 
@@ -31,6 +45,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    /** The reply's JSON body, for what it says beyond `error`. */
+    readonly body?: unknown,
   ) {
     super(message)
   }
@@ -48,10 +64,29 @@ export async function api<T = unknown>(
     body: init.body === undefined ? null : JSON.stringify(init.body),
   })
   if (response.status === 204) return undefined as T
-  const body = await response.json().catch(() => ({}))
+  const body = await readBody(response)
   if (!response.ok)
-    throw new ApiError((body as { error?: string }).error ?? response.statusText, response.status)
+    throw new ApiError(
+      (body as { error?: string } | undefined)?.error ?? response.statusText,
+      response.status,
+      body ?? {},
+    )
+  // A reply that came cut off, or that is not JSON (a page some proxy answered with): an error,
+  // never `{}` taken for what was asked, where a list then fails to iterate.
+  if (body === undefined) throw new ApiError('The reply could not be read', response.status)
   return body as T
+}
+
+/** A reply's JSON body: `{}` when it is empty, undefined when it cannot be read or parsed. */
+async function readBody(response: Response): Promise<unknown> {
+  const text = await response.text().catch(() => undefined)
+  if (text === undefined) return undefined
+  if (!text.trim()) return {}
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -131,6 +166,59 @@ export async function uploadAttachment(
 }
 
 /**
+ * Upload a file for the library, a skill import or a logo straight to the
+ * bucket, reporting progress from 0 to 1. Resolves once the API checked it;
+ * then use it by its id (`uploadId`). Without R2 the API signs a URL of its own.
+ */
+export async function uploadFile(
+  purpose: UploadPurpose,
+  file: Blob & { name?: string },
+  options: { name?: string; onProgress?: (fraction: number) => void; signal?: AbortSignal } = {},
+): Promise<FileUploadInfo> {
+  const ticket = await api<FileUploadTicket>('/uploads', {
+    body: {
+      purpose,
+      name: options.name || file.name || 'file',
+      size: file.size,
+      contentType: file.type,
+    },
+  })
+  try {
+    const url = ticket.url.startsWith('/') ? `${API_URL}${ticket.url}` : ticket.url
+    await send(
+      { method: ticket.method, url, headers: ticket.headers, credentials: false },
+      file,
+      options.onProgress ?? (() => {}),
+      options.signal,
+    )
+    return await api<FileUploadInfo>(`/uploads/${ticket.id}/complete`, { body: {} })
+  } catch (error) {
+    // The half-done upload goes; the API would sweep it later anyway.
+    void api(`/uploads/${ticket.id}`, { method: 'DELETE' }).catch(() => undefined)
+    throw error
+  }
+}
+
+/** A data URL's bytes, as a Blob of its type. */
+export function blobOfDataUrl(dataUrl: string): Blob {
+  const comma = dataUrl.indexOf(',')
+  const head = dataUrl.slice(5, comma)
+  const type = head.split(';')[0] ?? ''
+  const data = dataUrl.slice(comma + 1)
+  if (!head.endsWith(';base64')) return new Blob([decodeURIComponent(data)], { type })
+  const binary = atob(data)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type })
+}
+
+/** Upload a file from the computer to the library at `path`. */
+export async function uploadToLibrary(path: string, file: File): Promise<LibraryFile> {
+  const upload = await uploadFile('library', file, { name: path })
+  return api<LibraryFile>('/library/files', { body: { path, uploadId: upload.id } })
+}
+
+/**
  * Upload one file into a document, from the editor. Resolves to what its
  * block refers to it by (`asset:<id>`). Straight to the bucket when the API
  * hands out a signed URL; otherwise through the API.
@@ -167,6 +255,10 @@ export const attachmentUrl = (id: string, download = false) =>
 export const threadImageUrl = (threadId: string, path: string, teammateId?: string) =>
   `${API_URL}/api/threads/${threadId}/image?${new URLSearchParams({ path, ...(teammateId ? { teammateId } : {}) })}`
 
+/** An image or PDF a teammate's tool returned, kept apart from the thread's events (STORED_FILE). */
+export const storedFileUrl = (threadId: string, name: string) =>
+  `${API_URL}/api/threads/${threadId}/files/${name}`
+
 /** GET requests sent ahead, by path: see `preload`. */
 const ahead = new Map<string, Promise<unknown>>()
 
@@ -185,6 +277,13 @@ export function preload(path: string) {
   setTimeout(() => ahead.get(path) === request && ahead.delete(path), 10_000)
 }
 
+/** Settles once the request `preload` sent for this path has, leaving it for what takes it. */
+export const preloadSettled = (path: string) =>
+  ahead.get(path)?.then(
+    () => undefined,
+    () => undefined,
+  ) ?? Promise.resolve()
+
 /** The request `preload` sent for this path, once: undefined when there is none. */
 export function preloaded<T>(path: string) {
   const request = ahead.get(path)
@@ -192,15 +291,118 @@ export function preloaded<T>(path: string) {
   return request as Promise<T> | undefined
 }
 
-/** Fetch on mount (taking the request sent ahead, if any); `reload` refetches. */
-export function useApi<T>(path: string | null) {
-  const [data, setData] = useState<T | undefined>()
+/**
+ * What each path last answered, in this tab, for this person in this workspace: a page opened
+ * again (Back most of all) shows it at once while it asks again. On iPhone, Safari's Back shows a
+ * picture of the page until it is drawn about as full as it was left, or for 3 seconds: a page
+ * that opened on its skeleton every time kept that picture, frozen, for those 3 seconds.
+ */
+const answers = new Map<string, unknown>()
+/** Paths kept, the least recently used going first. */
+const ANSWERS_KEPT = 100
+let answersScope: string | undefined
+/** Counts scopes left: an answer asked for in one left since is not kept. */
+let answersGeneration = 0
+
+function keepAnswer(path: string, data: unknown) {
+  answers.delete(path)
+  answers.set(path, data)
+  if (answers.size > ANSWERS_KEPT) answers.delete(answers.keys().next().value!)
+}
+
+/**
+ * Asked for now, for the person and workspace kept for now: `keep` keeps its answer, and says
+ * whether it is still theirs (false: another one since, or signed out, and it is dropped).
+ */
+export function askingNow() {
+  const generation = answersGeneration
+  return (path: string, value: unknown) => {
+    if (generation !== answersGeneration) return false
+    if (answersScope !== undefined) keepAnswer(path, value)
+    return true
+  }
+}
+
+/** The answer kept for a path, if any. */
+export const keptAnswer = <T>(path: string) => answers.get(path) as T | undefined
+
+/**
+ * Whose answers are kept (person and workspace): another one, or none (signed out), forgets
+ * them all, so no one sees what was kept for someone else.
+ */
+export function setAnswersScope(scope: string | undefined) {
+  if (scope === answersScope) return
+  // Leaving someone's scope drops what was asked for them; the first one set (the dashboard
+  // opening, before /me is in) is that of what was asked meanwhile.
+  if (answersScope !== undefined) answersGeneration++
+  answersScope = scope
+  answers.clear()
+}
+
+/**
+ * A path's answer, from the request `preload` sent ahead when `opening` and there is one: an
+ * ApiError when `accept` says it is not of the shape asked for (`{}` or `{ items }` for a list),
+ * so it never replaces, or is kept as, the last answer that was.
+ */
+export async function answerOf<T>(
+  path: string,
+  { opening = false, accept }: { opening?: boolean; accept?: (value: unknown) => boolean } = {},
+): Promise<T> {
+  const value = await ((opening ? preloaded<T>(path) : undefined) ?? api<T>(path))
+  if (accept && !accept(value)) throw new ApiError('The reply is not what was asked for', 200)
+  return value
+}
+
+/** For `useApi`'s `accept`: the answer is a list (an array). */
+export const isList = (value: unknown): value is unknown[] => Array.isArray(value)
+
+/**
+ * Fetch on mount (taking the request sent ahead, if any); `reload` refetches, and so does each
+ * dashboard socket message of a type in `live`, and each time that socket is back after dropping.
+ * Opens on the path's last answer in this tab, when there is one, while it asks again.
+ */
+export function useApi<T>(
+  path: string | null,
+  live?: readonly ApiToBrowser['type'][],
+  /** Whether an answer has the shape asked for: one that has not is an error (`answerOf`). */
+  accept?: (value: unknown) => boolean,
+) {
+  // A kept answer of another shape (kept by a page that asked for it without `accept`) is none.
+  const keptFor = (at: string | null) => {
+    const kept = at ? keptAnswer<T>(at) : undefined
+    return kept !== undefined && (!accept || accept(kept)) ? kept : undefined
+  }
+  const [data, setState] = useState<T | undefined>(() => keptFor(path))
   const [error, setError] = useState<ApiError | undefined>()
+  // Another path: its kept answer shows at once, when there is one.
+  const [shown, setShown] = useState(path)
+  if (shown !== path) {
+    setShown(path)
+    const kept = keptFor(path)
+    if (kept !== undefined) setState(kept)
+  }
+  const pathRef = useRef(path)
+  pathRef.current = path
+  const acceptRef = useRef(accept)
+  acceptRef.current = accept
+  const setData = useCallback((next: SetStateAction<T | undefined>) => {
+    setState((current) => {
+      const value =
+        typeof next === 'function' ? (next as (c: T | undefined) => T | undefined)(current) : next
+      const at = pathRef.current
+      if (at && value !== undefined && answersScope !== undefined) keepAnswer(at, value)
+      return value
+    })
+  }, [])
   const load = useCallback(
     async (opening: boolean) => {
       if (!path) return
+      // Asked for one person in one workspace: kept and shown only if still theirs once it is in.
+      const keep = askingNow()
       try {
-        setData(await ((opening ? preloaded<T>(path) : undefined) ?? api<T>(path)))
+        const value = await answerOf<T>(path, { opening, accept: acceptRef.current })
+        if (!keep(path, value)) return
+        if (pathRef.current === path) setState(value)
         setError(undefined)
       } catch (e) {
         setError(e instanceof ApiError ? e : new ApiError(String(e), 0))
@@ -212,29 +414,116 @@ export function useApi<T>(path: string | null) {
   useEffect(() => {
     void load(true)
   }, [load])
+  const types = live?.join(' ') ?? ''
+  useEffect(() => {
+    if (!path || !types) return
+    const heard = types.split(' ')
+    return listen(
+      (message) => {
+        if (heard.includes(message.type)) void load(false)
+      },
+      () => void load(false),
+    )
+  }, [path, types, load])
   return { data, error, reload, setData }
+}
+
+/**
+ * Asks again at `at` (a time the API gave), when what it said changes then without an event:
+ * a failed thread starts waiting on a person once its runner's own retries are over.
+ */
+export function useRecheck(at: string | null | undefined, reload: () => Promise<void>) {
+  useEffect(() => {
+    if (!at) return
+    const timer = setTimeout(() => void reload(), Math.max(0, Date.parse(at) - Date.now()) + 1_000)
+    return () => clearTimeout(timer)
+  }, [at, reload])
 }
 
 // Response shapes used by the dashboard.
 export type Me = {
   user: { id: string; name: string; email: string; image: string | null }
+  /** What they answered to onboarding's questions; null: never asked (POST /me/onboarding). */
+  onboardingAnswers: OnboardingAnswers | null
+  /**
+   * A guest (docs/guests.md): Brigade.app made the account without a sign-in, until they save it
+   * with an email. Absent from APIs before it.
+   */
+  guest?: boolean
   organizations: { id: string; name: string; slug: string; role: string }[]
   activeOrganizationId: string | null
-  role: 'owner' | 'admin' | 'member' | null
-  workspaces: { id: string; name: string }[]
+  role: 'owner' | 'admin' | 'member' | 'viewer' | null
+  /** `logo`: its stored logo's version (workspaceLogoPath); null: its letter shows. */
+  workspaces: { id: string; name: string; logo: string | null }[]
   activeWorkspaceId: string | null
   memberId: string | null
   /** The member has an AI account here that has worked: nothing runs without one. */
   aiReady: boolean
+  /** Their message box suggests what they may write next (message.suggested). */
+  suggestions: boolean
+  /** Brigade merges what teammates open in their threads once it is ready (owners and admins). */
+  autoMerge: boolean
+  /**
+   * The previews of their threads run on a machine of their own (docs/previews.md); shown only to
+   * members with the preview_machines feature. Absent from APIs before it.
+   */
+  previewMachines?: boolean
+  /** Chief's daily pass for them (docs/chief-answers.md): Today shows what it did. */
+  chiefPass?: boolean
+  /** Features hidden until ready that this person has (docs/feature-flags.md); absent in the demo. */
+  features?: Feature[]
+}
+
+/** Settings › Members (GET /api/members): invitations only for owners and admins. */
+export type MembersResponse = {
+  members: {
+    id: string
+    name: string
+    email: string
+    image: string | null
+    role: 'owner' | 'admin' | 'member' | 'viewer'
+    joinedAt: string
+  }[]
+  invitations: {
+    id: string
+    email: string
+    role: 'owner' | 'admin' | 'member' | 'viewer'
+    invitedBy: string
+    expiresAt: string
+  }[]
+}
+
+/** An invitation as its invited person sees it at /invite/<id> (GET /api/invitations/:id). */
+export type InvitationView =
+  | { id: string; forYou: false; signedInAs: string }
+  | {
+      id: string
+      forYou: true
+      signedInAs: string
+      organization: string
+      invitedBy: string
+      role: 'owner' | 'admin' | 'member' | 'viewer'
+      /** A member of it already. */
+      member: boolean
+    }
+
+/** The invitations open for the signed-in address (GET /api/invitations). */
+export type OpenInvitation = {
+  id: string
+  organization: string
+  invitedBy: string
+  role: 'owner' | 'admin' | 'member' | 'viewer'
 }
 
 export type Teammate = {
   id: string
   name: string
+  /** Free text shown as a badge beside its name, e.g. "Software engineer"; empty for none. */
+  title: string
   /** chief: the teammate every workspace has, which sets up the team and routes work. */
   kind: 'teammate' | 'chief'
   instructions: string
-  harness: 'claude_code' | 'codex'
+  harness: TeammateHarness
   model: string | null
   permissionPolicy: { connectorWrites?: 'allow' | 'ask' | 'deny' } | null
   caps: Caps | null
@@ -254,9 +543,27 @@ export type Computer = {
   kind: 'cloud' | 'member_machine'
   status: 'pending' | 'creating' | 'starting' | 'running' | 'stopped' | 'error' | 'destroyed'
   online: boolean
+  /** Its runner restarts into an update: online all along, but nothing runs for a minute. */
+  restarting: boolean
   runner: { version: string | null; platform: string | null; lastSeenAt: string | null } | null
   /** Whether its connected runner runs the bundle the API serves, or updates to it once idle. */
   runnerUpdate: 'current' | 'waiting' | null
+  /** A cloud computer's latest move onto a new VM, under way or done. */
+  replacement?: ComputerReplacement | null
+}
+
+/** A cloud computer moved onto a new VM (the API's cloud-replace.ts). */
+export type ComputerReplacement = {
+  id: string
+  phase: 'backing_up' | 'creating' | 'restoring' | 'done' | 'failed'
+  createdAt: string
+  finishedAt: string | null
+  /** How the old computer's last backup went. */
+  backup: string | null
+  /** What did not come back on the new one. */
+  problems: { text: string }[]
+  /** Why it is held up, while it is tried again. */
+  error: string | null
 }
 
 export type ThreadSummary = {
@@ -286,14 +593,76 @@ export type ThreadSummary = {
   pinPosition?: number | null
   /** Set while archived: out of the sidebar until someone writes in it. */
   archivedAt?: string | null
+  /**
+   * When the work asked in it was declared done (docs/board.md), by its teammate or a person,
+   * with a line on what was delivered; a person's new message reopens it.
+   */
+  doneAt?: string | null
+  doneSummary?: string | null
+  /**
+   * When this member snoozed it: out of their list (the filter's Snoozed shows it) and of what
+   * waits on them until `snoozedUntil`, or until something new happens in it.
+   */
+  laterAt?: string | null
+  snoozedUntil?: string | null
+  /** When it came back from this member's snooze, lately: the list puts it by that time. */
+  returnedAt?: string | null
   /** Others than its starter may write in it, so rename and archive it. */
   othersMayPrompt?: boolean
   /** Since when its events have not reached Brigade: its computer keeps sending them. */
   eventsWaitingSince?: string | null
   /** Its child threads it waits for, at work: it shows as working. */
   childrenWorking?: number
+  /** Its child threads a teammate started (not a schedule's runs): the sidebar shows them under it. */
+  children?: SidebarChild[]
   /** Its preview is starting or running, on a computer that is up. */
   previewRunning?: boolean
+  /** When its next wake-up fires (a teammate checks on something then), while one is pending. */
+  wakeAt?: string | null
+  /** The list whose items it works on (docs/lists.md): the sidebar shows it under that list. */
+  list?: { documentId: string; title: string } | null
+}
+
+/** A list this member pinned in their sidebar (GET /lists/pins): under Pinned, with its threads. */
+export type PinnedList = {
+  documentId: string
+  title: string
+  pinnedAt: string
+  /** Where it sits under Pinned, in the same order as a thread's pinPosition. */
+  position: number
+}
+
+/** A child thread under its parent in the sidebar: newest activity first. */
+export type SidebarChild = {
+  id: string
+  title: string
+  status: string
+  updatedAt: string
+  /** A teammate replied since this member last looked at it. */
+  unread: boolean
+  /** Its preview is starting or running, on a computer that is up. */
+  previewRunning?: boolean
+  /** When its next wake-up fires (a teammate checks on something then), while one is pending. */
+  wakeAt?: string | null
+  /** Its own child threads, for a thread under a list's row (lib/list-groups.ts). */
+  children?: SidebarChild[]
+  /**
+   * What its menu in the sidebar needs (thread-menu.tsx), as a thread's own row has it. Missing
+   * from an API older than the menu: the row shows none then.
+   */
+  startedBy?: { id: string }
+  othersMayPrompt?: boolean
+  pinnedAt?: string | null
+  laterAt?: string | null
+  snoozedUntil?: string | null
+  doneAt?: string | null
+  /** The thread it was started from; none for a list's thread, which is a thread of its own. */
+  parent?: { id: string } | null
+  /**
+   * It reviews a pull request: the sidebar leaves it out, unless it needs the member or is open
+   * (lib/sub-threads.ts). Its parent's pull request card opens it.
+   */
+  review?: boolean
 }
 
 /** A thread started from another (start_child, or a schedule's run that reports there), shown in it. */
@@ -318,6 +687,8 @@ export type ThreadChild = {
 }
 
 export type Thread = Omit<ThreadSummary, 'teammates' | 'replies' | 'lastReplyAt'> & {
+  /** Its latest goal (docs/goals.md), for its banner; null when it never had one. */
+  goal?: GoalView | null
   startedByMemberId: string
   othersMayPrompt: boolean
   /** Adds nothing to workspace memory; its summary is the starter's only. */
@@ -329,13 +700,25 @@ export type Thread = Omit<ThreadSummary, 'teammates' | 'replies' | 'lastReplyAt'
   lastSeq: number
   /** In a child a person talked with: when its last message goes to the parent, unless sent sooner. */
   reportDueAt: string | null
-  teammate: { id: string; name: string; harness: string; model: string | null }
+  /** Who declared it done, by name, while it is. */
+  doneBy?: string | null
+  /** The choices card a person dismissed without picking: it and those before it are closed. */
+  choicesDismissedSeq?: number | null
+  teammate: { id: string; name: string; title: string; harness: string; model: string | null }
   teammates: {
     joinedAt: string
     lastTurnAt: string
     teammate: { id: string; name: string; harness: string; model: string | null }
   }[]
-  computer: { id: string; name: string; kind: string }
+  /** Where it runs, and whether that computer is there now (online, restarting into an update). */
+  computer: {
+    id: string
+    name: string
+    kind: string
+    status: Computer['status']
+    online: boolean
+    restarting: boolean
+  }
   account: { id: string; label: string; status: string } | null
   origin: 'member' | 'trigger' | 'schedule' | 'child'
   trigger: { id: string; label: string; event: string } | null
@@ -346,17 +729,50 @@ export type Thread = Omit<ThreadSummary, 'teammates' | 'replies' | 'lastReplyAt'
   followers: { id: string; title: string }[]
   /** Its child threads, newest first. */
   children: ThreadChild[]
+  /** Chief's answers in the person's name here (docs/chief-answers.md), each beside its note. */
+  chiefDecisions?: ChiefDecisionView[]
   /** Schedules whose runs report here, as its children. */
   reportingSchedules: { id: string; title: string; pausedAt: string | null }[]
   tickets: Pick<Ticket, 'id' | 'type' | 'title' | 'payload' | 'createdAt'>[]
   /** Every file given to the thread, oldest first. */
   attachments: AttachmentInfo[]
-  /** The task this thread works on, if it is one. */
-  task: { id: string; title: string; completedAt: string | null } | null
+  /** The thread a teammate started it from (start_thread), while there is one. */
+  startedFrom?: { id: string; title: string } | null
   /** The project it works in: its brief, memory and folder come with each turn. */
   project: ProjectSummary | null
   /** When its teammates asked to be prompted here again, soonest first. */
   wakeups: { id: string; teammateId: string; note: string; wakeAt: string }[]
+  /** Sign-up addresses it made (Email App) whose mail still comes to it alone, until waitUntil. */
+  mailAliases: {
+    id: string
+    local: string
+    address: string
+    purpose: string
+    waitUntil: string
+    teammateId: string | null
+  }[]
+  /** Its latest emails sent from Brigade's addresses; a scheduled one can be cancelled until sendAt. */
+  mailMessages: {
+    id: string
+    /** Gmail's: its account. Null: from Brigade's address. */
+    connectionId: string | null
+    to: string[]
+    subject: string
+    status: 'scheduled' | 'sent' | 'delivered' | 'bounced' | 'cancelled' | string
+    sendAt: string | null
+    error: string | null
+    fromAddress: string
+    createdAt: string
+  }[]
+  /** Emails sent from it whose replies wake it, until `until`; the latest sent first. */
+  replyWatches: {
+    id: string
+    teammateId: string
+    to: string
+    subject: string
+    until: string
+    connection: { kind: Connection['kind']; externalAccount: string | null; label: string }
+  }[]
   /**
    * While it moves to another computer: where to, and how far. waiting: once the
    * turn running ends. releasing: its computer hands its files over. arriving:
@@ -370,8 +786,6 @@ export type Thread = Omit<ThreadSummary, 'teammates' | 'replies' | 'lastReplyAt'
     waitingFor?: 'online' | 'update'
   } | null
 }
-
-export type { TaskColumn, TaskPriority } from '@brigade/contracts'
 
 /** A teammate prompted with the same instructions on a cron schedule, on its owner's accounts. */
 export type Schedule = {
@@ -395,63 +809,10 @@ export type Schedule = {
   project: ProjectRef | null
   /** Its latest thread. */
   lastRun: { id: string; status: string; createdAt: string } | null
+  /** Its latest runs, oldest first, with how each ended. */
+  recentRuns: { id: string; outcome: RunOutcome; createdAt: string }[]
   /** The thread its runs report to, as its children; null: each run is a thread of its own. */
   parentSession: { id: string; title: string } | null
-}
-
-/** A task on the board, with its thread if it has started. */
-export type Task = {
-  id: string
-  title: string
-  description: string
-  priority: TaskPriority
-  column: TaskColumn
-  /** Unset in the backlog: assigning a teammate starts its thread. */
-  teammate: { id: string; name: string; harness: Teammate['harness'] } | null
-  projectId: string | null
-  project: ProjectRef | null
-  /** The mission it is in: a task that groups it with others on the board. */
-  parentId: string | null
-  parent: { id: string; title: string } | null
-  /** Who asked: the member, or the thread's starter when a teammate created it. */
-  createdBy: { id: string; user: { name: string; image: string | null } }
-  createdByMemberId: string
-  /** The teammate that created it with its task tools, if one did. */
-  createdByTeammate: { id: string; name: string } | null
-  summary: string | null
-  deliverables: { label: string; url: string }[]
-  completedAt: string | null
-  /** Put away off the board; reopening brings it back. */
-  archivedAt: string | null
-  /** In the Trash: off the board; restoring brings it back. */
-  trashedAt: string | null
-  createdAt: string
-  updatedAt: string
-  thread: {
-    id: string
-    status: string
-    updatedAt: string
-    computerId: string
-    startedByMemberId: string
-    openTickets: number
-    /** What it opened that waits on review and merge. */
-    openPullRequests: { repository: string; number: number }[]
-  } | null
-}
-
-export type TaskDetail = Task & {
-  /** On create with a teammate: why its thread could not start, so it waits in Backlog. */
-  startError?: string
-  /** A mission's tasks, in the order they were made; none for a task of its own. */
-  children: Task[]
-  pullRequests: {
-    id: string
-    repository: string
-    number: number
-    title: string
-    state: string
-    headRef: string
-  }[]
 }
 
 export type AccountLogin = {
@@ -464,7 +825,7 @@ export type AccountLogin = {
 
 export type Account = {
   id: string
-  provider: 'claude_code' | 'codex'
+  provider: 'claude_code' | 'codex' | 'antigravity'
   source: 'machine' | 'brigade'
   label: string
   email: string | null
@@ -475,25 +836,114 @@ export type Account = {
   lastUsage: { window: string; utilization: number; resetsAt: string | null }[] | null
   computer: { id: string; name: string; kind: 'cloud' | 'member_machine' }
   login: AccountLogin | null
+  /** Added by the signed-in member. */
+  mine: boolean
+  /** The workspace's, usable by every member (on the cloud computer). */
+  shared: boolean
+  /** Who added it. */
+  addedBy: string
 }
 
-export type ComputersResponse = { cloudAvailable: boolean; computers: Computer[] }
+export type ComputersResponse = {
+  cloudAvailable: boolean
+  /** Billing is on: the cloud computer comes with the workspace's Cloud plan (Settings › Billing). */
+  billing: boolean
+  /**
+   * The workspace may have its cloud computer running: it has the plan (on Starter, with hours
+   * left this period), or billing is off.
+   */
+  cloudEntitled: boolean
+  /** Starter's hours are used up: the cloud computer sleeps until then (ISO). */
+  cloudHoursUsedUp?: string | null
+  /** On Starter, the cloud computer's hours this period, starting over at `resetsAt`. */
+  cloudHours?: { used: number; included: number; resetsAt: string } | null
+  computers: Computer[]
+}
 
-/** Computers a thread can run on: online machines, and the workspace computer unless broken (it resumes on demand). */
+/**
+ * Computers a thread can run on: online machines, and the workspace computer unless broken
+ * (it resumes on demand) or its plan ended (it stays stopped until the plan comes back).
+ */
 export const usableComputers = (data: ComputersResponse | undefined) =>
   (data?.computers ?? []).filter(
     (c) =>
-      c.online || (c.kind === 'cloud' && ['running', 'stopped', 'starting'].includes(c.status)),
+      c.online ||
+      (c.kind === 'cloud' &&
+        data!.cloudEntitled &&
+        ['running', 'stopped', 'starting'].includes(c.status)),
   )
+
+/**
+ * Open a Stripe page (Checkout, the billing portal). Stripe does not show in a frame, and the
+ * dashboard is one in a thread's preview: there it opens in a new tab, opened at once, on the
+ * click, so the browser does not block it while its address is asked for. Call it on a click.
+ */
+export async function openStripe(address: () => Promise<string>) {
+  const framed = window.self !== window.top
+  const tab = framed ? window.open('', '_blank') : null
+  try {
+    const url = await address()
+    if (tab) tab.location.href = url
+    else if (framed) window.open(url, '_blank')
+    else window.location.assign(url)
+  } catch (error) {
+    tab?.close()
+    throw error
+  }
+}
+
+/** Stripe Checkout for the workspace's Cloud plan: opens it, coming back to `from` after. */
+export function subscribeToCloud(
+  from: 'billing' | 'onboarding' = 'billing',
+  tier: 'cloud' | 'starter' = 'cloud',
+) {
+  return openStripe(
+    async () => (await api<{ url: string }>('/billing/checkout', { body: { from, tier } })).url,
+  )
+}
+
+/** From Starter to Max, confirmed in Stripe's portal. Call it on a click. */
+export function upgradeToCloud() {
+  return openStripe(
+    async () => (await api<{ url: string }>('/billing/upgrade', { method: 'POST' })).url,
+  )
+}
 
 export const computerName = (c: { kind: string; name: string }) =>
   c.kind === 'cloud' ? 'Cloud computer' : c.name
+
+/** A Google Ads customer account a Google sign-in reaches (GET /connections/:id/google-ads/customers). */
+export type GoogleAdsCustomer = {
+  id: string
+  loginCustomerId: string
+  name: string | null
+  currency?: string
+  timeZone?: string
+  /** Only in the list of what the account reaches. */
+  manager?: boolean
+  status?: string
+  managerName?: string | null
+}
+
+/** A Meta ad account a Facebook sign-in reaches (GET /connections/:id/meta-ads/accounts). */
+export type MetaAdAccount = {
+  /** act_<digits> */
+  id: string
+  name: string | null
+  currency?: string
+  timeZone?: string
+  business?: string | null
+  /** Only in the list of what the account reaches: ACTIVE, DISABLED, CLOSED… */
+  status?: string
+}
 
 export type Connection = {
   id: string
   appId: string
   /** mine: used only in threads the member who connected it started. workspace: in every thread. */
   reach: 'mine' | 'workspace'
+  /** Gmail shared with the workspace: its mail shows in the Inbox. */
+  inbox: boolean
   createdByMemberId: string
   /** webhook: a custom app that posts events to Brigade. Inbound only. */
   kind:
@@ -504,11 +954,16 @@ export type Connection = {
     | 'google_sheets'
     | 'google_search_console'
     | 'google_analytics'
+    | 'google_ads'
+    | 'meta_ads'
     | 'stripe'
     | 'github'
     | 'webhook'
     | 'cloudflare'
     | 'google_cloud'
+    | 'google_drive_mcp'
+    | 'google_docs_mcp'
+    | 'google_sheets_mcp'
     | 'neon'
     | 'supabase'
     | 'atlassian'
@@ -518,11 +973,20 @@ export type Connection = {
     | 'resend'
     | 'replicate'
     | 'openrouter'
+    | 'posthog'
+    | 'dataforseo'
+    | 'ahrefs'
+    | 'revenuecat'
+    | 'expo'
+    | 'vercel'
+    | 'email'
     | 'mcp'
   label: string
   externalAccount: string | null
   /** Where a person manages the account at the provider, e.g. a GitHub installation's settings. */
   externalUrl: string | null
+  /** What its owner picked after signing in: Google Ads' customer accounts, Meta's ad accounts. */
+  settings?: { customers?: GoogleAdsCustomer[]; accounts?: MetaAdAccount[] } | null
   status: 'active' | 'needs_reauth' | 'removed'
   createdAt: string
   grants: { teammateId: string; scope: 'read' | 'read_write' }[]
@@ -581,6 +1045,11 @@ export type ConnectionsResponse = {
   /** Member names, by id: who connected each account. */
   members: Record<string, string>
   available: Record<Connection['kind'], boolean>
+  /**
+   * Apps behind a feature this member lacks (docs/feature-flags.md): not offered, not connectable.
+   * Absent from the demo's recording, made before it.
+   */
+  hidden?: Connection['kind'][]
   connections: Connection[]
 }
 
@@ -663,12 +1132,15 @@ export type Trigger = {
   /** The catalog id, e.g. payment_received. */
   event: string
   options: Record<string, string>
+  /** What the teammate does with each event, first in each thread. */
+  instructions: string | null
   /** Custom apps only. */
   verification: 'hmac' | 'none' | null
   url: string | null
   hasSecret: boolean
   createdAt: string
-  teammate: { id: string; name: string }
+  /** Null: nobody, a mailbox's rule that keeps its mail in the Inbox for a person. */
+  teammate: { id: string; name: string } | null
   projectId: string | null
   project: ProjectRef | null
 }
@@ -738,7 +1210,7 @@ export type ConnectionCall = {
 
 export type Ticket = {
   id: string
-  type: 'approval' | 'question' | 'request' | 'sign_in' | 'cap' | 'usage_limit'
+  type: 'approval' | 'question' | 'request' | 'sign_in' | 'cap' | 'usage_limit' | 'disk_full'
   status: 'open' | 'approved' | 'denied' | 'resolved'
   title: string
   payload: {
@@ -749,6 +1221,16 @@ export type Ticket = {
     input?: unknown
     resetsAt?: string
     reason?: string
+    /** A mission action's draft to approve before its deadline (docs/missions.md). */
+    missionAction?: {
+      actionId: string
+      missionId: string
+      mission: string
+      title: string
+      dueAt: string
+      approveBy: string
+    }
+    draft?: string
     /** A member asks an owner or admin to activate a playbook they installed. */
     playbookActivation?: boolean
     playbookInstallationId?: string
@@ -787,7 +1269,8 @@ export type Ticket = {
     details?: CredentialSummary['details']
     changes?: Record<string, string>
     secretReplaced?: boolean
-  } & Partial<SkillProposalPayload>
+  } & Partial<SkillProposalPayload> &
+    Partial<TriggerProposalPayload>
   createdAt: string
   resolvedAt: string | null
   session: {
@@ -798,9 +1281,19 @@ export type Ticket = {
     projectId: string | null
     /** A child thread's parent: out of the sidebar, its ticket marks the parent there. */
     parentId: string | null
+    /**
+     * The thread at the top it sits under: its parent, or a child's review's parent's parent.
+     * Unset from an older API: its parent stands for it.
+     */
+    rootId?: string
     /** Archived: its tickets no longer wait on anyone, until it comes back. */
     archivedAt: string | null
+    /** Its thread (a child's: its parent) put away for later by this member: none waits on them. */
+    laterAt?: string | null
     teammate: { id: string; name: string }
+    /** Where it runs, and who has taken it over: Home's takeover from a ticket. */
+    computer?: { kind: string }
+    controlledByMemberId?: string | null
   } | null
   /**
    * A playbook's open approvals, listed as one: this ticket (their latest) stands for them all.
@@ -818,15 +1311,16 @@ export const waitingItemKey = (t: Ticket) => {
   return playbook ? `playbook:${playbook.installationId}` : `ticket:${t.id}`
 }
 
-/** A pull request that waits on a person, from /pulls/attention. */
+/** A pull request that waits on a person, from /pulls/attention, with where its review stands. */
 export type PullWaiting = {
   repository: string
   number: number
   title: string
-  reviewStatus: string
+  mergeStatus: MergeStatus
   updatedAt: string
   session: { id: string; title: string } | null
   authorTeammate: { id: string; name: string } | null
+  review: PullReview | null
 }
 
 /** Home's loose ends: nobody is blocked, but nothing moves on its own (apps/api/src/home.ts). */
@@ -850,22 +1344,86 @@ export type LooseEnd =
       quietSince: string
       offline: boolean
     }
-  | {
-      kind: 'failed'
-      key: string
-      at: string
-      thread: { id: string; title: string }
-      teammate: { id: string; name: string }
-      error: string | null
-    }
-  | {
-      kind: 'routine'
-      key: string
-      at: string
-      schedule: { id: string; title: string }
-      run: { id: string } | null
-      error: string | null
-    }
+
+/** A failed thread waiting on this member (apps/api/src/failed.ts, from /home/waiting). */
+export type FailedThread = {
+  id: string
+  title: string
+  teammate: { id: string; name: string }
+  /** Since when it waits on them: its last error, or past the retries its runner may still make. */
+  at: string
+  /** Its last error's first line, when it said something. */
+  error: string | null
+}
+
+/** A routine waiting on its owner: its last firing could not start, or its latest run failed. */
+export type FailingRoutine = {
+  scheduleId: string
+  title: string
+  /** Its latest run, when it failed: where to try it again. */
+  runId: string | null
+  /** The thread that run reports to, when it reports to one. */
+  runParentId: string | null
+  couldNotStart: boolean
+  at: string
+  error: string | null
+}
+
+/**
+ * Choices a teammate's reply ended on that this member has to pick from (apps/api/src/
+ * choices-waiting.ts, from /home/waiting).
+ */
+export type ChoiceWaiting = {
+  /** Its thread. */
+  id: string
+  title: string
+  teammate: { id: string; name: string }
+  /** Its card's event: what dismissing it names. */
+  seq: number
+  /** When they were offered. */
+  at: string
+  choices: Choices
+}
+
+/**
+ * What waits on this member beside their tickets and pull requests (/home/waiting): what failed,
+ * and choices to pick from.
+ */
+export type HomeWaiting = {
+  choices: ChoiceWaiting[]
+  threads: FailedThread[]
+  routines: FailingRoutine[]
+  /** When one that a retry of its own may still mend starts waiting: ask again then. */
+  recheckAt: string | null
+}
+
+/**
+ * The failed threads and routines waiting on this member, as Home lists and the sidebar counts
+ * them: a failed thread with a ticket waiting on them is that ticket's item, not one more.
+ */
+export function failuresWaiting(waiting: HomeWaiting | undefined, tickets: Ticket[]) {
+  const ticketed = new Set(tickets.flatMap((t) => (t.session ? [t.session.id] : [])))
+  return {
+    threads: (waiting?.threads ?? []).filter((t) => !ticketed.has(t.id)),
+    routines: waiting?.routines ?? [],
+  }
+}
+
+/**
+ * The choices waiting on this member, as Home lists and the sidebar counts them: a thread with a
+ * ticket or a pull request waiting on them is that item, not one more (as on the Board).
+ */
+export function choicesWaiting(
+  waiting: HomeWaiting | undefined,
+  tickets: Ticket[],
+  pulls: PullWaiting[],
+) {
+  const held = new Set([
+    ...tickets.flatMap((t) => (t.session ? [t.session.id] : [])),
+    ...pulls.flatMap((p) => (p.session ? [p.session.id] : [])),
+  ])
+  return (waiting?.choices ?? []).filter((c) => !held.has(c.id))
+}
 
 /** A thread with a teammate's reply the member has not read (apps/api/src/home.ts). */
 export type HomeResult = {
@@ -885,6 +1443,8 @@ export type HomeFeed = {
 }
 
 export const isAdmin = (me: Me) => me.role === 'owner' || me.role === 'admin'
+/** Reads the workspace, changes nothing (the API's src/viewers.ts). */
+export const isViewer = (me: Me) => me.role === 'viewer'
 
 /** A credential's ticket only its creator or an admin decides: sharing it, or changing it. */
 export const credentialManagersOnly = (t: Ticket) =>
@@ -892,11 +1452,16 @@ export const credentialManagersOnly = (t: Ticket) =>
 
 /** Whether an open ticket waits on this member: the same rules that give them actions below. */
 export function waitsOn(t: Ticket, me: Me) {
-  if (t.status !== 'open' || t.session?.archivedAt) return false
+  if (t.status !== 'open' || t.session?.archivedAt || t.session?.laterAt) return false
   const admin = isAdmin(me)
   const starter = t.session?.startedByMemberId === me.memberId
   // A skill shapes what every teammate does, and a playbook acts alone: an admin's call.
-  if (t.type === 'approval' && (t.payload.skillAction || t.payload.playbookActivation)) return admin
+  // So does a trigger: outside events would start work on someone's accounts.
+  if (
+    t.type === 'approval' &&
+    (t.payload.skillAction || t.payload.playbookActivation || t.payload.triggerAction)
+  )
+    return admin
   if (t.type === 'approval')
     return credentialManagersOnly(t)
       ? admin || t.payload.credentialOwnerId === me.memberId
@@ -907,14 +1472,21 @@ export function waitsOn(t: Ticket, me: Me) {
   return admin || (t.payload.memberId ? t.payload.memberId === me.memberId : starter)
 }
 
-export const harnessLabel = (harness: string) => (harness === 'codex' ? 'Codex' : 'Claude')
+export const harnessLabel = (harness: string) =>
+  harness === 'codex'
+    ? 'Codex'
+    : harness === 'pi'
+      ? 'Pi'
+      : harness === 'antigravity'
+        ? 'Antigravity'
+        : 'Claude'
 
 /**
  * What a teammate runs on, as people name it: its model ("Opus 5.5"), else the
  * harness ("Claude"), since the default model depends on the account.
  */
 export const teammateModelLabel = (t: { harness: string; model: string | null }) => {
-  const harness = HarnessId.safeParse(t.harness)
+  const harness = TeammateHarness.safeParse(t.harness)
   return t.model && harness.success ? modelLabel(harness.data, t.model) : harnessLabel(t.harness)
 }
 
@@ -954,7 +1526,9 @@ export type {
   PullRequestState,
   PullRequestSummary,
   PullRequestTracking,
-  ReviewStatus,
+  PullReview,
+  MergeStatus,
+  ReviewPolicy,
   TeammateReview,
 } from '@brigade/contracts'
 
@@ -975,6 +1549,8 @@ export type ProjectDetail = ProjectSummary & {
   url: string | null
   folder: string | null
   preferredConnections: { id: string; label: string; kind: string }[]
+  /** Whether its pull requests get a review by another teammate: the teammate decides, or only when asked. */
+  reviewPolicy: ReviewPolicy
   repositories: {
     repository: string
     /** Null when GitHub could not be asked. */
@@ -989,3 +1565,49 @@ export type ProjectDetail = ProjectSummary & {
 /** `?project=` for a list: a project's id, "none", or nothing for all. */
 export const projectQuery = (project: string | undefined, join: '?' | '&' = '?') =>
   project ? `${join}project=${encodeURIComponent(project)}` : ''
+
+/** One of Brigade's own addresses (the Email App): an agent's, or a project's inbox. */
+export type MailAddress = {
+  id: string
+  kind: 'agent' | 'inbox'
+  name: string
+  address: string
+  on: boolean
+  connectionId: string | null
+  teammate: { id: string; name: string } | null
+  project: { id: string; name: string } | null
+  /** An agent's address in each project it was used in: riley.lovarank@… */
+  variants: { projectId: string; project: string; address: string }[]
+  /** Its address on one of the workspace's domains, when it has one: it receives and sends as it. */
+  publicAddress: string | null
+  displayName: string | null
+  domain: {
+    id: string
+    name: string
+    status: 'pending' | 'verified' | 'failed' | string
+    receiving: 'direct' | 'forward'
+    records: {
+      record: string
+      type: string
+      name: string
+      value: string
+      priority?: number
+      status: string
+    }[]
+    checkedAt: string | null
+  } | null
+  createdAt: string
+}
+
+export type EmailState = {
+  /** Whether this Brigade server can run the Email App (Resend configured). */
+  available: boolean
+  unavailable: string | null
+  domain: string
+  /** Whether the workspace turned it on (an owner or admin). */
+  enabled: boolean
+  appId: string | null
+  addresses: MailAddress[]
+}
+
+export type { MailJournalEntry } from '@brigade/contracts'

@@ -3,6 +3,7 @@
 // workspace resource stays shared: it organizes, it does not isolate.
 import { z } from 'zod'
 import { LibraryPath } from './library.js'
+import { ReviewPolicy } from './reviews.js'
 
 const Name = z.string().trim().min(1).max(80)
 /** One letter or an emoji. */
@@ -25,11 +26,19 @@ export const PROJECT_LOGO_TYPES = [
   'image/x-icon',
   'image/svg+xml',
 ] as const
-/** A logo as the dashboard sends it: a data URL of one of those types. */
-const Logo = z
-  .string()
-  .max(Math.ceil((PROJECT_LOGO_MAX * 4) / 3) + 64)
-  .regex(/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/, 'A logo is an image')
+/** A logo uploaded straight to the bucket (purpose `logo`), as `upload:<its id>`. */
+export const LOGO_UPLOAD = 'upload:'
+/**
+ * A logo as the dashboard sends it (a workspace's too): an upload (LOGO_UPLOAD), or without
+ * R2 only (development), a data URL of one of those types.
+ */
+export const Logo = z.union([
+  z.string().regex(/^upload:[A-Za-z0-9_-]{1,64}$/),
+  z
+    .string()
+    .max(Math.ceil((PROJECT_LOGO_MAX * 4) / 3) + 64)
+    .regex(/^data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+$/, 'A logo is an image'),
+])
 /** A library folder. */
 const Folder = LibraryPath
 /** owner/name; stored lowercase. */
@@ -59,6 +68,8 @@ export const UpdateProject = z.object({
   logo: Logo.nullable().optional(),
   folder: Folder.nullable().optional(),
   preferredConnectionIds: z.array(z.string()).max(20).optional(),
+  /** Whether its pull requests get a review by another teammate. */
+  reviewPolicy: ReviewPolicy.optional(),
 })
 
 /** Replaces the project's repositories. */
@@ -132,6 +143,8 @@ export const ThreadProject = z.object({
   repositories: z.array(z.string()),
   /** Connections to use when several could do. */
   connections: z.array(z.object({ connectionId: z.string(), label: z.string() })),
+  /** Whether its pull requests get a review: the teammate decides, or only when someone asks. */
+  reviewPolicy: ReviewPolicy.default('teammate'),
 })
 export type ThreadProject = z.infer<typeof ThreadProject>
 

@@ -1,41 +1,66 @@
 import { PROTOCOL_VERSION, type HealthResponse } from '@brigade/contracts'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
+import { z } from 'zod'
 import { HTTPException } from 'hono/http-exception'
-import { auth } from './auth.js'
-import { apiCors } from './cors.js'
+import { auth, authRouteClosed } from './auth.js'
+import { scannerLogin } from './scanner-login.js'
+import { checkoutReturn, stripeWebhook } from './billing.js'
+import { apiCors, apiCsrf } from './cors.js'
 import { env } from './config.js'
 import { prisma } from './db.js'
-import { designFiles, sandboxHostOnlyDesigns } from './designs.js'
+import { designFiles, sandboxHostOnlyDesigns, sharedDesignFiles } from './designs.js'
 import { desktopProxy } from './desktop-proxy.js'
-import { upgradeWebSocket } from './platform/node.js'
-import { authenticateRunner, browserSocket, runnerSocket } from './hub.js'
+import { hubIsElsewhere, moveHub, upgradeWebSocket } from './platform/node.js'
+import { HUB_HEADER, MISDIRECTED, WORKSPACE_HEADER } from './hub/route.js'
+import { authenticateRunner, browserSocket, HubOpError, runnerSocket } from './hub.js'
 import { accounts } from './routes/accounts.js'
 import { documentAssets } from './routes/assets.js'
 import { attachments } from './routes/attachments.js'
+import { localBucket } from './routes/bucket.js'
+import { billing } from './routes/billing.js'
+import { usage } from './routes/usage.js'
+import { allVmCosts, boatWebhook, monthOf, providerLimits, workspaceVmCosts } from './vm-costs.js'
 import { collab } from './routes/collab.js'
 import { computers, runnerLink } from './routes/computers.js'
 import { connections } from './routes/connections.js'
+import { email } from './routes/email.js'
+import { errors } from './routes/errors.js'
+import { inbox } from './routes/inbox.js'
+import { dictation } from './routes/dictation.js'
 import { credentials } from './routes/credentials.js'
 import { designs, designSystems } from './routes/designs.js'
+import { tools } from './routes/tools.js'
+import { toolPages } from './tools.js'
 import { security } from './routes/security.js'
 import { skills } from './routes/skills.js'
 import { gitProxy } from './routes/git.js'
 import { githubWebhook } from './routes/github-webhook.js'
 import { library } from './routes/library.js'
+import { lists } from './routes/lists.js'
+import { boardRoutes } from './routes/board.js'
+import { missionRoutes } from './routes/missions.js'
+import { themeRoutes } from './routes/themes.js'
 import { notifications } from './routes/notifications.js'
+import { desktopNotifications } from './routes/desktop-notifications.js'
 import { projects } from './routes/projects.js'
 import { home } from './routes/home.js'
 import { pulls } from './routes/pulls.js'
 import { repositories } from './routes/repositories.js'
 import { runnerAttachments } from './routes/runner-attachments.js'
 import { runnerSkillFiles } from './routes/runner-skill-files.js'
+import { runnerCatalogs } from './routes/runner-catalogs.js'
+import { runnerSpecParts } from './routes/runner-spec-parts.js'
 import { runnerBackups } from './routes/runner-backups.js'
+import { runnerFiles } from './routes/runner-files.js'
+import { runnerUploads } from './routes/runner-uploads.js'
+import { uploads } from './routes/uploads.js'
 import { runnerFolders } from './routes/runner-folders.js'
+import { runnerComputer } from './routes/runner-computer.js'
 import { runnerLibrary } from './routes/runner-library.js'
 import { schedules } from './routes/schedules.js'
 import { playbooks } from './routes/playbooks.js'
 import { search } from './routes/search.js'
-import { tasks } from './routes/tasks.js'
+import { shared } from './routes/shared.js'
 import { tickets } from './routes/tickets.js'
 import { customApps, events } from './routes/events.js'
 import { triggers } from './routes/triggers.js'
@@ -43,15 +68,29 @@ import { runnerInstall } from './routes/runner-install.js'
 import { teammates } from './routes/teammates.js'
 import { threads } from './routes/threads.js'
 import { workspaces } from './routes/workspaces.js'
+import { members } from './routes/members.js'
 import { mcpClientDocument } from './connectors/mcp.js'
 import { resolveScope, signInFirst } from './scope.js'
 import { serverTiming } from './timing.js'
+import { captureError, isTracked } from './error-tracking.js'
+import { noteFailure } from './ops/failures.js'
+import { openAlerts } from './ops/alerts.js'
+import { safeEqual } from './ops/send.js'
+import { ipOf, rememberDownload } from './download-source.js'
 
 export const app = new Hono()
 
 app.use(serverTiming)
+// No full URLs leaked to other sites (Google's CASA scan checks it). HSTS and nosniff come from
+// Cloudflare's zone settings for brigade.lol (SSL/TLS › Edge Certificates), on every host and
+// file. Framing stays each route's own call (designs are shown in the dashboard's frames).
+app.use(async (c, next) => {
+  await next()
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
+})
 app.use(sandboxHostOnlyDesigns)
 app.use('/api/*', apiCors(env.WEB_URL))
+app.use('/api/*', apiCsrf(env.WEB_URL))
 
 app.get('/health', (c) =>
   c.json<HealthResponse>({
@@ -79,29 +118,156 @@ app.get('/health/db', async (c) => {
   return c.json({ queryMs, colo: /^colo=(\w+)$/m.exec(trace)?.[1] ?? null })
 })
 
-app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw))
+/**
+ * What is wrong with Brigade now (src/ops/), for an uptime monitor outside Cloudflare: 200
+ * when nothing critical is open, else 503. Needs OPS_TOKEN as a bearer token.
+ */
+app.get('/health/ops', async (c) => {
+  const token = c.req.header('authorization')?.replace(/^Bearer /, '') ?? ''
+  if (!env.OPS_TOKEN || !safeEqual(token, env.OPS_TOKEN)) return c.json({ error: 'Not found' }, 404)
+  const alerts = await openAlerts()
+  const { lastChecksAt } = await import('./ops/checks.js')
+  return c.json(
+    { checksAt: lastChecksAt ? new Date(lastChecksAt).toISOString() : null, alerts },
+    alerts.some((a) => a.severity === 'critical') ? 503 : 200,
+  )
+})
+
+/**
+ * Where a workspace's hub runs on Cloudflare (docs/workspace-hubs-plan.md): POST {workspaceId,
+ * mode: 'object' | 'api'}. Its sockets on the side it leaves close and connect again where it is.
+ * Needs OPS_TOKEN as a bearer token.
+ */
+app.post('/ops/hubs', async (c) => {
+  const token = c.req.header('authorization')?.replace(/^Bearer /, '') ?? ''
+  if (!env.OPS_TOKEN || !safeEqual(token, env.OPS_TOKEN)) return c.json({ error: 'Not found' }, 404)
+  const input = z
+    .object({ workspaceId: z.string().min(1), mode: z.enum(['api', 'object']) })
+    .safeParse(await c.req.json().catch(() => null))
+  if (!input.success)
+    return c.json({ error: 'Expected { workspaceId, mode: "api" | "object" }' }, 400)
+  const workspace = await prisma.workspace.findUnique({ where: { id: input.data.workspaceId } })
+  if (!workspace) return c.json({ error: 'No such workspace' }, 404)
+  await moveHub(input.data.workspaceId, input.data.mode)
+  console.log(`hub of ${input.data.workspaceId} moved to ${input.data.mode}`)
+  return c.json({ workspaceId: input.data.workspaceId, mode: input.data.mode })
+})
+
+/** Whether the request carries OPS_TOKEN as its bearer token. */
+function opsAllowed(c: Context) {
+  const token = c.req.header('authorization')?.replace(/^Bearer /, '') ?? ''
+  return Boolean(env.OPS_TOKEN && safeEqual(token, env.OPS_TOKEN))
+}
+
+/**
+ * What each workspace's VMs cost at the provider over a month (?month=2026-11, this one by
+ * default), the costliest first, with the account's starts and plan (docs/vm-costs.md). Needs
+ * OPS_TOKEN as a bearer token.
+ */
+app.get('/ops/vm-costs', async (c) => {
+  if (!opsAllowed(c)) return c.json({ error: 'Not found' }, 404)
+  const month = monthOf(c.req.query('month'))
+  if (!month) return c.json({ error: 'Expected ?month=YYYY-MM' }, 400)
+  const [costs, limits] = await Promise.all([allVmCosts(month), providerLimits()])
+  return c.json({ ...costs, provider: limits })
+})
+
+/**
+ * One workspace's: its cloud computer's VMs, each thread's machine, and beside each VM the
+ * provider's own figure for the month. Needs OPS_TOKEN as a bearer token.
+ */
+app.get('/ops/vm-costs/:workspaceId', async (c) => {
+  if (!opsAllowed(c)) return c.json({ error: 'Not found' }, 404)
+  const month = monthOf(c.req.query('month'))
+  if (!month) return c.json({ error: 'Expected ?month=YYYY-MM' }, 400)
+  const workspace = await prisma.workspace.findUnique({
+    where: { id: c.req.param('workspaceId') },
+    select: { id: true, name: true },
+  })
+  if (!workspace) return c.json({ error: 'No such workspace' }, 404)
+  const costs = await workspaceVmCosts(workspace.id, month, { reconcile: true })
+  return c.json({ name: workspace.name, ...costs })
+})
+
+// boat's webhook (src/vm-costs.ts): its own stops end their VM's run at once. Verified by its
+// signature (BOAT_WEBHOOK_SECRET); needs no session.
+app.post('/api/boat/webhook', (c) => boatWebhook(c.req.raw, env.BOAT_WEBHOOK_SECRET))
+
+// TEMPORARY login aliases for the CASA lab's scanner (src/scanner-login.ts): remove after the audit.
+for (const path of ['/api/auth/login', '/api/v1/auth/login', '/auth/login'])
+  app.post(path, scannerLogin(auth))
+app.on(['GET', 'POST'], '/api/auth/*', (c) =>
+  authRouteClosed(c.req.raw)
+    ? Response.json({ error: 'Not found' }, { status: 404 })
+    : auth.handler(c.req.raw),
+)
+// Billing (src/billing.ts): Stripe's webhook, verified by its signature, and the way back
+// from Checkout, which reads only Stripe. Neither needs a session: before the routers below,
+// whose middleware asks for one.
+app.post('/api/billing/webhook', (c) => stripeWebhook(c.req.raw))
+app.get('/api/billing/return', async (c) => {
+  await checkoutReturn(c.req.query('session')).catch((error) =>
+    // The webhook does it, a moment later.
+    console.error('billing: reconciling on the way back from Checkout failed', error),
+  )
+  const page = c.req.query('to') === 'onboarding' ? '/onboarding' : '/app/billing'
+  return c.redirect(`${env.WEB_URL[0]}${page}?subscribed=1`)
+})
+// The site's download button: where the visit came from, for the app's guest sign-up from the
+// same address (src/download-source.ts). No session; a beacon's plain-text JSON body.
+app.post('/api/downloads', async (c) => {
+  const text = await c.req.text().catch(() => '')
+  let raw: unknown = null
+  try {
+    raw = text.length <= 4_000 ? JSON.parse(text) : null
+  } catch {
+    raw = null
+  }
+  await rememberDownload(ipOf(c.req.raw.headers), raw).catch((error: unknown) =>
+    console.warn(`download source not kept: ${String(error)}`),
+  )
+  return c.body(null, 204)
+})
 // Brigade's OAuth client ID metadata document, read by MCP servers' authorization servers.
 app.get('/api/mcp/client.json', (c) => c.json(mcpClientDocument()))
 app.use('/api/connections/oauth/*', signInFirst)
+// The bucket's stand-in for uploads without R2 (development): signed paths, no session.
+app.route('/api/bucket', localBucket)
+// Library files behind their public links (src/library-shares.ts): the token alone, no session.
+app.route('/api/shared', shared)
+// Brigade.app's notifications, fetched with its device's token, no session.
+app.route('/api/desktop-notifications', desktopNotifications)
+app.route('/api/errors', errors)
 app.route('/api', workspaces)
+app.route('/api', members)
 app.route('/api/teammates', teammates)
 app.route('/api/computers', computers)
+app.route('/api/billing', billing)
 app.route('/api/accounts', accounts)
+app.route('/api/usage', usage)
 app.route('/api/connections', connections)
+app.route('/api/email', email)
+app.route('/api/inbox', inbox)
+app.route('/api/dictation', dictation)
 app.route('/api/credentials', credentials)
 app.route('/api/security', security)
 app.route('/api/tickets', tickets)
-app.route('/api/tasks', tasks)
 app.route('/api/schedules', schedules)
 app.route('/api/playbooks', playbooks)
 app.route('/api/projects', projects)
 // Before the library: its own routes would read /assets/<id> as a file id.
 app.route('/api/library/assets', documentAssets)
 app.route('/api/library', library)
+app.route('/api/lists', lists)
+app.route('/api/board', boardRoutes)
+app.route('/api/missions', missionRoutes)
+app.route('/api/themes', themeRoutes)
 app.route('/api/design-systems', designSystems)
 app.route('/api/skills', skills)
 app.route('/api/designs', designs)
+app.route('/api/tools', tools)
 app.route('/api/attachments', attachments)
+app.route('/api/uploads', uploads)
 app.route('/api/repositories', repositories)
 app.route('/api/home', home)
 app.route('/api/pulls', pulls)
@@ -114,8 +280,13 @@ app.route('/runner', runnerInstall)
 app.route('/runner/library', runnerLibrary)
 app.route('/runner/backups', runnerBackups)
 app.route('/runner/folders', runnerFolders)
+app.route('/runner/computer', runnerComputer)
+app.route('/runner/files', runnerFiles)
+app.route('/runner/uploads', runnerUploads)
 app.route('/runner/attachments', runnerAttachments)
 app.route('/runner/skill-files', runnerSkillFiles)
+app.route('/runner/spec-parts', runnerSpecParts)
+app.route('/runner/catalogs', runnerCatalogs)
 // Git for teammates, proxied to GitHub. Authenticated by a thread's git token, not a session.
 app.route('/git', gitProxy)
 // GitHub App events: pushes refresh computers' caches. Verified by the app's webhook secret.
@@ -124,6 +295,10 @@ app.route('/github/webhook', githubWebhook)
 app.route('/desktop', desktopProxy)
 // Designs' pages, on the sandbox origin (DESIGN_URL). Their addresses are signed and short-lived.
 app.route('/v', designFiles)
+// Tools' pages, on the sandbox origin (DESIGN_URL), as designs': signed, short-lived addresses.
+app.route('/t', toolPages)
+// Shared designs' pages, on the sandbox origin, for as long as their public link is on.
+app.route('/s', sharedDesignFiles)
 // The collab server's calls: documents people edit together. Verified by COLLAB_SECRET.
 app.route('/collab', collab)
 // Public: vendors deliver events here (Stripe, Gmail's Pub/Sub, Calendar channels), and
@@ -131,19 +306,46 @@ app.route('/collab', collab)
 app.route('/events', events)
 app.route('/hooks', customApps)
 
+/** The workspace a dashboard's socket is for: the session's, or the one it names, if a member's. */
+async function socketScope(c: Context) {
+  // No refresh: a socket's answer can't renew the cookie, and a refresh here would leave the next
+  // HTTP call nothing to renew it with (requireUser in src/scope.ts).
+  const session = await auth.api.getSession({
+    headers: c.req.raw.headers,
+    query: { disableRefresh: true },
+  })
+  if (!session) return null
+  const named = c.req.query('workspace')
+  const workspace = named
+    ? await prisma.workspace.findUnique({ where: { id: named }, select: { organizationId: true } })
+    : null
+  return resolveScope({
+    userId: session.user.id,
+    activeOrganizationId: workspace?.organizationId ?? session.session.activeOrganizationId ?? null,
+    activeWorkspaceId: workspace
+      ? named!
+      : ((session.session as { activeWorkspaceId?: string | null }).activeWorkspaceId ?? null),
+  })
+}
+
+/**
+ * A socket of a workspace whose hub has a Durable Object of its own (docs/workspace-hubs-plan.md)
+ * is not this process's: the API's front sends it there (src/front.ts). Never on Node.
+ */
+async function hubElsewhere(c: Context, workspaceId: string | undefined) {
+  if (!workspaceId || !(await hubIsElsewhere(workspaceId))) return null
+  return c.body('This workspace’s hub has its own object', MISDIRECTED, {
+    [HUB_HEADER]: 'object',
+    [WORKSPACE_HEADER]: workspaceId,
+  })
+}
+
 /** The dashboard's live socket. Scoped by the session cookie. */
 app.get(
   '/api/ws',
+  async (c, next) => (await hubElsewhere(c, (await socketScope(c))?.workspaceId)) ?? next(),
   upgradeWebSocket(async (c) => {
-    const session = await auth.api.getSession({ headers: c.req.raw.headers })
-    const scope = session
-      ? await resolveScope({
-          userId: session.user.id,
-          activeOrganizationId: session.session.activeOrganizationId ?? null,
-          activeWorkspaceId:
-            (session.session as { activeWorkspaceId?: string | null }).activeWorkspaceId ?? null,
-        })
-      : null
+    const scope = await socketScope(c)
     if (!scope) return { onOpen: (_e, ws) => ws.close(4401, 'unauthorized') }
     const socket = browserSocket(scope)
     return {
@@ -157,19 +359,38 @@ app.get(
 /** The one outbound socket from each runner. Scoped by the runner token. */
 app.get(
   '/runner/ws',
+  async (c, next) =>
+    (await hubElsewhere(
+      c,
+      (await authenticateRunner(c.req.header('authorization')))?.workspaceId,
+    )) ?? next(),
   upgradeWebSocket(async (c) => {
     const runner = await authenticateRunner(c.req.header('authorization'))
     if (!runner) return { onOpen: (_e, ws) => ws.close(4401, 'unknown runner token') }
     const socket = runnerSocket(runner)
     return {
-      onMessage: (e, ws) => socket.onMessage(e.data, ws),
+      onOpen: (_e, ws) => socket.onOpen(ws),
+      onMessage: (e, ws) => void socket.onMessage(e.data, ws),
       onClose: () => socket.onClose(),
     }
   }),
 )
 
 app.onError((error, c) => {
-  if (error instanceof HTTPException) return c.json({ error: error.message }, error.status)
-  console.error(error)
+  if (error instanceof HTTPException) {
+    // A failure said on purpose (a provider that did not answer…): sent too, as handled.
+    // One shared by several requests (a provider's failed call, src/cloud.ts) was sent once.
+    if (error.status >= 500 && !isTracked(error))
+      captureError(error, { kind: `api:${c.req.method} ${c.req.routePath}`, handled: true })
+    return c.json({ error: error.message }, error.status)
+  }
+  console.error(`${c.req.method} ${c.req.path} failed:`, error)
+  // A hub's operation that failed in another object was sent there, with its own stack.
+  if (!(error instanceof HubOpError))
+    captureError(error, { kind: `api:${c.req.method} ${c.req.routePath}` })
+  noteFailure(
+    'api',
+    `${c.req.method} ${c.req.routePath}: ${error instanceof Error ? error.message : String(error)}`,
+  )
   return c.json({ error: 'Internal error' }, 500)
 })

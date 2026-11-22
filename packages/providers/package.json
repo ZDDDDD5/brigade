@@ -13,15 +13,16 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch --preserveWatchOutput",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
     "clean": "rm -rf dist .turbo",
     "boat": "tsx scripts/boat.ts"
   },
   "dependencies": {
-    "@boatdev/sdk": "1.9.9",
+    "@boatdev/sdk": "1.10.0",
     "@brigade/contracts": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "22.20.5",
+    "@types/node": "24.19.2",
     "tsx": "4.23.15"
   }
 }

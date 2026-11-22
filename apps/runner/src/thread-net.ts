@@ -1,8 +1,10 @@
 // Each thread's own network on a workspace cloud computer: a network
 // namespace per thread (the root thread helper's, installed by the API's
-// setup), where its teammates' processes run, with a rootless Docker per
-// teammate in it. Two threads can then run the same app on the same ports, its
-// database container's published port included, without reaching each other.
+// setup), where its teammates' processes run. Two threads can then run the
+// same app on the same ports without reaching each other, its database
+// container's published port included: each teammate has one rootless Docker
+// for all its threads, and the thread's localhost reaches what its containers
+// publish (docker-proxy.ts).
 //
 // The runner stays outside: it reaches a thread's loopback at the thread's
 // address (what the host sends there goes to its 127.0.0.1), for a preview's
@@ -17,6 +19,8 @@
 // namespaces are taken down once none of its processes is left (takeDown), and
 // come back at the same address with its next command.
 import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { promisify } from 'node:util'
 import { CLOUD } from './config.js'
 
@@ -35,32 +39,66 @@ const nets = new Map<string, Promise<ThreadNet | null>>()
 const down = new Set<string>()
 
 /**
- * The thread's network, made if needed; null where threads have none (see
- * above) or when the helper failed. Then the thread stays on the computer's
- * network until the runner restarts, so that its preview and its commands
- * never end up on two networks (as when the setup arrives after the runner).
+ * How long the helper's `up` may take. It waits for the helper's lock: a resumed computer
+ * brings all its threads back at once, over a disk still being restored, and on Nov 4 one
+ * waited past the 30 seconds it had then.
+ */
+const UP_TIMEOUT_MS = 120_000
+/** Tries of `up`, a little apart, before the thread's command fails. */
+const UP_TRIES = 3
+const UP_AGAIN_MS = 5_000
+
+/**
+ * The thread's network, made if needed; null where threads have none (see above): no helper
+ * on this computer, which then stays so until the runner restarts, so that a thread's preview
+ * and its commands never end up on two networks (as when the setup arrives after the runner).
+ * When the helper fails, tried again (netWithTries), then a rejection: the thread's command
+ * fails rather than running on the computer's network, next to every other thread's, and the
+ * next one tries again.
  */
 export function threadNet(sessionId: string): Promise<ThreadNet | null> {
   if (!ENABLED) return Promise.resolve(null)
   down.delete(sessionId)
   let net = nets.get(sessionId)
   if (!net) {
-    net = run('sudo', ['-n', THREAD_HELPER, 'up', sessionId], { cwd: '/', timeout: 30_000 }).then(
-      async ({ stdout }) => ({
-        thread: sessionId,
-        address: stdout.trim(),
-        isolated: await isolate(sessionId),
-      }),
-      (error: { stderr?: string } & Error) => {
-        console.warn(
-          `thread ${sessionId} runs on the computer's network: ${(error.stderr || error.message).trim()}`,
-        )
-        return null
-      },
-    )
-    nets.set(sessionId, net)
+    const made = existsSync(THREAD_HELPER)
+      ? netWithTries(sessionId, async () => {
+          const { stdout } = await run('sudo', ['-n', THREAD_HELPER, 'up', sessionId], {
+            cwd: '/',
+            timeout: UP_TIMEOUT_MS,
+          })
+          return { thread: sessionId, address: stdout.trim(), isolated: await isolate(sessionId) }
+        })
+      : Promise.resolve(null)
+    net = made
+    nets.set(sessionId, made)
+    made.catch(() => {
+      if (nets.get(sessionId) === made) nets.delete(sessionId)
+    })
   }
   return net
+}
+
+/** `up` tried `tries` times, `againMs` more apart each time; its last failure, said plainly. */
+export async function netWithTries(
+  sessionId: string,
+  up: () => Promise<ThreadNet>,
+  tries = UP_TRIES,
+  againMs = UP_AGAIN_MS,
+): Promise<ThreadNet> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await up()
+    } catch (error) {
+      const why = ((error as { stderr?: string }).stderr || (error as Error).message).trim()
+      if (attempt >= tries)
+        throw new Error(
+          `This thread's own network could not be set up on the computer (${why}), so nothing of it ran. Send a message to try again.`,
+        )
+      console.warn(`thread ${sessionId}'s network, try ${attempt} of ${tries}: ${why}`)
+      await new Promise((resolve) => setTimeout(resolve, againMs * attempt))
+    }
+  }
 }
 
 /** Its holder, started: false with an older helper (the setup arrives after the runner) or when it failed. */
@@ -80,13 +118,24 @@ function isolate(sessionId: string) {
 }
 
 /**
- * How to run a command as a teammate: in its thread's namespaces when the
- * thread has them, else as today. All keep the runner's environment (-E).
+ * The directory of the Node the runner runs on (/opt/brigade/node/bin on a cloud computer), put
+ * first on the PATH of what a teammate runs. sudo keeps the runner's environment but PATH, which
+ * becomes the computer's secure_path, where `node` is the system's (v20 on Ubuntu 24.04): too old
+ * for most projects, so each teammate and each preview script downloaded a Node of its own.
  */
-export function asTeammate(runAs: string, net: ThreadNet | null) {
-  if (!net) return { file: 'sudo', args: ['-n', '-E', '-u', runAs, '--'] }
+const NODE_DIR = dirname(process.execPath)
+
+/**
+ * How to run a command as a teammate: in its thread's namespaces when the
+ * thread has them, else as today. All keep the runner's environment (-E), and
+ * find the runner's Node first (NODE_DIR); a project that needs another one
+ * still puts its own first, as before.
+ */
+export function asTeammate(runAs: string, net: ThreadNet | null, nodeDir = NODE_DIR) {
+  const withNode = ['/bin/sh', '-c', 'PATH="$0${PATH:+:$PATH}"; export PATH; exec "$@"', nodeDir]
+  if (!net) return { file: 'sudo', args: ['-n', '-E', '-u', runAs, '--', ...withNode] }
   const how = net.isolated ? 'enter' : 'run'
-  return { file: 'sudo', args: ['-n', '-E', THREAD_HELPER, how, net.thread, runAs] }
+  return { file: 'sudo', args: ['-n', '-E', THREAD_HELPER, how, net.thread, runAs, ...withNode] }
 }
 
 /**
@@ -116,8 +165,10 @@ export async function takeDown(sessionId: string, purge = false) {
 }
 
 /**
- * The teammate's own Docker in the thread, started if needed: its socket, or
- * null where the computer has no rootless Docker.
+ * The teammate's Docker, as the thread sees it: the socket of its proxy in the
+ * thread (docker-proxy.ts), which starts that Docker on first use, or null
+ * where the computer has no rootless Docker. What its containers publish there
+ * is the thread's.
  */
 export async function threadDocker(net: ThreadNet, runAs: string) {
   const { stdout } = await run('sudo', ['-n', THREAD_HELPER, 'docker', net.thread, runAs], {
@@ -127,7 +178,11 @@ export async function threadDocker(net: ThreadNet, runAs: string) {
   return stdout.trim() || null
 }
 
-/** Stop the teammate's Docker in a thread; with purge, delete its images, containers and volumes too. */
+/**
+ * The teammate's Docker socket in a thread gone, with the thread's ports (its
+ * containers are stopped first); with purge, what an older runner's Docker of
+ * the thread kept too.
+ */
 export async function stopThreadDocker(sessionId: string, runAs: string, purge = false) {
   if (!ENABLED) return
   await run(
@@ -137,47 +192,19 @@ export async function stopThreadDocker(sessionId: string, runAs: string, purge =
   )
 }
 
-/**
- * Freeze the teammate's Docker in a thread, its containers with it, and give
- * its memory back; or thaw it. For a frozen preview's database, say.
- */
-export async function freezeThreadDocker(sessionId: string, runAs: string, frozen: boolean) {
-  await run(
-    'sudo',
-    ['-n', THREAD_HELPER, frozen ? 'docker-freeze' : 'docker-thaw', sessionId, runAs],
-    { cwd: '/', timeout: 60_000 },
-  )
+/** Stop the teammate's Docker, its containers with it: none of its threads uses it. */
+export async function stopTeammateDocker(runAs: string) {
+  if (!ENABLED) return
+  await run('sudo', ['-n', THREAD_HELPER, 'docker-down', runAs], { cwd: '/', timeout: 120_000 })
 }
 
-/** The unit of a teammate's Docker in a thread (systemd's, outside the runner's own). */
-export const dockerUnit = (sessionId: string, runAs: string) =>
-  `brigade-docker-${sessionId}-${runAs}.service`
-
-/** Its socket, where the helper puts it. */
+/** The teammate's Docker socket in a thread, where the helper puts it. */
 export const dockerSocket = (sessionId: string, runAs: string) =>
   `/run/brigade-docker/${sessionId}/${runAs}/docker.sock`
 
-/** The threads whose Docker of this teammate is running, from systemd. */
-export async function runningThreadDockers(runAs: string): Promise<string[]> {
-  const { stdout } = await run(
-    'systemctl',
-    ['list-units', '--plain', '--no-legend', '--state=active', `brigade-docker-*-${runAs}.service`],
-    { cwd: '/' },
-  ).catch(() => ({ stdout: '' }))
-  return threadsOfUnits(stdout, runAs)
-}
-
-/** The threads in systemctl's listing of a teammate's Docker units (dockerUnit's names). */
-export function threadsOfUnits(listing: string, runAs: string) {
-  const prefix = 'brigade-docker-'
-  const suffix = `-${runAs}.service`
-  return listing
-    .split('\n')
-    .map((line) => line.trim().split(/\s+/)[0] ?? '')
-    .filter((unit) => unit.startsWith(prefix) && unit.endsWith(suffix))
-    .map((unit) => unit.slice(prefix.length, -suffix.length))
-    .filter(Boolean)
-}
+/** Whether the teammate has a Docker socket in the thread (the helper's docker made it). */
+export const hasThreadDocker = (sessionId: string, runAs: string) =>
+  ENABLED && existsSync(dirname(dockerSocket(sessionId, runAs)))
 
 /**
  * The teammate's browser on the host's loopback, reachable from the thread's

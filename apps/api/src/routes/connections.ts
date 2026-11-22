@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { Hono } from 'hono'
+import { unavailable } from '../subscriptions/index.js'
 import { HTTPException } from 'hono/http-exception'
 import { audit } from '../audit.js'
 import { env } from '../config.js'
@@ -8,18 +9,22 @@ import {
   ConnectGitHub,
   ConnectGoogle,
   ConnectMcp,
+  ConnectMcpKey,
   ConnectMcpServer,
-  ConnectStripe,
   InspectMcp,
   ConnectWebhookApp,
   UpdateApp,
+  PickGoogleAdsCustomers,
+  PickMetaAdAccounts,
+  ConnectMeta,
   UpdateConnection,
 } from '@brigade/contracts'
 import { installAppSkills } from '../app-skills.js'
 import { appFor, appKey, requireAccountManager, requireAppManager } from '../apps.js'
-import { stripeAccount } from '../connectors/stripe.js'
-import type { ConnectorKind } from '../connectors/types.js'
+import { stripeAccountLabel, stripeAccountOf, stripeAccounts } from '../connectors/stripe.js'
+import type { ApiKeyCredential, ConnectorKind } from '../connectors/types.js'
 import { syncConnection } from '../subscriptions/index.js'
+import { accountKey } from '../subscriptions/stripe.js'
 import { deleteTriggers } from './triggers.js'
 import {
   githubAccount,
@@ -36,6 +41,9 @@ import {
   googleMcpConfigured,
   isGoogleKind,
   revokeGoogle,
+  GOOGLE_KINDS,
+  mayRevokeGoogle,
+  removeAndRevokeGoogle,
   type GoogleCredential,
   type GoogleKind,
 } from '../connectors/google-oauth.js'
@@ -63,18 +71,30 @@ import {
   toolPrefix,
   type CustomMcp,
 } from '../mcp-servers.js'
-import { forgetMcpTools } from '../mcp-tools.js'
+import { checkMcpSignIn, forgetMcpTools } from '../mcp-tools.js'
+import { authorisedFetch } from '../connector-calls.js'
+import { listAdsCustomers, pickedCustomers, type AdsCustomer } from '../connectors/google-ads.js'
+import { listMetaAdAccounts, pickedAdAccounts, type MetaAdAccount } from '../connectors/meta-ads.js'
+import {
+  exchangeMetaCode,
+  metaAccount,
+  metaAuthUrl,
+  metaConfigured,
+  type MetaCredential,
+} from '../connectors/meta-oauth.js'
+import { appOpen, featuresOfUser } from '../features.js'
 import { prisma, scoped, type ScopedDb } from '../db.js'
 import { hashToken } from '../hub.js'
 import {
   parseBody,
+  requireRole,
   requireUser,
   requireWorkspace,
   resolveScope,
   type AppEnv,
   type WorkspaceScope,
 } from '../scope.js'
-import { deleteSecret, openSecret, sealSecret } from '../vault.js'
+import { deleteSecret, openSecret, replaceSecret, sealSecret } from '../vault.js'
 
 const stateIdentifier = (state: string) => `oauth-state:${hashToken(state)}`
 /** A member's GitHub connect request, from "Connect GitHub" until GitHub sends them back. */
@@ -90,6 +110,9 @@ type OAuthState = {
     | 'github'
     | 'cloudflare'
     | 'google_cloud'
+    | 'google_drive_mcp'
+    | 'google_docs_mcp'
+    | 'google_sheets_mcp'
     | 'neon'
     | 'supabase'
     | 'atlassian'
@@ -99,17 +122,61 @@ type OAuthState = {
     | 'resend'
     | 'replicate'
     | 'openrouter'
+    | 'posthog'
+    | 'dataforseo'
+    | 'ahrefs'
+    | 'expo'
+    | 'vercel'
+    | 'revenuecat'
+    | 'stripe'
+    | 'meta_ads'
     | 'mcp'
   /** mcp: the App of the server added by its URL. */
   appId?: string
   /** A built-in App with a server per data region: the region picked. */
   region?: string
+  /** The account being reconnected, when its sign-in alone cannot say which it is (Stripe's). */
+  reconnect?: string
   /** github: the installation GitHub named, still to be checked against the person. */
   installationId?: number
   /** An MCP server's sign-in: the PKCE verifier for its code. */
   verifier?: string
+  /** An MCP server's sign-in: the client ID it was authorized for, to exchange its code as. */
+  mcpClientId?: string
   /** The dashboard page to send the person back to; default the Connections page. */
   returnTo?: string
+  /** The page that started the sign-in reads its result by this (signInResult), on its own. */
+  attempt?: string
+}
+
+/**
+ * A sign-in's result, kept for the page that started it: it reads it by the attempt it was given
+ * (GET /connections/sign-in/:attempt), whether or not the sign-in tab's own word reaches it (in
+ * Brigade.app, a brigade:// link the browser may not open). Only for that same person, and only
+ * the account this sign-in connected, so nothing else is taken for it.
+ */
+const attemptIdentifier = (attempt: string) => `sign-in-result:${attempt}`
+const newAttempt = () => randomBytes(18).toString('base64url')
+async function keepResult(grant: OAuthState, query: string) {
+  if (!grant.attempt) return
+  const result = new URLSearchParams(query)
+  const value = {
+    userId: grant.userId,
+    ...(result.get('connected') ? { connected: result.get('connected') } : {}),
+    ...(result.get('error') ? { error: result.get('error') } : {}),
+  }
+  await prisma.verification
+    .create({
+      data: {
+        id: randomUUID(),
+        identifier: attemptIdentifier(grant.attempt),
+        value: JSON.stringify(value),
+        expiresAt: new Date(Date.now() + STATE_MS),
+      },
+    })
+    .catch((error) =>
+      console.error('sign-in result not kept:', error instanceof Error ? error.message : error),
+    )
 }
 
 /** Back to the dashboard after a connect attempt, with its result in the query. */
@@ -153,7 +220,7 @@ const saveState = (identifier: string, value: OAuthState) =>
  * account of its App, adding the App the first time. A personal account (a
  * mailbox, a calendar) starts as the member's own: used only in their threads.
  */
-async function createConnection(
+export async function createConnection(
   scope: WorkspaceScope,
   connection: {
     kind: ConnectorKind
@@ -165,14 +232,64 @@ async function createConnection(
   credential: object | null,
   /** An MCP server added by its URL: its App, added before its first account signs in. */
   existing?: { id: string },
+  /** The row this sign-in repairs, when its label alone cannot say which (Stripe's). */
+  repair?: string,
+  /**
+   * false: only `repair` says which row this sign-in renews, never the account's name (a pasted
+   * key, whose accounts are told apart by id: two may share a name).
+   */
+  matchByName = true,
 ) {
   const db = scoped(scope)
-  const vaultSecretId = credential ? await sealSecret(db, scope, credential) : null
   const id = randomUUID()
   const custom = connection.kind === 'webhook'
   const app =
     existing ??
     (await appFor(db, scope, appKey(connection.kind, id), custom ? connection.label : null))
+  // The member signing in again to an account they already have (Reconnect): the same
+  // account gets the new credential, rather than a second row beside the broken one.
+  const same =
+    credential && repair
+      ? await db.connection.findFirst({
+          where: {
+            id: repair,
+            appId: app.id,
+            createdByMemberId: scope.memberId,
+            status: { not: 'removed' },
+          },
+        })
+      : credential && connection.externalAccount && matchByName
+        ? await db.connection.findFirst({
+            where: {
+              appId: app.id,
+              externalAccount: connection.externalAccount,
+              mcpUrl: connection.mcpUrl ?? null,
+              createdByMemberId: scope.memberId,
+              status: { not: 'removed' },
+            },
+          })
+        : null
+  if (same && credential) {
+    if (same.vaultSecretId) await replaceSecret(db, scope, same.vaultSecretId, credential)
+    const vaultSecretId = same.vaultSecretId ?? (await sealSecret(db, scope, credential))
+    await db.connection.updateMany({
+      where: { id: same.id },
+      data: { status: 'active', vaultSecretId },
+    })
+    forgetMcpTools(same.id)
+    await syncConnection(scope, same.id).catch((error) =>
+      console.error('resubscribe failed:', error instanceof Error ? error.message : error),
+    )
+    await audit({
+      ...scope,
+      actor: { type: 'member', id: scope.memberId },
+      action: 'connection.reconnected',
+      target: { type: 'connection', id: same.id },
+      data: { kind: connection.kind, account: connection.externalAccount },
+    })
+    return { ...same, status: 'active' as const, vaultSecretId }
+  }
+  const vaultSecretId = credential ? await sealSecret(db, scope, credential) : null
   const row = await db.connection.create({
     data: {
       ...connection,
@@ -194,6 +311,110 @@ async function createConnection(
   return row
 }
 
+/** A Google Ads account of this workspace, still connected. */
+async function googleAdsConnection(db: ScopedDb, id: string) {
+  const connection = await db.connection.findFirst({
+    where: { id, kind: 'google_ads', status: { not: 'removed' } },
+  })
+  if (!connection) throw new HTTPException(404, { message: 'Google Ads account not found' })
+  return connection
+}
+
+/** The customers a Google Ads account reaches, Google's refusal as a readable error. */
+async function adsCustomersOf(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  connection: Awaited<ReturnType<typeof googleAdsConnection>>,
+) {
+  try {
+    return await listAdsCustomers(await authorisedFetch(db, scope, connection))
+  } catch (error) {
+    throw new HTTPException(502, {
+      message: `Google Ads: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
+}
+
+/** A Meta Ads account of this workspace, still connected. */
+async function metaAdsConnection(db: ScopedDb, id: string) {
+  const connection = await db.connection.findFirst({
+    where: { id, kind: 'meta_ads', status: { not: 'removed' } },
+  })
+  if (!connection) throw new HTTPException(404, { message: 'Meta Ads account not found' })
+  return connection
+}
+
+/** The ad accounts a Meta Ads account reaches, Meta's refusal as a readable error. */
+async function metaAdAccountsOf(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  connection: Awaited<ReturnType<typeof metaAdsConnection>>,
+) {
+  try {
+    return await listMetaAdAccounts(await authorisedFetch(db, scope, connection))
+  } catch (error) {
+    throw new HTTPException(502, {
+      message: `Meta Ads: ${error instanceof Error ? error.message : String(error)}`,
+    })
+  }
+}
+
+/**
+ * The member's Meta Ads account this sign-in renews: the one whose token was issued to the same
+ * Facebook user (its app-scoped ID, kept with the token). None: the sign-in adds an account.
+ */
+export async function metaConnectionOf(scope: WorkspaceScope, userId: string) {
+  const db = scoped(scope)
+  const rows = await db.connection.findMany({
+    where: { kind: 'meta_ads', createdByMemberId: scope.memberId, status: { not: 'removed' } },
+    select: { id: true, vaultSecretId: true },
+  })
+  for (const row of rows) {
+    if (!row.vaultSecretId) continue
+    const kept = await openSecret<MetaCredential>(db, scope, row.vaultSecretId).catch(() => null)
+    if (kept?.userId === userId) return row.id
+  }
+  return undefined
+}
+
+/** Whether each App can be connected on this Brigade server: Google's and GitHub's need their apps set up. */
+export const availableApps = (): Record<ConnectorKind, boolean> => ({
+  gmail: googleConfigured(),
+  google_calendar: googleConfigured(),
+  google_drive: googleConfigured(),
+  google_docs: googleConfigured(),
+  google_sheets: googleConfigured(),
+  google_search_console: googleConfigured(),
+  google_analytics: googleConfigured(),
+  google_ads: googleConfigured(),
+  meta_ads: metaConfigured(),
+  stripe: true,
+  github: githubConfigured(),
+  cloudflare: true,
+  google_cloud: googleMcpConfigured(),
+  google_drive_mcp: googleMcpConfigured(),
+  google_docs_mcp: googleMcpConfigured(),
+  google_sheets_mcp: googleMcpConfigured(),
+  neon: true,
+  supabase: true,
+  atlassian: true,
+  notion: true,
+  linear: true,
+  mixpanel: true,
+  resend: true,
+  replicate: true,
+  openrouter: true,
+  posthog: true,
+  dataforseo: true,
+  ahrefs: true,
+  revenuecat: true,
+  expo: true,
+  vercel: true,
+  email: !unavailable('email'),
+  mcp: true,
+  webhook: true,
+})
+
 export const connections = new Hono<AppEnv>()
   .use(requireUser)
 
@@ -202,11 +423,15 @@ export const connections = new Hono<AppEnv>()
    * signed-in member and workspace; tokens go straight into the vault.
    */
   .get('/oauth/google/callback', async (c) => {
-    let back = (query: string) => c.redirect(backTo(undefined, query))
+    let back: (query: string) => Response | Promise<Response> = (query: string) =>
+      c.redirect(backTo(undefined, query))
     const taken = await takeState(stateIdentifier(c.req.query('state') ?? ''), c.var.userId)
     if (typeof taken === 'string') return back(`error=${taken}`)
     const { grant, scope } = taken
-    back = (query: string) => c.redirect(backTo(grant.returnTo, query))
+    back = async (query: string) => {
+      await keepResult(grant, query)
+      return c.redirect(backTo(grant.returnTo, query))
+    }
     if (!isGoogleKind(grant.kind)) return back('error=forbidden')
     if (c.req.query('error') || !c.req.query('code')) return back('error=declined')
 
@@ -228,16 +453,70 @@ export const connections = new Hono<AppEnv>()
   })
 
   /**
+   * Meta's redirect back after its sign-in (Facebook Login for Business, on Brigade's Meta app):
+   * the code for a long-lived user token, straight into the vault.
+   */
+  .get('/oauth/meta/callback', async (c) => {
+    let back: (query: string) => Response | Promise<Response> = (query: string) =>
+      c.redirect(backTo(undefined, query))
+    const taken = await takeState(stateIdentifier(c.req.query('state') ?? ''), c.var.userId)
+    if (typeof taken === 'string') return back(`error=${taken}`)
+    const { grant, scope } = taken
+    back = async (query: string) => {
+      await keepResult(grant, query)
+      return c.redirect(backTo(grant.returnTo, query))
+    }
+    if (grant.kind !== 'meta_ads') return back('error=forbidden')
+    if (c.req.query('error') || !c.req.query('code')) return back('error=declined')
+
+    let credential: MetaCredential
+    let account: { id: string | null; name: string | null }
+    try {
+      credential = await exchangeMetaCode(c.req.query('code')!)
+      account = await metaAccount(credential.accessToken)
+    } catch (error) {
+      console.error('meta connection failed:', error instanceof Error ? error.message : error)
+      return back('error=meta')
+    }
+    // Who signed in is told by Meta's user ID, never by the name, which two people may share and
+    // anyone may change: without it the account cannot be told apart from another.
+    if (!account.id) {
+      console.error('meta connection failed: /me gave no user id')
+      return back('error=meta')
+    }
+    const repair = await metaConnectionOf(scope, account.id)
+    const connection = await createConnection(
+      scope,
+      { kind: 'meta_ads', label: connectors.meta_ads!.label, externalAccount: account.name },
+      { ...credential, userId: account.id },
+      undefined,
+      repair,
+      false,
+    )
+    // A Facebook user renamed since: the row shows the name they have now.
+    if (repair && account.name)
+      await scoped(scope).connection.updateMany({
+        where: { id: connection.id },
+        data: { externalAccount: account.name },
+      })
+    return back(`connected=${connection.id}`)
+  })
+
+  /**
    * An MCP server's redirect back after its sign-in: the code and the PKCE
    * verifier for tokens, straight into the vault. The App's skills come with
    * its first account.
    */
   .get('/oauth/mcp/callback', async (c) => {
-    let back = (query: string) => c.redirect(backTo(undefined, query))
+    let back: (query: string) => Response | Promise<Response> = (query: string) =>
+      c.redirect(backTo(undefined, query))
     const taken = await takeState(stateIdentifier(c.req.query('state') ?? ''), c.var.userId)
     if (typeof taken === 'string') return back(`error=${taken}`)
     const { grant, scope } = taken
-    back = (query: string) => c.redirect(backTo(grant.returnTo, query))
+    back = async (query: string) => {
+      await keepResult(grant, query)
+      return c.redirect(backTo(grant.returnTo, query))
+    }
     const db = scoped(scope)
     // A server added by its URL, from its App; else a built-in App's.
     const added =
@@ -260,18 +539,49 @@ export const connections = new Hono<AppEnv>()
         c.req.query('code')!,
         grant.verifier,
         own,
+        grant.mcpClientId,
       ))
     } catch (error) {
       console.error('mcp connection failed:', error instanceof Error ? error.message : error)
       return back('error=mcp')
     }
     const signedIn = bearer(credential.accessToken)
+    const kind = grant.kind as ConnectorKind
+    // Stripe: a Brigade account is one Stripe account in one mode (connectors/stripe.ts), named
+    // from this one answer, so that the row always says which.
+    let stripeLabel: string | null = null
+    let repair: string | undefined
+    if (kind === 'stripe') {
+      const accounts = stripeAccounts(
+        await callMcpTool(signedIn, server, 'list_available_accounts_or_orgs', {}).catch(
+          () => null,
+        ),
+      )
+      if (accounts.length !== 1) {
+        await revokeMcp(credential)
+        return back('error=stripe_accounts')
+      }
+      stripeLabel = stripeAccountLabel(accounts[0]!)
+      repair = (await sameStripeAccount(db, scope, stripeLabel, grant.reconnect)) ?? undefined
+    }
     // An App that names its accounts (Linear's workspace, Atlassian's site) wins over the
     // sign-in's email, which would show the same on each of a member's accounts.
-    const account = server.account
-      ? ((await mcpAccount(server, signedIn)) ?? email)
-      : (email ?? (await mcpAccount(server, signedIn)))
-    const kind = grant.kind as ConnectorKind
+    // An App whose accounts have a stable id beside their name (RevenueCat's projects, which
+    // may share a name): the sign-in renews the member's account of that same id, never one
+    // that only has the same name, and keeps the id with its tokens.
+    const byId = server.account && 'tool' in server.account && !!server.account.id
+    const identified = byId ? await keyAccount(server, signedIn) : null
+    if (identified?.accountId) {
+      credential = { ...credential, accountId: identified.accountId }
+      repair = await sameAccountRow(db, scope, kind, identified.accountId)
+    }
+    const account =
+      stripeLabel ??
+      (identified
+        ? (identified.account ?? email)
+        : server.account
+          ? ((await mcpAccount(server, signedIn)) ?? email)
+          : (email ?? (await mcpAccount(server, signedIn))))
     // The row would show only the App's name: say so, as the provider's reply may have changed.
     if (!account) console.warn(`mcp connection of ${kind}: no account name`)
     const connection = await createConnection(
@@ -284,6 +594,8 @@ export const connections = new Hono<AppEnv>()
       },
       credential,
       added ?? undefined,
+      repair,
+      !byId,
     )
     if (added && config) await refreshApp(db, added.id, config, server, signedIn)
     const repository = appCatalog[kind].skills
@@ -382,7 +694,7 @@ export const connections = new Hono<AppEnv>()
       },
       orderBy: { createdAt: 'asc' },
     })
-    const [apps, members, packs] = await Promise.all([
+    const [apps, members, packs, features] = await Promise.all([
       c.var.db.app.findMany({ orderBy: { createdAt: 'asc' } }),
       // Who connected each account.
       c.var.db.member.findMany({ select: { id: true, user: { select: { name: true } } } }),
@@ -394,7 +706,13 @@ export const connections = new Hono<AppEnv>()
           skills: { select: { name: true, description: true }, orderBy: { name: 'asc' } },
         },
       }),
+      featuresOfUser(c.var.userId, c.var.scope.workspaceId),
     ])
+    // Apps behind a feature the member lacks (src/features.ts): not offered, not connectable.
+    const kinds = Object.keys(appCatalog) as ConnectorKind[]
+    const hidden = kinds.filter((kind) => !appOpen(kind, features))
+    const available = availableApps()
+    for (const kind of hidden) available[kind] = false
     return c.json({
       members: Object.fromEntries(members.map((m) => [m.id, m.user.name])),
       apps: apps.map((a) => ({
@@ -424,30 +742,8 @@ export const connections = new Hono<AppEnv>()
           ]
         }),
       ),
-      available: {
-        gmail: googleConfigured(),
-        google_calendar: googleConfigured(),
-        google_drive: googleConfigured(),
-        google_docs: googleConfigured(),
-        google_sheets: googleConfigured(),
-        google_search_console: googleConfigured(),
-        google_analytics: googleConfigured(),
-        stripe: true,
-        github: githubConfigured(),
-        cloudflare: true,
-        google_cloud: googleMcpConfigured(),
-        neon: true,
-        supabase: true,
-        atlassian: true,
-        notion: true,
-        linear: true,
-        mixpanel: true,
-        resend: true,
-        replicate: true,
-        openrouter: true,
-        mcp: true,
-        webhook: true,
-      },
+      available,
+      hidden,
       connections: rows.map(({ vaultSecretId: _secret, ...row }) => row),
     })
   })
@@ -457,9 +753,32 @@ export const connections = new Hono<AppEnv>()
     if (!googleConfigured())
       throw new HTTPException(409, { message: 'Google is not configured on this Brigade server' })
     const { kind, returnTo } = await parseBody(c.req.raw, ConnectGoogle)
+    if (!appOpen(kind, await featuresOfUser(c.var.userId, c.var.scope.workspaceId)))
+      throw new HTTPException(403, {
+        message: `${appCatalog[kind].name} is not open to your account yet`,
+      })
     const state = randomBytes(24).toString('base64url')
-    await saveState(stateIdentifier(state), { ...c.var.scope, kind, returnTo })
-    return c.json({ url: googleAuthUrl(kind, state) })
+    const attempt = newAttempt()
+    await saveState(stateIdentifier(state), { ...c.var.scope, kind, returnTo, attempt })
+    return c.json({ url: googleAuthUrl(kind, state), attempt })
+  })
+
+  /** Start Meta's sign-in (Facebook Login for Business) for a new Meta Ads account. */
+  .post('/meta', async (c) => {
+    if (!metaConfigured())
+      throw new HTTPException(409, { message: 'Meta is not configured on this Brigade server' })
+    const { returnTo } = await parseBody(c.req.raw, ConnectMeta)
+    if (!appOpen('meta_ads', await featuresOfUser(c.var.userId, c.var.scope.workspaceId)))
+      throw new HTTPException(403, { message: 'Meta Ads is not open to your account yet' })
+    const state = randomBytes(24).toString('base64url')
+    const attempt = newAttempt()
+    await saveState(stateIdentifier(state), {
+      ...c.var.scope,
+      kind: 'meta_ads',
+      returnTo,
+      attempt,
+    })
+    return c.json({ url: metaAuthUrl(state), attempt })
   })
 
   /**
@@ -546,10 +865,17 @@ export const connections = new Hono<AppEnv>()
 
     // OAuth: the provider's own sign-in page.
     const state = randomBytes(24).toString('base64url')
+    const attempt = newAttempt()
     const verifier = pkceVerifier()
     let url: string
+    let mcpClientId: string
     try {
-      url = await mcpAuthUrl(server, state, verifier, await ownClient(db, scope, config))
+      ;({ url, clientId: mcpClientId } = await mcpAuthUrl(
+        server,
+        state,
+        verifier,
+        await ownClient(db, scope, config),
+      ))
     } catch (error) {
       throw new HTTPException(502, {
         message: `${name} did not answer: ${error instanceof Error ? error.message : 'error'}`,
@@ -561,13 +887,75 @@ export const connections = new Hono<AppEnv>()
       appId: app.id,
       returnTo: input.returnTo,
       verifier,
+      mcpClientId,
+      attempt,
     })
-    return c.json({ url, appId: app.id })
+    return c.json({ url, appId: app.id, attempt })
+  })
+
+  /**
+   * An account of an App that signs in to its MCP server with a pasted key (RevenueCat): the
+   * key is checked against the server before it is kept, and the row named from it.
+   */
+  .post('/mcp/key', async (c) => {
+    const { scope, db } = c.var
+    const { kind, apiKey, reconnect } = await parseBody(c.req.raw, ConnectMcpKey)
+    const server = connectors[kind]!.mcp!
+    const name = appCatalog[kind].name
+    const keyed = (url: string, init: RequestInit = {}) =>
+      fetch(url, {
+        ...init,
+        headers: { ...(init.headers as Record<string, string>), authorization: `Bearer ${apiKey}` },
+      })
+    try {
+      await listMcpTools(keyed, server)
+    } catch (error) {
+      throw new HTTPException(400, {
+        message: `${name} did not accept that key (${error instanceof Error ? error.message : 'error'})`,
+      })
+    }
+    // Which account the key reaches, by name for its row and by id to tell it apart.
+    const { account, accountId } = await keyAccount(server, keyed)
+    if (!account) console.warn(`mcp connection of ${kind}: no account name`)
+    if (!accountId)
+      throw new HTTPException(400, {
+        message: `${name} did not say which account that key reaches`,
+      })
+    // The member's account this key reaches already, by id: it gets the new key. A reconnect
+    // keeps the row's name and grants, so only with a key of that same account.
+    const same = await sameAccountRow(db, scope, kind, accountId)
+    if (reconnect) {
+      const row = await db.connection.findFirst({
+        where: {
+          id: reconnect,
+          kind,
+          createdByMemberId: scope.memberId,
+          status: { not: 'removed' },
+        },
+      })
+      if (!row) throw new HTTPException(404, { message: 'Connection not found' })
+      const refused = keyReconnectRefusal(name, reconnect, same, account)
+      if (refused) throw new HTTPException(400, { message: refused })
+    }
+    const credential: ApiKeyCredential = { apiKey, accountId }
+    const connection = await createConnection(
+      scope,
+      { kind, label: name, externalAccount: account },
+      credential,
+      undefined,
+      same,
+      false,
+    )
+    return c.json({ id: connection.id }, 201)
   })
 
   /** Start an MCP App's sign-in, on its server's own OAuth. */
   .post('/mcp', async (c) => {
-    const { kind, region, returnTo } = await parseBody(c.req.raw, ConnectMcp)
+    const { kind, region, returnTo, reconnect } = await parseBody(c.req.raw, ConnectMcp)
+    if (!appOpen(kind, await featuresOfUser(c.var.userId, c.var.scope.workspaceId)))
+      throw new HTTPException(403, {
+        message: `${appCatalog[kind].name} is not open to your account yet`,
+      })
     let server: McpServer
     try {
       server = inRegion(connectors[kind]!.mcp!, { id: region })
@@ -575,10 +963,12 @@ export const connections = new Hono<AppEnv>()
       throw new HTTPException(400, { message: `${appCatalog[kind].name} has no region ${region}` })
     }
     const state = randomBytes(24).toString('base64url')
+    const attempt = newAttempt()
     const verifier = pkceVerifier()
     let url: string
+    let mcpClientId: string
     try {
-      url = await mcpAuthUrl(server, state, verifier)
+      ;({ url, clientId: mcpClientId } = await mcpAuthUrl(server, state, verifier))
     } catch (error) {
       throw new HTTPException(502, {
         message: `${appCatalog[kind].name} did not answer: ${error instanceof Error ? error.message : 'error'}`,
@@ -589,9 +979,33 @@ export const connections = new Hono<AppEnv>()
       kind,
       returnTo,
       verifier,
+      mcpClientId,
       ...(region ? { region } : {}),
+      ...(reconnect ? { reconnect } : {}),
+      attempt,
     })
-    return c.json({ url })
+    return c.json({ url, attempt })
+  })
+
+  /**
+   * What a sign-in this person started came back with (keepResult): the account it connected,
+   * or why not; nothing while it is still going on.
+   */
+  .get('/sign-in/:attempt', async (c) => {
+    const row = await prisma.verification.findFirst({
+      where: {
+        identifier: attemptIdentifier(c.req.param('attempt')),
+        expiresAt: { gt: new Date() },
+      },
+    })
+    const result = row
+      ? (JSON.parse(row.value) as { userId: string; connected?: string; error?: string })
+      : null
+    if (!result || result.userId !== c.var.userId) return c.json({})
+    return c.json({
+      ...(result.connected ? { connected: result.connected } : {}),
+      ...(result.error ? { error: result.error } : {}),
+    })
   })
 
   /**
@@ -609,26 +1023,6 @@ export const connections = new Hono<AppEnv>()
     await prisma.verification.deleteMany({ where: { identifier } })
     await saveState(identifier, { ...c.var.scope, kind: 'github', returnTo })
     return c.json({ url: githubInstallUrl() })
-  })
-
-  /** Connect Stripe with a key entered once here. It goes straight into the vault. */
-  .post('/stripe', async (c) => {
-    const { scope } = c.var
-    const input = await parseBody(c.req.raw, ConnectStripe)
-    let account: string
-    try {
-      account = await stripeAccount(input.apiKey)
-    } catch (error) {
-      throw new HTTPException(400, {
-        message: `Stripe did not accept that key (${error instanceof Error ? error.message : 'error'})`,
-      })
-    }
-    const connection = await createConnection(
-      scope,
-      { kind: 'stripe', label: input.label ?? 'Stripe', externalAccount: account },
-      { apiKey: input.apiKey },
-    )
-    return c.json({ id: connection.id }, 201)
   })
 
   /**
@@ -659,6 +1053,140 @@ export const connections = new Hono<AppEnv>()
     return c.json(calls)
   })
 
+  /**
+   * Whether an account still signs in, checked as a ticket offers to give it. A built-in MCP App's
+   * tools come from its server, and an account it refuses (an expired key) gives a teammate no
+   * tools and no word why: checked, it is marked needs_reauth, and the ticket offers to reconnect
+   * it instead. Brigade's own connectors list their tools whatever the account's state, and a call
+   * refused says to reconnect it. A server that does not answer leaves the account as it is.
+   */
+  .post('/:id/check', async (c) => {
+    const { scope, db } = c.var
+    const connection = await db.connection.findFirst({
+      where: { id: c.req.param('id'), status: { not: 'removed' } },
+    })
+    if (!connection) throw new HTTPException(404, { message: 'Connection not found' })
+    requireAccountManager(scope, connection)
+    if (connection.status === 'active' && connectors[connection.kind]?.mcp)
+      await checkMcpSignIn(db, scope, connection).catch((error: unknown) =>
+        console.warn(`check of ${connection.id}: ${String(error)}`),
+      )
+    const now = await db.connection.findFirst({
+      where: { id: connection.id },
+      select: { status: true },
+    })
+    return c.json({ status: now?.status ?? 'removed' })
+  })
+
+  /**
+   * Google Ads: every customer account the signed-in Google account reaches (directly, or through
+   * a manager account it holds), and those picked for teammates. Read with the account's own token.
+   */
+  .get('/:id/google-ads/customers', async (c) => {
+    const { scope, db } = c.var
+    const connection = await googleAdsConnection(db, c.req.param('id'))
+    requireAccountManager(scope, connection)
+    const found = await adsCustomersOf(db, scope, connection)
+    return c.json({
+      ...found,
+      picked: pickedCustomers(connection.settings).map((p) => p.id),
+    })
+  })
+
+  /**
+   * Google Ads: pick the customer accounts teammates reach through this account. Each is checked
+   * against what the account reaches now, which also says the manager it goes through; the
+   * dashboard's word for it is not taken. Manager accounts hold no campaigns of their own.
+   */
+  .put('/:id/google-ads/customers', async (c) => {
+    const { scope, db } = c.var
+    const connection = await googleAdsConnection(db, c.req.param('id'))
+    requireAccountManager(scope, connection)
+    const { ids } = await parseBody(c.req.raw, PickGoogleAdsCustomers)
+    const { customers } = await adsCustomersOf(db, scope, connection)
+    const picked: AdsCustomer[] = []
+    for (const id of new Set(ids)) {
+      const customer = customers.find((x) => x.id === id)
+      if (!customer)
+        throw new HTTPException(400, { message: `This Google account does not reach ${id}` })
+      if (customer.manager)
+        throw new HTTPException(400, {
+          message: `${customer.name ?? id} is a manager account: pick the accounts it manages`,
+        })
+      picked.push({
+        id: customer.id,
+        loginCustomerId: customer.loginCustomerId,
+        name: customer.name,
+        ...(customer.currency ? { currency: customer.currency } : {}),
+        ...(customer.timeZone ? { timeZone: customer.timeZone } : {}),
+      })
+    }
+    await db.connection.updateMany({
+      where: { id: connection.id },
+      data: { settings: { customers: picked } },
+    })
+    await audit({
+      ...scope,
+      actor: { type: 'member', id: scope.memberId },
+      action: 'connection.google_ads_customers',
+      target: { type: 'connection', id: connection.id },
+      data: { customers: picked.map((p) => p.id) },
+    })
+    return c.json({ picked: picked.map((p) => p.id) })
+  })
+
+  /**
+   * Meta Ads: every ad account the signed-in Facebook user reaches (their own, and those of the
+   * businesses they work in), and those picked for teammates.
+   */
+  .get('/:id/meta-ads/accounts', async (c) => {
+    const { scope, db } = c.var
+    const connection = await metaAdsConnection(db, c.req.param('id'))
+    requireAccountManager(scope, connection)
+    const found = await metaAdAccountsOf(db, scope, connection)
+    return c.json({
+      ...found,
+      picked: pickedAdAccounts(connection.settings).map((p) => p.id),
+    })
+  })
+
+  /**
+   * Meta Ads: pick the ad accounts teammates reach through this account. Each is checked against
+   * what the account reaches now; the dashboard's word for it is not taken.
+   */
+  .put('/:id/meta-ads/accounts', async (c) => {
+    const { scope, db } = c.var
+    const connection = await metaAdsConnection(db, c.req.param('id'))
+    requireAccountManager(scope, connection)
+    const { ids } = await parseBody(c.req.raw, PickMetaAdAccounts)
+    const { accounts } = await metaAdAccountsOf(db, scope, connection)
+    const picked: MetaAdAccount[] = []
+    for (const id of new Set(ids)) {
+      const account = accounts.find((a) => a.id === id)
+      if (!account)
+        throw new HTTPException(400, { message: `This Facebook account does not reach ${id}` })
+      picked.push({
+        id: account.id,
+        name: account.name,
+        business: account.business ?? null,
+        ...(account.currency ? { currency: account.currency } : {}),
+        ...(account.timeZone ? { timeZone: account.timeZone } : {}),
+      })
+    }
+    await db.connection.updateMany({
+      where: { id: connection.id },
+      data: { settings: { accounts: picked } },
+    })
+    await audit({
+      ...scope,
+      actor: { type: 'member', id: scope.memberId },
+      action: 'connection.meta_ads_accounts',
+      target: { type: 'connection', id: connection.id },
+      data: { accounts: picked.map((p) => p.id) },
+    })
+    return c.json({ picked: picked.map((p) => p.id) })
+  })
+
   /** Rename an account, or change where teammates may use it. */
   .patch('/:id', async (c) => {
     const { scope, db } = c.var
@@ -668,9 +1196,34 @@ export const connections = new Hono<AppEnv>()
     if (!connection) throw new HTTPException(404, { message: 'Connection not found' })
     requireAccountManager(scope, connection)
     const input = await parseBody(c.req.raw, UpdateConnection)
+    if (input.inbox !== undefined && connection.kind !== 'gmail')
+      throw new HTTPException(400, { message: 'Only a Gmail account goes in the Inbox' })
+    if (input.sendPolicy !== undefined) {
+      if (connection.kind !== 'gmail' && connection.kind !== 'email')
+        throw new HTTPException(400, { message: 'Only a mailbox sends email' })
+      // Brigade's addresses are the workspace's: an owner's or admin's, as their rules are.
+      if (connection.kind === 'email') requireRole(scope, 'owner', 'admin')
+    }
     await db.connection.updateMany({ where: { id: connection.id }, data: input })
+    if (input.sendPolicy !== undefined && input.sendPolicy !== connection.sendPolicy)
+      await audit({
+        ...scope,
+        actor: { type: 'member', id: scope.memberId },
+        action: 'connection.send_policy',
+        target: { type: 'connection', id: connection.id },
+        data: { sendPolicy: input.sendPolicy },
+      })
     if (connection.kind === 'webhook' && input.label)
       await db.app.updateMany({ where: { id: connection.appId }, data: { name: input.label } })
+    // Gmail in the Inbox is read for it; out of it, or back to its owner's, it is not.
+    if (
+      connection.kind === 'gmail' &&
+      ((input.reach && input.reach !== connection.reach) ||
+        (input.inbox !== undefined && input.inbox !== connection.inbox))
+    )
+      await syncConnection(scope, connection.id).catch((error) =>
+        console.warn(`inbox: ${connection.id} not resynced`, error),
+      )
     if (input.reach && input.reach !== connection.reach)
       await audit({
         ...scope,
@@ -783,20 +1336,88 @@ export const connections = new Hono<AppEnv>()
     return c.body(null, 204)
   })
 
+/**
+ * Whether no other active connection, in any workspace, signs in to this Google account with
+ * Brigade's client: revoking its token would revoke theirs too (mayRevokeGoogle).
+ */
+async function mayRevokeGoogleAccount(connection: { id: string; externalAccount?: string | null }) {
+  if (!connection.externalAccount) return true
+  const others = await prisma.connection.findMany({
+    where: {
+      id: { not: connection.id },
+      kind: { in: GOOGLE_KINDS },
+      status: { not: 'removed' },
+      externalAccount: { equals: connection.externalAccount, mode: 'insensitive' },
+    },
+    select: { externalAccount: true },
+    take: 1,
+  })
+  return mayRevokeGoogle(connection.externalAccount, others)
+}
+
+/**
+ * The Apps that sign in to Google's MCP servers with Brigade's Google client for agents
+ * (GOOGLE_MCP_CLIENT_ID). Like the Apps on Brigade's other Google client, they share one grant
+ * per Google account: revoking one connection's token signs out every other one.
+ */
+const GOOGLE_MCP_KINDS: ConnectorKind[] = [
+  'google_cloud',
+  'google_drive_mcp',
+  'google_docs_mcp',
+  'google_sheets_mcp',
+]
+
+/**
+ * Whether no other active connection, in any workspace, signs in to this Google account with
+ * Brigade's Google client for agents. A server added by its URL on Google's sign-in uses that
+ * client too (mcp.ts): any other one on the same address counts, since which server it reaches
+ * is not checked here; at worst, a grant stays live while its token is gone from the vault.
+ */
+async function mayRevokeGoogleMcpAccount(connection: {
+  id: string
+  externalAccount?: string | null
+}) {
+  if (!connection.externalAccount) return true
+  const others = await prisma.connection.findMany({
+    where: {
+      id: { not: connection.id },
+      kind: { in: [...GOOGLE_MCP_KINDS, 'mcp'] },
+      status: { not: 'removed' },
+      externalAccount: { equals: connection.externalAccount, mode: 'insensitive' },
+    },
+    select: { externalAccount: true },
+    take: 1,
+  })
+  return mayRevokeGoogle(connection.externalAccount, others)
+}
+
 /** Revoke at the provider, delete the credential, drop grants and triggers, keep the call log. */
-async function disconnect(
+export async function disconnect(
   scope: WorkspaceScope,
   db: ScopedDb,
-  connection: { id: string; kind: ConnectorKind; vaultSecretId: string | null; appId: string },
+  connection: {
+    id: string
+    kind: ConnectorKind
+    vaultSecretId: string | null
+    appId: string
+    externalAccount?: string | null
+  },
 ) {
+  // One of Brigade's own addresses: it stops receiving; its name stays reserved for good.
+  if (connection.kind === 'email')
+    await db.mailAddress.updateMany({
+      where: { connectionId: connection.id },
+      data: { releasedAt: new Date(), connectionId: null },
+    })
   // Unsubscribe at the vendor while the credential still works: Stripe endpoints, Gmail watches,
   // Calendar channels.
   await syncConnection(scope, connection.id, { removing: true }).catch((error) =>
     console.error('unsubscribe failed:', error instanceof Error ? error.message : error),
   )
   if (connection.vaultSecretId) {
-    // Google and MCP tokens are revoked at the provider. A Stripe key is revoked in Stripe's
-    // dashboard. A GitHub installation stays: other workspaces may use it; it is uninstalled on GitHub.
+    // Google and MCP tokens are revoked at the provider. A Stripe key from before Stripe signed in
+    // is revoked in Stripe's dashboard. A GitHub installation stays: other workspaces may use it;
+    // it is uninstalled on GitHub.
     const auth =
       connection.kind === 'mcp'
         ? customMcp((await db.app.findFirst({ where: { id: connection.appId } })) ?? {})?.auth ===
@@ -810,8 +1431,29 @@ async function disconnect(
         scope,
         connection.vaultSecretId,
       ).catch(() => null)
-      if (credential && auth === 'google') await revokeGoogle(credential as GoogleCredential)
-      if (credential && auth === 'mcp') await revokeMcp(credential as McpCredential)
+      // Marked removed first, so that another account disconnected at the same moment counts
+      // this one as gone (removeAndRevokeGoogle).
+      if (credential && auth === 'google')
+        await removeAndRevokeGoogle({
+          markRemoved: () =>
+            db.connection.updateMany({ where: { id: connection.id }, data: { status: 'removed' } }),
+          usedElsewhere: async () => !(await mayRevokeGoogleAccount(connection)),
+          revoke: () => revokeGoogle(credential as GoogleCredential),
+        })
+      // Brigade's Google client for agents: one grant per Google account, as above.
+      if (
+        credential &&
+        auth === 'mcp' &&
+        env.GOOGLE_MCP_CLIENT_ID &&
+        (credential as McpCredential).clientId === env.GOOGLE_MCP_CLIENT_ID
+      )
+        await removeAndRevokeGoogle({
+          markRemoved: () =>
+            db.connection.updateMany({ where: { id: connection.id }, data: { status: 'removed' } }),
+          usedElsewhere: async () => !(await mayRevokeGoogleMcpAccount(connection)),
+          revoke: () => revokeMcp(credential as McpCredential),
+        })
+      else if (credential && auth === 'mcp') await revokeMcp(credential as McpCredential)
     }
     forgetMcpTools(connection.id)
     await db.connection.updateMany({
@@ -829,7 +1471,47 @@ async function disconnect(
     actor: { type: 'member', id: scope.memberId },
     action: 'connection.removed',
     target: { type: 'connection', id: connection.id },
+    track: { app: connection.kind },
   })
+}
+
+/**
+ * The member's row this Stripe sign-in repairs, labelled as the sign-in names it, so that it
+ * keeps its access, triggers and webhook endpoint rather than a second row being added: the one
+ * its owner is reconnecting, when it is this account and mode or names none (a row from when one
+ * sign-in could stand for several accounts); else the one with this label; else the one for this
+ * account and mode under another label (renamed, or connected with a key before Brigade signed
+ * in to Stripe); else a row that names no account and has a webhook endpoint on this one. Null:
+ * a new row.
+ */
+export async function sameStripeAccount(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  label: string,
+  reconnect?: string,
+) {
+  const account = stripeAccountOf(label)
+  if (!account) return null
+  const resource = accountKey(account)
+  const rows = await db.connection.findMany({
+    where: { kind: 'stripe', createdByMemberId: scope.memberId, status: { not: 'removed' } },
+    include: { subscriptions: { select: { resource: true } } },
+    orderBy: { createdAt: 'asc' },
+  })
+  /** Whether a row is this account and mode; null when its label names none. */
+  const isThis = (r: { externalAccount: string | null }) => {
+    const other = stripeAccountOf(r.externalAccount)
+    return other ? accountKey(other) === resource : null
+  }
+  const same =
+    rows.find((r) => r.id === reconnect && isThis(r) !== false) ??
+    rows.find((r) => r.externalAccount === label) ??
+    rows.find((r) => isThis(r) === true) ??
+    rows.find((r) => isThis(r) === null && r.subscriptions.some((s) => s.resource === resource))
+  if (!same) return null
+  if (same.externalAccount !== label)
+    await db.connection.updateMany({ where: { id: same.id }, data: { externalAccount: label } })
+  return same.id
 }
 
 /** A fetch that sends an access token. */
@@ -866,6 +1548,56 @@ async function mcpAccount(server: McpServer, signedIn: typeof fetch | ReturnType
     return who.email ?? who.name ?? who.id ?? null
   } catch {
     return null
+  }
+}
+
+/**
+ * Why a key may not reconnect an account, or null: it must reach that same account, by id
+ * (`same`: the member's account the key reaches, if any). Two RevenueCat projects may share a
+ * name, so the name alone cannot say.
+ */
+export function keyReconnectRefusal(
+  app: string,
+  reconnect: string,
+  same: string | undefined,
+  key: string | null,
+) {
+  if (same === reconnect) return null
+  return `That key reaches ${key ? `another ${app} account (${key})` : `another ${app} account`}: paste a key of this account, or add it as another account`
+}
+
+/**
+ * The member's account of an App reaching this account id, whether signed in with a key or the
+ * provider's OAuth: both keep the id with their credential.
+ */
+async function sameAccountRow(
+  db: ScopedDb,
+  scope: WorkspaceScope,
+  kind: ConnectorKind,
+  accountId: string,
+) {
+  const rows = await db.connection.findMany({
+    where: { kind, createdByMemberId: scope.memberId, status: { not: 'removed' } },
+  })
+  for (const row of rows) {
+    if (!row.vaultSecretId) continue
+    const kept = await openSecret<{ accountId?: string }>(db, scope, row.vaultSecretId).catch(
+      () => null,
+    )
+    if (kept?.accountId === accountId) return row.id
+  }
+  return undefined
+}
+
+/** The account a pasted key or a sign-in reaches: its name for the row, and its stable id. */
+async function keyAccount(server: McpServer, keyed: Parameters<typeof mcpAccount>[1]) {
+  if (!server.account || !('tool' in server.account) || !server.account.id)
+    return { account: await mcpAccount(server, keyed), accountId: null }
+  try {
+    const output = await callMcpTool(keyed, server, server.account.tool, {})
+    return { account: server.account.name(output), accountId: server.account.id(output) }
+  } catch {
+    return { account: null, accountId: null }
   }
 }
 

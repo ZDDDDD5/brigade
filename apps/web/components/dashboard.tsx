@@ -1,26 +1,29 @@
 'use client'
 import {
-  Bell,
+  BookOpenCheck,
   CalendarClock,
   ChevronDown,
+  ChevronRight,
   GitPullRequest,
-  House,
   Inbox,
   Keyboard,
-  KeyRound,
+  Palette,
   Library,
+  ListChecks,
   LogOut,
-  Monitor,
+  Mail,
   Moon,
+  Monitor,
   Plug,
   Plus,
   Search,
   Settings,
-  ShieldCheck,
   Sun,
-  UserRound,
+  UserRoundCheck,
   UsersRound,
   FolderKanban,
+  SquareKanban,
+  Target,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useTheme } from 'next-themes'
@@ -35,20 +38,20 @@ import {
   type ReactNode,
 } from 'react'
 import { AppLoader } from '@/components/app-loader'
-import { DocumentPanel, DocumentPanelProvider } from '@/components/document-panel'
+import { ConnectAppsDialog, openConnectApps } from '@/components/connect-apps'
+import { DocumentPanel, DocumentPanelProvider, DocumentsCorner } from '@/components/document-panel'
+import { KeptPreviews } from '@/components/kept-previews'
 import { openShortcuts, ShortcutsDialog } from '@/components/help-menu'
+import { useSidebarKeys } from '@/components/sidebar-keys'
 import { PebbleAvatar } from '@/components/pebble-avatar'
 import { ProviderLogo, type ProviderKind } from '@/components/provider-logo'
-import {
-  NotificationsDialog,
-  openNotifications,
-  useAppNotifications,
-} from '@/components/notifications'
+import { useAppNotifications } from '@/components/notifications'
 import { NewProjectDialog, ProjectIcon } from '@/components/projects'
 import { SearchDialog } from '@/components/search'
+import { SettingsDialog } from '@/components/settings-dialog'
 import { SidebarResizer, useSidebarWidth } from '@/components/sidebar-resizer'
 import { RailMenu } from '@/components/rail-menu'
-import { SidebarWork } from '@/components/sidebar-threads'
+import { SidebarWork, useSidebarOrder } from '@/components/sidebar-threads'
 import { QuickThread } from '@/components/quick-thread'
 import {
   preloadThreadPanel,
@@ -60,6 +63,11 @@ import { TopBar } from '@/components/top-bar'
 import { UpdatePill } from '@/components/update-pill'
 import { UsageMenu } from '@/components/usage-menu'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Hint } from '@/components/ui/tooltip'
+import { CloudHoursBanner } from '@/components/cloud-hours-banner'
+import { DemoBanner } from '@/components/demo-banner'
+import { GuestBanner, SaveAccountDialog } from '@/components/save-account'
+import { DemoTour } from '@/components/demo-tour'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -87,34 +95,51 @@ import {
 } from '@/components/ui/sidebar'
 import {
   api,
+  setAnswersScope,
+  choicesWaiting,
+  failuresWaiting,
   isAdmin,
+  isViewer,
   useApi,
+  useRecheck,
   waitingItemKey,
   waitsOn,
   type Account,
+  type HomeWaiting,
   type Me,
   type ProjectSummary,
   type PullWaiting,
-  type Task,
   type Teammate,
   type Ticket,
 } from '@/lib/api'
-import { inCaptureWindow } from '@/lib/brigade-app'
+import { setLiveWorkspace } from '@/lib/live-socket'
+import { setThreadsShownScope } from '@/lib/use-thread-events'
+import { DESKTOP_SIGN_IN, inCaptureWindow } from '@/lib/brigade-app'
+import { useDesktopFrame } from '@/lib/desktop-frame'
+import { WorkspaceMark, WorkspaceMenuContent } from '@/components/workspace-switcher'
 import { authClient } from '@/lib/auth-client'
-import { markSignedIn, markSignedOut } from '@/lib/signed-in'
+import { DEMO, signUp } from '@/lib/demo/flag'
+import { setDocumentScope } from '@/lib/prepare-document'
+import { markSignedIn, clearBrowserData, markSignedOut } from '@/lib/signed-in'
 import { isMac, useIsMac } from '@/lib/platform'
-import { useLive } from '@/lib/use-live'
+import { openSettings, SETTINGS_SECTIONS, settingsHref } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
+import { takeOffTheme, ThemeRuntime, useWornTheme } from '@/components/theme-runtime'
 
 export { StatusBadge } from '@/components/status-badge'
 
 type Dashboard = {
   me: Me
+  reloadMe: () => Promise<void>
   teammates: Teammate[]
   reloadTeammates: () => Promise<void>
   /** Archived ones included; the sidebar and pickers leave them out. */
   projects: ProjectSummary[]
   reloadProjects: () => Promise<void>
+  /** Count again the Inbox's mail waiting, beside Inbox in the sidebar. */
+  reloadInboxCount: () => Promise<void>
+  /** The Inbox's mail waiting, workspace-wide: the sidebar's count. */
+  inboxWaiting: number
 }
 const DashboardContext = createContext<Dashboard | null>(null)
 
@@ -128,26 +153,32 @@ export function useDashboard() {
 export const useMaybeDashboard = () => useContext(DashboardContext)
 
 export { isAdmin }
+export { WorkspaceMark }
 
 /** The work: what projects group. */
 const WORK_NAV = [
-  { href: '/app', label: 'Home', icon: House },
+  { href: '/app', label: 'Today', icon: Sun },
+  { href: '/app/inbox', label: 'Inbox', icon: Mail },
+  { href: '/app/board', label: 'Board', icon: SquareKanban },
+  { href: '/app/lists', label: 'Lists', icon: ListChecks },
   { href: '/app/tickets', label: 'Tickets', icon: Inbox },
   { href: '/app/pulls', label: 'Pull requests', icon: GitPullRequest },
   { href: '/app/library', label: 'Library', icon: Library },
+  { href: '/app/playbooks', label: 'Playbooks', icon: BookOpenCheck },
   { href: '/app/routines', label: 'Routines', icon: CalendarClock },
 ]
 
-/** The setup every project shares: the Settings page's sections, its first one first. */
-export const SETTINGS_NAV = [
-  { href: '/app/connections', label: 'Apps', icon: Plug },
-  { href: '/app/vault', label: 'Secrets', icon: KeyRound },
-  { href: '/app/security', label: 'Security', icon: ShieldCheck },
-  { href: '/app/accounts', label: 'AI Accounts', icon: UserRound },
-  { href: '/app/computers', label: 'Computers', icon: Monitor },
-]
+/** Settings' sections, which open its dialog (lib/settings-dialog.ts). */
+const SETTINGS_NAV = SETTINGS_SECTIONS.map((s) => ({
+  href: settingsHref(s.section),
+  label: s.label,
+  search: 'search' in s ? s.search : undefined,
+}))
 
-export const NAV = [...WORK_NAV, ...SETTINGS_NAV]
+export const NAV: { href: string; label: string; search?: string }[] = [
+  ...WORK_NAV,
+  ...SETTINGS_NAV,
+]
 
 const THEMES = [
   { value: 'light', label: 'Light', icon: Sun },
@@ -179,6 +210,15 @@ export function TeammateAvatar({
   )
 }
 
+/**
+ * Whose pages and threads this tab keeps as they were last shown, for Back to show them at once:
+ * another person or workspace, or none (signed out), forgets them.
+ */
+function keepShownFor(scope: string | undefined) {
+  setAnswersScope(scope)
+  setThreadsShownScope(scope)
+}
+
 export function DashboardShell({ children }: { children: ReactNode }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -186,28 +226,79 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   // with it, so as not to wait for it (a trip each to the API): the lists below, and the
   // thread panel's (sent ahead). Without a workspace they fail, unseen: onboarding comes next.
   const me = useApi<Me>('/me')
+  // Its live sockets go to the hub of the workspace it shows, once known.
+  setLiveWorkspace(me.data?.activeWorkspaceId)
+  // Documents kept open (lib/live-documents.ts) are this person's in this workspace: signed out,
+  // or in another, none is reused.
+  const documentScope = me.data ? `${me.data.user.id}:${me.data.activeWorkspaceId}` : undefined
+  useEffect(() => {
+    if (!documentScope) return
+    setDocumentScope(documentScope)
+    // So are the pages' last answers (lib/api.ts's useApi).
+    keepShownFor(documentScope)
+  }, [documentScope])
+  useEffect(
+    () => () => {
+      setDocumentScope(undefined)
+      keepShownFor(undefined)
+    },
+    [],
+  )
   useEffect(() => preloadThreadPanel(pathname), []) // eslint-disable-line react-hooks/exhaustive-deps
-  const teammates = useApi<Teammate[]>('/teammates')
-  const projects = useApi<ProjectSummary[]>('/projects')
+  const teammates = useApi<Teammate[]>('/teammates', ['teammates.updated'])
+  const projects = useApi<ProjectSummary[]>('/projects', ['projects.updated'])
   const reloadProjects = projects.reload
+  // The sidebar's teammates and projects, in the order the member dragged them to.
+  const sidebarOrder = useSidebarOrder()
+  const sidebarTeammates = sidebarOrder.sort('teammates', teammates.data ?? [])
+  const sidebarProjects = sidebarOrder.sort('projects', projects.data ?? [])
   const [creatingProject, setCreatingProject] = useState(false)
   const mac = useIsMac()
-  const { theme = 'system', setTheme } = useTheme()
+  // Brigade.app's window on macOS without a title bar (lib/desktop-frame.ts).
+  const frame = useDesktopFrame()
+  const { theme = 'dark', setTheme } = useTheme()
+  // A theme the member wears (docs/themes.md): their menu takes it off, whatever it hides.
+  const { worn: wornTheme, safe: safeLook } = useWornTheme()
   const ThemeIcon = THEMES.find((t) => t.value === theme)?.icon ?? Monitor
   const [sidebarWidth, setSidebarWidth] = useSidebarWidth()
-  // Tickets waiting on this member, refreshed as the member moves around.
-  const tickets = useApi<Ticket[]>('/tickets')
+  // Tickets waiting on this member, live and refreshed as the member moves around.
+  const tickets = useApi<Ticket[]>('/tickets', ['tickets.updated'])
   const reloadTickets = tickets.reload
-  // Tasks that need a person, the same way.
-  const tasks = useApi<Task[]>('/tasks')
-  const reloadTasks = tasks.reload
-  // Pull requests waiting on a person: with the tickets, what Home's Waiting on you counts.
-  const pulls = useApi<{ pulls: PullWaiting[] }>('/pulls/attention')
+  // Pull requests waiting on a person: with the tickets, what Home's Needs you counts.
+  const pulls = useApi<{ pulls: PullWaiting[] }>('/pulls/attention', ['pulls.updated'])
   const reloadPulls = pulls.reload
+  // Failed threads and routines waiting on this member (apps/api/src/failed.ts): a thread's
+  // status, a routine's firing, or the ticket of one that could not start changes them; and a
+  // failure its runner may still try again on its own waits from `recheckAt` on.
+  const failedWaiting = useApi<HomeWaiting>('/home/waiting', [
+    'thread.updated',
+    'schedule.updated',
+    'tickets.updated',
+  ])
+  const reloadFailures = failedWaiting.reload
+  useRecheck(failedWaiting.data?.recheckAt, reloadFailures)
+  // The Inbox's To do beside it (mail nobody took, replies to approve): live, and again when the
+  // window comes back (a phone that slept missed what its socket would have said).
+  const inboxCount = useApi<{ waiting: number }>('/inbox/count', [
+    'mail.updated',
+    // A Gmail account put in the Inbox or taken out of it, an address released.
+    'connections.updated',
+    // A teammate's reply asked for approval, or was decided.
+    'tickets.updated',
+  ])
+  const reloadInboxCount = inboxCount.reload
+  const inboxWaiting = inboxCount.data?.waiting ?? 0
+  useEffect(() => {
+    const onFocus = () => void reloadInboxCount()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [reloadInboxCount])
   // The member's AI accounts, for the avatar menu's usage: fresh each time it opens.
   const accounts = useApi<Account[]>('/accounts')
   const reloadAccounts = accounts.reload
   const [searching, setSearching] = useState(false)
+  // A guest (docs/guests.md) saves their account; asked to sign out, they are offered it first.
+  const [saving, setSaving] = useState<'save' | 'leave'>()
   // Expanded or folded to icons, as the member left it: the sidebar keeps it in a cookie.
   // Read once, before the sidebar first shows (it waits for the member to load).
   const [sidebarOpen, setSidebarOpen] = useState(
@@ -219,26 +310,22 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     if (counted.current === pathname) return
     counted.current = pathname
     void reloadTickets()
-    void reloadTasks()
     void reloadPulls()
-  }, [pathname, reloadTickets, reloadTasks, reloadPulls])
-  // And live: a task's column follows its thread's status and open tickets.
-  useLive((message) => {
-    if (message.type === 'projects.updated') void reloadProjects()
-    if (message.type === 'tickets.updated') void reloadTickets()
-    if (message.type === 'pulls.updated') void reloadPulls()
-    if (
-      message.type === 'task.updated' ||
-      message.type === 'thread.updated' ||
-      message.type === 'tickets.updated'
-    )
-      void reloadTasks()
-  })
+    void reloadFailures()
+    void reloadInboxCount()
+  }, [pathname, reloadTickets, reloadPulls, reloadFailures, reloadInboxCount])
 
   useEffect(() => {
     if (me.error?.status === 401) {
       markSignedOut()
-      router.replace('/sign-in')
+      keepShownFor(undefined)
+      // Brigade.app's sign-in in the browser comes back here once signed in. A full load, as on
+      // signing out: no draft kept in memory waits for whoever signs in next in this tab.
+      location.replace(
+        location.pathname === DESKTOP_SIGN_IN
+          ? `/sign-in?next=${encodeURIComponent(location.pathname + location.search)}`
+          : '/sign-in',
+      )
     } else if (me.data) markSignedIn()
     // No workspace yet, or no AI account to run anything: onboarding first.
     if (me.data && (!me.data.activeWorkspaceId || !me.data.aiReady)) router.replace('/onboarding')
@@ -254,69 +341,124 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     )
   }, [me.data])
 
+  // The member could not be read (the API restarting, a deploy, the network): asked again,
+  // sooner then less often, rather than the loader staying for good. 401 signs out above.
+  const failures = useRef(0)
+  const unreachable = !me.data && !!me.error && me.error.status !== 401
+  const reloadMe = me.reload
+  useEffect(() => {
+    if (!me.error || me.error.status === 401) {
+      failures.current = 0
+      return
+    }
+    const wait = Math.min(1000 * 2 ** failures.current++, 15000)
+    const timer = setTimeout(() => void reloadMe(), wait)
+    return () => clearTimeout(timer)
+  }, [me.error, reloadMe])
+
   useSettingsShortcut()
+  // ⌥↑ / ⌥↓ through the sidebar, Enter unfolds a folded row.
+  useSidebarKeys()
 
   // Brigade.app's screenshot window shows its page alone; signing in there lands it back on it.
-  const capture = pathname === '/app/capture'
+  // So does the page that signs that window in, in the browser.
+  const alone = pathname === '/app/capture' || pathname === DESKTOP_SIGN_IN
   useEffect(() => {
     if (pathname === '/app' && inCaptureWindow()) router.replace('/app/capture')
   }, [pathname, router])
 
-  if (!me.data?.activeWorkspaceId || !me.data.aiReady) return <AppLoader />
+  if (!me.data?.activeWorkspaceId || !me.data.aiReady)
+    return <AppLoader note={unreachable ? 'Cannot reach Brigade. Trying again…' : undefined} />
   const data = me.data
   const workspace = data.workspaces.find((w) => w.id === data.activeWorkspaceId)
   const organization = data.organizations.find((o) => o.id === data.activeOrganizationId)
-  // What Home's Waiting on you holds, counted beside Home in the sidebar: the one count of
+  // What Home's Needs you holds, counted beside Home in the sidebar: the one count of
   // what waits on this member (folded sections show none). A playbook's approvals are one.
+  const waitingTickets = (tickets.data ?? []).filter((t) => waitsOn(t, data))
+  const failing = failuresWaiting(failedWaiting.data, waitingTickets)
+  const choosing = choicesWaiting(failedWaiting.data, waitingTickets, pulls.data?.pulls ?? [])
   const waitingOnYou =
-    new Set((tickets.data ?? []).filter((t) => waitsOn(t, data)).map(waitingItemKey)).size +
-    (pulls.data?.pulls.length ?? 0)
+    new Set(waitingTickets.map(waitingItemKey)).size +
+    (pulls.data?.pulls.length ?? 0) +
+    failing.threads.length +
+    failing.routines.length +
+    choosing.length
   // Threads with a ticket waiting on this member, and what the ticket asks of them.
   const needsYou: Record<string, string> = {}
   // What the app icon badge counts: those threads, but a playbook's approvals once, whichever
   // of its runs (out of the sidebar) ask.
   const badge = new Set<string>()
-  // A child thread is out of the sidebar: its ticket marks its parent, which shows it.
+  // A child thread is out of the sidebar's list: its ticket marks the thread at the top, which
+  // shows it (a child's review: under that child).
   for (const t of tickets.data ?? [])
     if (t.session && waitsOn(t, data)) {
-      const thread = t.session.parentId ?? t.session.id
+      const thread = t.session.rootId ?? t.session.parentId ?? t.session.id
       needsYou[thread] ??= TICKET_ASKS[t.type] ?? 'needs you'
+      // And the sub-threads down to it, under the thread at the top once the member unfolds it.
+      if (t.session.parentId && t.session.parentId !== thread)
+        needsYou[t.session.parentId] ??= TICKET_ASKS[t.type] ?? 'needs you'
+      if (thread !== t.session.id) needsYou[t.session.id] ??= TICKET_ASKS[t.type] ?? 'needs you'
       const item = waitingItemKey(t)
       badge.add(item.startsWith('playbook:') ? item : thread)
     }
-  // And threads whose task is in Needs you, so the list agrees with the board.
-  for (const t of tasks.data ?? [])
-    if (t.column === 'needs_you' && t.thread) {
-      needsYou[t.thread.id] ??= t.thread.openPullRequests.length ? 'review PR' : 'needs you'
-      badge.add(t.thread.id)
-    }
-
-  async function switchWorkspace(workspaceId: string) {
-    await api('/workspaces/switch', { body: { workspaceId } })
-    window.location.href = '/app'
+  // Failed threads waiting on this member: their dot stays red, in the list with those
+  // waiting (sidebar-threads.tsx). A routine by its latest run, under the thread it reports to.
+  for (const t of failing.threads) {
+    needsYou[t.id] ??= 'failed'
+    badge.add(t.id)
+  }
+  for (const r of failing.routines) {
+    if (r.runId) needsYou[r.runId] ??= 'failed'
+    if (r.runParentId) needsYou[r.runParentId] ??= 'routine failed'
+    badge.add(`routine:${r.scheduleId}`)
+  }
+  // Threads whose teammate offered choices nobody picked (apps/api/src/choices-waiting.ts).
+  for (const c of choosing) {
+    needsYou[c.id] ??= 'pick one'
+    badge.add(c.id)
   }
 
-  async function signOut() {
+  async function signOut(confirmed = false) {
+    // The demo has no account to leave: the way out is signing up for real.
+    if (DEMO) return signUp()
+    if (data?.guest && !confirmed) return setSaving('leave')
     await authClient.signOut()
     markSignedOut()
-    router.replace('/sign-in')
+    await clearBrowserData()
+    setDocumentScope(undefined)
+    keepShownFor(undefined)
+    // A full load, not the router: drafts and other state kept in memory (reply and code drafts,
+    // pending attachments) go with the page, so the next person to sign in here finds none.
+    location.replace('/sign-in')
   }
 
   const dashboard = {
     me: data,
+    reloadMe: me.reload,
     teammates: teammates.data ?? [],
     reloadTeammates: teammates.reload,
     projects: projects.data ?? [],
     reloadProjects,
+    reloadInboxCount,
+    inboxWaiting,
   }
-  if (capture)
-    return <DashboardContext.Provider value={dashboard}>{children}</DashboardContext.Provider>
+  // The member's own look (docs/themes.md), while they have the themes feature.
+  const themes = <ThemeRuntime enabled={data.features?.includes('themes') ?? false} />
+  if (alone)
+    return (
+      <DashboardContext.Provider value={dashboard}>
+        {themes}
+        {children}
+      </DashboardContext.Provider>
+    )
 
   return (
     <DashboardContext.Provider value={dashboard}>
+      {themes}
       <DocumentPanelProvider>
         <ThreadPanelProvider>
           <SidebarProvider
+            data-look="app"
             open={sidebarOpen}
             onOpenChange={setSidebarOpen}
             style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}
@@ -325,46 +467,13 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                 settings then open as menus beside it. */}
             <Sidebar collapsible="icon">
               <SidebarResizer width={sidebarWidth} onWidth={setSidebarWidth} />
-              <SidebarHeader>
-                <SidebarMenu>
-                  <SidebarMenuItem className="flex items-center gap-2 group-data-[collapsible=icon]:block">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <SidebarMenuButton
-                          size="lg"
-                          className="min-w-0 flex-1 data-[state=open]:bg-sidebar-accent"
-                        >
-                          <span className="bg-sidebar-primary text-sidebar-primary-foreground flex size-8 shrink-0 items-center justify-center rounded-sm font-bold">
-                            {initial(workspace?.name ?? '')}
-                          </span>
-                          <span className="truncate font-semibold group-data-[collapsible=icon]:hidden">
-                            {workspace?.name}
-                          </span>
-                          <ChevronDown className="text-muted-foreground size-3.5! group-data-[collapsible=icon]:hidden" />
-                        </SidebarMenuButton>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start" className="min-w-56">
-                        <DropdownMenuLabel className="text-muted-foreground text-xs">
-                          {organization?.name ?? 'Workspaces'}
-                        </DropdownMenuLabel>
-                        {data.workspaces.map((w) => (
-                          <DropdownMenuItem key={w.id} onSelect={() => void switchWorkspace(w.id)}>
-                            <span className="bg-secondary flex size-6 items-center justify-center rounded-sm text-xs font-bold">
-                              {initial(w.name)}
-                            </span>
-                            {w.name}
-                          </DropdownMenuItem>
-                        ))}
-                        {isAdmin(data) && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem onSelect={() => router.push('/onboarding')}>
-                              <Plus /> New workspace
-                            </DropdownMenuItem>
-                          </>
-                        )}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+              <SidebarHeader data-window-drag className={cn(frame === 'mac' && 'pt-0')}>
+                {/* Brigade.app on macOS, with no title bar: the traffic lights at the start of
+                    this row, search and new thread across from them (lib/desktop-frame.ts).
+                    Folded to the rail, the row keeps the lights' room above the icons. Narrower,
+                    the app keeps a band above the page instead. */}
+                {frame === 'mac' && (
+                  <div className="flex h-[3.25rem] items-center justify-end gap-2 pl-[4.75rem] group-data-[collapsible=icon]:h-9 group-data-[collapsible=icon]:pl-0">
                     <RoundButton
                       label={`Search (${mac ? '⌘K' : 'Ctrl+K'})`}
                       onClick={() => setSearching(true)}
@@ -372,6 +481,45 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                       <Search />
                     </RoundButton>
                     <NewThreadButton />
+                  </div>
+                )}
+                <SidebarMenu>
+                  <SidebarMenuItem className="flex items-center gap-2 group-data-[collapsible=icon]:block">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <SidebarMenuButton
+                          size="lg"
+                          data-look="workspace-switcher"
+                          className="min-w-0 flex-1 data-[state=open]:bg-sidebar-accent"
+                        >
+                          <WorkspaceMark
+                            workspace={workspace}
+                            className="bg-sidebar-primary text-sidebar-primary-foreground size-8"
+                          />
+                          <span className="truncate font-semibold group-data-[collapsible=icon]:hidden">
+                            {workspace?.name}
+                          </span>
+                          <ChevronDown className="text-muted-foreground size-3.5! group-data-[collapsible=icon]:hidden" />
+                        </SidebarMenuButton>
+                      </DropdownMenuTrigger>
+                      <WorkspaceMenuContent
+                        me={data}
+                        onNewWorkspace={
+                          isAdmin(data) ? () => router.push('/onboarding') : undefined
+                        }
+                      />
+                    </DropdownMenu>
+                    {frame !== 'mac' && (
+                      <>
+                        <RoundButton
+                          label={`Search (${mac ? '⌘K' : 'Ctrl+K'})`}
+                          onClick={() => setSearching(true)}
+                        >
+                          <Search />
+                        </RoundButton>
+                        <NewThreadButton />
+                      </>
+                    )}
                   </SidebarMenuItem>
                 </SidebarMenu>
                 {/* Folded: the same two as icons of the rail. */}
@@ -386,34 +534,113 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                 </SidebarMenu>
               </SidebarHeader>
 
-              <SidebarContent>
-                {/* Home, first: what waits and what runs. It scrolls with the threads below. */}
+              <SidebarContent className="scroll-fade-y">
+                {/* Today (the Home page), first: what waits and what runs. It scrolls with the threads below. */}
                 <SidebarGroup className="py-0">
                   <SidebarMenu>
                     <SidebarMenuItem>
-                      <SidebarMenuButton asChild tooltip="Home" isActive={pathname === '/app'}>
+                      <SidebarMenuButton asChild tooltip="Today" isActive={pathname === '/app'}>
                         <Link href="/app">
-                          <House />
-                          <span>Home</span>
+                          <Sun />
+                          <span>Today</span>
                           {waitingOnYou > 0 && (
-                            <span
-                              title={`${waitingOnYou} waiting on you`}
-                              className="bg-warning/15 text-warning ml-auto shrink-0 rounded-full px-1.5 text-[0.6875rem] leading-4 font-semibold tabular-nums"
-                            >
-                              {waitingOnYou}
-                            </span>
+                            <Hint label={`${waitingOnYou} waiting on you`}>
+                              <span className="bg-warning/15 text-warning ml-auto shrink-0 rounded-full px-1.5 text-[0.6875rem] leading-4 font-semibold tabular-nums">
+                                {waitingOnYou}
+                              </span>
+                            </Hint>
                           )}
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    {/* Not in the public demo: it shows the work teammates do, not the mail and the
+                        board around it. */}
+                    {!DEMO && (
+                      <>
+                        <SidebarMenuItem>
+                          <SidebarMenuButton
+                            asChild
+                            tooltip="Inbox"
+                            isActive={pathname.startsWith('/app/inbox')}
+                          >
+                            <Link href="/app/inbox">
+                              <Mail />
+                              <span>Inbox</span>
+                              {inboxWaiting > 0 && (
+                                <Hint
+                                  label={`${inboxWaiting} ${inboxWaiting === 1 ? 'email' : 'emails'} waiting`}
+                                >
+                                  <span className="bg-primary/15 text-primary ml-auto shrink-0 rounded-full px-1.5 text-[0.6875rem] leading-4 font-semibold tabular-nums">
+                                    {inboxWaiting}
+                                  </span>
+                                </Hint>
+                              )}
+                            </Link>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                        {/* What moves across lists, threads and routines (docs/board.md); no badge: Home counts what waits. */}
+                        <SidebarMenuItem>
+                          <SidebarMenuButton
+                            asChild
+                            tooltip="Board"
+                            isActive={pathname.startsWith('/app/board')}
+                          >
+                            <Link href="/app/board">
+                              <SquareKanban />
+                              <span>Board</span>
+                            </Link>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      </>
+                    )}
+                    {/* Ongoing work delegated to teammates (docs/missions.md), behind its feature. */}
+                    {data.features?.includes('missions') && (
+                      <SidebarMenuItem>
+                        <SidebarMenuButton
+                          asChild
+                          tooltip="Missions"
+                          isActive={pathname.startsWith('/app/missions')}
+                        >
+                          <Link href="/app/missions">
+                            <Target />
+                            <span>Missions</span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    )}
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        asChild
+                        tooltip="Lists"
+                        isActive={pathname.startsWith('/app/lists')}
+                      >
+                        <Link href="/app/lists">
+                          <ListChecks />
+                          <span>Lists</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        asChild
+                        tooltip="Library"
+                        isActive={pathname.startsWith('/app/library')}
+                      >
+                        <Link href="/app/library">
+                          <Library />
+                          <span>Library</span>
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   </SidebarMenu>
                 </SidebarGroup>
                 <SidebarWork
-                  teammates={teammates.data ?? []}
-                  projects={projects.data ?? []}
+                  teammates={sidebarTeammates}
+                  projects={sidebarProjects}
                   admin={isAdmin(data)}
                   memberId={data.memberId}
                   onNewProject={() => setCreatingProject(true)}
+                  onReorder={sidebarOrder.reorder}
                   needsYou={needsYou}
                   rail={
                     <>
@@ -422,7 +649,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         label="Projects"
                         href="/app/projects"
                         active={pathname.startsWith('/app/projects')}
-                        items={(projects.data ?? [])
+                        items={sidebarProjects
                           .filter((p) => !p.archivedAt)
                           .map((p) => ({
                             href: `/app/projects/${p.id}`,
@@ -431,20 +658,30 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                           }))}
                         action={{ label: 'New project', onSelect: () => setCreatingProject(true) }}
                       />
-                      <TeammatesRailMenu teammates={teammates.data ?? []} admin={isAdmin(data)} />
+                      <TeammatesRailMenu teammates={sidebarTeammates} admin={isAdmin(data)} />
                     </>
                   }
                 />
               </SidebarContent>
 
               <SidebarFooter className="gap-3">
+                <DemoBanner place="sidebar" />
+                {data?.guest && <GuestBanner onSave={() => setSaving('save')} />}
+                <CloudHoursBanner admin={isAdmin(data)} />
+                <SaveAccountDialog
+                  open={!!saving}
+                  onOpenChange={(open) => !open && setSaving(undefined)}
+                  onSaved={() => void me.reload()}
+                  leaving={saving === 'leave'}
+                  onLeave={() => void signOut(true)}
+                />
                 {/* The member and their menu, and the way to connect apps; folded, a column. */}
                 <div className="flex items-center gap-2 px-2 pb-2 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:p-0">
                   <DropdownMenu onOpenChange={(open) => open && void reloadAccounts()}>
                     <DropdownMenuTrigger asChild>
                       <button
                         type="button"
-                        aria-label={`${data.user.name}: settings, appearance, notifications, help and sign out`}
+                        aria-label={`${data.user.name}: settings, usage, theme, help and sign out`}
                         className="focus-visible:ring-sidebar-ring shrink-0 rounded-full outline-none focus-visible:ring-2"
                       >
                         <Avatar className="size-9 group-data-[collapsible=icon]:size-8">
@@ -462,21 +699,41 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                       </button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent side="top" align="start" className="min-w-60">
-                      <DropdownMenuLabel className="grid leading-tight">
-                        <span className="truncate">{data.user.name}</span>
-                        <span className="text-muted-foreground truncate text-xs font-normal">
-                          {organization?.name}
-                        </span>
-                      </DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem asChild>
-                        <Link href="/app/settings">
-                          <Settings /> Settings
-                          <span className="text-muted-foreground ml-auto text-xs">
-                            {mac ? '⌘,' : 'Ctrl+,'}
+                      {data.guest ? (
+                        // A guest (docs/guests.md): the menu says they are not signed in, and
+                        // saving the account is the way to be.
+                        <>
+                          <DropdownMenuItem onSelect={() => setSaving('save')}>
+                            <span className="grid min-w-0 flex-1 leading-tight">
+                              <span className="truncate font-semibold">{data.user.name}</span>
+                              <span className="text-muted-foreground truncate text-xs">
+                                Not signed in
+                              </span>
+                            </span>
+                            <ChevronRight className="text-muted-foreground" />
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem onSelect={() => setSaving('save')}>
+                            <UserRoundCheck /> Save your account
+                          </DropdownMenuItem>
+                        </>
+                      ) : (
+                        <DropdownMenuLabel className="grid leading-tight">
+                          <span className="truncate">{data.user.name}</span>
+                          <span className="text-muted-foreground truncate text-xs font-normal">
+                            {organization?.name}
                           </span>
-                        </Link>
+                        </DropdownMenuLabel>
+                      )}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => openSettings()}>
+                        <Settings /> Settings
+                        <span className="text-muted-foreground ml-auto text-xs">
+                          {mac ? '⌘,' : 'Ctrl+,'}
+                        </span>
                       </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <UsageMenu accounts={accounts.data} />
                       <DropdownMenuSeparator />
                       {/* Theme on one row: three icon segments, kept open on pick so the change shows. */}
                       <div
@@ -488,36 +745,36 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         Theme
                         <div className="bg-muted ml-auto flex gap-0.5 rounded-md p-0.5">
                           {THEMES.map(({ value, label, icon: Icon }) => (
-                            <DropdownMenuItem
-                              key={value}
-                              role="menuitemradio"
-                              aria-checked={theme === value}
-                              aria-label={label}
-                              title={label}
-                              onSelect={(e) => {
-                                e.preventDefault()
-                                setTheme(value)
-                              }}
-                              className={cn(
-                                'rounded-sm px-1.5 py-1',
-                                theme === value && 'bg-card shadow-xs',
-                              )}
-                            >
-                              <Icon
+                            <Hint key={value} label={label}>
+                              <DropdownMenuItem
+                                role="menuitemradio"
+                                aria-checked={theme === value}
+                                aria-label={label}
+                                onSelect={(e) => {
+                                  e.preventDefault()
+                                  setTheme(value)
+                                }}
                                 className={cn(
-                                  'size-3.5',
-                                  theme === value ? 'text-foreground' : 'text-muted-foreground',
+                                  'rounded-sm px-1.5 py-1',
+                                  theme === value && 'bg-card shadow-xs',
                                 )}
-                              />
-                            </DropdownMenuItem>
+                              >
+                                <Icon
+                                  className={cn(
+                                    'size-3.5',
+                                    theme === value ? 'text-foreground' : 'text-muted-foreground',
+                                  )}
+                                />
+                              </DropdownMenuItem>
+                            </Hint>
                           ))}
                         </div>
                       </div>
-                      <UsageMenu accounts={accounts.data} />
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onSelect={openNotifications}>
-                        <Bell /> Notifications
-                      </DropdownMenuItem>
+                      {wornTheme && !safeLook && (
+                        <DropdownMenuItem onSelect={() => void takeOffTheme()}>
+                          <Palette /> Take off {wornTheme.theme.name}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem onSelect={openShortcuts}>
                         <Keyboard /> Keyboard shortcuts
                         <span className="text-muted-foreground ml-auto text-xs">
@@ -525,37 +782,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         </span>
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => void signOut()}>
-                        <LogOut /> Sign out
+                        {/* A guest has nothing to sign out of: what they want is another account. */}
+                        <LogOut /> {data.guest ? 'Sign in to another account' : 'Sign out'}
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
-                  <Link
-                    href="/app/connections"
-                    title="Connect apps"
-                    className="group/apps @container/apps bg-card hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-full border text-[0.9375rem] font-medium outline-none focus-visible:ring-2 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:flex-none"
-                  >
-                    <Plug className="hidden size-4 group-data-[collapsible=icon]:block" />
-                    {/* Too narrow for the words: the logos alone, never a cut-off label. */}
-                    <span className="hidden truncate @[11rem]/apps:inline group-data-[collapsible=icon]:hidden">
-                      Connect apps
-                    </span>
-                    <span aria-hidden className="flex group-data-[collapsible=icon]:hidden">
-                      {APP_TILES.map(({ kind, fan }) => (
-                        <span
-                          key={kind}
-                          className={cn(
-                            'border-card -ml-1.5 flex size-5 items-center justify-center overflow-hidden rounded-[0.35rem] border bg-white text-[#181717] transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] first:ml-0 motion-reduce:transition-none',
-                            fan,
-                          )}
-                        >
-                          <ProviderLogo
-                            kind={kind}
-                            className={kind === 'stripe' ? 'size-full' : 'size-3.5'}
-                          />
-                        </span>
-                      ))}
-                    </span>
-                  </Link>
+                  <ConnectAppsButton />
                 </div>
               </SidebarFooter>
             </Sidebar>
@@ -564,7 +796,8 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           </SidebarProvider>
           <SearchDialog open={searching} onOpenChange={setSearching} />
           <ShortcutsDialog />
-          <NotificationsDialog />
+          <ConnectAppsDialog />
+          <SettingsDialog />
           <AppNotifications needsYou={badge.size} />
           <NewProjectDialog open={creatingProject} onOpenChange={setCreatingProject} />
         </ThreadPanelProvider>
@@ -589,6 +822,44 @@ const TICKET_ASKS: Partial<Record<Ticket['type'], string>> = {
   usage_limit: 'usage limit',
 }
 
+/** The sidebar footer's Connect apps: opens the popup, over the sidebar on a phone. */
+function ConnectAppsButton() {
+  const { isMobile, setOpenMobile } = useSidebar()
+  return (
+    <Hint label="Connect apps">
+      <button
+        type="button"
+        aria-label="Connect apps"
+        data-look="connect-apps"
+        onClick={() => {
+          if (isMobile) setOpenMobile(false)
+          openConnectApps()
+        }}
+        className="group/apps @container/apps bg-card hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-full border text-[0.9375rem] font-medium outline-none focus-visible:ring-2 group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:flex-none"
+      >
+        <Plug className="hidden size-4 group-data-[collapsible=icon]:block" />
+        {/* Too narrow for the words: the logos alone, never a cut-off label. */}
+        <span className="hidden truncate @[11rem]/apps:inline group-data-[collapsible=icon]:hidden">
+          Connect apps
+        </span>
+        <span aria-hidden className="flex group-data-[collapsible=icon]:hidden">
+          {APP_TILES.map(({ kind, fan }) => (
+            <span
+              key={kind}
+              className={cn(
+                'border-card -ml-1.5 flex size-5 items-center justify-center overflow-hidden rounded-[0.35rem] border bg-white text-[#181717] transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)] first:ml-0 motion-reduce:transition-none',
+                fan,
+              )}
+            >
+              <ProviderLogo kind={kind} className={kind === 'stripe' ? 'size-full' : 'size-3.5'} />
+            </span>
+          ))}
+        </span>
+      </button>
+    </Hint>
+  )
+}
+
 /** Decoration for Connect apps: the services' marks, which fan out while the pointer is over the button. */
 const APP_TILES: { kind: ProviderKind; fan: string }[] = [
   {
@@ -605,34 +876,49 @@ const APP_TILES: { kind: ProviderKind; fan: string }[] = [
   },
 ]
 
-/** A round, outlined icon button beside the workspace's name. */
+/** A round, outlined icon button beside the workspace's name (and the sidebar's on a phone). */
+const roundButtonClass =
+  'bg-card text-foreground hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex size-9 shrink-0 items-center justify-center rounded-full border outline-none focus-visible:ring-2 group-data-[collapsible=icon]:hidden [&>svg]:size-4'
+
 function RoundButton({
   label,
   onClick,
   children,
+  nav,
 }: {
   label: string
   onClick: () => void
   children: ReactNode
+  /** In the sidebar, a stop of ⌥↑ / ⌥↓ that opens as a click does (sidebar-keys.tsx). */
+  nav?: { active: boolean }
 }) {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      className="bg-card text-foreground hover:bg-sidebar-accent focus-visible:ring-sidebar-ring flex size-9 shrink-0 items-center justify-center rounded-full border outline-none focus-visible:ring-2 group-data-[collapsible=icon]:hidden [&>svg]:size-4"
-    >
-      {children}
-    </button>
+    <Hint label={label}>
+      <button
+        type="button"
+        aria-label={label}
+        onClick={onClick}
+        data-nav-stop={nav && 'link'}
+        data-nav-top={nav && true}
+        data-active={nav?.active}
+        data-look="round-button"
+        className={roundButtonClass}
+      >
+        {children}
+      </button>
+    </Hint>
   )
 }
 
 /** The round + that starts a thread: beside the workspace's name, and on a phone at the top of each page. */
 export function NewThreadButton() {
-  const { newThreadPage } = useThreadPanel()
+  const { newThreadPage, expanded, threadId } = useThreadPanel()
+  // A viewer starts nothing.
+  if (isViewer(useDashboard().me)) return null
   return (
-    <RoundButton label="New thread" onClick={newThreadPage}>
+    // The first stop of ⌥↑ / ⌥↓, above Today: it opens the new-thread page, where it stands
+    // while that page shows.
+    <RoundButton label="New thread" onClick={newThreadPage} nav={{ active: expanded && !threadId }}>
       <Plus />
     </RoundButton>
   )
@@ -640,9 +926,15 @@ export function NewThreadButton() {
 
 function NewThreadRailItem() {
   const { newThreadPage } = useThreadPanel()
+  if (isViewer(useDashboard().me)) return null
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton tooltip="New thread" onClick={newThreadPage}>
+      <SidebarMenuButton
+        tooltip="New thread"
+        onClick={newThreadPage}
+        data-nav-stop="link"
+        data-nav-top
+      >
         <Plus />
         <span>New thread</span>
       </SidebarMenuButton>
@@ -660,7 +952,8 @@ function useSettingsShortcut() {
       if (!command || e.shiftKey || e.altKey || e.key !== ',') return
       if (document.querySelector('[role=dialog][data-state=open]')) return
       e.preventDefault()
-      router.push('/app/settings')
+      // Where no dialog shows Settings (Brigade.app's quick-capture window): its address.
+      if (!openSettings()) router.push('/app/settings')
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -674,17 +967,21 @@ export function SidebarToggle({ className }: { className?: string }) {
   const label = isMobile ? 'Open the sidebar' : open ? 'Collapse the sidebar' : 'Expand the sidebar'
   return (
     <SidebarTrigger
-      className={cn('-ml-1 size-8 text-muted-foreground hover:text-foreground', className)}
+      // On a phone, round like the + across from it; wider, a plain icon in the sidebar's header.
+      className={cn(
+        isMobile ? roundButtonClass : '-ml-1 size-8 text-muted-foreground hover:text-foreground',
+        className,
+      )}
       aria-label={label}
-      title={isMobile ? label : `${label} (${mac ? '⌘' : 'Ctrl+'}B)`}
+      tooltip={isMobile ? label : `${label} (${mac ? '⌘' : 'Ctrl+'}B)`}
     />
   )
 }
 
-/** Folded, the teammates as a menu beside the rail: each opens its threads, as above. */
+/** Folded, the teammates as a menu beside the rail: each starts a new thread with it, as above. */
 function TeammatesRailMenu({ teammates, admin }: { teammates: Teammate[]; admin: boolean }) {
   const router = useRouter()
-  const { teammateHref, chooseTeammate } = useThreadPanel()
+  const { chooseTeammate } = useThreadPanel()
   const pathname = usePathname()
   return (
     <RailMenu
@@ -693,7 +990,7 @@ function TeammatesRailMenu({ teammates, admin }: { teammates: Teammate[]; admin:
       active={pathname.startsWith('/app/teammates')}
       items={teammates.map((t) => ({
         id: t.id,
-        href: teammateHref(t.id),
+        href: '/app/threads',
         label: t.name,
         icon: <TeammateAvatar teammate={t} className="size-5" />,
         onSelect: () => chooseTeammate(t.id),
@@ -713,28 +1010,60 @@ function TeammatesRailMenu({ teammates, admin }: { teammates: Teammate[]; admin:
  */
 function Inset({ children }: { children: ReactNode }) {
   const { expanded, computerPage } = useThreadPanel()
+  const frame = useDesktopFrame()
+  const { state } = useSidebar()
+  // The Inbox lays out its own columns, edge to edge, each the window's height.
+  const inboxPage = usePathname().startsWith('/app/inbox')
   return (
     // min-w-0: long unwrapped text inside a page must not widen it past the window.
     <SidebarInset className="min-w-0">
+      {/* Brigade.app's window on macOS, without a title bar: the empty top of the page moves
+          it, as a title bar would (lib/desktop-frame.ts). Controls over it still click. */}
+      {frame && <div data-window-drag aria-hidden className="absolute inset-x-0 top-0 h-10" />}
+      {frame === 'mac' && state === 'collapsed' && <TrafficLightsPill />}
+      <DemoBanner place="phone" />
+      <DemoTour />
       <UpdatePill header={expanded} />
       {!expanded && <TopBar />}
+      {/* A minimized document's button, at the page's top right; a thread has its own. */}
+      {!expanded && <DocumentsCorner />}
       {/* Before the document: a document opened over a docked thread covers it until closed. */}
       <ThreadPanel />
+      {/* A thread's preview: here, so its page stays as it was while another thread shows. */}
+      <KeptPreviews />
       <QuickThread />
       <DocumentPanel />
-      {/* A computer's screen takes the whole page, edge to edge. */}
+      {/* A computer's screen, and the Inbox, take the whole page, edge to edge. */}
       <div
         data-bleed={computerPage ? '' : undefined}
         className={cn(
-          computerPage
+          computerPage || inboxPage
             ? 'w-full min-w-0'
             : 'mx-auto w-full max-w-5xl min-w-0 px-4 pt-6 pb-16 md:px-10 md:pt-8',
           expanded && 'hidden',
         )}
       >
-        {children}
+        {/* Not kept behind it: a thread opens in place (lib/thread-address.ts), over the page
+            it was opened from, which would go on loading and listening unseen. */}
+        {!expanded && children}
       </div>
     </SidebarInset>
+  )
+}
+
+/**
+ * Brigade.app on macOS with the sidebar folded to its rail: the traffic lights (drawn by macOS
+ * at TRAFFIC_LIGHTS in apps/desktop/src/windows.ts, over the page) reach past the rail onto the
+ * page, whatever it shows there. A pill under them, the same surface as the thread's pills,
+ * gives them a ground of their own. It moves the window, as the title bar would.
+ */
+function TrafficLightsPill() {
+  return (
+    <div
+      data-window-drag
+      aria-hidden
+      className="fixed top-3 left-2 z-40 h-7 w-[4.25rem] rounded-full bg-card/90 shadow-sm backdrop-blur"
+    />
   )
 }
 

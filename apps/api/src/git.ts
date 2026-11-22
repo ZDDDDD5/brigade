@@ -17,6 +17,8 @@ import {
 import { prisma, scoped, type Scope, type ScopedDb } from './db.js'
 import { onDefaultBranch, pushRule } from './git-refs.js'
 import { openSecret } from './vault.js'
+import { usableIn } from './apps.js'
+import { playbookAccepts, threadPlaybook } from './playbooks.js'
 
 export { BACKUP_PREFIX, PUSH_PREFIX } from './git-refs.js'
 
@@ -173,6 +175,52 @@ export async function workspaceGitHub(db: ScopedDb, scope: Scope, repo: string) 
 }
 
 /**
+ * A repository Brigade knows by a name it no longer has (renamed or transferred on GitHub), or
+ * one the installations' cached lists do not have yet: the connection reaching it under its name
+ * now. GitHub still answers the old name, redirecting to
+ * the repository's id; null when no connection's installation reaches what it answers.
+ */
+export async function renamedRepository(db: ScopedDb, scope: Scope, repo: string) {
+  const connections = await db.connection.findMany({
+    where: { kind: 'github', status: 'active', vaultSecretId: { not: null } },
+    orderBy: { createdAt: 'asc' },
+  })
+  for (const connection of connections) {
+    const { installationId } = await openSecret<GitHubCredential>(
+      db,
+      scope,
+      connection.vaultSecretId!,
+    )
+    const answered = await fetch(
+      `${GITHUB_API}/repos/${repo.split('/').map(encodeURIComponent).join('/')}`,
+      {
+        headers: {
+          ...githubHeaders,
+          authorization: `Bearer ${await installationToken(installationId)}`,
+        },
+      },
+    )
+      .then((r) => (r.ok ? (r.json() as Promise<{ id: number; full_name: string }>) : null))
+      .catch(() => null)
+    const now = answered?.full_name?.toLowerCase()
+    if (!now) continue
+    // Listed again: the installation's list may still have the old name (or, for the name it
+    // has now, not have it yet).
+    forgetInstallation(installationId)
+    const found = (await installationRepos(installationId).catch(() => null))?.get(now)
+    if (found)
+      return {
+        connectionId: connection.id,
+        installationId,
+        fullName: found.fullName,
+        repository: now,
+        repositoryId: String(answered!.id),
+      }
+  }
+  return null
+}
+
+/**
  * The workspace's active GitHub connections whose installation reaches a repository, listed
  * again when older than maxAgeMs. A connection whose installation is gone is marked for reconnecting.
  */
@@ -212,8 +260,17 @@ export async function connectionsReaching(
   return reaching
 }
 
-/** Whether a teammate's GitHub grants reach a repository, and with write access. */
-export async function teammateGitHub(db: ScopedDb, scope: Scope, teammateId: string, repo: string) {
+/**
+ * Whether a teammate's GitHub grants reach a repository, and with write access. With a
+ * thread: only those it may use there (a member's own account, in the threads they start).
+ */
+export async function teammateGitHub(
+  db: ScopedDb,
+  scope: Scope,
+  teammateId: string,
+  repo: string,
+  thread?: { startedByMemberId: string },
+) {
   const grants = await db.grant.findMany({
     where: { teammateId, connection: { kind: 'github', status: 'active' } },
     include: { connection: true },
@@ -222,6 +279,7 @@ export async function teammateGitHub(db: ScopedDb, scope: Scope, teammateId: str
   let read: { connectionId: string; write: boolean } | null = null
   for (const grant of grants) {
     if (!grant.connection.vaultSecretId) continue
+    if (thread && !usableIn(grant.connection, thread)) continue
     const { installationId } = await openSecret<GitHubCredential>(
       db,
       scope,
@@ -294,13 +352,19 @@ export async function authorize(
       where: { id: claims.sessionId, computerId: claims.computerId },
     })
     if (!row) throw new GitRefused('Brigade: unknown thread')
-    // A playbook's dry run: its work stays in its folder.
+    // A playbook's dry run: its work stays in its folder. A playbook's thread whose teammate
+    // does not have its GitHub App (the one reading customers' mail) reaches no repository.
     const run = row.playbookRunId
       ? await db.playbookRun.findFirst({
           where: { id: row.playbookRunId },
           select: { dryRun: true },
         })
       : null
+    const playbook = run ? await threadPlaybook(db, row.playbookRunId, row.playbookTeammate) : null
+    if (playbook && !playbookAccepts(playbook, 'github'))
+      throw new GitRefused(
+        `Brigade: in this thread, ${playbook.name} has no GitHub; hand code work to the teammate that has it`,
+      )
     session = { id: row.id, origin: row.origin, dryRun: !!run?.dryRun }
     const seat = await db.threadTeammate.findFirst({
       where: { sessionId: session.id, teammateId: claims.teammateId },

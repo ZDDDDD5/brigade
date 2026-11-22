@@ -185,9 +185,9 @@ rejects(
   'a role accepting an App Brigade does not have',
   (m) => {
     analytics(m)
-    m.apps[1].kinds = ['mixpanel', 'posthog']
+    m.apps[1].kinds = ['mixpanel', 'amplitude']
   },
-  /no App posthog/,
+  /no App amplitude/,
 )
 rejects(
   'a role named like another of its Apps',
@@ -295,6 +295,133 @@ test('Gmail replays the latest mails its search matches, as the inbox reader han
   )
 })
 
+test('Gmail leaves out a machine’s mail when its trigger says automated: skip', async () => {
+  const { full } = await import('../src/connectors/gmail.js')
+  const message = (id: string, extra: { name: string; value: string }[] = []) => ({
+    id,
+    threadId: `t${id}`,
+    internalDate: '1700000000000',
+    payload: {
+      mimeType: 'text/plain',
+      headers: [
+        { name: 'From', value: 'Jane <jane@customer.test>' },
+        { name: 'Subject', value: `Mail ${id}` },
+        { name: 'Message-ID', value: `<${id}@x>` },
+        ...extra,
+      ],
+      body: { data: Buffer.from(`Body ${id}`).toString('base64url') },
+    },
+  })
+  const outOfOffice = message('ooo', [{ name: 'Auto-Submitted', value: 'auto-replied' }])
+  const person = message('jane')
+  assert.equal(full(outOfOffice as never).automatic, true)
+  assert.equal(full(person as never).automatic, false)
+  // No search asked: the headers decide first.
+  const asked: string[] = []
+  const fetch = async (url: string) => {
+    asked.push(url)
+    const u = new URL(url)
+    if (u.pathname.endsWith('/messages'))
+      return Response.json({ messages: [{ id: 'ooo' }, { id: 'jane' }] })
+    return Response.json(u.pathname.endsWith('/ooo') ? outOfOffice : person)
+  }
+  const trigger = gmail.triggers!.email_received!
+  const event = (m: unknown) => ({ id: 'e', type: 'email', payload: full(m as never) })
+  assert.equal(
+    await trigger.matches!(
+      event(outOfOffice) as never,
+      { automated: 'skip' },
+      {
+        fetch: fetch as never,
+      },
+    ),
+    false,
+  )
+  assert.equal(asked.length, 0)
+  // Without the option, it is kept as before; a person's mail always is.
+  assert.equal(
+    await trigger.matches!(event(outOfOffice) as never, {}, { fetch: fetch as never }),
+    true,
+  )
+  assert.equal(
+    await trigger.matches!(
+      event(person) as never,
+      { automated: 'skip' },
+      { fetch: fetch as never },
+    ),
+    true,
+  )
+  // A dry run's replay leaves it out the same way.
+  const replayed = await trigger.replay!({ automated: 'skip' }, { fetch: fetch as never }, 5)
+  assert.deepEqual(
+    replayed.map((e) => e.id),
+    ['jane'],
+  )
+})
+
+test('Support and bugs leaves out Gmail tabs and out-of-office replies, never the forums tab', () => {
+  const support = templates().get('brigade/support-bugs')!.manifest
+  const entry = support.entries.find((e) => 'trigger' in e) as { options: Record<string, string> }
+  assert.equal(entry.options.automated, 'skip')
+  assert.match(entry.options.query!, /-category:promotions -category:social -category:updates/)
+  assert.doesNotMatch(entry.options.query!, /forums/)
+})
+
 test("the dry run's closing note shows as Brigade's, not as a person's message", () => {
   assert.equal(childNote(`${DRY_RUN_HEAD}Support and bugs is done: 3 events`), 'dry_run')
+})
+
+test('a Gmail reply goes out from the alias the email was sent to', async () => {
+  const send = async (
+    sendAs: {
+      sendAsEmail: string
+      displayName?: string
+      isPrimary?: boolean
+      verificationStatus?: string
+    }[],
+    extra: { from?: string } = {},
+  ) => {
+    let raw = ''
+    const fetch = async (url: string, init?: RequestInit) => {
+      const u = new URL(url)
+      if (u.pathname.endsWith('/settings/sendAs')) return Response.json({ sendAs })
+      if (u.pathname.endsWith('/messages/send')) {
+        raw = Buffer.from(JSON.parse(String(init!.body)).raw, 'base64url').toString()
+        return Response.json({ id: 'sent', threadId: 't1' })
+      }
+      return Response.json({
+        id: 'm1',
+        threadId: 't1',
+        payload: {
+          headers: [
+            { name: 'Message-ID', value: '<m1@x>' },
+            { name: 'Subject', value: 'Big bug' },
+            { name: 'To', value: 'Acme Support <Support@acme.test>' },
+          ],
+        },
+      })
+    }
+    await gmail.operations.gmail_send!.run({ fetch } as never, {
+      to: ['jane@customer.test'],
+      subject: 'Re: Big bug',
+      body: 'Hi',
+      replyToMessageId: 'm1',
+      ...extra,
+    })
+    return raw.split('\r\n').find((l) => l.startsWith('From:')) ?? null
+  }
+  const own = { sendAsEmail: 'georges@gmail.test', isPrimary: true }
+  const support = {
+    sendAsEmail: 'support@acme.test',
+    displayName: 'Acme Support',
+    verificationStatus: 'accepted',
+  }
+  assert.equal(await send([own, support]), 'From: "Acme Support" <support@acme.test>')
+  // Not a verified alias: the account's own address stays.
+  assert.equal(await send([own, { ...support, verificationStatus: 'pending' }]), null)
+  assert.equal(await send([own]), null)
+  await assert.rejects(
+    send([own], { from: 'support@acme.test' }),
+    /not one of this account's Send mail as/,
+  )
 })

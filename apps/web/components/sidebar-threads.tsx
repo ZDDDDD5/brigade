@@ -1,22 +1,34 @@
 'use client'
 // The sidebar's work: one list of the latest threads, each with its status, and below it
-// the teammates and projects. A teammate opens its latest thread and a project its page,
+// the teammates and projects. A teammate opens a new thread with it and a project its page,
 // and each narrows the list to theirs; the filter beside "Threads" narrows it by status,
 // teammate or project without going anywhere. The list shows its first few threads (waiting
 // on a person first, then working, then the rest) and folds the others into a "+N" row, so
 // the teammates and projects stay in reach however many there are; older ones load on asking.
-// Threads this member pinned sit above them, under Pinned, in the order they drag them to;
-// archived ones are out of both,
-// and the filter lists them. Pinned and Threads each fold to their label alone (what waits
-// on a person is counted once, beside Home), and this browser remembers which are folded.
+// Threads this member pinned sit above them, under Pinned, in the order they drag them to,
+// with the lists they pinned (each with the threads on its items, which leave Threads);
+// archived ones are out of both, and so are those the member snoozed, and the filter lists
+// each (Snoozed with how many, each with when it comes back). The teammates and projects stay in the order the
+// member drags them to, too (useSidebarOrder). Pinned, Threads, Teammates and Projects each
+// fold to their label alone (what waits on a person is counted once, beside Home), and this
+// browser remembers which are folded.
 // Inside Threads, the latest thread waiting on a person shows first, and the others behind a
 // "+N waiting on you".
+// A thread's child threads stay out of the list: folded under it, unfolded by the caret
+// after its title (SubThreads); a list's threads fold theirs the same way, one level further
+// in. The thread already shows their
+// state: working while one it waits for works, waiting while one waits on a person.
 import {
   Archive,
+  EllipsisVertical,
   ChevronDown,
+  Clock,
   ChevronUp,
+  Globe,
+  ListChecks,
   ListFilter,
   MessagesSquare,
+  Play,
   Plus,
   Settings,
   X,
@@ -24,6 +36,8 @@ import {
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import {
+  Fragment,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -32,10 +46,17 @@ import {
   type ReactNode,
 } from 'react'
 import { TeammateAvatar } from '@/components/dashboard'
+import { TeammateTitle } from '@/components/teammate-title'
 import { ProjectIcon } from '@/components/projects'
 import { RailPanel } from '@/components/rail-menu'
+import { preloadOnPoint } from '@/components/thread-conversation'
 import { useThreadPanel } from '@/components/thread-panel'
+import { FadeText } from '@/components/fade-text'
+import { ListGroupRow } from '@/components/list-group-row'
 import { ThreadRow } from '@/components/thread-row'
+import { renameThread, useThreadMenu } from '@/components/thread-menu'
+import { wakeLabel } from '@/lib/snooze'
+import { WakeupIcon } from '@/components/wakeup-icon'
 import { StreamedTitle } from '@/components/streamed-title'
 import {
   DropdownMenu,
@@ -58,27 +79,64 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
-import { api, type ProjectSummary, type Teammate, type ThreadSummary } from '@/lib/api'
+import { Hint } from '@/components/ui/tooltip'
+import {
+  answerOf,
+  api,
+  isList,
+  useApi,
+  type PinnedList,
+  type ProjectSummary,
+  type SidebarChild,
+  type Teammate,
+  type ThreadSummary,
+} from '@/lib/api'
+import { fetchFar, keepFar, latestOnly } from '@/lib/far-threads'
+import { latestSave } from '@/lib/latest-save'
+import { useShownThreads, withShown } from '@/lib/optimistic-threads'
+import { groupByList, isListRow, listRowId } from '@/lib/list-groups'
+import {
+  groupOf,
+  groupWith,
+  holds,
+  subThreadRows,
+  withoutReviews,
+  type Group,
+} from '@/lib/sub-threads'
+import { useFlip } from '@/lib/use-flip'
+import { clickInPlace } from '@/lib/thread-address'
 import { cn } from '@/lib/utils'
-
-type Group = 'waiting' | 'working' | 'rest'
 
 /** How many threads show before the "+N" row. */
 const CAP = 5
 /** Each "+N more" shows this many more; folding "Threads" goes back to the cap. */
 const STEP = 20
 
-/** Which of Pinned and Threads this browser folded. */
+/** How many of a thread's child threads show unfolded before their "+N more". */
+const CHILD_CAP = 5
+
+/** Whose child threads this browser unfolded, or folded while one of them was open. */
+const CHILDREN_KEY = 'brigade:sidebar-children'
+/** The most remembered: the latest set first. */
+const CHILDREN_KEPT = 100
+
+/** Which of the sidebar's sections this browser folded. */
 const FOLDED_KEY = 'brigade:sidebar-folded'
-type Folded = { pinned: boolean; threads: boolean }
+const SECTIONS = ['pinned', 'threads', 'teammates', 'projects'] as const
+type Folded = Record<(typeof SECTIONS)[number], boolean>
 
 function useFolded() {
-  const [folded, setFolded] = useState<Folded>({ pinned: false, threads: false })
+  const [folded, setFolded] = useState<Folded>({
+    pinned: false,
+    threads: false,
+    teammates: false,
+    projects: false,
+  })
   // Read after the first render, so the server's page and the browser's agree.
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(FOLDED_KEY) ?? 'null') as Partial<Folded> | null
-      setFolded({ pinned: saved?.pinned === true, threads: saved?.threads === true })
+      setFolded(Object.fromEntries(SECTIONS.map((k) => [k, saved?.[k] === true])) as Folded)
     } catch {
       // Nothing saved, or not readable: both open.
     }
@@ -96,20 +154,452 @@ function useFolded() {
   return [folded, toggle] as const
 }
 
-/** A section's label, which folds it. */
+/**
+ * Whose child threads show under them. Folded unless the member unfolded them, or one of them
+ * is open; what the member set wins, and this browser remembers it.
+ */
+function useOpenChildren() {
+  const [set, setSet] = useState<Record<string, boolean>>({})
+  // Read after the first render, so the server's page and the browser's agree.
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(CHILDREN_KEY) ?? 'null') as unknown
+      if (saved && typeof saved === 'object')
+        setSet(
+          Object.fromEntries(
+            Object.entries(saved).filter((e): e is [string, boolean] => typeof e[1] === 'boolean'),
+          ),
+        )
+    } catch {
+      // Nothing saved, or not readable: all folded.
+    }
+  }, [])
+  const toggle = (id: string, open: boolean) =>
+    setSet((s) => {
+      const { [id]: _, ...rest } = s
+      const next = Object.fromEntries(
+        [[id, !open] as const, ...Object.entries(rest)].slice(0, CHILDREN_KEPT),
+      )
+      try {
+        localStorage.setItem(CHILDREN_KEY, JSON.stringify(next))
+      } catch {
+        // Private mode or full: as set until the page reloads.
+      }
+      return next
+    })
+  return [set, toggle] as const
+}
+
+/**
+ * A child thread's branch: a line down from its parent, which the last one ends in a rounded
+ * elbow at its own row, as in a tree, above any child threads of its own.
+ */
+const BRANCH =
+  'relative pl-3.5 before:pointer-events-none before:absolute before:top-0 before:bottom-0 before:left-0 before:border-l before:border-sidebar-border last:before:bottom-auto last:before:h-4 last:before:w-2 last:before:rounded-bl-lg last:before:border-b'
+/** A row under a thread: a child thread or a control, the height of the list's rows. */
+const SUB_ROW =
+  'flex h-8 w-full min-w-0 items-center gap-2 rounded-[10px] px-2 text-left text-sm text-sidebar-foreground outline-hidden ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground'
+
+/** Which rows under a thread show their own child threads, and how to fold them. */
+type Unfolded = { set: Record<string, boolean>; toggle: (id: string, open: boolean) => void }
+
+/**
+ * A thread's child threads, under it: folded, nothing but a button for the keyboard; unfolded, the first
+ * of them (waiting on a person, then working, then the latest), the one open among them, and
+ * a "+N more" for the rest. No dot on those rows: they are controls, not threads.
+ */
+function SubThreads({
+  items,
+  open,
+  onToggle,
+  activeId,
+  needsYou,
+  unfolded,
+  menu,
+  noun = 'sub-thread',
+}: {
+  items: SidebarChild[]
+  open: boolean
+  onToggle: () => void
+  /** The thread open, here or deeper. */
+  activeId: string | null
+  needsYou: Record<string, string>
+  unfolded: Unfolded
+  menu: SubMenu
+  /** What its rows are, for the keyboard's buttons: a list's threads are no sub-threads. */
+  noun?: string
+}) {
+  return (
+    // Folded, it takes no room: the caret after the parent's title unfolds it, and from the
+    // keyboard a "Show N sub-threads" button, shown once focused.
+    <SidebarMenuItem className={cn(!open && 'sr-only has-focus-visible:not-sr-only')}>
+      <SubThreadList
+        className="ml-[18px] group-data-[collapsible=icon]:hidden"
+        items={items}
+        open={open}
+        onToggle={onToggle}
+        activeId={activeId}
+        needsYou={needsYou}
+        unfolded={unfolded}
+        menu={menu}
+        noun={noun}
+      />
+    </SidebarMenuItem>
+  )
+}
+
+/**
+ * The rows of SubThreads. A row with child threads of its own (a list's thread) has a caret
+ * after its title, which folds them under it, one level further in.
+ */
+function SubThreadList({
+  className,
+  items,
+  open,
+  onToggle,
+  activeId,
+  needsYou,
+  unfolded,
+  menu,
+  noun,
+}: {
+  className: string
+  items: SidebarChild[]
+  open: boolean
+  onToggle: () => void
+  activeId: string | null
+  needsYou: Record<string, string>
+  unfolded: Unfolded
+  menu: SubMenu
+  noun: string
+}) {
+  const [all, setAll] = useState(false)
+  // What waits on this member is more than its own status, as for the list's threads.
+  const { shown, hidden } = subThreadRows(items, { needsYou, activeId, all, cap: CHILD_CAP })
+  return (
+    <ul className={cn('flex min-w-0 flex-col', className)}>
+      {open ? (
+        <>
+          {/* Folds them again from the keyboard: the caret is a mouse's only. Shown once
+              focused, so the list keeps no row for it. */}
+          <li className={cn(BRANCH, 'sr-only has-focus-visible:not-sr-only')}>
+            <button
+              type="button"
+              aria-expanded
+              onClick={onToggle}
+              className={cn(SUB_ROW, 'text-muted-foreground')}
+            >
+              Hide {noun}s
+            </button>
+          </li>
+          {shown.map((c) => {
+            const kids = c.children ?? []
+            // Folded unless the member unfolded them, or one of them is open.
+            const kidsOpen =
+              kids.length > 0 &&
+              (unfolded.set[c.id] ?? (!!activeId && kids.some((k) => holds(k, activeId))))
+            const toggleKids = () => unfolded.toggle(c.id, kidsOpen)
+            return (
+              <li key={c.id} className={BRANCH}>
+                <SubThreadRow
+                  thread={c}
+                  active={c.id === activeId}
+                  menu={menu}
+                  caret={
+                    kids.length > 0
+                      ? { open: kidsOpen, count: kids.length, onToggle: toggleKids }
+                      : undefined
+                  }
+                />
+                {kids.length > 0 && (
+                  <SubThreadList
+                    className={cn('ml-2.5', !kidsOpen && 'sr-only has-focus-visible:not-sr-only')}
+                    items={kids}
+                    open={kidsOpen}
+                    onToggle={toggleKids}
+                    activeId={activeId}
+                    needsYou={needsYou}
+                    unfolded={unfolded}
+                    menu={menu}
+                    noun="sub-thread"
+                  />
+                )}
+              </li>
+            )
+          })}
+          {hidden > 0 && (
+            <li className={BRANCH}>
+              <button
+                type="button"
+                data-nav-stop="toggle"
+                onClick={() => setAll(true)}
+                className={cn(SUB_ROW, 'text-muted-foreground')}
+              >
+                {`+${hidden} more`}
+              </button>
+            </li>
+          )}
+        </>
+      ) : (
+        <li className={BRANCH}>
+          <button
+            type="button"
+            aria-expanded={false}
+            onClick={onToggle}
+            className={cn(SUB_ROW, 'text-muted-foreground')}
+          >
+            Show {items.length} {noun}
+            {items.length === 1 ? '' : 's'}
+          </button>
+        </li>
+      )}
+    </ul>
+  )
+}
+
+/** What a row under a thread needs for its menu: the same as a thread's own row (ThreadRow). */
+type SubMenu = {
+  memberId: string | null
+  admin: boolean
+  onChanged: () => void
+  onDeleted: (id: string) => void
+}
+
+/**
+ * A thread under another, or under a list: its title, the caret folding its own child threads,
+ * its preview and wake-up, its dot. Its menu is a thread's (thread-menu.tsx), as on its own row
+ * (ThreadRow): ⋮ on hover in place of its dot, a right-click on the row, or a double-click on
+ * the title to rename it there.
+ */
+function SubThreadRow({
+  thread: c,
+  active,
+  caret,
+  menu,
+}: {
+  thread: SidebarChild & { ask?: string }
+  active: boolean
+  caret?: { open: boolean; count: number; onToggle: () => void }
+  menu: SubMenu
+}) {
+  const { openPreview } = useThreadPanel()
+  const [renaming, setRenaming] = useState(false)
+  const href = `/app/threads/${c.id}`
+  const status = { status: c.status, unread: c.unread, ask: c.ask }
+  const group = groupOf(c.status)
+  const state = group !== 'rest' || c.status === 'failed' || c.unread
+  // From an API older than the menu, a row has none.
+  const startedBy = c.startedBy
+  const thread = {
+    id: c.id,
+    title: c.title,
+    pinnedAt: c.pinnedAt ?? null,
+    laterAt: c.laterAt ?? null,
+    archivedAt: null,
+    doneAt: c.doneAt ?? null,
+    othersMayPrompt: c.othersMayPrompt,
+    previewRunning: c.previewRunning,
+    startedBy: startedBy ?? { id: '' },
+    parent: c.parent ?? null,
+  }
+  const { title, open, setOpen, busy, onMenuKey, content, mayRename } = useThreadMenu({
+    thread,
+    memberId: menu.memberId,
+    admin: menu.admin,
+    onRename: () => setRenaming(true),
+    onChanged: menu.onChanged,
+    onDeleted: menu.onDeleted,
+  })
+  const hasMenu = !!startedBy
+
+  async function rename(next: string) {
+    setRenaming(false)
+    if (await renameThread(c.id, c.title, next)) menu.onChanged()
+  }
+
+  if (renaming)
+    return (
+      <div className="flex h-8 items-center gap-2 rounded-[10px] px-2 ring-1 ring-sidebar-ring">
+        <input
+          autoFocus
+          defaultValue={c.title}
+          aria-label="Thread title"
+          maxLength={200}
+          className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={(e) => void rename(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur()
+            else if (e.key === 'Escape') {
+              e.preventDefault()
+              setRenaming(false)
+            }
+          }}
+        />
+      </div>
+    )
+
+  return (
+    // Its own hover group: not the item's, which holds its child threads too.
+    <div className="group/sub relative">
+      <Link
+        title={`${c.title} · ${state ? `${threadStatusLabel(status)} · ` : ''}${shortAgo(c.updatedAt)}`}
+        href={href}
+        data-active={active}
+        data-nav-stop="link"
+        {...preloadOnPoint(c.id, active)}
+        onClick={(e) => clickInPlace(e, href)}
+        onContextMenu={(e) => {
+          if (!hasMenu) return
+          e.preventDefault()
+          setOpen(true)
+        }}
+        // The first click opened the thread; the second edits its title, as Rename does.
+        onDoubleClick={(e) => {
+          if (!hasMenu || !mayRename) return
+          e.preventDefault()
+          setRenaming(true)
+        }}
+        className={cn(SUB_ROW, busy && 'opacity-60')}
+      >
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <FadeText textClassName={cn(group === 'working' && 'text-shimmer-dim')}>
+            <StreamedTitle threadId={c.id} text={c.title} />
+          </FadeText>
+          {/* As after a thread's title in the list (ThreadRow). */}
+          {caret && (
+            <span
+              aria-hidden
+              // Folds in place: on a phone, the sidebar stays open (ui/sidebar.tsx).
+              data-keeps-sidebar
+              // Enter on the row does the same (sidebar-keys.tsx).
+              data-nav-caret
+              title={
+                caret.open
+                  ? 'Hide sub-threads'
+                  : `Show ${caret.count} sub-thread${caret.count === 1 ? '' : 's'}`
+              }
+              className="text-muted-foreground hover:text-sidebar-foreground -m-1 flex shrink-0 p-1"
+              onClick={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                caret.onToggle()
+              }}
+            >
+              <Play
+                className={cn(
+                  'size-2 fill-current transition-transform',
+                  caret.open && 'rotate-90',
+                )}
+              />
+            </span>
+          )}
+        </span>
+        {/* Its preview is up, as on its parent's row: a click opens it. */}
+        {c.previewRunning && (
+          <span
+            title="Open preview"
+            className="hover:text-sidebar-foreground -m-1 flex shrink-0 p-1"
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              openPreview(c.id)
+            }}
+          >
+            <Globe aria-hidden className="size-3 opacity-50" />
+            <span className="sr-only">Preview running</span>
+          </span>
+        )}
+        {c.wakeAt && <WakeupIcon at={c.wakeAt} />}
+        {/* ⋮ takes the dot's place on hover; on a phone ⋮ is always there, the dot beside it. */}
+        <span
+          className={cn(
+            'flex shrink-0',
+            hasMenu && 'max-md:mr-5 md:group-hover/sub:opacity-0',
+            open && 'opacity-0',
+          )}
+        >
+          {state ? (
+            <ThreadStatusIcon {...status} />
+          ) : (
+            <span aria-hidden className="size-4 shrink-0" />
+          )}
+        </span>
+      </Link>
+      {hasMenu && (
+        <DropdownMenu open={open} onOpenChange={setOpen}>
+          {/* Only on the hovered row, or while its menu is open, as on a thread's row. */}
+          <Hint label="More">
+            <DropdownMenuTrigger
+              aria-label={`${title}: more`}
+              className={cn(
+                'text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground absolute top-1.5 right-1 flex aspect-square w-5 items-center justify-center rounded-md p-0 outline-hidden focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0',
+                // A larger hit area on a phone.
+                'after:absolute after:-inset-2 md:after:hidden',
+                'data-[state=open]:bg-sidebar-accent focus-visible:opacity-100 data-[state=open]:opacity-100 md:opacity-0 md:group-hover/sub:opacity-100',
+              )}
+            >
+              <EllipsisVertical />
+            </DropdownMenuTrigger>
+          </Hint>
+          <DropdownMenuContent
+            align="start"
+            side="right"
+            className="min-w-44"
+            onKeyDown={onMenuKey}
+            // Not back to ⋮: focused, it would stay shown once the pointer has left the row.
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
+            {content}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
+  )
+}
+
+/**
+ * A section's label, which folds it; with `href`, the label opens that page and its chevron
+ * folds.
+ */
 function FoldButton({
   label,
   folded,
   onToggle,
+  href,
+  stop = false,
 }: {
   label: string
   folded: boolean
   onToggle: () => void
+  href?: string
+  /** Folded, ⌥↑ / ⌥↓ stop on it, and Enter unfolds it (sidebar-keys.tsx). */
+  stop?: boolean
 }) {
   const Chevron = folded ? ChevronDown : ChevronUp
+  const navStop = stop && folded ? 'toggle' : undefined
+  if (href)
+    return (
+      <span className="-ml-1 flex items-center">
+        <Link href={href} className="hover:text-sidebar-foreground rounded-md px-1">
+          {label}
+        </Link>
+        <button
+          type="button"
+          data-nav-stop={navStop}
+          onClick={onToggle}
+          aria-expanded={!folded}
+          aria-label={`${label}: ${folded ? 'show' : 'hide'}`}
+          className="hover:text-sidebar-foreground -ml-1 rounded-md px-1"
+        >
+          <Chevron className="size-3.5" />
+        </button>
+      </span>
+    )
   return (
     <button
       type="button"
+      data-nav-stop={navStop}
       onClick={onToggle}
       aria-expanded={!folded}
       aria-label={`${label}: ${folded ? 'show' : 'hide'}`}
@@ -121,15 +611,64 @@ function FoldButton({
   )
 }
 
-const groupOf = (status: string): Group =>
-  status === 'waiting'
-    ? 'waiting'
-    : status === 'starting' || status === 'running'
-      ? 'working'
-      : 'rest'
+/** The sidebar's lists the member orders by dragging. */
+export type SidebarList = 'teammates' | 'projects'
+
+/**
+ * The order this member dragged their teammates and projects to, in this workspace (the API
+ * keeps it): `sort` puts a list in it, those not placed yet at the end as they came, and
+ * `reorder` keeps a new one, shown at once.
+ */
+export function useSidebarOrder() {
+  const { data, setData, reload } = useApi<Record<SidebarList, string[]>>('/me/sidebar-order')
+  const sort = useCallback(
+    <T extends { id: string }>(list: SidebarList, items: T[]) => {
+      const ids = data?.[list]
+      if (!ids?.length) return items
+      const rank = (id: string) => {
+        const i = ids.indexOf(id)
+        return i < 0 ? ids.length : i
+      }
+      // Stable: those not placed keep the list's own order.
+      return [...items].sort((a, b) => rank(a.id) - rank(b.id))
+    },
+    [data],
+  )
+  // A save per list at a time, the latest asked for: drags in quick succession reach the
+  // server in order, so the last one stays. Failed, the list goes back to what it holds.
+  const saves = useRef<Partial<Record<SidebarList, (ids: string[]) => Promise<void>>>>({})
+  const reorder = useCallback(
+    (list: SidebarList, ids: string[]) => {
+      setData((d) => ({ teammates: [], projects: [], ...d, [list]: ids }))
+      saves.current[list] ??= latestSave(
+        (ids: string[]) => api('/me/sidebar-order', { method: 'PUT', body: { list, ids } }),
+        (e) => {
+          alert(e instanceof Error ? e.message : String(e))
+          void reload()
+        },
+      )
+      void saves.current[list](ids)
+    },
+    [setData, reload],
+  )
+  return { sort, reorder }
+}
+
+/** The lists whose rows drag to another place. */
+type DragList = 'pinned' | SidebarList
+
+/** Under Pinned: a thread, or a list (`list`) with its threads' row when any work on it. */
+type PinnedEntry = {
+  id: string
+  pinnedAt: string
+  position: number
+  thread?: ThreadSummary
+  list?: PinnedList
+}
 
 const LABELS: Record<string, string> = {
   waiting: 'needs you',
+  paused: 'paused',
   starting: 'working',
   running: 'working',
 }
@@ -140,6 +679,28 @@ const LABELS: Record<string, string> = {
  * updates stopped reaching Brigade (stuck). Otherwise grey: filled while a reply is unread,
  * a ring once read.
  */
+/** What a thread's dot says, in words. */
+export function threadStatusLabel({
+  status,
+  unread = false,
+  stuck = false,
+  ask,
+}: {
+  status: string
+  unread?: boolean
+  stuck?: boolean
+  ask?: string
+}) {
+  const group = groupOf(status)
+  return stuck
+    ? 'updates not arriving'
+    : status === 'failed' && ask && ask !== 'failed'
+      ? `failed · ${ask}`
+      : group === 'waiting' && ask
+        ? ask
+        : (LABELS[status] ?? status) + (group === 'rest' ? (unread ? ', unread' : ', read') : '')
+}
+
 export function ThreadStatusIcon({
   status,
   unread = false,
@@ -154,11 +715,7 @@ export function ThreadStatusIcon({
   className?: string
 }) {
   const group = groupOf(status)
-  const label = stuck
-    ? 'updates not arriving'
-    : group === 'waiting' && ask
-      ? ask
-      : (LABELS[status] ?? status) + (group === 'rest' ? (unread ? ', unread' : ', read') : '')
+  const label = threadStatusLabel({ status, unread, stuck, ask })
   return (
     <span
       role="img"
@@ -169,9 +726,9 @@ export function ThreadStatusIcon({
       {stuck ? (
         <span className="bg-destructive size-2 rounded-full" />
       ) : group === 'working' ? (
-        <span className="bg-primary ring-primary/25 size-2 rounded-full ring-[3px]" />
+        <span className="bg-primary size-2 rounded-full" />
       ) : group === 'waiting' ? (
-        <span className="bg-warning ring-warning/25 size-2 rounded-full ring-[3px]" />
+        <span className="bg-warning size-2 rounded-full" />
       ) : status === 'failed' ? (
         <span className="bg-destructive size-2 rounded-full" />
       ) : unread ? (
@@ -237,6 +794,25 @@ const statusKey = (t: ThreadSummary): StatusKey | undefined => {
 }
 
 /**
+ * Where a row goes among those waiting, working and the rest: a failed thread that asks
+ * something of the member waits on them, its dot still red; so does a list's row with one.
+ */
+const groupIn = (t: ThreadSummary, asks: Map<string, string>): Group =>
+  isListRow(t)
+    ? groupOf(t.status) === 'rest' &&
+      !!t.children?.some((c) => c.status === 'failed' && asks.has(c.id))
+      ? 'waiting'
+      : groupOf(t.status)
+    : groupWith(t.status, asks.get(t.id))
+
+/** What the filter finds a thread under: a failed one waiting on the member under both. */
+const statusKeys = (t: ThreadSummary, asks: Map<string, string>): StatusKey[] => {
+  const key = statusKey(t)
+  if (key === 'failed' && groupIn(t, asks) === 'waiting') return ['waiting', 'failed']
+  return key ? [key] : []
+}
+
+/**
  * What the list shows. A teammate or project picked from its row (`byRow`) goes with the
  * page it opened: leaving for another page ends it. One picked from the menu stays.
  */
@@ -247,9 +823,9 @@ type Filter = {
   byRow?: 'teammate' | 'project'
 }
 
-/** The filter this browser last set, and whether it showed the archived threads. */
+/** The filter this browser last set, and whether it showed the archived or later threads. */
 const FILTER_KEY = 'brigade:sidebar-filter'
-type SavedFilter = Filter & { archived?: boolean }
+type SavedFilter = Filter & { archived?: boolean; later?: boolean }
 
 /** Whether `pathname` is the page a filter from a row goes with. */
 function onOwnPage(filter: Filter, pathname: string) {
@@ -278,7 +854,7 @@ function readFilter(pathname: string): SavedFilter | undefined {
       else filter.projectId = undefined
       filter.byRow = undefined
     }
-    return { ...filter, archived: saved.archived === true }
+    return { ...filter, archived: saved.archived === true, later: saved.later === true }
   } catch {
     // Nothing saved, or not readable: no filter.
   }
@@ -293,17 +869,30 @@ function saveFilter(saved: SavedFilter) {
 }
 
 /** The threads with what each waiting on a person asks, those shown as waiting. */
-function withAsks(threads: ThreadSummary[], needsYou: Record<string, string>) {
+function withAsks(
+  threads: ThreadSummary[],
+  needsYou: Record<string, string>,
+  openId: string | null,
+) {
   const asks = new Map<string, string>()
-  const all = threads.map((t) => {
+  const all = threads.map((thread) => {
+    // Its pull requests' reviews are not rows of their own (lib/sub-threads.ts).
+    const t = withoutReviews(thread, needsYou, openId)
+    // A failed thread's pull request is not ready for a person: the thread waits on them, its
+    // red dot says what to do (src/failed.ts in the API).
     const ask =
       needsYou[t.id] ??
-      (t.pullsWaiting ? 'review PR' : t.status === 'waiting' ? 'needs you' : undefined)
+      (t.pullsWaiting && t.status !== 'failed'
+        ? 'review PR'
+        : t.status === 'waiting'
+          ? 'needs you'
+          : undefined)
     // Children it waits for at work: it shows as working, as for its own background work.
     if (!ask)
       return t.childrenWorking && groupOf(t.status) === 'rest' ? { ...t, status: 'running' } : t
     asks.set(t.id, ask)
-    return groupOf(t.status) === 'rest' ? { ...t, status: 'waiting' } : t
+    // Failed, it keeps its red dot; it is listed with those waiting all the same (groupIn).
+    return groupOf(t.status) === 'rest' && t.status !== 'failed' ? { ...t, status: 'waiting' } : t
   })
   return { all, asks }
 }
@@ -320,14 +909,18 @@ export function SidebarWork({
   admin,
   memberId,
   onNewProject,
+  onReorder,
   needsYou,
   rail,
 }: {
+  /** The teammates and projects in the member's order (useSidebarOrder). */
   teammates: Teammate[]
   projects: ProjectSummary[]
   admin: boolean
   memberId: string | null
   onNewProject: () => void
+  /** The member dragged a teammate or project to another place: the list's ids, in order. */
+  onReorder: (list: SidebarList, ids: string[]) => void
   /**
    * Threads with an open ticket waiting on this member or a task in Needs you, and what it
    * asks ("approve").
@@ -342,11 +935,22 @@ export function SidebarWork({
   const [filter, setFilter] = useState<Filter>({ statuses: [] })
   // The archived threads, while the list shows them instead (from the filter).
   const [archived, setArchived] = useState<ThreadSummary[]>()
-  const loadArchived = () =>
-    api<ThreadSummary[]>('/threads?archived=1').then(setArchived, () => setArchived([]))
+  const loadArchived = () => {
+    setLater(false)
+    return answerOf<ThreadSummary[]>('/threads?archived=1', { accept: isList }).then(
+      setArchived,
+      () => setArchived([]),
+    )
+  }
+  // Whether the list shows the threads this member snoozed instead (the filter's Snoozed).
+  // They are in the panel's list, all of them, out of the usual one.
+  const [later, setLater] = useState(false)
+  const putAway = useMemo(() => (threads ?? []).filter((t) => t.laterAt), [threads])
   // How many more than the cap the list shows: a step at a time.
   const [extra, setExtra] = useState(0)
   const [folded, toggleFolded] = useFolded()
+  const [childrenSet, toggleChildren] = useOpenChildren()
+  const unfolded = { set: childrenSet, toggle: toggleChildren }
   // Whether the list shows every thread waiting on a person, not only the latest.
   const [allWaiting, setAllWaiting] = useState(false)
   // Threads older than the latest the panel loads, asked for from the end of the list; and
@@ -354,15 +958,24 @@ export function SidebarWork({
   const [older, setOlder] = useState<ThreadSummary[]>([])
   const [exhausted, setExhausted] = useState<string[]>([])
   const [loadingOlder, setLoadingOlder] = useState(false)
-  // Pinned as just dragged, until the list comes back in that order; and the drag under way:
-  // the row dragged, and where it would land (before or after the row under the pointer).
+  // Pinned as just dragged, until the list comes back in that order; and the drag under way
+  // (pinned, teammates or projects): the row dragged, and where it would land (before or after
+  // the row under the pointer, in the same list).
   const [pinOrder, setPinOrder] = useState<string[]>()
-  const [dragged, setDragged] = useState<string>()
+  const [dragged, setDragged] = useState<{ list: DragList; id: string }>()
   const [dropAt, setDropAt] = useState<{ id: string; after: boolean }>()
   const live = projects.filter((p) => !p.archivedAt)
   const teammate = teammates.find((t) => t.id === filter.teammateId)
   const project = live.find((p) => p.id === filter.projectId)
-  const filtered = !!(filter.teammateId || filter.projectId || filter.statuses.length || archived)
+  const filtered = !!(
+    filter.teammateId ||
+    filter.projectId ||
+    filter.statuses.length ||
+    archived ||
+    later
+  )
+  // The archived or later threads instead of the usual list: in one list, as they come.
+  const instead = !!archived || later
 
   // The filter this browser last set comes back with the page: read after the first render,
   // so the server's page and the browser's agree, and saved from then on.
@@ -370,17 +983,18 @@ export function SidebarWork({
   useEffect(() => {
     const saved = readFilter(pathname)
     if (saved) {
-      const { archived, ...rest } = saved
+      const { archived, later, ...rest } = saved
       setFilter(rest)
       if (archived) void loadArchived()
+      else if (later) setLater(true)
     }
     setRestored(true)
     // Once, on load: later pages keep the filter as it is.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   useEffect(() => {
-    if (restored) saveFilter({ ...filter, archived: !!archived })
-  }, [restored, filter, archived])
+    if (restored) saveFilter({ ...filter, archived: !!archived, later })
+  }, [restored, filter, archived, later])
   // A teammate or project since removed filters nothing in: it goes, once the lists are in.
   useEffect(() => {
     if (filter.teammateId && teammates.length && !teammate)
@@ -404,47 +1018,125 @@ export function SidebarWork({
       }))
   }, [pathname])
 
+  // Threads waiting on this member that are older than those loaded (choices from last week, a
+  // ticket in an old thread): asked for by id, so the list shows them with the others waiting
+  // and agrees with the count beside Today.
+  const farIds = useMemo(() => {
+    const near = [...(threads ?? []), ...older]
+    return Object.keys(needsYou)
+      .filter((id) => !near.some((t) => holds(t, id)))
+      .sort()
+  }, [threads, older, needsYou])
+  const farKey = farIds.join('\n')
+  const [far, setFar] = useState<ThreadSummary[]>([])
+  // Only the latest answer lands: one asked for before and answering after never replaces it.
+  const deliverFar = useMemo(() => latestOnly<ThreadSummary[]>(setFar), [])
+  // Asked again as the list reloads (a thread changed), every id however many, by batches.
+  useEffect(() => {
+    if (!threads) return
+    const ids = farKey ? farKey.split('\n') : []
+    deliverFar(
+      ids.length
+        ? fetchFar(ids, (path) => answerOf<ThreadSummary[]>(path, { accept: isList }))
+        : Promise.resolve([]),
+    )
+  }, [threads, farKey, deliverFar])
+
   // Waiting on a person is more than the thread's own status: a ticket for this member, a task
   // in Needs you, or a pull request it opened that a person has to review or merge. Unless it is working: then
   // it shows as working, and waits once it stops. What each asks goes at the row's end.
-  const { all, asks } = useMemo(() => {
+  const changes = useShownThreads()
+  const { all, asks, farOnes } = useMemo(() => {
     const latestIds = new Set((threads ?? []).map((t) => t.id))
-    return withAsks(
-      archived ?? [...(threads ?? []), ...older.filter((t) => !latestIds.has(t.id))],
-      needsYou,
-    )
-  }, [threads, older, needsYou, archived])
-  // Pinned: where the member dragged them, else in the order they were pinned, whatever the
-  // filter. Pinned since the last drag, at the end.
-  const pinned = useMemo(() => {
-    if (archived) return []
-    const rank = (t: ThreadSummary) => {
-      const i = pinOrder?.indexOf(t.id) ?? -1
-      return pinOrder ? (i < 0 ? pinOrder.length : i) : (t.pinPosition ?? 0)
+    const olderOnes = older.filter((t) => !latestIds.has(t.id))
+    const loadedIds = new Set([...latestIds, ...olderOnes.map((t) => t.id)])
+    // Only those still waiting: an answer from before may bring one that waits no more.
+    const farRows = keepFar(far, farIds, loadedIds)
+    const farOnes = new Set(farRows.map((t) => t.id))
+    // A pin, snooze, done or archive just clicked shows at once, ahead of the server
+    // (lib/optimistic-threads.ts): archived, it leaves the list; unarchived, the archived one.
+    const list = (archived ?? [...(threads ?? []), ...olderOnes, ...farRows])
+      .map((t) => withShown(t, changes))
+      .filter((t) => !!archived === !!t.archivedAt)
+    return { ...withAsks(list, needsYou, threadId), farOnes }
+  }, [threads, older, far, farIds, needsYou, archived, threadId, changes])
+  // The lists this member pinned: under Pinned, each with the threads on its items (those not
+  // pinned themselves), which leave Threads.
+  const pinnedLists = useApi<PinnedList[]>('/lists/pins', ['lists.updated'])
+  const pinnedListIds = useMemo(
+    () => new Set((pinnedLists.data ?? []).map((l) => l.documentId)),
+    [pinnedLists.data],
+  )
+  const onPinnedList = useCallback(
+    (t: ThreadSummary) => !!t.list && pinnedListIds.has(t.list.documentId),
+    [pinnedListIds],
+  )
+  async function pinList(documentId: string, pinned: boolean) {
+    await api(`/lists/${documentId}/pin`, { method: pinned ? 'DELETE' : 'POST' })
+    // Threads on it from long ago come with the list's pin.
+    await Promise.all([pinnedLists.reload(), reloadThreads()])
+  }
+  // Pinned threads and lists: where the member dragged them, else in the order they were
+  // pinned, whatever the filter. Pinned since the last drag, at the end. A list is its row
+  // with its threads under it, or alone while no thread works on it (`thread` unset).
+  const pinned = useMemo((): PinnedEntry[] => {
+    if (instead) return []
+    const onList = new Map<string, ThreadSummary[]>()
+    for (const t of all)
+      if (!t.pinnedAt && !t.laterAt && onPinnedList(t))
+        onList.set(t.list!.documentId, [...(onList.get(t.list!.documentId) ?? []), t])
+    const entries: PinnedEntry[] = [
+      ...all
+        .filter((t) => t.pinnedAt && !t.laterAt)
+        .map((t) => ({ id: t.id, pinnedAt: t.pinnedAt!, position: t.pinPosition ?? 0, thread: t })),
+      ...(pinnedLists.data ?? []).map((l) => {
+        const threads = onList.get(l.documentId)
+        return {
+          id: listRowId(l.documentId),
+          pinnedAt: l.pinnedAt,
+          position: l.position,
+          list: l,
+          thread: threads && groupByList(threads)[0],
+        }
+      }),
+    ]
+    const rank = (e: PinnedEntry) => {
+      const i = pinOrder?.indexOf(e.id) ?? -1
+      return pinOrder ? (i < 0 ? pinOrder.length : i) : e.position
     }
-    return all
-      .filter((t) => t.pinnedAt)
-      .sort((a, b) => rank(a) - rank(b) || a.pinnedAt!.localeCompare(b.pinnedAt!))
-  }, [all, archived, pinOrder])
+    return entries.sort((a, b) => rank(a) - rank(b) || a.pinnedAt.localeCompare(b.pinnedAt))
+  }, [all, instead, pinOrder, pinnedLists.data, onPinnedList])
 
-  async function movePin(id: string, to: { id: string; after: boolean }) {
-    const ids = pinned.map((t) => t.id).filter((x) => x !== id)
+  /** The list's ids with `id` moved before or after `to`; undefined when nothing moves. */
+  function moved(list: { id: string }[], id: string, to: { id: string; after: boolean }) {
+    const ids = list.map((t) => t.id).filter((x) => x !== id)
     const at = ids.indexOf(to.id)
     if (at < 0) return
     ids.splice(at + (to.after ? 1 : 0), 0, id)
-    if (ids.every((x, i) => x === pinned[i]?.id)) return
+    if (ids.every((x, i) => x === list[i]?.id)) return
+    return ids
+  }
+  function move({ list, id }: { list: DragList; id: string }, to: { id: string; after: boolean }) {
+    if (list === 'pinned') return void movePin(id, to)
+    const ids = moved(list === 'teammates' ? teammates : live, id, to)
+    if (ids) onReorder(list, ids)
+  }
+  async function movePin(id: string, to: { id: string; after: boolean }) {
+    const ids = moved(pinned, id, to)
+    if (!ids) return
     setPinOrder(ids)
     try {
       await api('/threads/pins/order', { method: 'PUT', body: { ids } })
-      await reloadThreads()
+      // Lists keep their place in their own list: both, or a dragged list jumps back.
+      await Promise.all([reloadThreads(), pinnedLists.reload()])
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e))
     }
     // The list now has the order itself (or, failed, goes back to where it was).
     setPinOrder(undefined)
   }
-  // A pinned row's drag: picked up anywhere on it, it lands before or after the row last under
-  // the pointer, where the line shows. The whole sidebar takes the drop, so past the first or
+  // A row's drag (pinned, a teammate or a project): picked up anywhere on it, it lands before
+  // or after the row of its list last under the pointer, where the line shows. The whole sidebar takes the drop, so past the first or
   // last row it lands where the line still is; out of the sidebar, the line goes and so does
   // the drop. On the window, as the sidebar's padding and edge are in no row or group.
   const drop = useRef(dropAt)
@@ -462,7 +1154,7 @@ export function SidebarWork({
       if (!inSidebar(e)) return
       e.preventDefault()
       const to = drop.current
-      if (to && to.id !== dragged) void movePin(dragged, to)
+      if (to && to.id !== dragged.id) move(dragged, to)
       setDragged(undefined)
       setDropAt(undefined)
     }
@@ -472,20 +1164,21 @@ export function SidebarWork({
       window.removeEventListener('dragover', over)
       window.removeEventListener('drop', dropped)
     }
-    // movePin reads the pinned list of this render; a drag starts and ends within one list.
+    // move reads the lists of this render; a drag starts and ends within one list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dragged])
-  const pinDrag = (id: string): ComponentProps<'li'> => ({
+  const dragRow = (list: DragList, id: string): ComponentProps<'li'> => ({
     draggable: true,
     onDragStart: (e) => {
       e.dataTransfer.effectAllowed = 'move'
-      e.dataTransfer.setData('application/x-brigade-pin', id)
+      e.dataTransfer.setData(`application/x-brigade-${list}`, id)
       e.dataTransfer.setDragImage(e.currentTarget, 16, 16)
-      setDragged(id)
+      setDragged({ list, id })
     },
-    // The window's handler then accepts it and takes the drop.
+    // The window's handler then accepts it and takes the drop. Over another list's row, the
+    // line stays where it was.
     onDragOver: (e) => {
-      if (!dragged) return
+      if (dragged?.list !== list) return
       const box = e.currentTarget.getBoundingClientRect()
       const after = e.clientY > box.top + box.height / 2
       if (dropAt?.id !== id || dropAt.after !== after) setDropAt({ id, after })
@@ -495,9 +1188,10 @@ export function SidebarWork({
       setDropAt(undefined)
     },
     className: cn(
-      dragged === id && 'opacity-50',
+      dragged?.id === id && 'opacity-50',
       dropAt?.id === id &&
-        dragged !== id &&
+        dragged?.list === list &&
+        dragged.id !== id &&
         'before:bg-primary before:pointer-events-none before:absolute before:inset-x-2 before:z-10 before:h-0.5 before:rounded-full',
       dropAt?.id === id && (dropAt.after ? 'before:-bottom-px' : 'before:-top-px'),
     ),
@@ -506,18 +1200,21 @@ export function SidebarWork({
     () =>
       all.filter(
         (t) =>
-          (archived || !t.pinnedAt) &&
+          (instead || (!t.pinnedAt && !onPinnedList(t))) &&
+          (later ? !!t.laterAt : !t.laterAt) &&
           (!filter.teammateId || inThread(t, filter.teammateId)) &&
           (!filter.projectId || t.projectId === filter.projectId) &&
-          (!filter.statuses.length || filter.statuses.includes(statusKey(t)!)),
+          (!filter.statuses.length || statusKeys(t, asks).some((k) => filter.statuses.includes(k))),
       ),
-    [all, filter],
+    [all, asks, filter, instead, later, onPinnedList],
   )
   const groups = useMemo(() => {
     const by: Record<Group, ThreadSummary[]> = { waiting: [], working: [], rest: [] }
-    for (const t of shown) by[groupOf(t.status)].push(t)
+    // The threads on a list's items go under that list, one row for it (lib/list-groups.ts);
+    // the archived or later threads stay as they come.
+    for (const t of instead ? shown : groupByList(shown)) by[groupIn(t, asks)].push(t)
     return by
-  }, [shown])
+  }, [shown, instead, asks])
   // Another filter starts from the cap again.
   useEffect(() => {
     setExtra(0)
@@ -531,18 +1228,21 @@ export function SidebarWork({
   }`
   // Fewer than the panel's latest 100, unfiltered: there are none older.
   const mayHaveOlder =
-    !archived && !!threads && !exhausted.includes(query) && (!!query || threads.length >= 100)
+    !instead && !!threads && !exhausted.includes(query) && (!!query || threads.length >= 100)
   async function loadOlder() {
+    // From the end of the pages loaded: not from a thread asked for apart, which may be older.
     const matching = all.filter(
       (t) =>
+        !farOnes.has(t.id) &&
         (!filter.teammateId || inThread(t, filter.teammateId)) &&
         (!filter.projectId || t.projectId === filter.projectId),
     )
     const oldest = matching[matching.length - 1]
     setLoadingOlder(true)
     try {
-      const page = await api<ThreadSummary[]>(
+      const page = await answerOf<ThreadSummary[]>(
         `/threads?limit=${OLDER_PAGE}&sort=activity${query}${oldest ? `&before=${oldest.id}` : ''}`,
+        { accept: isList },
       )
       setOlder((o) => {
         const ids = new Set(o.map((t) => t.id))
@@ -560,9 +1260,9 @@ export function SidebarWork({
   // What the list shows: the latest thread waiting on a person, the others behind a "+N waiting on
   // you" until asked; then the first of the rest and a "+N more" past them. Its N counts only
   // threads already loaded and matching, so it never promises ones that may not exist.
-  const waitingRows = archived ? [] : groups.waiting
+  const waitingRows = instead ? [] : groups.waiting
   const waitingShown = allWaiting ? waitingRows : waitingRows.slice(0, 1)
-  const ordered = [...(archived ? groups.waiting : []), ...groups.working, ...groups.rest]
+  const ordered = [...(instead ? groups.waiting : []), ...groups.working, ...groups.rest]
   const visible = CAP + extra
   const hidden = Math.max(0, ordered.length - visible)
   const more =
@@ -577,38 +1277,167 @@ export function SidebarWork({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mayHaveOlder, hidden, loadingOlder, query])
 
+  // The thread open, when the list does not show it (older than its threads, behind a "+N",
+  // filtered out or snoozed): first under Threads while it stays open, so the
+  // member sees where they are. Pinned, it is under Pinned already; a child thread brings
+  // its parent, unfolded.
+  const openId = expanded && !instead ? threadId : null
+  // A child thread open: its parent, which shows it unfolded.
+  const inView =
+    !!openId &&
+    (pinned.some((p) => !!p.thread && holds(p.thread, openId)) ||
+      waitingShown.some((t) => holds(t, openId)) ||
+      ordered.slice(0, visible).some((t) => holds(t, openId)))
+  const loaded = openId ? all.find((t) => holds(t, openId)) : undefined
+  // Not among those loaded: as the list has it, from the server, again as the list changes.
+  const [fetched, setFetched] = useState<ThreadSummary>()
+  useEffect(() => {
+    if (!openId || inView || loaded) return
+    let current = true
+    answerOf<ThreadSummary[]>(`/threads?id=${openId}`, { accept: isList }).then(
+      ([t]) =>
+        current &&
+        setFetched(t && holds(t, openId) ? withAsks([t], needsYou, openId).all[0] : undefined),
+      () => undefined,
+    )
+    return () => {
+      current = false
+    }
+  }, [openId, inView, loaded, threads, needsYou])
+  const opened = inView
+    ? undefined
+    : (loaded ?? (fetched && holds(fetched, openId!) ? withShown(fetched, changes) : undefined))
+  // A thread moving in the list slides to its place; another filter is another list, shown at once.
+  const listRef = useRef<HTMLUListElement>(null)
+  useFlip(listRef, JSON.stringify([filter, !!archived, later]))
+
   function changed() {
-    void reloadThreads()
-    if (archived) void loadArchived()
+    // Older pages may hold the thread as it was (snoozed, say): asked for again.
+    setOlder([])
+    setExhausted([])
+    return Promise.all([reloadThreads(), archived && loadArchived()])
   }
   function deleted(id: string) {
     setOlder((o) => o.filter((t) => t.id !== id))
     if (threadId === id) router.push('/app')
   }
-  function row(t: ThreadSummary, drag?: ComponentProps<'li'>) {
+  /** A sub-thread's or a list's thread's menu, as on a thread's own row. */
+  const subMenu: SubMenu = { memberId, admin, onChanged: changed, onDeleted: deleted }
+  /** `dated`: the thread opened from outside the list, which shows its date to say why it is
+   * at the top. Other rows give it in their tooltip only. */
+  function row(t: ThreadSummary, drag?: ComponentProps<'li'>, dated = false) {
     const href = `/app/threads/${t.id}`
-    return (
-      <ThreadRow
-        key={t.id}
-        thread={t}
-        href={href}
-        active={threadId === t.id && (expanded || pathname === href)}
-        icon={
-          <ThreadStatusIcon
-            status={t.status}
-            unread={t.unread}
-            stuck={!!t.eventsWaitingSince}
-            ask={asks.get(t.id)}
+    const status = {
+      status: t.status,
+      unread: t.unread,
+      stuck: !!t.eventsWaitingSince,
+      ask: asks.get(t.id),
+    }
+    // Working also shows on the title, a band passing over it. Stuck: its red dot alone.
+    const working = statusKey(t) === 'working' && !t.eventsWaitingSince
+    const state = !!(statusKey(t) || t.eventsWaitingSince)
+    // Its child threads, folded under it unless the member unfolded them or one is open.
+    const children = t.children ?? []
+    // The thread open among them, here or under a list's thread.
+    const activeChild =
+      threadId &&
+      (expanded || pathname === `/app/threads/${threadId}`) &&
+      children.some((c) => holds(c, threadId))
+        ? threadId
+        : null
+    const open = children.length > 0 && (childrenSet[t.id] ?? !!activeChild)
+    const toggle = () => toggleChildren(t.id, open)
+    if (isListRow(t)) {
+      const documentId = t.list!.documentId
+      const listHref = `/app/lists/${documentId}`
+      const listPinned = pinnedListIds.has(documentId)
+      return (
+        <Fragment key={t.id}>
+          <ListGroupRow
+            title={t.title}
+            href={listHref}
+            active={pathname === listHref}
+            pinned={listPinned}
+            onPin={() => pinList(documentId, listPinned)}
+            drag={drag}
+            dot={state ? <ThreadStatusIcon {...status} /> : undefined}
+            working={working}
+            hint={
+              state
+                ? `${threadStatusLabel(status)} · ${shortAgo(t.updatedAt)}`
+                : shortAgo(t.updatedAt)
+            }
+            caret={{ open, count: children.length, onToggle: toggle }}
           />
-        }
-        // The dot says it waits on a person: the row's end stays how old it is.
-        trailing={
-          <span className="text-muted-foreground font-normal">{shortAgo(t.updatedAt)}</span>
-        }
-        memberId={memberId}
-        admin={admin}
-        onChanged={changed}
-        onDeleted={deleted}
+          <SubThreads
+            items={children}
+            open={open}
+            onToggle={toggle}
+            activeId={activeChild}
+            needsYou={needsYou}
+            unfolded={unfolded}
+            menu={subMenu}
+            noun="thread"
+          />
+        </Fragment>
+      )
+    }
+    return (
+      <Fragment key={t.id}>
+        <ThreadRow
+          caret={children.length ? { open, count: children.length, onToggle: toggle } : undefined}
+          thread={t}
+          href={href}
+          active={threadId === t.id && (expanded || pathname === href)}
+          dot={state ? <ThreadStatusIcon {...status} /> : undefined}
+          working={working}
+          hint={
+            state
+              ? `${threadStatusLabel(status)} · ${shortAgo(t.updatedAt)}`
+              : shortAgo(t.updatedAt)
+          }
+          trailing={
+            later && t.snoozedUntil ? (
+              <span className="text-muted-foreground font-normal">{wakeLabel(t.snoozedUntil)}</span>
+            ) : (
+              dated && (
+                <span className="text-muted-foreground font-normal">{shortAgo(t.updatedAt)}</span>
+              )
+            )
+          }
+          memberId={memberId}
+          admin={admin}
+          onChanged={changed}
+          onDeleted={deleted}
+          drag={drag}
+        />
+        {children.length > 0 && (
+          <SubThreads
+            items={children}
+            open={open}
+            onToggle={toggle}
+            activeId={activeChild}
+            needsYou={needsYou}
+            unfolded={unfolded}
+            menu={subMenu}
+          />
+        )}
+      </Fragment>
+    )
+  }
+
+  /** A pinned thread or list; a list no thread works on now, alone. */
+  function pinnedRow(p: PinnedEntry, drag?: ComponentProps<'li'>) {
+    if (p.thread) return row(p.thread, drag)
+    const href = `/app/lists/${p.list!.documentId}`
+    return (
+      <ListGroupRow
+        key={p.id}
+        title={p.list!.title}
+        href={href}
+        active={pathname === href}
+        pinned
+        onPin={() => pinList(p.list!.documentId, true)}
         drag={drag}
       />
     )
@@ -623,8 +1452,8 @@ export function SidebarWork({
       byRow: 'teammate',
       ...(f.byRow === 'project' ? { projectId: undefined } : {}),
     }))
-    // Its latest thread, else a box to start one with it.
-    void openTeammate(id)
+    // A new thread with it: its threads are in the list, narrowed to them.
+    openTeammate(id)
   }
   function clickProject(id: string) {
     setFilter((f) => ({
@@ -638,40 +1467,49 @@ export function SidebarWork({
 
   // The list, here and folded in the panel beside the rail: its first threads and its
   // "+N more", which grows it in both.
-  const list = (
-    <>
-      {threads && shown.length === 0 && (archived || !pinned.length) && (
-        <li className="text-muted-foreground px-2 py-1.5 text-xs">
-          {archived ? 'No archived threads.' : filtered ? 'No threads match.' : 'No threads yet.'}
-        </li>
-      )}
-      {waitingShown.map((t) => row(t))}
-      {/* No dot: a control, not a thread; its text lines up with the titles. */}
-      {waitingShown.length < waitingRows.length && (
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="text-muted-foreground pl-8"
-            onClick={() => setAllWaiting(true)}
-          >
-            <span>{`+${waitingRows.length - waitingShown.length} waiting on you`}</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      )}
-      {ordered.slice(0, visible).map((t) => row(t))}
-      {more && (
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            size="sm"
-            className="text-muted-foreground pl-8"
-            onClick={more.onSelect}
-          >
-            <span>{more.label}</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      )}
-    </>
-  )
+  // One keyed array, so a thread moving between them (waiting, then done) keeps its row, which
+  // the expanded list slides to its new place (useFlip).
+  const list = [
+    threads && shown.length === 0 && !opened && (instead || !pinned.length) && (
+      <li key="empty" className="text-muted-foreground px-2 py-1.5 text-xs">
+        {archived
+          ? 'No archived threads.'
+          : later
+            ? 'Nothing snoozed.'
+            : filtered
+              ? 'No threads match.'
+              : 'No threads yet.'}
+      </li>
+    ),
+    opened && row(opened, undefined, true),
+    ...waitingShown.map((t) => row(t)),
+    // No dot: a control, not a thread; its text lines up with the titles.
+    waitingShown.length < waitingRows.length && (
+      <SidebarMenuItem key="more-waiting">
+        <SidebarMenuButton
+          size="sm"
+          data-nav-stop="toggle"
+          className="text-muted-foreground pl-8"
+          onClick={() => setAllWaiting(true)}
+        >
+          <span>{`+${waitingRows.length - waitingShown.length} waiting on you`}</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    ),
+    ...ordered.slice(0, visible).map((t) => row(t)),
+    more && (
+      <SidebarMenuItem key="more">
+        <SidebarMenuButton
+          size="sm"
+          data-nav-stop="toggle"
+          className="text-muted-foreground pl-8"
+          onClick={more.onSelect}
+        >
+          <span>{more.label}</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    ),
+  ]
 
   return (
     <>
@@ -687,7 +1525,7 @@ export function SidebarWork({
             {pinned.length > 0 && (
               <>
                 <SidebarGroupLabel className="h-6">Pinned</SidebarGroupLabel>
-                <SidebarMenu>{pinned.map((t) => row(t))}</SidebarMenu>
+                <SidebarMenu>{pinned.map((p) => pinnedRow(p))}</SidebarMenu>
                 <hr className="border-sidebar-border mx-2 my-1" />
               </>
             )}
@@ -698,7 +1536,32 @@ export function SidebarWork({
           {pinned.length > 0 && (
             <li aria-hidden className="bg-sidebar-border mx-auto my-1 h-px w-4" />
           )}
-          {pinned.map((t) => {
+          {pinned.map((p) => {
+            const t = p.thread
+            // A list: its icon, and its threads' dot.
+            if (!t || isListRow(t)) {
+              const href = `/app/lists/${p.list!.documentId}`
+              return (
+                <SidebarMenuItem key={p.id}>
+                  <SidebarMenuButton asChild tooltip={p.list!.title} isActive={pathname === href}>
+                    <Link href={href} aria-label={p.list!.title} data-nav-stop="link">
+                      <span className="relative flex size-4 shrink-0 items-center justify-center">
+                        <ListChecks aria-hidden className="size-4" />
+                        {t && statusKey(t) && (
+                          <ThreadStatusIcon
+                            status={t.status}
+                            unread={t.unread}
+                            stuck={!!t.eventsWaitingSince}
+                            className="absolute -right-1.5 -bottom-1.5 size-3"
+                          />
+                        )}
+                      </span>
+                      <span>{p.list!.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )
+            }
             const href = `/app/threads/${t.id}`
             const title = t.title || 'New thread'
             return (
@@ -708,7 +1571,7 @@ export function SidebarWork({
                   tooltip={title}
                   isActive={threadId === t.id && (expanded || pathname === href)}
                 >
-                  <Link href={href} aria-label={title}>
+                  <Link href={href} aria-label={title} data-nav-stop="link">
                     <span className="relative flex size-4 shrink-0 items-center justify-center">
                       <TeammateAvatar teammate={t.teammate} className="size-5" />
                       {statusKey(t) && (
@@ -736,13 +1599,14 @@ export function SidebarWork({
           <SidebarGroupLabel>
             <FoldButton
               label="Pinned"
+              stop
               folded={folded.pinned}
               onToggle={() => toggleFolded('pinned')}
             />
           </SidebarGroupLabel>
           {!folded.pinned && (
             <SidebarGroupContent>
-              <SidebarMenu>{pinned.map((t) => row(t, pinDrag(t.id)))}</SidebarMenu>
+              <SidebarMenu>{pinned.map((p) => pinnedRow(p, dragRow('pinned', p.id)))}</SidebarMenu>
             </SidebarGroupContent>
           )}
         </SidebarGroup>
@@ -753,6 +1617,7 @@ export function SidebarWork({
           {/* Folding it also takes the list back to its first threads. */}
           <FoldButton
             label="Threads"
+            stop
             folded={folded.threads}
             onToggle={() => {
               if (!folded.threads) {
@@ -781,6 +1646,7 @@ export function SidebarWork({
             />
           )}
           {archived && <FilterChip label="Archived" onClear={() => setArchived(undefined)} />}
+          {later && <FilterChip label="Snoozed" onClear={() => setLater(false)} />}
           {filter.statuses.length > 0 && (
             <FilterChip
               label={
@@ -795,20 +1661,22 @@ export function SidebarWork({
         {/* Folded, Threads is only its label: no filter beside it. */}
         {!folded.threads && (
           <DropdownMenu>
-            <SidebarGroupAction asChild title="Filter threads">
-              <DropdownMenuTrigger
-                aria-label="Filter threads"
-                className="data-[state=open]:bg-sidebar-accent"
-              >
-                <ListFilter />
-                {filtered && (
-                  <span
-                    aria-hidden
-                    className="bg-primary absolute top-0.5 right-0.5 size-1.5 rounded-full"
-                  />
-                )}
-              </DropdownMenuTrigger>
-            </SidebarGroupAction>
+            <Hint side="right" label="Filter threads">
+              <SidebarGroupAction asChild>
+                <DropdownMenuTrigger
+                  aria-label="Filter threads"
+                  className="data-[state=open]:bg-sidebar-accent"
+                >
+                  <ListFilter />
+                  {filtered && (
+                    <span
+                      aria-hidden
+                      className="bg-primary absolute top-0.5 right-0.5 size-1.5 rounded-full"
+                    />
+                  )}
+                </DropdownMenuTrigger>
+              </SidebarGroupAction>
+            </Hint>
             <DropdownMenuContent align="start" side="right" className="min-w-56">
               <DropdownMenuLabel className="text-muted-foreground text-xs">
                 Status
@@ -878,6 +1746,22 @@ export function SidebarWork({
                 </>
               )}
               <DropdownMenuSeparator />
+              {/* How many: a plain count, so what was snoozed is not forgotten. */}
+              <DropdownMenuCheckboxItem
+                checked={later}
+                onCheckedChange={(on) => {
+                  setLater(on)
+                  if (on) setArchived(undefined)
+                }}
+              >
+                <Clock />
+                Snoozed
+                {putAway.length > 0 && (
+                  <span className="text-muted-foreground ml-auto text-xs tabular-nums">
+                    {putAway.length}
+                  </span>
+                )}
+              </DropdownMenuCheckboxItem>
               <DropdownMenuCheckboxItem
                 checked={!!archived}
                 onCheckedChange={(on) => (on ? void loadArchived() : setArchived(undefined))}
@@ -892,6 +1776,7 @@ export function SidebarWork({
                     onSelect={() => {
                       setFilter({ statuses: [] })
                       setArchived(undefined)
+                      setLater(false)
                     }}
                   >
                     Clear filters
@@ -903,88 +1788,117 @@ export function SidebarWork({
         )}
         {!folded.threads && (
           <SidebarGroupContent>
-            <SidebarMenu>{list}</SidebarMenu>
+            <SidebarMenu ref={listRef}>{list}</SidebarMenu>
           </SidebarGroupContent>
         )}
       </SidebarGroup>
 
       <SidebarGroup className="py-1 group-data-[collapsible=icon]:hidden">
-        <SidebarGroupLabel>Teammates</SidebarGroupLabel>
+        <SidebarGroupLabel>
+          <FoldButton
+            label="Teammates"
+            folded={folded.teammates}
+            onToggle={() => toggleFolded('teammates')}
+          />
+        </SidebarGroupLabel>
         {admin && (
-          <SidebarGroupAction asChild title="New teammate">
-            <Link href="/app/teammates/new">
-              <Plus />
-              <span className="sr-only">New teammate</span>
-            </Link>
-          </SidebarGroupAction>
+          <Hint side="right" label="New teammate">
+            <SidebarGroupAction asChild>
+              <Link href="/app/teammates/new">
+                <Plus />
+                <span className="sr-only">New teammate</span>
+              </Link>
+            </SidebarGroupAction>
+          </Hint>
         )}
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {teammates.map((t) => (
-              <SidebarRow
-                key={t.id}
-                active={filter.teammateId === t.id}
-                title={`${t.name}: its latest thread, and only its threads above`}
-                onClick={() => clickTeammate(t.id)}
-                icon={<TeammateAvatar teammate={t} className="size-5" />}
-                label={t.name}
-                action={{
-                  href: `/app/teammates/${t.id}`,
-                  label: `${t.name}'s settings`,
-                  icon: <Settings />,
-                }}
-              />
-            ))}
-          </SidebarMenu>
-        </SidebarGroupContent>
+        {!folded.teammates && (
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {teammates.map((t) => (
+                <SidebarRow
+                  key={t.id}
+                  drag={dragRow('teammates', t.id)}
+                  active={filter.teammateId === t.id}
+                  title={`${t.name}: its latest thread, and only its threads above`}
+                  onClick={() => clickTeammate(t.id)}
+                  icon={<TeammateAvatar teammate={t} className="size-5" />}
+                  label={t.name}
+                  badge={
+                    <TeammateTitle title={t.title} className="max-w-28 px-1.5 py-0 text-[11px]" />
+                  }
+                  action={{
+                    href: `/app/teammates/${t.id}`,
+                    label: `${t.name}'s settings`,
+                    icon: <Settings />,
+                  }}
+                />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        )}
       </SidebarGroup>
 
       <SidebarGroup className="py-1 group-data-[collapsible=icon]:hidden">
-        <SidebarGroupLabel asChild>
-          <Link href="/app/projects">Projects</Link>
+        <SidebarGroupLabel>
+          <FoldButton
+            label="Projects"
+            href="/app/projects"
+            folded={folded.projects}
+            onToggle={() => toggleFolded('projects')}
+          />
         </SidebarGroupLabel>
-        <SidebarGroupAction title="New project" onClick={onNewProject}>
-          <Plus />
-          <span className="sr-only">New project</span>
-        </SidebarGroupAction>
-        <SidebarGroupContent>
-          <SidebarMenu>
-            {live.map((p) => (
-              <SidebarRow
-                key={p.id}
-                active={
-                  filter.projectId === p.id ||
-                  pathname === `/app/projects/${p.id}` ||
-                  pathname.startsWith(`/app/projects/${p.id}/`)
-                }
-                title={`${p.name}: its page, and only its threads above`}
-                onClick={() => clickProject(p.id)}
-                icon={<ProjectIcon project={p} />}
-                label={p.name}
-              />
-            ))}
-            {live.length === 0 && (
-              <SidebarMenuItem>
-                <SidebarMenuButton className="text-muted-foreground" onClick={onNewProject}>
-                  <Plus />
-                  <span>New project</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            )}
-          </SidebarMenu>
-        </SidebarGroupContent>
+        <Hint side="right" label="New project">
+          <SidebarGroupAction onClick={onNewProject}>
+            <Plus />
+            <span className="sr-only">New project</span>
+          </SidebarGroupAction>
+        </Hint>
+        {!folded.projects && (
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {live.map((p) => (
+                <SidebarRow
+                  key={p.id}
+                  drag={dragRow('projects', p.id)}
+                  active={
+                    filter.projectId === p.id ||
+                    pathname === `/app/projects/${p.id}` ||
+                    pathname.startsWith(`/app/projects/${p.id}/`)
+                  }
+                  title={`${p.name}: its page, and only its threads above`}
+                  onClick={() => clickProject(p.id)}
+                  icon={<ProjectIcon project={p} />}
+                  label={p.name}
+                />
+              ))}
+              {live.length === 0 && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton className="text-muted-foreground" onClick={onNewProject}>
+                    <Plus />
+                    <span>New project</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        )}
       </SidebarGroup>
     </>
   )
 }
 
-/** A teammate or project: opens its thread or page, and narrows the list above to it. */
+/**
+ * A teammate or project: opens its thread or page, and narrows the list above to it. Dragged,
+ * it goes to another place in its list.
+ */
 function SidebarRow({
+  drag,
   active,
   title,
   onClick,
   icon,
   label,
+  badge,
   action,
 }: {
   active: boolean
@@ -992,20 +1906,27 @@ function SidebarRow({
   onClick: () => void
   icon: ReactNode
   label: string
+  /** Beside the label: a teammate's title. */
+  badge?: ReactNode
   action?: { href: string; label: string; icon: ReactNode }
+  /** Its drag handlers and the drop line's class. */
+  drag?: ComponentProps<'li'>
 }) {
   return (
-    <SidebarMenuItem>
+    <SidebarMenuItem {...drag}>
       <SidebarMenuButton isActive={active} title={title} onClick={onClick}>
         {icon}
         <span className="truncate">{label}</span>
+        {badge}
       </SidebarMenuButton>
       {action && (
-        <SidebarMenuAction asChild showOnHover>
-          <Link href={action.href} aria-label={action.label} title={action.label}>
-            {action.icon}
-          </Link>
-        </SidebarMenuAction>
+        <Hint side="right" label={action.label}>
+          <SidebarMenuAction asChild showOnHover>
+            <Link href={action.href} aria-label={action.label}>
+              {action.icon}
+            </Link>
+          </SidebarMenuAction>
+        </Hint>
       )}
     </SidebarMenuItem>
   )

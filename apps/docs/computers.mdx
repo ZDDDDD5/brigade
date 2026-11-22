@@ -1,0 +1,151 @@
+---
+title: 'Your computer or Brigade Cloud'
+description: 'Where your teammates run, what each option gives you, and how to move a thread between them.'
+---
+
+A teammate works on a computer: it runs the real Claude Code or Codex there, with a browser, your repositories and
+the previews of the apps it builds. The computer is linked to your workspace by a small program, the **runner**.
+You can use your own computer for free, Brigade's cloud computer, or both.
+
+|                                 | Your own computer                        | Brigade Cloud                                         |
+| ------------------------------- | ---------------------------------------- | ----------------------------------------------------- |
+| **Price**                       | Free                                     | From $15 a month per workspace (€15 in the euro zone) |
+| **When teammates work**         | While your computer is on and awake      | All the time, even when your laptop is closed         |
+| **Routines and triggers**       | Only while your computer is on           | On time, even at 3 a.m.                               |
+| **AI usage**                    | Your Claude or ChatGPT plan              | Your Claude or ChatGPT plan                           |
+| **Systems**                     | macOS, Windows, Linux                    | Nothing to install                                    |
+| **Computer use**                | Any app on your Mac, PC or Linux desktop | Its own browser; you can take control of its desktop  |
+| **Take control, Teach a task**  | Not yet                                  | Yes                                                   |
+| **Website logins from Secrets** | Not yet                                  | Yes                                                   |
+| **Turns at once**               | Up to 8 by default                       | Up to 8, shared by the workspace                      |
+
+Teammates, threads and members are unlimited in both.
+
+## Your own computer
+
+### On a Mac: Brigade.app
+
+1. In onboarding, or in **Settings → Computers**, choose **Download Brigade for Mac** (macOS 14 or later).
+2. Open it, then choose **Open in Brigade** on the page. Brigade.app asks before it installs anything, links the Mac
+   to your workspace and keeps the runner going. It lives in the menu bar and updates itself.
+3. Follow **Set up Brigade…** in its menu: move it to Applications, open it at login, and, for computer use, allow
+   Screen Recording and Accessibility.
+
+**Computer use.** On your Mac, teammates can read the screen, click and type in any app. They read an app's
+interface through macOS's accessibility and act on its buttons and fields without moving your pointer, and take a
+screenshot and click where that isn't enough. macOS gives those permissions to a separate helper, **Brigade
+Computer Use**, not to the teammate. While a teammate acts, a pill on the screen shows its name and a **Stop**
+button.
+
+Some command-line tools a teammate runs, such as a screen recorder or `osascript` with System Events, need those
+permissions too. The teammate runs them through Brigade Computer Use, under the same pill: you never need to give
+Accessibility to Brigade itself.
+
+<Tip>
+  Teammates work only while your Mac is awake. **Keep screen awake** in Brigade's menu stops it from
+  sleeping.
+</Tip>
+
+### On Windows: Brigade for Windows
+
+1. In onboarding, or in **Settings → Computers**, choose **Download Brigade for Windows** (Windows 10 or 11, 64-bit)
+   and run `Brigade-Setup.exe`. It installs for your Windows account only, with no administrator.
+2. Open it, then choose **Open in Brigade** on the page. Brigade asks before it installs anything, then sets itself
+   up in a few minutes the first time: the runner, Node.js and Git for Windows, all in `%USERPROFILE%\.brigade`.
+   Nothing else to install, and no WSL. It lives in the system tray, opens at login and updates itself.
+3. Sign in to Claude or ChatGPT on the page. The first sign-in downloads Claude Code or Codex, once.
+
+Teammates run as your own Windows account, in Git Bash (Git for Windows' bash) for Claude Code and in PowerShell for
+Codex, and work while your PC is on. What differs from a Mac:
+
+- **Computer use** works with no permission to give: teammates read an app's interface through Windows' UI
+  Automation and act on it, and take screenshots, click and press keys where that isn't enough. There is no pill with
+  a Stop button on screen as on a Mac: stop the teammate's turn in its thread.
+- Teammates work only while your PC is awake: **Keep screen awake** in Brigade's menu stops it from sleeping.
+- A preview runs until it is stopped: on a Mac an unused one pauses to free memory.
+- An update of the runner restarts the turns running then from where their conversation was, rather than letting
+  them go on, and restarts the previews running then.
+- A teammate uses Docker only if Docker Desktop is installed.
+
+### On a Linux desktop: Brigade.app
+
+1. In onboarding, or in **Settings → Computers** on that computer, choose **Download for Ubuntu or Debian (.deb)**,
+   or the **AppImage** for another distribution (x86-64; in onboarding, it is under the arrow beside the button).
+2. Install and open it, then choose **Open in Brigade** on the page. As on a Mac, it asks before it installs
+   anything, links the computer and keeps the runner going, from the system tray.
+3. Follow **Set up Brigade…** in its menu. On Wayland, your desktop asks once whether Brigade may take screenshots:
+   choose **Allow**.
+
+**Computer use** works as on a Mac: teammates read an app's interface through the desktop's accessibility (AT-SPI)
+and act on it without moving your pointer, take screenshots, click and type, and run commands in your desktop
+session, while a pill at the top of the screen shows their name and a **Stop** button.
+
+- On **X11** (any desktop) and **GNOME on Wayland** (Ubuntu's default), all of it works. On GNOME, Brigade sends the
+  pointer and keyboard through GNOME's remote desktop, so its screen-sharing icon shows in the top bar while a
+  teammate acts; stopping it there is the same as **Stop**.
+- On **other Wayland desktops** (KDE Plasma, Sway…), teammates read and use apps through accessibility and take
+  screenshots, but can't move the pointer or type: those desktops let no app do that.
+- Reading apps' interfaces needs Ubuntu 24.04 or a distribution as recent. Chrome and Chromium show theirs only
+  when started with `--force-renderer-accessibility`.
+
+### From the terminal (a Mac, Linux or a server)
+
+In **Settings → Computers**, choose **Link your machine** and run the command it shows. It looks like this:
+
+```bash
+curl -fsSL https://api.brigade.lol/runner/install.sh | sh \
+  && ~/.brigade/bin/brigade-runner link <CODE> --api https://api.brigade.lol \
+  && ~/.brigade/bin/brigade-runner start
+```
+
+- It needs `curl` and `tar`, and no root access. It installs Node.js 24 if the machine has no recent one, and puts
+  everything in `~/.brigade`.
+- It works on Linux (x86_64, arm64) and macOS (Apple silicon, Intel). On Windows, use Brigade for Windows.
+- The code works once, for 10 minutes. Linking the same machine again replaces it rather than adding a second one.
+- Only one runner runs per machine.
+
+### Your AI login stays on your computer
+
+Sign in with **Sign in with Claude** or **Sign in with ChatGPT (Codex)** on the computer's card, or keep the `claude`
+or `codex` login you already have in your terminal: it shows up by itself. The runner removes API keys such as
+`ANTHROPIC_API_KEY` and `OPENAI_API_KEY` from what the teammate sees, so the work always runs on your plan, never on
+a key that bills per use.
+
+A computer you link is yours alone: other members of the workspace can't start threads on it.
+
+## Brigade Cloud
+
+Subscribe in **Settings → Billing → Subscribe** (owners and admins), or with **Get Brigade Cloud** in onboarding.
+Payment goes through Stripe. The cloud computer appears in **Settings → Computers** within a few minutes; sign it in
+to your Claude or ChatGPT account there.
+
+- **Always on, when needed.** It sleeps after 30 idle minutes and wakes on the next message, routine or trigger.
+- **Shared by the workspace.** Every member's threads can run on it, on the AI accounts signed in there.
+- **Teammates kept apart.** Each teammate runs as its own Linux user with a private home folder, and each thread has
+  its own network, temporary files and processes. Each teammate has its own Docker, without root.
+- **Backed up.** Every 10 minutes and before each sleep: thread folders (encrypted), each teammate's scheduled jobs
+  and services, and browser sign-ins. **Replace cloud computer** in its menu builds a new one and restores all of
+  it. Docker images, previews and tool caches are not backed up.
+- **Mends itself.** If the cloud computer stops answering, Brigade restarts it, and moves it to a new machine with
+  your backups if that is not enough. Your threads show it restarting, then carry on: you have nothing to do.
+- **Take control.** Open the computer's desktop in a thread and choose **Take control** to use it yourself, for
+  example to solve a CAPTCHA. The teammate waits; choose **Hand back**, with an optional note, when you are done.
+- **Teach a task.** In the composer's **+** menu, record yourself doing a task on the cloud computer (up to 10
+  minutes, in Chrome, Edge or Firefox on a desktop). The teammate writes the steps down as a skill, and does the task
+  on its own once an admin adds it.
+
+### Cancel
+
+Choose **Manage billing** in **Settings → Billing** to update your card, read invoices or cancel. Cloud stops at the
+end of the month you paid for. Your workspace stays; the cloud computer stops but keeps its disk until you subscribe
+again, and your teammates can keep working for free on your own computer.
+
+## Move a thread between computers
+
+Pick the computer when you start a thread (**Run on**). To move one later, choose **Continue on…** in the composer's
+**+** menu. When a thread's computer is offline, the thread offers **Continue on the cloud computer**.
+
+<Note>
+  A thread picks up on another computer from what is on GitHub and in the thread. Files that exist
+  only on the first computer stay there, so commit and push what matters.
+</Note>

@@ -1,7 +1,36 @@
+import { addressOf } from '../mail/names.js'
+import { mayWrite, openToOthers } from '../account-sharing.js'
+import {
+  approveGoal,
+  declineGoal,
+  goalView,
+  judgeGoal,
+  pauseGoal,
+  resumeGoal,
+  revokePermission,
+  stopGoal,
+} from '../goals.js'
 import { randomUUID } from 'node:crypto'
 import {
+  JudgeGoal,
+  ASIDE_PROTOCOL,
+  SIDE_REPLY_PROTOCOL,
+  clipReport,
+  CODE_CHANGES_PROTOCOL,
+  CODE_EDIT_PROTOCOL,
+  CODE_TREE_PROTOCOL,
+  CodeHashes,
+  type CodeChange,
+  type CodeEntry,
   FILE_VIEW_MAX,
+  FindSource,
+  RevertCode,
+  SaveThreadFile,
+  type SavedThreadFile,
+  type SourceMatch,
   FOCUS_PROTOCOL,
+  REPORT_START,
+  RETRY_PROTOCOL,
   VIEWABLE_FILE,
   AnswerQuestion,
   AnswerTicket,
@@ -9,6 +38,8 @@ import {
   HandBack,
   InterruptThread,
   inParallel,
+  MarkThreadDone,
+  DismissChoices,
   mayChangeQueued,
   mentionsToText,
   MESSAGE_COMMANDS,
@@ -23,9 +54,14 @@ import {
   SendMessage,
   SetProject,
   StartThread,
+  SNOOZE_MAX_DAYS,
+  STORED_FILE_NAME,
+  handbackAnswer,
   UpdateThread,
   type ThreadFile,
   type ThreadSpec,
+  type Ask,
+  type AgentEvent,
   type ApiToRunner,
   type PreviewView,
   type ThreadPreviewState,
@@ -33,54 +69,74 @@ import {
 import { Hono, type Context } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
-import { readAttachment, toInfo } from '../attachments.js'
+import { toInfo } from '../attachments.js'
+import { isKept } from '../runner-commands.js'
 import { audit } from '../audit.js'
+import { openChoices } from '../choices-waiting.js'
+import { attachmentKey, presignGet, streamObject, threadFileKey } from '../bucket.js'
 import {
   latestPreview,
   livePreview,
   previewLogs,
   previewOffline,
+  previewOfflineIn,
   previewStates,
   startPreview,
   touchPreview,
 } from '../app-previews.js'
-import { ensureRunning, hostedPort } from '../cloud.js'
+import { computerStarting, desktopClipboard, hostedPort } from '../cloud.js'
 import { applyPick, checkPick } from '../designs.js'
-import { watchDesktop } from '../desktop-proxy.js'
-import { answerQuestion, answerTicket, resolveTicket } from '../decide.js'
-import type { ScopedDb } from '../db.js'
-import {
-  broadcastSchedule,
-  broadcastTask,
-  broadcastThreadStatus,
-  desktopClipboard,
-  dispatch,
-  eventsWaitingSince,
-  readThreadFile,
-  runnerProtocol,
-  sendToRunner,
-} from '../hub.js'
+import { COMPUTER_ASLEEP, watchDesktop } from '../desktop-proxy.js'
+import { answerQuestion, answerTicket, mayAnswer, resolveTicket } from '../decide.js'
+import { prisma, type ScopedDb } from '../db.js'
+import { requireGuestRoom } from '../guests.js'
+import { hubs, scheduleUpdated, threadUpdated } from '../hub.js'
+import { codeFiles, findSource, readThreadFile, writeThreadFile } from '../runner-requests.js'
 import { contentTypeFor, isText } from '../library.js'
 import { projectWhere, usableProject } from '../projects.js'
-import { currentTeammate, loadThread, requireMayPrompt, specFor } from '../thread-spec.js'
+import { localPreviewUrl } from '../preview-gateway.js'
+import {
+  currentTeammate,
+  loadThread,
+  noteAsker,
+  requireMayPrompt,
+  specFor,
+  teammateIn,
+  type LoadedThread,
+} from '../thread-spec.js'
 import { movePublic, requestMove } from '../move.js'
 import {
   handBack,
+  retryThread,
   joinThread,
   mentionedTeammates,
   promptWithAttachments,
   startThread,
 } from '../work.js'
 import { waitingOnPerson } from '../pull-requests.js'
-import { reopenOnMessage } from '../tasks.js'
+import { messagesToRequeue } from '../recovery.js'
 import { recorder } from '../teaching.js'
 import { setThreadArchived } from '../thread-archive.js'
-import { descendants, reportConversation } from '../children.js'
+import { markDone, markReopened, reopenThread } from '../thread-done.js'
+import { actorNames } from '../library-history.js'
+import { latersOf, returnsOf, setLater, snoozeUntil } from '../later.js'
+import { descendants, reportConversation, reportOf } from '../children.js'
+import { noteChiefDismissed, overruleDecision, threadDecisions } from '../chief-answers.js'
 import { deleteThread } from '../thread-delete.js'
+import { stopWatching } from '../replies.js'
 import { cancelWakeup } from '../wakeups.js'
 import { surface } from '../playbooks.js'
 import { runLog } from '../timeline.js'
-import { historyContext, pageEvents, pageStart } from '../thread-history.js'
+import {
+  historyContext,
+  pageEnd,
+  pageEvents,
+  pageStart,
+  startAt,
+  threadPrompts,
+} from '../thread-history.js'
+import { linesToStartOn, nextPinPosition, pinnedListThreads, threadLists } from '../lists.js'
+import { noteInThread } from '../thread-notes.js'
 import {
   parseBody,
   requireUser,
@@ -88,6 +144,7 @@ import {
   type AppEnv,
   type WorkspaceScope,
 } from '../scope.js'
+import { headOf } from '../serve-object.js'
 
 /** The ids of a thread's teammates, the one asked for first (whose folder is tried first). */
 function teammatesFirst(
@@ -110,8 +167,42 @@ async function attachedTitle(db: ScopedDb, attachmentIds: string[]) {
 const openCapTicket = (db: ScopedDb, sessionId: string) =>
   db.ticket.findFirst({ where: { sessionId, type: 'cap', status: 'open' } })
 
-async function deliver(computer: { id: string; kind: string }, message: ApiToRunner) {
-  if ((await dispatch(computer, message)) === 'offline') {
+/**
+ * Why a message can't go to a thread that waits on a person, or undefined: it can, and its
+ * teammate reads it now while the ticket or question it asked stays open (ASIDE_PROTOCOL). It
+ * can't while a decision holds a call (an approval before a built-in tool, an App write, a
+ * credential, a trigger), nor on a runner from before that.
+ */
+async function waitingRefusal(
+  db: ScopedDb,
+  thread: { id: string; computer: { id: string; workspaceId: string } },
+) {
+  const held = await db.heldCall.findMany({
+    where: { sessionId: thread.id, status: 'waiting' },
+    select: { ticketId: true },
+  })
+  const deciding = await db.ticket.count({
+    where: {
+      sessionId: thread.id,
+      status: 'open',
+      OR: [
+        { id: { in: held.map((h) => h.ticketId) } },
+        { type: 'approval', payload: { path: ['source'], equals: 'harness' } },
+      ],
+    },
+  })
+  if (deciding) return 'Approve or deny the pending request first'
+  const protocol = await hubs.get(thread.computer.workspaceId).runnerProtocol(thread.computer.id)
+  if (protocol !== undefined && protocol < ASIDE_PROTOCOL)
+    return 'Answer the pending request first, or update Brigade on this computer to write while it waits'
+  return undefined
+}
+
+async function deliver(
+  computer: { id: string; kind: string; workspaceId: string },
+  message: ApiToRunner,
+) {
+  if ((await hubs.get(computer.workspaceId).dispatch(computer, message)) === 'offline') {
     throw new HTTPException(409, {
       message: 'That computer is offline. Start its runner and try again.',
     })
@@ -120,21 +211,85 @@ async function deliver(computer: { id: string; kind: string }, message: ApiToRun
 
 /** Starting, restarting and stopping a thread's preview is for people who may write in it. */
 function mayPrompt(
-  thread: { startedByMemberId: string | null; othersMayPrompt: boolean },
-  memberId: string,
+  thread: {
+    startedByMemberId: string | null
+    othersMayPrompt: boolean
+    computer: { kind: string }
+  },
+  scope: WorkspaceScope,
 ) {
-  if (thread.startedByMemberId !== memberId && !thread.othersMayPrompt)
+  if (!mayWrite(thread, scope))
     throw new HTTPException(403, { message: 'Only who may write in this thread can do that' })
 }
 
 const isAdmin = (scope: WorkspaceScope) => scope.role === 'owner' || scope.role === 'admin'
 
+/** Editing code needs the computer on, with a runner that writes files (CODE_EDIT_PROTOCOL). */
+async function requireCodeEdit(
+  computer: { id: string; workspaceId: string },
+  needs = CODE_EDIT_PROTOCOL,
+) {
+  const protocol = await hubs.get(computer.workspaceId).runnerProtocol(computer.id)
+  if (protocol === undefined) throw new HTTPException(409, { message: 'The computer is offline' })
+  if (protocol < needs)
+    throw new HTTPException(409, {
+      message: 'Update Brigade on this computer to edit code from here',
+    })
+}
+
+/** The teammate of the thread whose working folder the code panel shows: one of its own. */
+async function codeTeammate(
+  thread: LoadedThread,
+  teammateId: string | undefined,
+  needs = CODE_TREE_PROTOCOL,
+) {
+  if (!teammateId || !thread.teammates.some((t) => t.teammateId === teammateId))
+    throw new HTTPException(400, { message: 'That teammate is not in this thread' })
+  await requireCodeEdit(thread.computer, needs)
+  return teammateId
+}
+
+/** A code panel answer from the runner, or the HTTP error that says why not. */
+function codeAnswer(result: Awaited<ReturnType<typeof codeFiles>>) {
+  if (!result.ok)
+    throw new HTTPException(result.error === 'not_found' ? 404 : 409, {
+      message: result.error === 'not_found' ? 'No such folder' : (result.error ?? 'Could not read'),
+    })
+  return result
+}
+
+/** Edits already told to their thread, by thread, file and member: when. */
+const editsNoted = new Map<string, number>()
+const EDIT_NOTE_MS = 15 * 60_000
+
+/**
+ * "Ada edited `src/app.tsx`.": a line in the thread, and what its teammates read at their
+ * next turn. Once per file and person in a while, not at each save.
+ */
+async function noteEdit(db: ScopedDb, scope: WorkspaceScope, threadId: string, path: string) {
+  const key = `${threadId}\0${path}\0${scope.memberId}`
+  const now = Date.now()
+  if (now - (editsNoted.get(key) ?? 0) < EDIT_NOTE_MS) return
+  for (const [k, at] of editsNoted) if (now - at >= EDIT_NOTE_MS) editsNoted.delete(k)
+  editsNoted.set(key, now)
+  const user = await prisma.user.findFirst({ where: { id: scope.userId }, select: { name: true } })
+  await noteInThread(
+    db,
+    threadId,
+    `${user?.name || 'A member'} edited \`${path}\` in the code editor. The change is saved in the working folder, not committed.`,
+  )
+}
+
 /** Renaming and archiving a thread is for who may write in it, and admins. */
 function mayChange(
   scope: WorkspaceScope,
-  thread: { startedByMemberId: string | null; othersMayPrompt: boolean },
+  thread: {
+    startedByMemberId: string | null
+    othersMayPrompt: boolean
+    computer: { kind: string }
+  },
 ) {
-  if (thread.startedByMemberId !== scope.memberId && !thread.othersMayPrompt && !isAdmin(scope))
+  if (!mayWrite(thread, scope) && !isAdmin(scope))
     throw new HTTPException(403, { message: 'Only who may write in this thread can do that' })
 }
 
@@ -159,6 +314,13 @@ async function archive(c: Context<AppEnv>, on: boolean) {
 const unread = (lastTurnAt: Date | null | undefined, seenAt: Date | undefined) =>
   !!lastTurnAt && (!seenAt || lastTurnAt > seenAt)
 
+/** A thread with the id the browser chose (`id`) exists already, in this workspace or another. */
+const idTaken = (error: unknown, id: string | undefined): never => {
+  if (id && (error as { code?: string }).code === 'P2002')
+    throw new HTTPException(409, { message: 'That thread id is taken' })
+  throw error
+}
+
 export const threads = new Hono<AppEnv>()
   .use(requireUser, requireWorkspace)
 
@@ -181,18 +343,33 @@ export const threads = new Hono<AppEnv>()
       // Where it runs: the sidebar marks a member's own machine.
       computer: { select: { kind: true, name: true } },
     }
+    // Some threads, as the list has it (?id=, repeated): the sidebar shows the one open, and
+    // those waiting on the member, when they are not among those it loaded. Archived or quiet,
+    // the one open is still the one open; a child thread is not listed, its parent is, which
+    // shows it among its children (a child's review, among that child's).
+    const ids = (c.req.queries('id') ?? []).filter(Boolean).slice(0, 100)
+    const only = ids.length > 0
     const rows = await c.var.db.session.findMany({
-      where: {
-        // A teammate's threads: those it started and those it joined.
-        ...(teammateId ? { teammates: { some: { teammateId } } } : {}),
-        ...projectWhere(c.req.query('project')),
-        // Archived ones only when asked for: ?archived=1.
-        archivedAt: c.req.query('archived') === '1' ? { not: null } : null,
-        // Child threads show in their parent, not in lists.
-        parentId: null,
-        // A playbook's runs, once a person took part in them (src/playbooks.ts).
-        OR: [{ playbookRunId: null }, { surfacedAt: { not: null } }],
-      },
+      where: only
+        ? {
+            parentId: null,
+            OR: [
+              { id: { in: ids } },
+              { children: { some: { id: { in: ids } } } },
+              { children: { some: { children: { some: { id: { in: ids } } } } } },
+            ],
+          }
+        : {
+            // A teammate's threads: those it started and those it joined.
+            ...(teammateId ? { teammates: { some: { teammateId } } } : {}),
+            ...projectWhere(c.req.query('project')),
+            // Archived ones only when asked for: ?archived=1.
+            archivedAt: c.req.query('archived') === '1' ? { not: null } : null,
+            // Child threads show in their parent, not in lists.
+            parentId: null,
+            // A playbook's runs, once a person took part in them (src/playbooks.ts).
+            OR: [{ playbookRunId: null, quiet: false }, { surfacedAt: { not: null } }],
+          },
       ...(limit
         ? {
             orderBy:
@@ -211,16 +388,48 @@ export const threads = new Hono<AppEnv>()
       where: { memberId: c.var.scope.memberId },
       select: { sessionId: true, pinnedAt: true, position: true },
     })
-    if (!limit && !teammateId && !c.req.query('project') && c.req.query('archived') !== '1') {
+    // And those they snoozed, all of them too: the filter's Snoozed lists them. Those back from
+    // a snooze lately go by when they came back, however old: on top of the list, not past it.
+    const [laters, returns] = await Promise.all([
+      latersOf(c.var.db, c.var.scope.memberId),
+      returnsOf(c.var.db, c.var.scope.memberId),
+    ])
+    if (
+      !only &&
+      !limit &&
+      !teammateId &&
+      !c.req.query('project') &&
+      c.req.query('archived') !== '1'
+    ) {
       const loaded = new Set(rows.map((r) => r.id))
-      const missing = pins.map((p) => p.sessionId).filter((id) => !loaded.has(id))
+      // And those on the lists they pinned, which show under each list, however old.
+      const onPinnedLists = await pinnedListThreads(c.var.db, c.var.scope.memberId)
+      const missing = [
+        ...new Set([
+          ...pins.map((p) => p.sessionId),
+          ...laters.keys(),
+          ...returns.keys(),
+          ...onPinnedLists,
+        ]),
+      ].filter((id) => !loaded.has(id))
+      // A child thread shows only in its parent, unless this member pinned it.
+      const pinnedIds = new Set(pins.map((p) => p.sessionId))
       if (missing.length)
         rows.push(
           ...(await c.var.db.session.findMany({
-            where: { id: { in: missing }, archivedAt: null, parentId: null },
+            where: {
+              id: { in: missing },
+              archivedAt: null,
+              OR: [{ parentId: null }, { id: { in: [...pinnedIds] } }],
+            },
             include,
           })),
         )
+    }
+    if (!only && !limit && returns.size) {
+      const at = (row: { id: string; updatedAt: Date }) =>
+        Math.max(row.updatedAt.getTime(), returns.get(row.id)?.getTime() ?? 0)
+      rows.sort((a, b) => at(b) - at(a))
     }
     // How much each one was answered, for the list's replies line: people's messages
     // after the first, and the teammates' turns.
@@ -243,24 +452,126 @@ export const threads = new Hono<AppEnv>()
           _count: { _all: true },
         })
       : []
-    // Children it waits for, at work: it shows as working, as for its own background work.
-    const working = rows.length
-      ? await c.var.db.session.groupBy({
-          by: ['parentId'],
-          where: {
-            parentId: { in: rows.map((r) => r.id) },
-            awaited: true,
-            status: { in: ['starting', 'running'] },
-          },
-          _count: { _all: true },
+    // Children it waits for, at work: it shows as working, as for its own background work. A
+    // child's review too, while that child waits for it.
+    const [working, workingBelow] = rows.length
+      ? await Promise.all([
+          c.var.db.session.groupBy({
+            by: ['parentId'],
+            where: {
+              parentId: { in: rows.map((r) => r.id) },
+              awaited: true,
+              status: { in: ['starting', 'running'] },
+            },
+            _count: { _all: true },
+          }),
+          c.var.db.session.findMany({
+            where: {
+              parent: { parentId: { in: rows.map((r) => r.id) }, awaited: true },
+              awaited: true,
+              status: { in: ['starting', 'running'] },
+            },
+            select: { parent: { select: { parentId: true } } },
+          }),
+        ])
+      : [[], []]
+    const childrenWorking = (id: string) =>
+      (working.find((w) => w.parentId === id)?._count._all ?? 0) +
+      workingBelow.filter((w) => w.parent?.parentId === id).length
+    // Its child threads, out of lists: the sidebar shows them under it, folded. Those a
+    // teammate started (start_child), not a schedule's runs, which would fill it, nor Chief's
+    // decision threads of #724, which were never meant to show. And under a child, the reviews
+    // of the pull requests it opened (src/reviews.ts), the one level below.
+    const subThreads = (parents: string[]) =>
+      parents.length
+        ? c.var.db.session.findMany({
+            where: {
+              parentId: { in: parents },
+              origin: 'child',
+              archivedAt: null,
+              chiefDecisionId: null,
+            },
+            select: {
+              id: true,
+              title: true,
+              status: true,
+              parentId: true,
+              updatedAt: true,
+              computerId: true,
+              computer: { select: { kind: true, name: true } },
+              // For its menu in the sidebar, as a thread's own row has it (thread-menu.tsx).
+              startedByMemberId: true,
+              othersMayPrompt: true,
+              doneAt: true,
+              // A pull request's review: the sidebar leaves it out (see `review` below).
+              _count: { select: { reviewsOf: true } },
+            },
+            orderBy: [{ updatedAt: 'desc' as const }, { id: 'desc' as const }],
+          })
+        : Promise.resolve([])
+    const firstLevel = await subThreads(rows.map((r) => r.id))
+    const children = [...firstLevel, ...(await subThreads(firstLevel.map((r) => r.id)))]
+    // Which of them review a pull request: its latest review's thread, or an earlier one that
+    // posted a review (a pull request keeps only its latest review's thread).
+    const posted = children.length
+      ? await c.var.db.pullRequestReview.findMany({
+          where: { sessionId: { in: children.map((r) => r.id) } },
+          select: { sessionId: true },
+          distinct: ['sessionId'],
         })
       : []
-    // Whose preview is up: the sidebar marks them. Not on a computer that is gone, whatever
-    // the events say, as on the preview panel.
-    const previews = await previewStates(
+    const reviewIds = new Set([
+      ...children.filter((r) => r._count.reviewsOf > 0).map((r) => r.id),
+      ...posted.map((r) => r.sessionId!),
+    ])
+    // Which of them a teammate answered since this member last looked.
+    const [childTurns, childReads] = children.length
+      ? await Promise.all([
+          c.var.db.sessionEvent.groupBy({
+            by: ['sessionId'],
+            where: { sessionId: { in: children.map((r) => r.id) }, type: 'turn.completed' },
+            _max: { at: true },
+          }),
+          c.var.db.threadRead.findMany({
+            where: {
+              memberId: c.var.scope.memberId,
+              sessionId: { in: children.map((r) => r.id) },
+            },
+            select: { sessionId: true, seenAt: true },
+          }),
+        ])
+      : [[], []]
+    // The list each works on (docs/lists.md): the sidebar shows them under it.
+    const lists = await threadLists(
       c.var.db,
       rows.map((r) => r.id),
     )
+    // Whose preview is up, its child threads' too: the sidebar marks them. Not on a computer
+    // that is gone, whatever the events say, as on the preview panel.
+    const previews = await previewStates(c.var.db, [
+      ...rows.map((r) => r.id),
+      ...children.map((r) => r.id),
+    ])
+    // Its next wake-up, its child threads' too, the same ones its panel lists: the sidebar marks them.
+    const wakeups = rows.length
+      ? await c.var.db.wakeup.groupBy({
+          by: ['sessionId'],
+          where: {
+            sessionId: { in: [...rows.map((r) => r.id), ...children.map((r) => r.id)] },
+            status: 'pending',
+            kind: 'wakeup',
+          },
+          _min: { wakeAt: true },
+        })
+      : []
+    const wakeAt = (id: string) =>
+      wakeups.find((w) => w.sessionId === id)?._min.wakeAt?.toISOString() ?? null
+    // How its computers are connected, and whose events wait on them: from the hub.
+    const hub = hubs.get(c.var.scope.workspaceId)
+    const [presence, waitingSince] = await Promise.all([
+      hub.presence([...new Set([...rows, ...children].map((r) => r.computerId))]),
+      hub.eventsWaitingSince(rows.map((r) => r.id)),
+    ])
     // When this member last looked at each: a teammate's turn after it is unread for them.
     const reads = rows.length
       ? await c.var.db.threadRead.findMany({
@@ -268,6 +579,44 @@ export const threads = new Hono<AppEnv>()
           select: { sessionId: true, seenAt: true },
         })
       : []
+    /** A sub-thread as the sidebar shows it. */
+    const shape = ({
+      parentId,
+      computerId,
+      computer,
+      startedByMemberId,
+      othersMayPrompt,
+      _count,
+      ...child
+    }: (typeof children)[number]) => ({
+      ...child,
+      // A pull request's review: out of the sidebar unless it needs the person.
+      review: reviewIds.has(child.id),
+      // What its menu needs (thread-menu.tsx): who started it, who else may change it,
+      // and this member's pin and Later on it.
+      parent: { id: parentId! },
+      startedBy: { id: startedByMemberId },
+      othersMayPrompt: openToOthers({ othersMayPrompt, computer }),
+      pinnedAt: pins.find((p) => p.sessionId === child.id)?.pinnedAt.toISOString() ?? null,
+      laterAt: laters.get(child.id)?.at.toISOString() ?? null,
+      snoozedUntil: laters.get(child.id)?.until.toISOString() ?? null,
+      unread: unread(
+        childTurns.find((t) => t.sessionId === child.id)?._max.at,
+        childReads.find((r) => r.sessionId === child.id)?.seenAt,
+      ),
+      wakeAt: wakeAt(child.id),
+      previewRunning:
+        !!previews.get(child.id) && !previewOfflineIn(presence, { id: computerId, ...computer }),
+    })
+    type SidebarChild = ReturnType<typeof shape> & { children?: SidebarChild[] }
+    /** A thread's sub-threads, each with its own: a child's reviews. */
+    const childrenOf = (id: string): SidebarChild[] =>
+      children
+        .filter((child) => child.parentId === id)
+        .map((child) => {
+          const below = childrenOf(child.id)
+          return { ...shape(child), ...(below.length ? { children: below } : {}) }
+        })
     return c.json(
       rows.map((row) => {
         const of = (type: string) => counts.find((n) => n.sessionId === row.id && n.type === type)
@@ -283,12 +632,21 @@ export const threads = new Hono<AppEnv>()
           lastReplyAt: latest?.toISOString() ?? null,
           unread: unread(turns?._max.at, reads.find((r) => r.sessionId === row.id)?.seenAt),
           pullsWaiting: pulls.find((p) => p.sessionId === row.id)?._count._all ?? 0,
-          childrenWorking: working.find((w) => w.parentId === row.id)?._count._all ?? 0,
+          childrenWorking: childrenWorking(row.id),
+          children: childrenOf(row.id),
+          list: lists.get(row.id) ?? null,
           pinnedAt: pins.find((p) => p.sessionId === row.id)?.pinnedAt.toISOString() ?? null,
           pinPosition: pins.find((p) => p.sessionId === row.id)?.position ?? null,
-          eventsWaitingSince: eventsWaitingSince(row.id),
+          laterAt: laters.get(row.id)?.at.toISOString() ?? null,
+          snoozedUntil: laters.get(row.id)?.until.toISOString() ?? null,
+          returnedAt: returns.get(row.id)?.toISOString() ?? null,
+          eventsWaitingSince: waitingSince[row.id] ?? null,
+          // Others than its starter write in it, so rename and archive it (account-sharing.ts).
+          othersMayPrompt: openToOthers(row),
+          wakeAt: wakeAt(row.id),
           previewRunning:
-            !!previews.get(row.id) && !previewOffline({ id: row.computerId, ...row.computer }),
+            !!previews.get(row.id) &&
+            !previewOfflineIn(presence, { id: row.computerId, ...row.computer }),
         }
       }),
     )
@@ -298,7 +656,7 @@ export const threads = new Hono<AppEnv>()
     const thread = await c.var.db.session.findFirst({
       where: { id: c.req.param('id') },
       include: {
-        teammate: { select: { id: true, name: true, harness: true, model: true } },
+        teammate: { select: { id: true, name: true, title: true, harness: true, model: true } },
         teammates: {
           select: {
             joinedAt: true,
@@ -307,14 +665,16 @@ export const threads = new Hono<AppEnv>()
           },
           orderBy: { joinedAt: 'asc' },
         },
-        computer: { select: { id: true, name: true, kind: true } },
+        computer: { select: { id: true, name: true, kind: true, status: true } },
         account: { select: { id: true, label: true, status: true } },
         startedBy: { select: { id: true, user: { select: { name: true } } } },
         trigger: { select: { id: true, label: true, event: true } },
         schedule: { select: { id: true, title: true } },
         parent: { select: { id: true, title: true } },
-        // Shown in it, newest first: each a line that opens it.
+        // Shown in it, newest first: each a line that opens it. Not Chief's decision threads of
+        // #724, which were never meant to show.
         children: {
+          where: { chiefDecisionId: null },
           select: {
             id: true,
             title: true,
@@ -327,6 +687,7 @@ export const threads = new Hono<AppEnv>()
             createdAt: true,
             startedByMemberId: true,
             othersMayPrompt: true,
+            computer: { select: { kind: true } },
             teammate: { select: { id: true, name: true } },
             schedule: { select: { id: true, title: true } },
             tickets: {
@@ -349,51 +710,172 @@ export const threads = new Hono<AppEnv>()
           orderBy: { createdAt: 'asc' },
         },
         attachments: { include: { attachment: true }, orderBy: { createdAt: 'asc' } },
-        task: { select: { id: true, title: true, completedAt: true } },
+        // The thread a teammate started it from (start_thread).
+        startedFrom: { select: { id: true, title: true } },
         project: { select: { id: true, name: true, icon: true, logo: true, archivedAt: true } },
         wakeups: {
           where: { status: 'pending', kind: 'wakeup' },
           select: { id: true, teammateId: true, note: true, wakeAt: true },
           orderBy: { wakeAt: 'asc' },
         },
+        // Emails sent from it whose replies wake it (src/replies.ts).
+        replyWatches: {
+          where: { until: { gt: new Date() } },
+          select: {
+            id: true,
+            teammateId: true,
+            to: true,
+            subject: true,
+            until: true,
+            connection: { select: { kind: true, externalAccount: true, label: true } },
+          },
+          orderBy: { updatedAt: 'desc' },
+        },
+        // Sign-up addresses it made whose mail still comes to it (the Email App).
+        mailAliases: {
+          where: { waitUntil: { gt: new Date() } },
+          select: { id: true, local: true, purpose: true, waitUntil: true, teammateId: true },
+          orderBy: { createdAt: 'desc' },
+        },
+        // Emails it sent from Brigade's addresses or Gmail, the latest: one in its window can be
+        // cancelled.
+        mailMessages: {
+          where: { direction: 'out' },
+          select: {
+            id: true,
+            connectionId: true,
+            to: true,
+            subject: true,
+            status: true,
+            sendAt: true,
+            error: true,
+            fromAddress: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 10,
+        },
       },
     })
     if (!thread) throw new HTTPException(404, { message: 'Thread not found' })
-    // This member's pin, for the thread's menu in its details.
-    const pin = await c.var.db.threadPin.findUnique({
-      where: { memberId_sessionId: { memberId: c.var.scope.memberId, sessionId: thread.id } },
-      select: { pinnedAt: true },
-    })
+    // This member's pin and later, for the thread's menu in its details.
+    const mine = { memberId_sessionId: { memberId: c.var.scope.memberId, sessionId: thread.id } }
+    const hub = hubs.get(c.var.scope.workspaceId)
+    const [pin, later, presence, waitingSince, names, chiefDecisions, ticketsBelow, goal] =
+      await Promise.all([
+        c.var.db.threadPin.findUnique({ where: mine, select: { pinnedAt: true } }),
+        c.var.db.threadLater.findFirst({
+          where: { ...mine.memberId_sessionId, until: { gt: new Date() } },
+          select: { laterAt: true, until: true },
+        }),
+        hub.presence([thread.computer.id]),
+        hub.eventsWaitingSince([thread.id]),
+        // Who declared it done, by name.
+        thread.doneByType && thread.doneById
+          ? actorNames(c.var.db, [{ type: thread.doneByType, id: thread.doneById }])
+          : null,
+        // Chief's decisions on its questions (src/chief-answers.ts), each shown on its question.
+        threadDecisions(c.var.db, thread.id),
+        // The open tickets of its children's reviews: each shows on that child, whose page has it.
+        thread.children.length
+          ? c.var.db.ticket.findMany({
+              where: {
+                status: 'open',
+                session: { parentId: { in: thread.children.map((child) => child.id) } },
+              },
+              select: {
+                id: true,
+                type: true,
+                title: true,
+                createdAt: true,
+                session: { select: { parentId: true } },
+              },
+              orderBy: { createdAt: 'asc' },
+            })
+          : [],
+        // Its goal, for its banner (src/goals.ts).
+        goalView(c.var.db, c.var.scope, thread.id, {
+          act: mayWrite(thread, c.var.scope) || isAdmin(c.var.scope),
+          approve: mayWrite(thread, c.var.scope),
+        }),
+      ])
     return c.json({
       ...thread,
+      goal,
+      // Whether it is there, for everyone in the thread: /computers lists only the member's own.
+      computer: {
+        ...thread.computer,
+        online: presence[thread.computer.id]?.online ?? false,
+        restarting: presence[thread.computer.id]?.restarting ?? false,
+      },
       pinnedAt: pin?.pinnedAt.toISOString() ?? null,
+      laterAt: later?.laterAt.toISOString() ?? null,
+      snoozedUntil: later?.until.toISOString() ?? null,
+      chiefDecisions,
+      doneBy: (thread.doneAt && names?.(thread.doneByType, thread.doneById)?.name) || null,
       // Where it is going, not the message that goes with it.
       move: movePublic(thread.move),
       attachments: thread.attachments.map((a) => toInfo(a.attachment, a.path)),
       followers: thread.followers.map((f) => f.follower),
       // Whether this member may send a child's report now (POST /:id/report), as in the child itself.
-      children: thread.children.map(({ startedByMemberId, othersMayPrompt, ...child }) => ({
-        ...child,
-        mayPrompt: startedByMemberId === c.var.scope.memberId || othersMayPrompt,
-      })),
-      mayPrompt: thread.startedByMemberId === c.var.scope.memberId || thread.othersMayPrompt,
-      eventsWaitingSince: eventsWaitingSince(thread.id),
+      children: thread.children.map(
+        ({ startedByMemberId, othersMayPrompt, computer, ...child }) => {
+          // Its line shows the start of its report; the child keeps the whole of it.
+          const report = reportOf(child.report)
+          const below = ticketsBelow
+            .filter((t) => t.session?.parentId === child.id)
+            .map(({ session: _session, ...t }) => t)
+          return {
+            ...child,
+            ...(below.length ? { tickets: [...child.tickets, ...below] } : {}),
+            ...(report
+              ? { report: { ...report, summary: clipReport(report.summary, REPORT_START) } }
+              : {}),
+            mayPrompt: mayWrite({ startedByMemberId, othersMayPrompt, computer }, c.var.scope),
+          }
+        },
+      ),
+      othersMayPrompt: openToOthers(thread),
+      mayPrompt: mayWrite(thread, c.var.scope),
+      eventsWaitingSince: waitingSince[thread.id] ?? null,
+      mailAliases: thread.mailAliases.map((a) => ({ ...a, address: addressOf(a.local) })),
     })
   })
 
   /**
-   * An older page of the thread's events: those before `before`, from a turn's start. Without
-   * `before`, the latest page and what the whole thread needs from before it, as a socket's
+   * A page of the thread's events. `before`: the page ending there, from a turn's start, and
+   * not before `since` when given (what the dashboard has already). `from`: the page holding
+   * that event, from the turn's start or message at or before it, up to about a page on and
+   * not past `until`: the timeline jumps there without loading what lies between. Without
+   * either, the latest page and what the whole thread needs from before it, as a socket's
    * `history` then `events` bring them: the dashboard opens a thread on it, with the thread,
    * and its socket only brings what follows.
    */
   .get('/:id/events', async (c) => {
-    if (c.req.query('before') === undefined) {
-      const thread = await c.var.db.session.findFirst({
-        where: { id: c.req.param('id') },
-        select: { id: true, lastSeq: true },
+    const seq = z.coerce.number().int().min(1)
+    const query = z
+      .object({
+        before: seq.optional(),
+        since: seq.optional(),
+        from: seq.optional(),
+        until: seq.optional(),
       })
-      if (!thread) throw new HTTPException(404, { message: 'Thread not found' })
+      .safeParse(c.req.query())
+    if (!query.success)
+      throw new HTTPException(400, { message: 'Pages are named by sequence numbers' })
+    const { before, since, from, until } = query.data
+    const thread = await c.var.db.session.findFirst({
+      where: { id: c.req.param('id') },
+      select: { id: true, lastSeq: true },
+    })
+    if (!thread) throw new HTTPException(404, { message: 'Thread not found' })
+    if (from !== undefined) {
+      const end = Math.min(until ?? thread.lastSeq + 1, thread.lastSeq + 1)
+      const firstSeq = Math.min(await startAt(thread.id, from), end)
+      const endSeq = await pageEnd(thread.id, firstSeq, end)
+      return c.json({ firstSeq, endSeq, events: await pageEvents(thread.id, firstSeq, endSeq) })
+    }
+    if (before === undefined) {
       const firstSeq = await pageStart(thread.id, thread.lastSeq + 1)
       const [context, events] = await Promise.all([
         historyContext(thread.id, firstSeq),
@@ -401,16 +883,18 @@ export const threads = new Hono<AppEnv>()
       ])
       return c.json({ firstSeq, lastSeq: thread.lastSeq, context, events })
     }
-    const before = z.coerce.number().int().min(1).safeParse(c.req.query('before'))
-    if (!before.success)
-      throw new HTTPException(400, { message: 'before must be a sequence number' })
+    const firstSeq = Math.max(await pageStart(thread.id, before), Math.min(since ?? 1, before))
+    return c.json({ firstSeq, events: await pageEvents(thread.id, firstSeq, before) })
+  })
+
+  /** The messages people wrote in the thread, each one's start: the timeline beside a long thread. */
+  .get('/:id/prompts', async (c) => {
     const thread = await c.var.db.session.findFirst({
       where: { id: c.req.param('id') },
       select: { id: true },
     })
     if (!thread) throw new HTTPException(404, { message: 'Thread not found' })
-    const firstSeq = await pageStart(thread.id, before.data)
-    return c.json({ firstSeq, events: await pageEvents(thread.id, firstSeq, before.data) })
+    return c.json(await threadPrompts(thread.id))
   })
 
   /**
@@ -443,8 +927,9 @@ export const threads = new Hono<AppEnv>()
       const row = given.attachment
       const text =
         isText(row.contentType) &&
+        // Its first part only, read as such: the rest never leaves the bucket.
         new TextDecoder('utf-8', { fatal: false }).decode(
-          (await readAttachment(c.var.scope, row.id)).subarray(0, FILE_VIEW_MAX),
+          await headOf(attachmentKey(c.var.scope, row.id), FILE_VIEW_MAX),
         )
       return c.json({
         source: 'attachment',
@@ -457,20 +942,22 @@ export const threads = new Hono<AppEnv>()
       } satisfies ThreadFile)
     }
 
-    // The library: its own path, or its mirror's path on a computer (a teammate's own
-    // mirror, in a folder named after its Linux user, on runners since protocol 13).
+    // The library: its own path, its mirror's path on a computer (a teammate's own
+    // mirror, in a folder named after its Linux user, on runners since protocol 13),
+    // or a path in the thread's project folder ("decisions/x.md" for "Projects/Acme/decisions/x.md").
     const mirrored = path.startsWith('/')
       ? path.match(/\/library\/(?:bt-[a-z0-9]{1,28}\/)?(.+)$/)?.[1]
       : undefined
-    const library = await db.document.findFirst({
-      where: {
-        kind: 'library',
-        deletedAt: null,
-        path: { in: [path, ...(mirrored ? [mirrored] : [])] },
-      },
+    const project =
+      !path.startsWith('/') && thread.projectId
+        ? await db.project.findFirst({ where: { id: thread.projectId }, select: { folder: true } })
+        : null
+    const inProject = project?.folder ? `${project.folder.replace(/\/+$/, '')}/${path}` : undefined
+    const candidates = [path, ...(mirrored ? [mirrored] : []), ...(inProject ? [inProject] : [])]
+    const found = await db.document.findMany({
+      where: { kind: 'library', deletedAt: null, path: { in: candidates } },
     })
-    if (library) {
-      const row = library
+    const fromLibrary = (row: (typeof found)[number]) => {
       const editable = row.contentType.startsWith('text/') || /json|yaml|xml/.test(row.contentType)
       return c.json({
         source: 'library',
@@ -483,19 +970,39 @@ export const threads = new Hono<AppEnv>()
         truncated: false,
       } satisfies ThreadFile)
     }
+    const library = candidates.map((p) => found.find((d) => d.path === p)).find(Boolean)
+    if (library) return fromLibrary(library)
 
-    const result = await readThreadFile(thread.computerId, {
+    const result = await readThreadFile(thread.computer, {
       sessionId: thread.id,
       teammateIds: teammatesFirst(thread, c.req.query('teammateId')),
       path,
     })
-    if (!result.ok)
+    if (!result.ok) {
+      // A bare name ("10-bold-alternative.md") for a file in a folder of the thread's
+      // project: the only one of that name there. Never another project's file.
+      const folder = project?.folder?.replace(/\/+$/, '')
+      const named =
+        folder && !path.includes('/')
+          ? (
+              await db.document.findMany({
+                where: {
+                  kind: 'library',
+                  deletedAt: null,
+                  path: { startsWith: `${folder}/`, endsWith: `/${path}` },
+                },
+                take: 20,
+              })
+            ).filter((d) => d.path.startsWith(`${folder}/`) && d.path.endsWith(`/${path}`))
+          : []
+      if (named.length === 1) return fromLibrary(named[0]!)
       throw new HTTPException(result.error === 'not_found' ? 404 : 409, {
         message:
           result.error === 'not_found'
             ? `No file "${path}" in the library or the teammate's folder`
             : (result.error ?? 'Could not read the file'),
       })
+    }
     return c.json({
       source: 'thread',
       path: result.path ?? path,
@@ -504,7 +1011,185 @@ export const threads = new Hono<AppEnv>()
       ...(result.text === undefined ? {} : { text: result.text }),
       truncated: result.truncated ?? false,
       ...(result.teammateId ? { teammateId: result.teammateId } : {}),
+      ...(result.hash ? { hash: result.hash } : {}),
     } satisfies ThreadFile)
+  })
+
+  /**
+   * Save a text file of a teammate's working folder that a person edited in the file
+   * panel: whoever may write to the thread. Refused (409) when it changed since it was
+   * opened, unless the save has no `base`. The thread is told once in a while who
+   * edited what, so its teammates know at their next turn.
+   */
+  .put('/:id/file', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    requireMayPrompt(scope, thread)
+    const input = await parseBody(c.req.raw, SaveThreadFile)
+    if (!thread.teammates.some((t) => t.teammateId === input.teammateId))
+      throw new HTTPException(400, { message: 'That teammate is not in this thread' })
+    await requireCodeEdit(thread.computer)
+    const result = await writeThreadFile(thread.computer, {
+      sessionId: thread.id,
+      teammateId: input.teammateId,
+      path: input.path,
+      text: input.text,
+      ...(input.base ? { base: input.base } : {}),
+    })
+    if (!result.ok || !result.hash)
+      throw new HTTPException(result.conflict ? 409 : result.error === 'not_found' ? 404 : 409, {
+        message: result.conflict
+          ? 'The file changed since you opened it'
+          : result.error === 'not_found'
+            ? `No file "${input.path}" in the teammate's folder`
+            : (result.error ?? 'Could not save the file'),
+      })
+    await noteEdit(db, scope, thread.id, input.path)
+    return c.json({ hash: result.hash } satisfies SavedThreadFile)
+  })
+
+  /**
+   * The code panel's tree: a folder of a teammate's working folder for the thread
+   * (`path` relative to it, '' for itself), folders first. Any member who can see
+   * the thread, as for its files.
+   */
+  .get('/:id/code', async (c) => {
+    const thread = await loadThread(c.var.db, c.req.param('id'))
+    const teammateId = await codeTeammate(thread, c.req.query('teammateId'))
+    const result = codeAnswer(
+      await codeFiles(thread.computer, {
+        sessionId: thread.id,
+        teammateId,
+        op: 'list',
+        path: (c.req.query('path') ?? '').replace(/^\.?\/+|\/+$/g, '').slice(0, 1000),
+      }),
+    )
+    return c.json({ entries: result.entries ?? [], more: result.more ?? false } satisfies {
+      entries: CodeEntry[]
+      more: boolean
+    })
+  })
+
+  /** Files of a teammate's working folder by name (find), or lines holding a text (grep). */
+  .get('/:id/code/:op{find|grep}', async (c) => {
+    const thread = await loadThread(c.var.db, c.req.param('id'))
+    const teammateId = await codeTeammate(thread, c.req.query('teammateId'))
+    const query = (c.req.query('q') ?? '').trim().slice(0, 200)
+    const op = c.req.param('op') as 'find' | 'grep'
+    const result = codeAnswer(
+      await codeFiles(thread.computer, { sessionId: thread.id, teammateId, op, query }),
+    )
+    return c.json(op === 'find' ? { files: result.files ?? [] } : { matches: result.matches ?? [] })
+  })
+
+  /** Open files' hashes, to see when the teammate changed one (null: gone, or not text to edit). */
+  .post('/:id/code/hashes', async (c) => {
+    const thread = await loadThread(c.var.db, c.req.param('id'))
+    const input = await parseBody(c.req.raw, CodeHashes)
+    const teammateId = await codeTeammate(thread, input.teammateId)
+    const result = codeAnswer(
+      await codeFiles(thread.computer, {
+        sessionId: thread.id,
+        teammateId,
+        op: 'hashes',
+        paths: input.paths,
+      }),
+    )
+    return c.json({ hashes: result.hashes ?? {} })
+  })
+
+  /**
+   * The files of a teammate's working folder that differ from where their repository's
+   * branch left its default branch (`base`, from newer runners), else from its last commit,
+   * for the code panel's Changes, and those commits (`head`), so the panel sees when one
+   * is made. Any member who can see the thread.
+   */
+  .get('/:id/code/changes', async (c) => {
+    const thread = await loadThread(c.var.db, c.req.param('id'))
+    const teammateId = await codeTeammate(thread, c.req.query('teammateId'), CODE_CHANGES_PROTOCOL)
+    const result = codeAnswer(
+      await codeFiles(thread.computer, { sessionId: thread.id, teammateId, op: 'changes' }),
+    )
+    return c.json({
+      changes: result.changes ?? [],
+      more: result.more ?? false,
+      head: result.head ?? '',
+      ...(result.base ? { base: result.base } : {}),
+    } satisfies { changes: CodeChange[]; more: boolean; head: string; base?: string })
+  })
+
+  /** A file as Changes compares it to, for the editor to show what changed; null: in none. */
+  .get('/:id/code/original', async (c) => {
+    const thread = await loadThread(c.var.db, c.req.param('id'))
+    const teammateId = await codeTeammate(thread, c.req.query('teammateId'), CODE_CHANGES_PROTOCOL)
+    const path = (c.req.query('path') ?? '').trim()
+    if (!path || path.length > 1000) throw new HTTPException(400, { message: 'Which file?' })
+    const result = codeAnswer(
+      await codeFiles(thread.computer, {
+        sessionId: thread.id,
+        teammateId,
+        op: 'original',
+        path,
+      }),
+    )
+    return c.json({ text: result.original ?? null } satisfies { text: string | null })
+  })
+
+  /**
+   * Put files of a teammate's working folder back as Changes compares them to (new
+   * ones are deleted): whoever may write to the thread. The thread is told,
+   * so its teammates know at their next turn.
+   */
+  .post('/:id/code/revert', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    requireMayPrompt(scope, thread)
+    const input = await parseBody(c.req.raw, RevertCode)
+    const teammateId = await codeTeammate(thread, input.teammateId, CODE_CHANGES_PROTOCOL)
+    const paths = [...new Set(input.paths)]
+    const { base } = codeAnswer(
+      await codeFiles(thread.computer, { sessionId: thread.id, teammateId, op: 'revert', paths }),
+    )
+    const user = await prisma.user.findFirst({
+      where: { id: scope.userId },
+      select: { name: true },
+    })
+    const named = paths
+      .slice(0, 5)
+      .map((p) => `\`${p}\``)
+      .join(', ')
+    const more = paths.length > 5 ? ` and ${paths.length - 5} more` : ''
+    await noteInThread(
+      db,
+      thread.id,
+      base
+        ? `${user?.name || 'A member'} reverted ${named}${more} in the code editor to how they are on ${base}, where this branch left it. Their changes on the branch are undone and new files deleted, in the folder and the index: commit that to keep it.`
+        : `${user?.name || 'A member'} reverted ${named}${more} to the last commit in the code editor. Their changes since are undone, and new files deleted.`,
+    )
+    return c.json({ ok: true })
+  })
+
+  /**
+   * Where an element picked in the thread's preview is written: files of the
+   * preview's folder holding its text, best first, to open in the file panel.
+   */
+  .post('/:id/source', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    requireMayPrompt(scope, thread)
+    const input = await parseBody(c.req.raw, FindSource)
+    if (!thread.teammates.some((t) => t.teammateId === input.teammateId))
+      throw new HTTPException(400, { message: 'That teammate is not in this thread' })
+    await requireCodeEdit(thread.computer)
+    const result = await findSource(thread.computer, {
+      sessionId: thread.id,
+      teammateId: input.teammateId,
+      cwd: input.cwd,
+      text: input.text,
+      ...(input.components ? { components: input.components } : {}),
+    })
+    if (!result.ok) throw new HTTPException(409, { message: result.error ?? 'Could not search' })
+    return c.json({ matches: result.matches ?? [] } satisfies { matches: SourceMatch[] })
   })
 
   /**
@@ -516,7 +1201,7 @@ export const threads = new Hono<AppEnv>()
     const path = (c.req.query('path') ?? '').trim().replace(/^\.\//, '')
     if (!path || path.length > 1000 || !VIEWABLE_FILE.test(path))
       throw new HTTPException(400, { message: 'Which image or PDF?' })
-    const result = await readThreadFile(thread.computerId, {
+    const result = await readThreadFile(thread.computer, {
       sessionId: thread.id,
       teammateIds: teammatesFirst(thread, c.req.query('teammateId')),
       path,
@@ -538,6 +1223,44 @@ export const threads = new Hono<AppEnv>()
     })
   })
 
+  /**
+   * An image or PDF a teammate's tool returned, which the thread's events name
+   * (STORED_FILE): from the bucket, so it shows while the computer is stopped too. Its
+   * name is its hash, so it never changes. An image is a redirect to the bucket's signed
+   * URL. A PDF comes through here: the dashboard reads it with the member's session
+   * (pdf.js), which a redirect to the bucket would lose.
+   */
+  .get('/:id/files/:name', async (c) => {
+    const name = c.req.param('name')
+    if (!STORED_FILE_NAME.test(name)) throw new HTTPException(400, { message: 'Which file?' })
+    const thread = await c.var.db.session.findFirst({
+      where: { id: c.req.param('id') },
+      select: { id: true },
+    })
+    if (!thread) throw new HTTPException(404, { message: 'Thread not found' })
+    const key = threadFileKey(c.var.scope, thread.id, name)
+    const contentType = contentTypeFor(name)
+    const disposition = `inline; filename="${name}"`
+    if (contentType.startsWith('image/'))
+      try {
+        const signed = await presignGet(key, { contentType, disposition })
+        // The signed URL works a little longer than the browser keeps this.
+        c.header('cache-control', `private, max-age=${signed.seconds - 60}`)
+        return c.redirect(signed.url, 302)
+      } catch {
+        // No R2 (development): through the API.
+      }
+    const body = await streamObject(key)
+    if (!body) throw new HTTPException(404, { message: 'The file is missing from storage' })
+    return c.body(body, 200, {
+      'content-type': contentType,
+      'content-disposition': disposition,
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': 'sandbox',
+      'cache-control': 'private, max-age=31536000, immutable',
+    })
+  })
+
   /** The thread end to end: events, connector calls, tickets and who did what. */
   .get('/:id/log', async (c) => {
     const thread = await loadThread(c.var.db, c.req.param('id'))
@@ -547,6 +1270,7 @@ export const threads = new Hono<AppEnv>()
   /** A new top-level message starts a new thread with a fresh context. */
   .post('/', async (c) => {
     const { scope, db } = c.var
+    await requireGuestRoom(c.var.userId, scope.workspaceId)
     const input = await parseBody(c.req.raw, StartThread)
     // Looked up together, each a trip to the database; their errors still in this order.
     const [teammate, computer, project] = await Promise.all([
@@ -561,7 +1285,7 @@ export const threads = new Hono<AppEnv>()
     if (!computer || (computer.kind === 'member_machine' && computer.memberId !== scope.memberId)) {
       throw new HTTPException(404, { message: 'Computer not found' })
     }
-    // A thread runs on the starting member's accounts, never anyone else's.
+    // A thread runs on the accounts its starter may use (src/account-sharing.ts).
     // The title is what the message is about, not the command it starts with.
     const skill = input.text.startsWith('/')
       ? skillCommand(
@@ -576,7 +1300,12 @@ export const threads = new Hono<AppEnv>()
     const firstLine = mentionsToText(asked).split('\n')[0]!
     if ('error' in project) throw project.error
     const projectId = project.id
+    const listItemIds = input.listLines
+      ? await linesToStartOn(db, scope, scope.memberId, input.listLines)
+      : undefined
     const { thread, outcome } = await startThread(db, scope, {
+      // Chosen by the browser, which opened the thread already: never one that exists.
+      ...(input.id ? { id: input.id, fresh: true } : {}),
       teammate,
       computer,
       memberId: scope.memberId,
@@ -591,7 +1320,10 @@ export const threads = new Hono<AppEnv>()
       attachmentIds: input.attachmentIds,
       projectId,
       effort: input.effort ?? null,
-    })
+      ...(listItemIds ? { listItemIds } : {}),
+      // The member's box gets the message back: no failed thread of it is left.
+      dropUnstarted: true,
+    }).catch((error: unknown) => idTaken(error, input.id))
     if (outcome === 'offline') {
       throw new HTTPException(409, {
         message: 'That computer is offline. Start its runner and try again.',
@@ -628,8 +1360,9 @@ export const threads = new Hono<AppEnv>()
     const { scope, db } = c.var
     const thread = await loadThread(db, c.req.param('id'))
     requireMayPrompt(scope, thread)
-    if (thread.status === 'waiting')
-      throw new HTTPException(409, { message: 'Approve or deny the pending request first' })
+    await requireGuestRoom(c.var.userId, scope.workspaceId)
+    const refused = thread.status === 'waiting' ? await waitingRefusal(db, thread) : undefined
+    if (refused) throw new HTTPException(409, { message: refused })
     if (thread.status === 'paused' && (await openCapTicket(db, thread.id)))
       throw new HTTPException(409, {
         message: 'This thread is paused at a daily cap. An admin decides in Tickets.',
@@ -638,9 +1371,14 @@ export const threads = new Hono<AppEnv>()
       c.req.raw,
       SendMessage,
     )
+    // The sender's id names its command, so the same message sent again (Retry after a reply
+    // that never came back) reaches the computer once: kept already, it went.
+    const commandId = messageId && !moveTo ? `message:${thread.id}:${messageId}` : undefined
+    if (commandId && (await isKept(commandId)))
+      return c.json({ ok: true, paused: false, delivery: 'sent' })
     // A playbook's run a member writes in joins their Threads, and counts as stepping in.
     await surface(db, thread, true)
-    // A design picked from the thread's options: checked first, moved once the message is sent.
+    // A design picked from the thread's options: checked first, copied once the message is sent.
     const picking = pick ? await checkPick(db, thread.id, pick) : undefined
     // Teammates the message mentions answer it, joining the thread if new; otherwise whoever answered last.
     const mentioned = await mentionedTeammates(db, text)
@@ -664,7 +1402,8 @@ export const threads = new Hono<AppEnv>()
       )
       if (picking) await applyPick(db, scope, { type: 'member', id: scope.memberId }, picking)
       if (thread.archivedAt) await setThreadArchived(scope, thread.id, false)
-      await reopenOnMessage(scope, thread)
+      // A person asks again: the work is no longer done (src/thread-done.ts).
+      await reopenThread(scope, thread.id)
       return c.json({ ok: true, paused: false, delivery: 'moving' })
     }
     const outcome = await promptWithAttachments(
@@ -681,6 +1420,7 @@ export const threads = new Hono<AppEnv>()
         ...(replyTo ? { replyTo } : {}),
       },
       { memberId: scope.memberId },
+      commandId ? { commandId } : {},
     )
     if (outcome === 'offline')
       throw new HTTPException(409, {
@@ -696,7 +1436,8 @@ export const threads = new Hono<AppEnv>()
       target: { type: 'thread', id: thread.id },
       ...(joined.length > 0 ? { data: { joined } } : {}),
     })
-    await reopenOnMessage(scope, thread)
+    // A person asks again: the work is no longer done (src/thread-done.ts).
+    await reopenThread(scope, thread.id)
     // starting: a stopped computer starts first, and gets the message when its runner connects.
     return c.json({
       ok: true,
@@ -716,7 +1457,8 @@ export const threads = new Hono<AppEnv>()
 
   /**
    * A message still queued: steer it into the running turn, or cancel, edit or send to run in
-   * parallel one a person wrote.
+   * parallel one a person wrote. One answered on the side (message.side): keep it for after the
+   * turn rather than have it passed on, or queue one its side reply settled after all.
    */
   .post('/:id/messages/:messageId', async (c) => {
     const { scope, db } = c.var
@@ -736,26 +1478,94 @@ export const threads = new Hono<AppEnv>()
     })
     const data = queued?.data as { memberId?: string | null; text?: string } | undefined
     const memberId = data?.memberId
+    // Another member's own words are theirs to change: anyone who may write steers them in.
+    if (memberId && memberId !== scope.memberId && input.action !== 'steer')
+      throw new HTTPException(403, {
+        message:
+          'Another member wrote this message: only they can change it. Steer it, or write your own.',
+      })
     if (memberId !== undefined && !mayChangeQueued(memberId, input.action))
       throw new HTTPException(409, {
         message:
-          'Brigade sent this message, so it cannot be edited, cancelled or run in parallel. Steer it, or write your own.',
+          'Brigade sent this message, so it cannot be edited, cancelled or sent to a sub-thread. Steer it, or write your own.',
       })
     if (input.action === 'parallel') {
       // A child thread cannot start children of its own (src/children.ts).
       if (thread.parentId)
         throw new HTTPException(409, {
-          message: 'This is a child thread, so it cannot start another one. Steer it instead.',
+          message: 'This is a sub-thread, so it cannot start another one. Steer it instead.',
         })
       if (data?.text === undefined)
         throw new HTTPException(409, { message: 'This message was already read.' })
     }
-    const protocol = runnerProtocol(thread.computer.id)
+    const protocol = await hubs.get(thread.workspaceId).runnerProtocol(thread.computer.id)
     if (protocol !== undefined && protocol < 11)
       throw new HTTPException(409, {
         message: "This computer's runner is too old to change queued messages. Update it.",
       })
-    const command = (action: 'cancel' | 'edit' | 'steer', text?: string) =>
+    // Only a runner that answers on the side sends what these act on.
+    if (
+      (input.action === 'keep' || input.action === 'queue') &&
+      protocol !== undefined &&
+      protocol < SIDE_REPLY_PROTOCOL
+    )
+      throw new HTTPException(409, {
+        message: "This computer's runner is too old for asides. Update it.",
+      })
+    const audited = () =>
+      audit({
+        ...scope,
+        actor: { type: 'member', id: scope.memberId },
+        action: `thread.message_${{ cancel: 'cancelled', edit: 'edited', steer: 'steered', parallel: 'sent_in_parallel', keep: 'kept', queue: 'queued_again' }[input.action]}`,
+        target: { type: 'thread', id: thread.id },
+        data: { messageId },
+      })
+    // Settled on the side (its reading says so): it is queued no more, here or on the computer,
+    // which may have restarted since. To have it run after all, it is sent again as it was
+    // queued, with no side reply this time; steered, into the running turn if there is one.
+    if (input.action === 'queue' || input.action === 'steer') {
+      const latest = await db.sessionEvent.findFirst({
+        where: {
+          sessionId: thread.id,
+          type: { in: ['message.queued', 'message.user', 'message.cancelled'] },
+          data: { path: ['messageId'], equals: messageId },
+        },
+        orderBy: { seq: 'desc' },
+        select: { seq: true, type: true, data: true },
+      })
+      const side =
+        latest?.type === 'message.user'
+          ? (latest.data as { side?: { route?: string } } | null)?.side
+          : undefined
+      if (side?.route === 'answer' && queued) {
+        const [prompt] = await messagesToRequeue(
+          { organizationId: scope.organizationId, workspaceId: thread.workspaceId },
+          [
+            {
+              sessionId: thread.id,
+              messageId,
+              queued: queued.data as Extract<AgentEvent, { type: 'message.queued' }>,
+            },
+          ],
+        )
+        if (!prompt)
+          throw new HTTPException(409, { message: 'This message cannot run now. Write it again.' })
+        await deliver(thread.computer, {
+          ...prompt,
+          // One per reading: a second click, or a second request racing the first before the
+          // runner says it queued it, names the same command, which is kept once (its row's id)
+          // and taken once by the runner.
+          commandId: `side-${thread.id}-${latest!.seq}`,
+          settled: true,
+          ...(input.action === 'steer' ? { steer: true } : {}),
+        })
+        await audited()
+        return c.json({ ok: true })
+      }
+      // Still queued: it runs after the turn already.
+      if (input.action === 'queue') return c.json({ ok: true })
+    }
+    const command = (action: 'cancel' | 'edit' | 'steer' | 'keep' | 'queue', text?: string) =>
       deliver(thread.computer, {
         type: 'thread.queued',
         commandId: randomUUID(),
@@ -770,13 +1580,7 @@ export const threads = new Hono<AppEnv>()
       await command('edit', inParallel(data!.text!))
       await command('steer')
     } else await command(input.action, input.action === 'edit' ? input.text : undefined)
-    await audit({
-      ...scope,
-      actor: { type: 'member', id: scope.memberId },
-      action: `thread.message_${{ cancel: 'cancelled', edit: 'edited', steer: 'steered', parallel: 'sent_in_parallel' }[input.action]}`,
-      target: { type: 'thread', id: thread.id },
-      data: { messageId },
-    })
+    await audited()
     return c.json({ ok: true })
   })
 
@@ -786,25 +1590,33 @@ export const threads = new Hono<AppEnv>()
     requireMayPrompt(scope, thread)
     const input = await parseBody(c.req.raw, ResolveApproval)
     // The approval's ticket: a connector write (its id is the ticket's) or a harness request.
-    const ticket = await db.ticket.findFirst({
+    const tickets = await db.ticket.findMany({
       where: {
         sessionId: thread.id,
-        status: 'open',
         OR: [
           { id: input.approvalId },
           { payload: { path: ['approvalId'], equals: input.approvalId } },
         ],
       },
+      select: { id: true, status: true },
     })
+    const ticket = tickets.find((t) => t.status === 'open')
+    // Decided already (twice, or by someone else): nothing waits on it any more. Sent on, the
+    // runner would continue its teammate's turn with it, whatever that turn waits on now.
+    if (!ticket && tickets.length > 0)
+      throw new HTTPException(409, { message: 'This was decided already' })
     if (ticket) {
       return c.json(
         await resolveTicket(scope, ticket.id, {
           approved: input.approved,
           ...(input.reason ? { reason: input.reason } : {}),
           ...(input.always ? { always: true } : {}),
+          ...(input.edited ? { edited: input.edited } : {}),
         }),
       )
     }
+    // Allowed, or told why not: they ask in it too.
+    if (input.approved || input.reason) await noteAsker(db, thread.id, scope.memberId)
     await deliver(thread.computer, {
       type: 'thread.approval',
       commandId: randomUUID(),
@@ -846,7 +1658,9 @@ export const threads = new Hono<AppEnv>()
   .post('/:id/tickets', async (c) => {
     const { scope, db } = c.var
     const thread = await loadThread(db, c.req.param('id'))
-    requireMayPrompt(scope, thread)
+    // Control is answerTicket's to check: the member in control answers once done on the
+    // computer, and control goes back with the answer.
+    requireMayPrompt(scope, { ...thread, controlledByMemberId: null })
     const input = await parseBody(c.req.raw, AnswerTicket)
     const ticket = await db.ticket.findFirst({
       where: {
@@ -884,6 +1698,17 @@ export const threads = new Hono<AppEnv>()
     return c.json({ ok: true })
   })
 
+  /**
+   * The person marks one of Chief's answers in their name as wrong (src/chief-answers.ts): its
+   * teammate is told to stop what it started on it, and Chief suggests that kind again.
+   */
+  .post('/:id/chief/:decisionId/wrong', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    requireMayPrompt(scope, thread)
+    return c.json(await overruleDecision(scope, thread.id, c.req.param('decisionId')))
+  })
+
   .post('/:id/interrupt', async (c) => {
     const { scope, db } = c.var
     const thread = await loadThread(db, c.req.param('id'))
@@ -900,6 +1725,21 @@ export const threads = new Hono<AppEnv>()
       ...scope,
       actor: { type: 'member', id: scope.memberId },
       action: 'thread.interrupted',
+      target: { type: 'thread', id: thread.id },
+    })
+    return c.json({ ok: true })
+  })
+
+  /** The latest turn failed: its teammate tries it again, told the error it stopped on. */
+  .post('/:id/retry', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    requireMayPrompt(scope, thread)
+    await retryThread(db, scope, thread, scope.memberId)
+    await audit({
+      ...scope,
+      actor: { type: 'member', id: scope.memberId },
+      action: 'thread.retried',
       target: { type: 'thread', id: thread.id },
     })
     return c.json({ ok: true })
@@ -933,7 +1773,9 @@ export const threads = new Hono<AppEnv>()
 
   /**
    * The computer's desktop: watch the teammate work, or use it after taking
-   * over. Watching never wakes a stopped computer; having control does.
+   * over. Watching never wakes a stopped computer on its own: having control
+   * does, and so does `?wake=1`, the panel's Wake up button. Asleep, the reply
+   * says so (`asleep: true`) for the panel to offer it.
    */
   .post('/:id/desktop', async (c) => {
     const { scope, db } = c.var
@@ -944,14 +1786,12 @@ export const threads = new Hono<AppEnv>()
       })
     }
     if (thread.computer.status !== 'running') {
-      if (thread.controlledByMemberId === scope.memberId) {
-        await ensureRunning(thread.computer.id)
-        // 503: the dashboard asks again until the computer is up.
-        throw new HTTPException(503, { message: 'Starting the cloud computer…' })
+      if (thread.controlledByMemberId === scope.memberId || c.req.query('wake') === '1') {
+        await hubs.get(thread.workspaceId).ensureRunning(thread.computer.id)
+        // 503: the dashboard asks again until the computer is up (not sent as an error).
+        throw computerStarting()
       }
-      throw new HTTPException(409, {
-        message: 'The cloud computer is not running. It starts with the next message.',
-      })
+      return c.json({ error: COMPUTER_ASLEEP, asleep: true }, 409)
     }
     const view = await watchDesktop(thread.computer)
     // The screen is shared by every thread on the computer: show this one's tab,
@@ -961,8 +1801,9 @@ export const threads = new Hono<AppEnv>()
       (await db.session.count({
         where: { computerId: thread.computer.id, controlledByMemberId: { not: null } },
       }))
-    if ((runnerProtocol(thread.computer.id) ?? 0) >= FOCUS_PROTOCOL && !(await inUse()))
-      sendToRunner(
+    const hub = hubs.get(thread.workspaceId)
+    if (((await hub.runnerProtocol(thread.computer.id)) ?? 0) >= FOCUS_PROTOCOL && !(await inUse()))
+      await hub.sendToRunner(
         thread.computer.id,
         { type: 'browser.focus', teammateId: currentTeammate(thread).id, sessionId: thread.id },
         { touch: false },
@@ -980,9 +1821,10 @@ export const threads = new Hono<AppEnv>()
 
   /**
    * Open the thread's live preview: the address of the app its teammate runs.
-   * On the workspace computer the provider hosts it publicly, behind a token
-   * only people who may see the thread get; on a member's own machine it is
-   * that machine's localhost. touch: the dashboard still has it open, which
+   * On the workspace computer it is public on the preview gateway, with an
+   * access token for a few minutes that only people who may see the thread
+   * get; on a member's own machine it is the thread's own name under that machine's localhost
+   * (http://<thread>.localhost:<port>, as its runner says). touch: the dashboard still has it open, which
    * keeps it (and the workspace computer) from stopping.
    */
   .post('/:id/preview', async (c) => {
@@ -991,21 +1833,25 @@ export const threads = new Hono<AppEnv>()
     const { touch } = await parseBody(c.req.raw, z.object({ touch: z.boolean().optional() }))
     const preview = await livePreview(db, thread)
     if (touch) {
-      touchPreview(thread.computer.id, thread.id)
+      await touchPreview(thread.computer, thread.id)
       return c.body(null, 204)
     }
     // Its events may be stale (the runner restarted): ask the runner, which also touches it.
-    const live = await previewLogs(thread.computer.id, thread.id)
+    const live = await previewLogs(thread.computer, thread.id)
     if (!live.ok)
       throw new HTTPException(409, {
         message: 'The preview is no longer running. Start it again from the preview panel.',
       })
-    touchPreview(thread.computer.id, thread.id)
+    await touchPreview(thread.computer, thread.id)
     // The runner's proxy in front of the app; the app itself from runners before it.
     const port = preview.publicPort ?? preview.port
     if (thread.computer.kind !== 'cloud')
-      return c.json({ url: `http://localhost:${port}`, local: true } satisfies PreviewView)
-    const { url } = await hostedPort(thread.computer, port)
+      return c.json({ url: localPreviewUrl(live.origin, port), local: true } satisfies PreviewView)
+    const { url } = await hostedPort(thread.computer, port, thread.id)
+    if (!url)
+      throw new HTTPException(503, {
+        message: 'The preview gateway did not answer. Try again in a moment.',
+      })
     await audit({
       ...scope,
       actor: { type: 'member', id: scope.memberId },
@@ -1024,7 +1870,7 @@ export const threads = new Hono<AppEnv>()
   .post('/:id/preview/start', async (c) => {
     const { scope, db } = c.var
     const thread = await loadThread(db, c.req.param('id'))
-    mayPrompt(thread, scope.memberId)
+    mayPrompt(thread, scope)
     const { repository } = await parseBody(c.req.raw, StartPreview)
     const result = await startPreview(db, thread, repository)
     if (result.outcome === 'started')
@@ -1042,8 +1888,8 @@ export const threads = new Hono<AppEnv>()
   .get('/:id/preview/state', async (c) => {
     const { scope, db } = c.var
     const thread = await loadThread(db, c.req.param('id'))
-    const latest = await latestPreview(db, thread.id, thread.computer.id)
-    const offline = previewOffline(thread.computer)
+    const latest = await latestPreview(db, thread.id, thread.computer)
+    const offline = await previewOffline(thread.computer)
     // Its events say it runs, but its computer is gone: it stopped with it.
     const preview =
       latest && offline && (latest.status === 'starting' || latest.status === 'running')
@@ -1055,7 +1901,7 @@ export const threads = new Hono<AppEnv>()
       teammateName: (teammate ?? thread.teammate).name,
       computerName: thread.computer.name,
       cloud: thread.computer.kind === 'cloud',
-      mayControl: thread.startedByMemberId === scope.memberId || thread.othersMayPrompt,
+      mayControl: mayWrite(thread, scope),
     } satisfies ThreadPreviewState)
   })
 
@@ -1063,11 +1909,15 @@ export const threads = new Hono<AppEnv>()
   .post('/:id/preview/control', async (c) => {
     const { scope, db } = c.var
     const thread = await loadThread(db, c.req.param('id'))
-    mayPrompt(thread, scope.memberId)
+    mayPrompt(thread, scope)
     const { action } = await parseBody(c.req.raw, z.object({ action: PreviewAction }))
     await livePreview(db, thread)
     if (
-      !sendToRunner(thread.computer.id, { type: 'preview.control', sessionId: thread.id, action })
+      !(await hubs.get(thread.workspaceId).sendToRunner(thread.computer.id, {
+        type: 'preview.control',
+        sessionId: thread.id,
+        action,
+      }))
     )
       throw new HTTPException(409, { message: 'The computer is offline' })
     await audit({
@@ -1084,7 +1934,7 @@ export const threads = new Hono<AppEnv>()
     const { db } = c.var
     const thread = await loadThread(db, c.req.param('id'))
     await livePreview(db, thread)
-    const result = await previewLogs(thread.computer.id, thread.id)
+    const result = await previewLogs(thread.computer, thread.id)
     if (!result.ok) throw new HTTPException(409, { message: result.error ?? 'No output' })
     return c.json({ text: result.text ?? '' })
   })
@@ -1101,7 +1951,7 @@ export const threads = new Hono<AppEnv>()
     }
     const { text } = await parseBody(c.req.raw, DesktopClipboard)
     try {
-      return c.json({ text: await desktopClipboard(thread.computer.id, text) })
+      return c.json({ text: await desktopClipboard(thread.computer, text) })
     } catch (error) {
       throw new HTTPException(503, { message: (error as Error).message })
     }
@@ -1148,14 +1998,27 @@ export const threads = new Hono<AppEnv>()
     const thread = await loadThread(db, c.req.param('id'))
     if (thread.controlledByMemberId !== scope.memberId)
       throw new HTTPException(409, { message: 'You do not have control of this thread' })
-    const { note } = await parseBody(c.req.raw, HandBack)
-    await handBack(db, scope, thread, note)
+    const { note, replies } = await parseBody(c.req.raw, HandBack)
+    // The teammate waits on a ticket to do something in its browser: handing back answers it,
+    // with what the person answered of its other asks already.
+    const ticket = await db.ticket.findFirst({
+      where: { sessionId: thread.id, type: 'request', status: 'open' },
+      orderBy: { createdAt: 'desc' },
+    })
+    const payload = ticket?.payload as { asks?: Ask[]; requestId?: string } | null
+    const answer = handbackAnswer(
+      payload?.asks ?? [],
+      note,
+      (payload?.requestId && replies?.[payload.requestId]) || {},
+    )
+    if (ticket && answer && mayAnswer(scope, thread)) await answerTicket(scope, ticket.id, answer)
+    else await handBack(db, scope, thread, note)
     return c.json({ ok: true })
   })
 
   /**
    * Into a project or out of one: any member, as it only organizes. Its next
-   * turn gets the new project's context; its task follows.
+   * turn gets the new project's context.
    */
   .put('/:id/project', async (c) => {
     const { scope, db } = c.var
@@ -1167,8 +2030,6 @@ export const threads = new Hono<AppEnv>()
       where: { id: thread.id },
       data: { projectId: next, updatedAt: thread.updatedAt },
     })
-    if (thread.taskId)
-      await db.task.updateMany({ where: { id: thread.taskId }, data: { projectId: next } })
     // Its child threads, schedule runs among them, and the schedules reporting here follow.
     const family = await descendants(db, thread.id)
     if (family.length)
@@ -1182,7 +2043,7 @@ export const threads = new Hono<AppEnv>()
         where: { id: { in: reporting.map((s) => s.id) } },
         data: { projectId: next },
       })
-      for (const s of reporting) broadcastSchedule(scope.workspaceId, s.id)
+      for (const s of reporting) void hubs.get(scope.workspaceId).broadcast(scheduleUpdated(s.id))
     }
     await audit({
       ...scope,
@@ -1191,7 +2052,7 @@ export const threads = new Hono<AppEnv>()
       target: { type: 'thread', id: thread.id },
       data: { from: thread.projectId, to: next },
     })
-    broadcastThreadStatus(scope.workspaceId, thread.id, thread.status)
+    void hubs.get(scope.workspaceId).broadcast(threadUpdated(thread.id, thread.status))
     return c.json({ ok: true })
   })
 
@@ -1216,21 +2077,29 @@ export const threads = new Hono<AppEnv>()
       target: { type: 'thread', id: thread.id },
       data: { from: thread.title, to: title },
     })
-    broadcastThreadStatus(scope.workspaceId, thread.id, thread.status)
+    void hubs.get(scope.workspaceId).broadcast(threadUpdated(thread.id, thread.status))
     return c.json({ ok: true })
   })
 
-  /** This member's pinned threads in the order they dragged them to: the ids, first to last. */
+  /**
+   * This member's pinned threads and lists in the order they dragged them to: the ids, first to
+   * last, a list's as `list:<documentId>` (its sidebar row's).
+   */
   .put('/pins/order', async (c) => {
     const { scope, db } = c.var
     const { ids } = await parseBody(c.req.raw, z.object({ ids: z.array(z.string()).max(500) }))
     // Only their own pins move; ids they did not pin are left out.
     await db.$transaction(
-      ids.map((sessionId, position) =>
-        db.threadPin.updateMany({
-          where: { memberId: scope.memberId, sessionId },
-          data: { position },
-        }),
+      ids.map((id, position) =>
+        id.startsWith('list:')
+          ? db.listPin.updateMany({
+              where: { memberId: scope.memberId, documentId: id.slice('list:'.length) },
+              data: { position },
+            })
+          : db.threadPin.updateMany({
+              where: { memberId: scope.memberId, sessionId: id },
+              data: { position },
+            }),
       ),
     )
     return c.json({ ok: true })
@@ -1241,11 +2110,8 @@ export const threads = new Hono<AppEnv>()
     const { scope, db } = c.var
     const thread = await loadThread(db, c.req.param('id'))
     await surface(db, thread)
-    // At the end of Pinned, below those the member placed.
-    const last = await db.threadPin.aggregate({
-      where: { memberId: scope.memberId },
-      _max: { position: true },
-    })
+    // At the end of Pinned, below the threads and lists the member placed.
+    const position = await nextPinPosition(db, scope.memberId)
     await db.threadPin.upsert({
       where: { memberId_sessionId: { memberId: scope.memberId, sessionId: thread.id } },
       create: {
@@ -1253,7 +2119,7 @@ export const threads = new Hono<AppEnv>()
         workspaceId: scope.workspaceId,
         memberId: scope.memberId,
         sessionId: thread.id,
-        position: (last._max.position ?? -1) + 1,
+        position,
       },
       update: {},
     })
@@ -1267,6 +2133,75 @@ export const threads = new Hono<AppEnv>()
     return c.json({ ok: true })
   })
 
+  /**
+   * Snooze it (`{ until }`, an ISO time): out of this member's list and of what waits on them
+   * until then, or until something new happens in it (src/later.ts); DELETE wakes it now. Each
+   * member's own.
+   */
+  .post('/:id/later', async (c) => {
+    const { scope, db } = c.var
+    const body: { until?: unknown } = await c.req.json().catch(() => ({}))
+    const until = snoozeUntil(body?.until)
+    if (!until)
+      throw new HTTPException(400, {
+        message: `Snooze until a time in the next ${SNOOZE_MAX_DAYS} days.`,
+      })
+    const thread = await loadThread(db, c.req.param('id'))
+    if (thread.parentId)
+      throw new HTTPException(409, { message: 'A sub-thread shows in its parent.' })
+    if (thread.archivedAt) throw new HTTPException(409, { message: 'Unarchive the thread first.' })
+    await setLater(db, scope, thread, until)
+    return c.json({ ok: true, until: until.toISOString() })
+  })
+  .delete('/:id/later', async (c) => {
+    const { scope, db } = c.var
+    await setLater(db, scope, await loadThread(db, c.req.param('id')), null)
+    return c.json({ ok: true })
+  })
+
+  /**
+   * Its goal (docs/goals.md, src/goals.ts). Approving or resuming one lets its teammate act on the
+   * thread's accounts, so only who may write in it does; pausing, stopping and withdrawing a
+   * permission only hold it back, so an admin may too.
+   */
+  .post('/:id/goal/:goalId/:action{approve|decline|pause|resume|stop}', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    const action = c.req.param('action') as 'approve' | 'decline' | 'pause' | 'resume' | 'stop'
+    if (action === 'approve' || action === 'resume') {
+      if (!mayWrite(thread, scope))
+        throw new HTTPException(403, { message: 'Only who may write in this thread can do that' })
+    } else mayChange(scope, thread)
+    const goalId = c.req.param('goalId')
+    const act = {
+      approve: approveGoal,
+      decline: declineGoal,
+      pause: pauseGoal,
+      resume: resumeGoal,
+      stop: stopGoal,
+    }[action]
+    await act(db, scope, thread, goalId)
+    return c.json({ ok: true })
+  })
+
+  .post('/:id/goal/:goalId/judge', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    if (!mayWrite(thread, scope))
+      throw new HTTPException(403, { message: 'Only who may write in this thread can do that' })
+    const { met } = await parseBody(c.req.raw, JudgeGoal)
+    await judgeGoal(db, scope, thread, c.req.param('goalId'), met)
+    return c.json({ ok: true })
+  })
+
+  .delete('/:id/goal/:goalId/permissions/:permissionId', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    mayChange(scope, thread)
+    await revokePermission(db, scope, thread, c.req.param('goalId'), c.req.param('permissionId'))
+    return c.json({ ok: true })
+  })
+
   /** Cancel a wake-up a teammate set in it: who may change the thread. */
   .delete('/:id/wakeups/:wakeupId', async (c) => {
     const { scope, db } = c.var
@@ -1276,9 +2211,86 @@ export const threads = new Hono<AppEnv>()
     return c.json({ ok: true })
   })
 
+  /** Stop waiting on replies in an email's conversation: who may change the thread. */
+  .delete('/:id/replies/:watchId', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    mayChange(scope, thread)
+    if (!(await stopWatching(db, scope, thread, c.req.param('watchId'))))
+      throw new HTTPException(404, { message: 'This thread does not wait on that reply' })
+    return c.json({ ok: true })
+  })
+
   /** Archive it: out of everyone's sidebar until someone writes in it; DELETE brings it back. */
   .post('/:id/archive', async (c) => archive(c, true))
   .delete('/:id/archive', async (c) => archive(c, false))
+
+  /**
+   * Mark it done (docs/board.md), with a line on what was delivered or none: who may change it,
+   * whatever is still open in it, as they decide. Not a child. DELETE reopens it.
+   */
+  .post('/:id/done', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    mayChange(scope, thread)
+    // Its line, when one came with it.
+    const { summary } = c.req.header('content-type')?.startsWith('application/json')
+      ? await parseBody(c.req.raw, MarkThreadDone)
+      : {}
+    await markDone(db, scope, thread, summary)
+    return c.json({ ok: true })
+  })
+  .delete('/:id/done', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    mayChange(scope, thread)
+    await markReopened(db, scope, thread)
+    return c.json({ ok: true })
+  })
+
+  /**
+   * Dismiss the choices card a person sees in the thread without picking one (docs/board.md),
+   * named by its event (`seq`): it waits on nobody any more and the thread stops, with no turn
+   * started. A card answered or offered since is not theirs to dismiss: refused. Its teammate
+   * reads it at its next turn, as a note. Who may change the thread.
+   */
+  .post('/:id/choices/dismiss', async (c) => {
+    const { scope, db } = c.var
+    const thread = await loadThread(db, c.req.param('id'))
+    mayChange(scope, thread)
+    const { seq } = await parseBody(c.req.raw, DismissChoices)
+    const open = await openChoices(db, thread)
+    if (!open || open.seq !== seq)
+      throw new HTTPException(409, {
+        message: 'These choices were answered or replaced: open the thread to see the latest',
+      })
+    // Only forward, and in the database's own time: a person's dismissal is the thread's latest
+    // activity, its Stopped clock starts then, and activity written meanwhile is never rewound.
+    await prisma.$executeRaw`
+      UPDATE "Session" SET "choicesDismissedSeq" = ${seq}, "updatedAt" = now()
+      WHERE id = ${thread.id} AND "workspaceId" = ${scope.workspaceId}
+        AND ("choicesDismissedSeq" IS NULL OR "choicesDismissedSeq" < ${seq})`
+    // Chief's decisions on it are moot, an answer it has not delivered yet included.
+    await noteChiefDismissed(scope, thread.id, seq)
+    await audit({
+      ...scope,
+      actor: { type: 'member', id: scope.memberId },
+      action: 'thread.choices_dismissed',
+      target: { type: 'thread', id: thread.id },
+      data: { question: open.question },
+    })
+    const user = await prisma.user.findFirst({
+      where: { id: scope.userId },
+      select: { name: true },
+    })
+    await noteInThread(
+      db,
+      thread.id,
+      `${user?.name || 'A member'} dismissed the choices you offered ("${open.question}") without picking one.`,
+    )
+    void hubs.get(scope.workspaceId).broadcast(threadUpdated(thread.id, thread.status))
+    return c.json({ ok: true })
+  })
 
   /** Delete it for good, with its files in the bucket: its starter or an admin. */
   .delete('/:id', async (c) => {
@@ -1288,14 +2300,8 @@ export const threads = new Hono<AppEnv>()
       throw new HTTPException(403, {
         message: 'Only the member who started this thread or an admin can delete it',
       })
-    const { taskId } = await deleteThread(
-      db,
-      scope,
-      { type: 'member', id: scope.memberId },
-      thread.id,
-    )
-    broadcastThreadStatus(scope.workspaceId, thread.id, 'deleted')
-    if (taskId) broadcastTask(scope.workspaceId, taskId)
+    await deleteThread(db, scope, { type: 'member', id: scope.memberId }, thread.id)
+    void hubs.get(scope.workspaceId).broadcast(threadUpdated(thread.id, 'deleted'))
     return c.json({ ok: true })
   })
 
@@ -1314,7 +2320,7 @@ export const threads = new Hono<AppEnv>()
       throw new HTTPException(403, {
         message: 'Only the member who started this thread can change it',
       })
-    if (input.effort !== undefined) mayPrompt(thread, scope.memberId)
+    if (input.effort !== undefined) mayPrompt(thread, scope)
     await db.session.updateMany({ where: { id: thread.id }, data: input })
     await audit({
       ...scope,
@@ -1323,6 +2329,6 @@ export const threads = new Hono<AppEnv>()
       target: { type: 'thread', id: thread.id },
       data: input,
     })
-    broadcastThreadStatus(scope.workspaceId, thread.id, thread.status)
+    void hubs.get(scope.workspaceId).broadcast(threadUpdated(thread.id, thread.status))
     return c.json({ ok: true })
   })

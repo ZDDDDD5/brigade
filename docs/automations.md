@@ -9,7 +9,8 @@ do this from events (`apps/api/src/triggers.ts`). This step adds **schedules**: 
 teammate is prompted with the same instructions on a cron schedule. Each firing
 starts a fresh thread.
 
-The name is "schedule" because a **Task** already means an item on the Tasks board.
+The name is "schedule" because a **task** then meant an item on the Tasks board (gone since:
+docs/hand-offs.md).
 
 ## Decisions
 
@@ -40,6 +41,10 @@ The name is "schedule" because a **Task** already means an item on the Tasks boa
   - Only in a member's thread, never one started by a trigger or a schedule. An event
     cannot set up recurring work, and a schedule cannot multiply itself.
   - The owner is the thread's starter: they asked, and the runs spend their accounts.
+  - Only while the thread works for its starter alone (`shownAccounts()`, as for
+    triggers). Once another member asks in it, the teammate sets up, lists and changes no
+    schedule there: another member would otherwise set up or steer work that runs on the
+    starter's accounts, with their instructions, for good.
   - A schedule a teammate creates is active immediately and is marked as made by that
     teammate. Its runs are still bounded by the teammate's grants, policy and caps.
 
@@ -109,21 +114,37 @@ It goes in `@brigade/contracts`, so the API and the editor validate the same way
 
 ## Agent tools
 
-Three tools, built like `create_task`. Each is a tool in `harness/tools.ts`, sent from
+Three tools, each a tool in `harness/tools.ts`, sent from
 the runner to the API as `schedule.call { callId, sessionId, teammateId, operation }`,
 handled by `handleScheduleCall` in `schedules.ts`, and answered with `connector.result`.
 
+- **Whose schedules.** Scoped to the person the thread works for, never to the teammate
+  (`shownAccounts()` in `thread-spec.ts`, the rule of `list_apps` and the trigger tools):
+  the thread's starter while no other member asks in it. A thread several people ask in, or
+  one another member alone asks in, has no such person: it makes, lists and changes no
+  schedule, and says why.
 - `create_schedule { title, instructions, cron, timezone? }`
   - Creates a schedule for the calling teammate, owned by the thread's starter.
-  - Refused in a thread started by a trigger or a schedule.
+  - Refused in a thread started by a trigger or a schedule, and in a thread several people
+    ask in: a person sets one up from a thread of their own.
   - If `timezone` is missing, it uses the owner's latest schedule, else UTC.
   - The result describes when it runs, in words, and gives the next 3 runs, so the
     teammate can confirm with the person in one line.
 - `list_schedules {}`
-  - Lists the schedules this teammate runs: title, when, next run, paused.
+  - Lists the schedules this teammate runs that the thread's starter owns: title, when,
+    next run, paused. Never another member's, with their instructions. In a thread several
+    people ask in, none, with a `note` saying why.
 - `update_schedule { scheduleId, title?, instructions?, cron?, timezone?, paused? }`
-  - Changes a schedule this teammate runs. Only from a thread whose starter owns it.
+  - Changes a schedule this teammate runs. Only from a thread whose starter owns it,
+    working for them alone. Another member's schedule is refused with the message of an
+    unknown id, so the thread learns nothing of it.
   - Deleting is left to people, on the Automations page.
+- **Wake-ups and runs that report to a thread** need no such rule. A wake-up (`set_wakeup`)
+  prompts the same thread again, with no member, so it works for whoever the thread already
+  works for. A run that reports to a thread several people later ask in still runs its
+  owner's instructions on their accounts, as they set it up; what it reports, the members
+  could already read in the run's own thread, and the parent's `message_thread` into the run
+  passes its askers on (`onBehalfOf`), so the run then uses no member's own Apps.
 - A schedule made from a thread reports there, and belongs to it:
   - It is in that thread's project. The Edit dialog shows the project without a picker,
     `PATCH /schedules/:id` refuses another one, and moving the thread moves the schedule
@@ -174,6 +195,48 @@ the timezone and the 5-minute minimum.
 - **Thread page.** "started by schedule _\<title\>_ on \<owner\>'s accounts", linked to
   Automations.
 
+## Triggers from a thread
+
+Teammates also set up **triggers** when someone asks, in a thread, for work to start when
+something happens elsewhere ("each failed payment", "every new Sentry error"). The tools
+are `list_triggers` and `create_trigger`, sent as `schedule.call` operations
+(`apps/api/src/trigger-calls.ts`).
+
+- **What can trigger.** `list_triggers` lists each App account's events from the catalog,
+  with their options, and the teammate's own triggers. Any other service that can send a
+  webhook is a new custom app: `customApp` (its name) with the event `received`.
+- **Whose accounts.** As `list_apps`, scoped to the person the thread works for, never to the
+  teammate (`shownAccounts()` in `thread-spec.ts`, one rule for the three tools): shared
+  accounts, and the starter's own (reach `mine`) while no other member asks in the thread.
+  Another member's own account is never listed, even granted to the teammate, and
+  `create_trigger` refuses its `connectionId` with the message of an unknown one, before any
+  ticket, so the thread learns nothing of it. Checked again once a person approves.
+- **Its own triggers** (`yourTriggers`) are those its starter set up, on accounts the thread
+  shows, with a custom app's URL: only in a member's thread working for them alone. The URL is
+  a key that starts threads on the starter's accounts, so a thread several people ask in, or
+  one an event, a schedule or a playbook started, lists none.
+- **Instructions.** Each trigger has standing instructions (`Trigger.instructions`). They
+  open each thread it starts, before the event. Admins can also give them on the Apps page.
+- **An owner or admin approves each one.** A trigger lets an outside event start work on
+  someone's accounts, and on the Apps page triggers are admins-only. So `create_trigger`
+  opens an `approval` ticket (`payload.triggerAction`) and waits for the decision, the same
+  way a connector write does. The thread shows it as an approval, and Needs you shows it to
+  admins only. The thread's starter cannot allow it unless they are an admin.
+- **Once approved:**
+  - The trigger is made with the same checks as the Apps page (`createTrigger()` in
+    `routes/triggers.ts`).
+  - Its threads run on the accounts of the thread's starter, as a schedule's do, and in
+    the thread's project.
+  - A new custom app is added by the approver.
+  - The teammate gets the URL in the same turn, so it can set up the sender itself.
+- **Signing secret.** A custom app's hmac secret is never put in a reply. It is saved as a
+  credential (kind `other`) that only that teammate may use, without asking. The teammate
+  loads it with `use_credential` to set up a sender it controls.
+- **Refused** in a thread started by an event, a schedule or a playbook's run, as for
+  schedules; and in a thread several people ask in, also when that changes while the ticket
+  waits: the trigger's threads would run on the starter's accounts at another member's
+  request.
+
 ## Build order
 
 1. Schema and migration.
@@ -190,7 +253,7 @@ These are worth doing when someone asks for them:
 - **Triggers on the Automations page**, and one run history for both kinds, with
   skipped and failed runs as rows (`AutomationRun`).
 - **Behavior:**
-  - "Notify me" for results: on Home, then email.
+  - "Notify me" for results: on Today, then email.
   - A `finish_run` tool, so the teammate can say "nothing to do".
   - Pause a schedule after repeated failures.
   - A time limit per run.

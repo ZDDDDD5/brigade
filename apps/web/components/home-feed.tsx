@@ -1,10 +1,10 @@
 'use client'
-// Home under Waiting on you: loose ends, shown as Needs a nudge (nobody is blocked, but
+// Home under Needs you: loose ends, shown as Needs a nudge (nobody is blocked, but
 // nothing moves on its own), then what came back since the member last looked, led by a line
 // per playbook that ran this week. Each section shows only when it has something, so a quiet
 // day leaves the composer alone on the page.
 import type { PlaybookHomeLine } from '@brigade/contracts'
-import { BookOpenCheck, CircleAlert, Clock, MessageCircleQuestion, X } from 'lucide-react'
+import { BookOpenCheck, Clock, X } from 'lucide-react'
 import Link from 'next/link'
 import { useState, type ReactNode } from 'react'
 import { StatusBadge, TeammateAvatar } from '@/components/dashboard'
@@ -87,29 +87,23 @@ function SectionTitle({
   )
 }
 
-function LooseEndRow({ item, onChange }: { item: LooseEnd; onChange: () => Promise<void> }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string>()
-
-  async function run(action: () => Promise<unknown>) {
-    setBusy(true)
-    setError(undefined)
-    try {
-      await action()
-      await onChange()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong')
-      setBusy(false)
-    }
-  }
-
+function LooseEndRow({
+  item,
+  error,
+  run,
+}: {
+  item: LooseEnd
+  /** Why what was done from it last did not go. */
+  error?: string
+  /** Does it: the row leaves at once, and comes back with why if it did not go. */
+  run: (action: () => Promise<unknown>) => void
+}) {
   const dismiss = (
     <Button
       variant="ghost"
       size="icon-sm"
       aria-label="Dismiss"
-      title="Dismiss"
-      disabled={busy}
+      tooltip="Dismiss"
       onClick={() => run(() => api('/home/dismiss', { body: { key: item.key } }))}
     >
       <X aria-hidden />
@@ -120,38 +114,41 @@ function LooseEndRow({ item, onChange }: { item: LooseEnd; onChange: () => Promi
 
   if (item.kind === 'proposal') {
     const href = `/app/threads/${item.thread.id}`
-    const offered = item.offers.map((o) => `“${o}”`).join(' · ')
+    const pill = 'max-w-full rounded-full'
+    // The reply sits right of the title when there is room for both, and drops under it,
+    // left-aligned, on a phone: beside a narrow title, both were cut to a few letters.
     return (
-      <Row
-        icon={
-          <Icon>
-            <MessageCircleQuestion />
-          </Icon>
-        }
-        title={item.thread.title}
-        meta={meta(`${item.teammate.name} offered ${offered} · no answer for ${since(item.at)}`)}
-        href={href}
-      >
-        {item.reply ? (
-          // A click is the member's own message, as the button in the thread.
-          <Button
-            variant="outline"
-            size="sm"
-            className="max-w-48 rounded-full"
-            disabled={busy}
-            onClick={() =>
-              run(() => api(`/threads/${item.thread.id}/messages`, { body: { text: item.reply } }))
-            }
-          >
-            <span className="truncate">{item.reply}</span>
-          </Button>
-        ) : (
-          <Button variant="outline" size="sm" className="rounded-full" asChild>
-            <Link href={href}>Choose</Link>
-          </Button>
-        )}
+      <li className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
+        <Link href={href} className="min-w-0 flex-1 rounded-sm">
+          <p className="truncate text-sm font-semibold">{item.thread.title}</p>
+          <p className="truncate text-xs text-muted-foreground">
+            {meta(`${item.teammate.name} · no answer for ${since(item.at)}`)}
+          </p>
+        </Link>
+        <div className="order-last flex min-w-0 basis-full sm:order-none sm:max-w-[50%] sm:basis-auto">
+          {item.reply ? (
+            // A click is the member's own message, as the button in the thread.
+            <Button
+              variant="outline"
+              size="sm"
+              className={pill}
+              tooltip={item.reply}
+              onClick={() =>
+                run(() =>
+                  api(`/threads/${item.thread.id}/messages`, { body: { text: item.reply } }),
+                )
+              }
+            >
+              <span className="truncate">{item.reply}</span>
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" className={pill} asChild>
+              <Link href={href}>Choose</Link>
+            </Button>
+          )}
+        </div>
         {dismiss}
-      </Row>
+      </li>
     )
   }
 
@@ -180,53 +177,8 @@ function LooseEndRow({ item, onChange }: { item: LooseEnd; onChange: () => Promi
     )
   }
 
-  if (item.kind === 'failed') {
-    const href = `/app/threads/${item.thread.id}`
-    return (
-      <Row
-        icon={
-          <Icon tone="bad">
-            <CircleAlert />
-          </Icon>
-        }
-        title={item.thread.title}
-        meta={meta(
-          item.error
-            ? `${item.teammate.name} ran into a problem: ${item.error}`
-            : `${item.teammate.name} ran into a problem · ${when(item.at)}`,
-        )}
-        href={href}
-      >
-        <Button variant="outline" size="sm" className="rounded-full" asChild>
-          <Link href={href}>Open</Link>
-        </Button>
-        {dismiss}
-      </Row>
-    )
-  }
-
-  const href = item.run ? `/app/threads/${item.run.id}` : '/app/routines'
-  return (
-    <Row
-      icon={
-        <Icon tone="bad">
-          <CircleAlert />
-        </Icon>
-      }
-      title={item.schedule.title}
-      meta={meta(
-        item.error
-          ? `Routine · couldn't start: ${item.error}`
-          : `Routine · last run failed · ${when(item.at)}`,
-      )}
-      href={href}
-    >
-      <Button variant="outline" size="sm" className="rounded-full" asChild>
-        <Link href={href}>Open</Link>
-      </Button>
-      {dismiss}
-    </Row>
-  )
+  // A kind this page does not know (failed threads and routines moved to Needs you).
+  return null
 }
 
 /** Rows of Needs a nudge shown before Show more. */
@@ -240,9 +192,32 @@ export function LooseEnds({
   onChange: () => Promise<void>
 }) {
   const [all, setAll] = useState(false)
-  if (!items.length) return null
+  // Dismissed or answered here: out of the list at once, until it is reloaded.
+  const [gone, setGone] = useState<ReadonlySet<string>>(new Set())
+  const [errors, setErrors] = useState<Readonly<Record<string, string>>>({})
+  async function run(key: string, action: () => Promise<unknown>) {
+    setGone((g) => new Set(g).add(key))
+    setErrors(({ [key]: _, ...rest }) => rest)
+    try {
+      await action()
+      await onChange()
+    } catch (e) {
+      setErrors((errs) => ({
+        ...errs,
+        [key]: e instanceof Error ? e.message : 'Something went wrong',
+      }))
+    } finally {
+      setGone((g) => {
+        const next = new Set(g)
+        next.delete(key)
+        return next
+      })
+    }
+  }
+  const left = items.filter((i) => !gone.has(i.key))
+  if (!left.length) return null
   // A few at a time, newest first: a long list would read as a reproach, not a nudge.
-  const shown = all ? items : items.slice(0, NUDGES_SHOWN)
+  const shown = all ? left : left.slice(0, NUDGES_SHOWN)
   return (
     <section aria-labelledby="needs-nudge" className="flex flex-col gap-3">
       <SectionTitle
@@ -258,16 +233,21 @@ export function LooseEnds({
       <Card className="gap-0 overflow-hidden py-0 shadow-none">
         <ul className="divide-y">
           {shown.map((item) => (
-            <LooseEndRow key={item.key} item={item} onChange={onChange} />
+            <LooseEndRow
+              key={item.key}
+              item={item}
+              error={errors[item.key]}
+              run={(action) => void run(item.key, action)}
+            />
           ))}
         </ul>
-        {items.length > shown.length && (
+        {left.length > shown.length && (
           <button
             type="button"
             onClick={() => setAll(true)}
             className="border-t py-2.5 text-sm text-muted-foreground hover:text-foreground"
           >
-            Show {items.length - shown.length} more
+            Show {left.length - shown.length} more
           </button>
         )}
       </Card>
@@ -329,7 +309,7 @@ function PlaybookLineRow({ line }: { line: PlaybookHomeLine }) {
       <Icon>
         <BookOpenCheck />
       </Icon>
-      <Link href={`/app/routines/playbooks/${line.id}`} className="min-w-0 flex-1 rounded-sm">
+      <Link href={`/app/playbooks/${line.id}`} className="min-w-0 flex-1 rounded-sm">
         <p className="truncate text-sm font-semibold">{line.name}</p>
         <p className="text-xs text-muted-foreground">{playbookWeek(line)}</p>
       </Link>
@@ -341,19 +321,7 @@ export function SinceAway({ feed }: { feed: HomeFeed }) {
   if (!feed.results.length && !feed.playbooks.length) return null
   return (
     <section aria-labelledby="since-away" className="flex flex-col gap-3">
-      <SectionTitle
-        id="since-away"
-        aside={
-          <Link
-            href="/app/threads"
-            className="text-sm font-medium text-muted-foreground hover:text-foreground"
-          >
-            All threads
-          </Link>
-        }
-      >
-        Since you were away
-      </SectionTitle>
+      <SectionTitle id="since-away">Since you were away</SectionTitle>
       <Card className="gap-0 overflow-hidden py-0">
         <ul className="divide-y">
           {feed.playbooks.map((line) => (

@@ -1,16 +1,101 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { PrismaPg } from '@prisma/adapter-pg'
+import pg from 'pg'
 import { Prisma, PrismaClient } from './generated/prisma/client.js'
 import { env } from './config.js'
 import { countQuery } from './timing.js'
 
 export { Prisma }
 
-/** Unscoped client. Use only for auth, runner lookup by token hash, and scoped(). */
-export const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: env.DATABASE_URL }),
-  log: [{ emit: 'event', level: 'query' }],
+/**
+ * A Prisma client on its own pool of connections. pool: what limits it (a workspace's hub object
+ * keeps few connections, and lets them go soon, so that it can hibernate).
+ */
+export function newPrismaClient(
+  connectionString: string,
+  pool: { max?: number; idleTimeoutMillis?: number } = {},
+) {
+  const connections = new pg.Pool({ connectionString, ...pool })
+  retryReads(connections)
+  const client = new PrismaClient({
+    adapter: new PrismaPg(connections, { disposeExternalPool: true }),
+    log: [{ emit: 'event', level: 'query' }],
+  })
+  client.$on('query', (event) => countQuery(event.duration))
+  return client
+}
+
+/**
+ * An error of a connection the database (or Hyperdrive in front of it) closed, rather than of
+ * the query: Postgres's connection exceptions (class 08, as Hyperdrive's 08006 "Connection to the
+ * origin database was lost"), an administrator's shutdown (57P01), a reset socket, or node-postgres
+ * finding the socket gone ("Connection terminated unexpectedly").
+ */
+export function isDeadConnection(error: unknown) {
+  if (!(error instanceof Error)) return false
+  const code = (error as { code?: unknown }).code
+  if (
+    typeof code === 'string' &&
+    (/^08/.test(code) || ['57P01', 'ECONNRESET', 'EPIPE'].includes(code))
+  )
+    return true
+  return /connection terminated|not queryable|client was closed|connection to the origin database was lost/i.test(
+    error.message,
+  )
+}
+
+/** A query that only reads: run twice, it does nothing twice. */
+const READ = /^\s*select\b/i
+
+/**
+ * A read outside a transaction that meets a connection the database closed (one dropped
+ * connection failed 10 requests at once on 2026-11-01) is run once more: the pool has
+ * dropped that connection by then (node-postgres releases it with its error), so it gets
+ * another. Writes are not: one may have been applied before its answer was lost. Transactions
+ * take their own connection (pool.connect) and are not either.
+ */
+export function retryReads(pool: pg.Pool) {
+  const query = pool.query.bind(pool) as (...args: unknown[]) => Promise<unknown>
+  pool.query = ((...args: unknown[]) => {
+    const first = args[0] as string | { text?: unknown } | undefined
+    const text = typeof first === 'string' ? first : first?.text
+    if (args.some((a) => typeof a === 'function') || typeof text !== 'string' || !READ.test(text))
+      return query(...args)
+    return query(...args).catch((error: unknown) => {
+      if (!isDeadConnection(error)) throw error
+      console.warn(`db: a read met a closed connection, run again on another: ${String(error)}`)
+      return query(...args)
+    })
+  }) as typeof pool.query
+}
+
+/** The process's client: the API's on Node, the Api object's on Cloudflare. */
+const processClient = newPrismaClient(env.DATABASE_URL)
+
+/**
+ * The client of the Durable Object the code runs for, when it has its own (a workspace's hub
+ * object, src/hub-object.ts): objects may share an isolate, and a connection opened for one cannot
+ * serve another.
+ */
+const objectClients = new AsyncLocalStorage<PrismaClient>()
+
+/** Run `fn` with this client as `prisma`. */
+export const withPrismaClient = <T>(client: PrismaClient, fn: () => T): T =>
+  objectClients.run(client, fn)
+
+/**
+ * Unscoped client. Use only for auth, runner lookup by token hash, and scoped(). It is the
+ * process's, or the running object's own (withPrismaClient).
+ */
+export const prisma: PrismaClient = new Proxy(processClient, {
+  get(target, key) {
+    const client = objectClients.getStore() ?? target
+    const value = Reflect.get(client, key, client) as unknown
+    return typeof value === 'function'
+      ? (value as (...a: unknown[]) => unknown).bind(client)
+      : value
+  },
 })
-prisma.$on('query', (event) => countQuery(event.duration))
 
 export type Scope = {
   organizationId: string
@@ -26,6 +111,17 @@ const UNSCOPED = new Set([
   'Organization',
   'PushDevice',
   'McpClient',
+  // A workspace's plan, an organization's deletion under way: src/billing.ts's only.
+  'BillingSubscription',
+  'BillingClosing',
+  // Invitation mails sent, by organization: src/invitation-budget.ts's only.
+  'InvitationSend',
+  // Webhooks as they came, before anyone knows whose they are: src/inbound.ts's only.
+  'InboundEvent',
+  // Features opened to some people: src/features.ts's only.
+  'FeatureFlag',
+  // A library file's lock, by workspace and file: src/library.ts's withLibraryLock only.
+  'LibraryLock',
 ])
 const READS_AND_BULK = new Set([
   'findUnique',

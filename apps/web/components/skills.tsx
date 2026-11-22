@@ -6,6 +6,7 @@
 // proposes one, and an admin approves it from Tickets.
 import {
   skillSlug,
+  type BuiltinSkillView,
   type ImportedSkill,
   type Skill,
   type SkillFileRef,
@@ -21,9 +22,11 @@ import {
   Upload,
   X,
 } from 'lucide-react'
+import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { TeammateAvatar, timeAgo, useDashboard } from '@/components/dashboard'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { BrigadeMark } from '@/components/brigade-mark'
 import { ProviderTile, type ProviderKind } from '@/components/provider-logo'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -48,9 +51,10 @@ import { Label } from '@/components/ui/label'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { api, ApiError, useApi } from '@/lib/api'
-import { API_URL } from '@/lib/config'
+import { Hint } from '@/components/ui/tooltip'
+import { api, uploadFile, useApi } from '@/lib/api'
 import { ProjectIcon } from '@/components/projects'
+import { clickSettings } from '@/lib/settings-dialog'
 
 type Scope = { everywhere: boolean; teammateIds: string[]; projectIds: string[] }
 
@@ -106,13 +110,8 @@ function useWhere() {
 /** Read an upload or a GitHub address into skills to review. */
 async function readImport(from: { file: File } | { url: string }): Promise<SkillImport> {
   if ('url' in from) return api<SkillImport>('/skills/import/github', { body: { url: from.url } })
-  const response = await fetch(
-    `${API_URL}/api/skills/import?name=${encodeURIComponent(from.file.name)}`,
-    { method: 'POST', credentials: 'include', body: from.file },
-  )
-  const body = (await response.json().catch(() => ({}))) as SkillImport & { error?: string }
-  if (!response.ok) throw new ApiError(body.error ?? response.statusText, response.status)
-  return body
+  const upload = await uploadFile('skill_pack', from.file)
+  return api<SkillImport>('/skills/import/upload', { body: { uploadId: upload.id } })
 }
 
 /** The GitHub owner of a pack's source, for its picture: `cloudflare` for github.com/cloudflare/skills. */
@@ -250,23 +249,24 @@ export function Skills({ admin }: { admin: boolean }) {
   const skillRow = (s: Skill, inPack?: SkillPack) => (
     <div key={s.id} className={`flex items-center gap-3 py-2.5 pr-3 ${inPack ? 'pl-15' : 'pl-4'}`}>
       {!inPack && <AuthorImage skill={s} />}
-      <button
-        type="button"
-        className="flex min-w-0 flex-1 flex-col text-left"
-        title={s.description}
-        onClick={() => (admin ? setDraft({ ...s }) : setViewing(s))}
-      >
-        <span
-          className={`truncate font-mono text-sm font-medium ${s.active ? '' : 'text-muted-foreground'}`}
+      <Hint label={s.description}>
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 flex-col text-left"
+          onClick={() => (admin ? setDraft({ ...s }) : setViewing(s))}
         >
-          /{s.name}
-        </span>
-        <span className="truncate text-xs text-muted-foreground">
-          {inPack
-            ? s.description
-            : [where(s), s.updatedBy?.name, timeAgo(s.updatedAt)].filter(Boolean).join(' · ')}
-        </span>
-      </button>
+          <span
+            className={`truncate font-mono text-sm font-medium ${s.active ? '' : 'text-muted-foreground'}`}
+          >
+            /{s.name}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {inPack
+              ? s.description
+              : [where(s), s.updatedBy?.name, timeAgo(s.updatedAt)].filter(Boolean).join(' · ')}
+          </span>
+        </button>
+      </Hint>
       {admin && (
         <>
           <Switch
@@ -284,16 +284,25 @@ export function Skills({ admin }: { admin: boolean }) {
   )
 
   return (
-    <section aria-labelledby="skills" className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="flex flex-col gap-1">
-          <h2 id="skills" className="text-lg font-bold tracking-tight">
-            Skills <span className="font-semibold text-muted-foreground">{list.length}</span>
-          </h2>
-          <p className="max-w-prose text-sm text-muted-foreground">
+    <div className="flex flex-col gap-7">
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-2xl font-extrabold tracking-tight">
+            Skills{' '}
+            {skills.data && <span className="font-bold text-muted-foreground">{list.length}</span>}
+          </h1>
+          <p className="max-w-prose text-muted-foreground">
             How your teammates do certain work. A teammate reads a skill when the work matches its
             description, or when a message starts with its <span className="font-mono">/name</span>.
-            A skill gives no access: that stays with the Apps above.
+            A skill gives no access: that stays with{' '}
+            <Link
+              href="/app/connections"
+              onClick={(e) => clickSettings(e, '/app/connections')}
+              className="font-medium text-primary hover:underline"
+            >
+              Apps
+            </Link>
+            .
           </p>
         </div>
         {admin && (
@@ -301,7 +310,7 @@ export function Skills({ admin }: { admin: boolean }) {
             <Button
               variant="outline"
               size="sm"
-              title="A GitHub repository, a zip of skill folders, a .skill or a SKILL.md"
+              tooltip="A GitHub repository, a zip of skill folders, a .skill or a SKILL.md"
               onClick={() => setImporting(true)}
             >
               <Upload aria-hidden />
@@ -312,7 +321,7 @@ export function Skills({ admin }: { admin: boolean }) {
             </Button>
           </div>
         )}
-      </div>
+      </header>
       {error && <p className="text-sm text-destructive-text">{error}</p>}
       {skills.data && list.length === 0 ? (
         <p className="text-sm text-muted-foreground">
@@ -332,36 +341,37 @@ export function Skills({ admin }: { admin: boolean }) {
                 <div key={p.id} className="flex flex-col divide-y">
                   <div className="flex items-center gap-3 py-2.5 pr-3 pl-4">
                     <PackImage pack={p} />
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 flex-col text-left"
-                      title={sourceLabel(p.source)}
-                      aria-expanded={expanded}
-                      onClick={() => {
-                        const next = new Set(open)
-                        if (expanded) next.delete(p.id)
-                        else next.add(p.id)
-                        setOpen(next)
-                      }}
-                    >
-                      <span className="flex min-w-0 items-center gap-1">
-                        <span
-                          className={`truncate text-sm font-medium ${p.enabled ? '' : 'text-muted-foreground'}`}
-                        >
-                          {p.name}
+                    <Hint label={sourceLabel(p.source)}>
+                      <button
+                        type="button"
+                        className="flex min-w-0 flex-1 flex-col text-left"
+                        aria-expanded={expanded}
+                        onClick={() => {
+                          const next = new Set(open)
+                          if (expanded) next.delete(p.id)
+                          else next.add(p.id)
+                          setOpen(next)
+                        }}
+                      >
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span
+                            className={`truncate text-sm font-medium ${p.enabled ? '' : 'text-muted-foreground'}`}
+                          >
+                            {p.name}
+                          </span>
+                          <ChevronRight
+                            aria-hidden
+                            className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-90' : ''}`}
+                          />
                         </span>
-                        <ChevronRight
-                          aria-hidden
-                          className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${expanded ? 'rotate-90' : ''}`}
-                        />
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {on === inPack.length
-                          ? `${inPack.length} skill${inPack.length === 1 ? '' : 's'}`
-                          : `${on} of ${inPack.length} on`}{' '}
-                        · {where(p)}
-                      </span>
-                    </button>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {on === inPack.length
+                            ? `${inPack.length} skill${inPack.length === 1 ? '' : 's'}`
+                            : `${on} of ${inPack.length} on`}{' '}
+                          · {where(p)}
+                        </span>
+                      </button>
+                    </Hint>
                     {admin && (
                       <>
                         <Switch
@@ -391,6 +401,7 @@ export function Skills({ admin }: { admin: boolean }) {
           </Card>
         )
       )}
+      <BuiltinSkills admin={admin} />
       {importing && <ImportDialog onClose={() => setImporting(false)} onRead={imported} />}
       {review && (
         <PackDialog review={review} onClose={() => setReview(undefined)} onSaved={reload} />
@@ -404,7 +415,7 @@ export function Skills({ admin }: { admin: boolean }) {
       )}
       {draft && <EditDialog draft={draft} onClose={() => setDraft(undefined)} onSaved={reload} />}
       {viewing && <ViewDialog skill={viewing} onClose={() => setViewing(undefined)} />}
-    </section>
+    </div>
   )
 }
 
@@ -947,6 +958,135 @@ function EditDialog({
 }
 
 /** A skill as a member who may not change it sees it. */
+/**
+ * Brigade's own skills, under the workspace's: read-only, kept up to date by Brigade. An owner or
+ * admin may turn off those marked switchable (brigade-library); the others are always on.
+ */
+function BuiltinSkills({ admin }: { admin: boolean }) {
+  const builtin = useApi<BuiltinSkillView[]>('/skills/builtin')
+  const [reading, setReading] = useState<BuiltinSkillView>()
+  const [error, setError] = useState<string>()
+  if (!builtin.data) return null
+
+  async function toggle(s: BuiltinSkillView, enabled: boolean) {
+    setError(undefined)
+    builtin.setData(builtin.data!.map((x) => (x.name === s.name ? { ...x, enabled } : x)))
+    try {
+      builtin.setData(
+        await api<BuiltinSkillView[]>(`/skills/builtin/${encodeURIComponent(s.name)}`, {
+          method: 'PUT',
+          body: { enabled },
+        }),
+      )
+    } catch (e) {
+      setError((e as Error).message)
+      await builtin.reload()
+    }
+  }
+
+  return (
+    <section aria-labelledby="builtin-skills" className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <h2 id="builtin-skills" className="text-lg font-bold tracking-tight">
+          Brigade&apos;s own
+        </h2>
+        <p className="max-w-prose text-sm text-muted-foreground">
+          Built into Brigade and updated with it, so they can&apos;t be edited.{' '}
+          {admin
+            ? 'You can turn off the one about filing project documents if your team has its own way.'
+            : 'An owner or admin can turn off the one about filing project documents.'}
+        </p>
+      </div>
+      {error && <p className="text-sm text-destructive-text">{error}</p>}
+      <Card className="gap-0 divide-y py-0">
+        {builtin.data.map((s) => {
+          const readable = s.instructions !== null
+          const meta = s.switchable
+            ? s.enabled
+              ? 'On by default'
+              : s.offBy
+                ? `Turned off by ${s.offBy.name} · ${timeAgo(s.offBy.at)}`
+                : 'Off'
+            : null
+          const label = (
+            <span className="flex min-w-0 flex-1 flex-col text-left">
+              <span
+                className={`truncate font-mono text-sm font-medium ${s.enabled ? '' : 'text-muted-foreground'}`}
+              >
+                /{s.name}
+              </span>
+              <span className="truncate text-xs text-muted-foreground">
+                {[s.description, meta].filter(Boolean).join(' · ')}
+              </span>
+            </span>
+          )
+          return (
+            <div key={s.name} className="flex flex-col">
+              <div className="flex items-center gap-3 py-2.5 pr-3 pl-4">
+                <BrigadeMark className="size-8" />
+                {readable ? (
+                  <button
+                    type="button"
+                    className="flex min-w-0 flex-1"
+                    onClick={() => setReading(s)}
+                  >
+                    {label}
+                  </button>
+                ) : (
+                  <Hint label={s.description}>{label}</Hint>
+                )}
+                {s.switchable ? (
+                  admin && (
+                    <Switch
+                      checked={s.enabled}
+                      onCheckedChange={(on) => void toggle(s, on)}
+                      aria-label={`Use ${s.name}`}
+                    />
+                  )
+                ) : (
+                  <Badge variant="outline" className="shrink-0 font-normal text-muted-foreground">
+                    Always on
+                  </Badge>
+                )}
+              </div>
+              {s.switchable && (
+                <p className="border-t border-dashed py-2 pr-4 pl-15 text-xs text-muted-foreground">
+                  {s.enabled ? (
+                    <>
+                      <span className="font-medium text-foreground">On:</span> teammates keep specs
+                      with a status line, and a merged pull request marks the spec it builds as
+                      shipped.
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium text-foreground">Off:</span> teammates file
+                      nothing on their own. Documents that already have a status line still update
+                      when their pull request is merged.
+                    </>
+                  )}
+                </p>
+              )}
+            </div>
+          )
+        })}
+      </Card>
+      {reading && (
+        <Dialog open onOpenChange={(o) => !o && setReading(undefined)}>
+          <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="font-mono">/{reading.name}</DialogTitle>
+              <DialogDescription>{reading.description}</DialogDescription>
+            </DialogHeader>
+            <pre className="max-h-[60vh] overflow-auto rounded-md border bg-secondary p-3 font-mono text-xs whitespace-pre-wrap">
+              {reading.instructions}
+            </pre>
+          </DialogContent>
+        </Dialog>
+      )}
+    </section>
+  )
+}
+
 function ViewDialog({ skill, onClose }: { skill: Skill; onClose: () => void }) {
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>

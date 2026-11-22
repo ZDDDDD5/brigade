@@ -11,6 +11,98 @@ provider and hands out the address with its token (`apps/api/src/app-previews.ts
   them: on the dashboard's site it could set the dashboard's cookies and send it
   requests with a person's session. The cost is that the frame is a third party
   to its own app.
+- **The previews' own site in front of the provider** (`apps/preview-gateway`, the
+  Worker `brigade-preview-gateway`). The provider lets a request in with its
+  token, once in the address (`?_token=`), which it trades for a cookie
+  (`_port_auth`, `SameSite=None`, not partitioned). Safari, and so every browser
+  on an iPhone, drops that cookie in the dashboard's frame: the page came, its
+  scripts and styles got 403, and the pane stayed white (reproduced in
+  Playwright's WebKit on October 24, 2026). So people open
+  `https://<id>.brigade.surf`, and the Worker adds the token to each request:
+  the browser needs no cookie of the provider's. The API registers the
+  thread's preview with the shared secret (`PREVIEW_GATEWAY_URL`,
+  `PREVIEW_GATEWAY_SECRET`, `src/preview-gateway.ts`), and hands out the
+  gateway's address with an access token (below), and without it as
+  `BRIGADE_PREVIEW_URL`. Without the gateway set up, the provider's address.
+  When the gateway does not answer, the app gets the provider's origin and
+  nobody gets an address: the provider's with its token would open every
+  later preview at that port. The runner's proxy gives the app the gateway's
+  host as `Host` and `X-Forwarded-Host`, as a real deploy would. On one level
+  of `brigade.surf`, which Cloudflare's free certificate covers
+  (`*.brigade.surf`); `<id>.preview.brigade.surf` would need Advanced
+  Certificate Manager. Costs: Workers requests (a dev server's page can make
+  hundreds), a D1 read per request (requests at the same time in an isolate
+  share one), and an HMAC per request.
+- **A preview's address is its thread's, and ends with it.** The provider's
+  address depends only on the computer and the port, and a repository's
+  previews get the same port on a computer (below): when the id was an HMAC
+  of that address, every thread previewing the same repository on that
+  computer had the same address, routes were never deleted, and the id was
+  all it took, so whoever once had it (a member since removed, someone it was
+  pasted to) reached any later preview there, another member's private
+  thread's too (security audit, October 26, 2026). The id is now an HMAC of
+  the thread and the provider's address (130 bits). The API registers it at
+  each start (`preview.expose`) and each open, and the gateway keeps one
+  route per thread and one thread per provider address (`previews` in its
+  D1): registering drops the thread's route elsewhere and any other thread's
+  at that address, before the new app runs there. When a preview stops or
+  fails for good (not when the next one replaces it, which may already have
+  registered it again), or its thread is deleted, the API drops its route
+  (`DELETE /routes`, tried three times): its address answers 404. Each new
+  route gets a nonce, which ends the cookies and grants made for the run
+  before. The gateway reads the route for each request and keeps none: with
+  a cache, an isolate kept a dropped route for its 30 seconds, and the old
+  thread's cookie reached the next thread's app at that address (review of
+  #414).
+- **Access proof at the gateway.** The id lets nobody in by itself. The API
+  hands whoever may see the thread the address with `?_brigade=<expiry>.<mac>`
+  (HMAC of the id and expiry with the shared secret, 5 minutes;
+  `apps/preview-gateway/src/access.ts`), which the dashboard's frame, Open in
+  a new tab, Copy link and the runner's check open. The gateway trades it for
+  its own cookie, `__Host-brigade` (`Secure; HttpOnly; SameSite=None;
+Partitioned`, no `Domain`, path `/`: this host only, kept for the
+  dashboard's frame; bound to the run's nonce, 12 hours at most), and
+  redirects to the address without it, so the app never sees it. The cookie
+  never goes to the app. Anything else gets a page that says to open the
+  preview from Brigade (403).
+  - **Where the browser drops that cookie** (Safari, and so every browser on
+    an iPhone, in the dashboard's frame), the gateway sees it missing on the
+    redirect that sets it (`_brigade_cookie=1`) and sends the frame to a
+    grant in the host instead: `<id>-<grant>.brigade.surf`, the grant being
+    its expiry and an HMAC of the id, the run's nonce and that expiry (36
+    characters, 12 hours). There the host is what lets the page in, as the
+    id alone did before, but only for that run and that long. The app is
+    still told the preview's own address: the gateway rewrites the Origin and
+    Referer it gets to it, its redirects to it back to the grant, and a page at
+    the grant may call the preview's own address (an absolute
+    `BRIGADE_PREVIEW_URL_<port>`) with CORS, its grant as Origin. The
+    dashboard's panel talks to a page there as to its own address
+    (`previewOrigin`).
+  - **Fresh tokens.** The dashboard asks for the address again for a new tab
+    or loading the frame again once the one it has is over 3 minutes old, and
+    always for Copy link. A copied link opens the preview for whoever opens
+    it within 5 minutes, then while it runs, at most 12 hours.
+  - **Teammates' browsers.** `start_preview` and `preview_logs` answer `open`,
+    the address with a token, asked for each time, for the teammate's browser
+    to open before testing at `origins`.
+- **Cookies for their own host only.** `brigade.surf` is not on the Public
+  Suffix List, so an app could set `Domain=brigade.surf` cookies that every
+  other preview's requests carry, and the gateway passed on to their apps.
+  The gateway removes `Domain` from every `Set-Cookie` an app sends (the
+  runner's proxy also does over HTTPS), which makes it the preview's host's
+  only, and drops any the app sets for the provider's token or the
+  gateway's own cookie.
+- **The gateway answers `Cache-Control: private, no-cache`** (the app's own when
+  it says `no-store`). Cloudflare's Browser Cache TTL made a dev server's
+  `no-cache` scripts four hours, and Turbopack keeps a chunk's name when an
+  edit changes it: after Fast Refresh's full reload, the dashboard's pane ran
+  the old code. Chrome keeps a frame's cache apart from a tab's, so a new tab
+  showed the edit. Its requests to the provider go through Cloudflare's cache,
+  which revalidates them: fetched past it (`cache: 'no-store'`), the provider
+  answered every revalidation with the whole file. Measured on October 25, 2026
+  on `/app/connections` in a dev server: a second load revalidates its 48
+  chunks in 14 KB rather than 2.4 MB, and after an edit fetches the changed
+  chunk only.
 - **A proxy in front of every preview** (`apps/runner/src/preview-proxy.ts`). The
   provider hosts the proxy's port (`publicPort`), not the app's. It fixes what
   apps cannot be asked to change:
@@ -32,10 +124,178 @@ provider and hands out the address with its token (`apps/api/src/app-previews.ts
     requests get a plain 502.
   - **Use keeps it alive.** Any request through the proxy counts as use, so a
     preview someone is using does not expire.
+  - **Picking elements** (`apps/runner/src/preview-select.ts`, its script in contracts'
+    `element-select.ts`, which tools' pages get too: docs/tools.md), as in Claude.
+    Each page navigation is asked for uncompressed and gets
+    `<script src="/__brigade/select.js">` right after its `<head>` (the proxy
+    serves that path itself; same origin, so a `script-src 'self'` policy allows
+    it). The script removes its tag before the page's own scripts run, so React
+    hydrates against the HTML it rendered, and does nothing outside a frame. It
+    says `ready` to the dashboard, which only then shows the panel's select
+    button: a preview from a runner without the script has none. While select
+    mode is on, the element under the pointer is outlined in a shadow root, and
+    a click goes to the dashboard instead of the page: its label (nearest React
+    component and tag, read from React's fiber in development), that
+    component's plain props, page, CSS selector, size, text and HTML, clipped.
+    The page then draws it (`modern-screenshot`, served at
+    `/__brigade/screenshot.mjs` and loaded only then) and sends the PNG, which
+    the message carries as an image attachment named in the block; its chip
+    shows it, as Claude's does, rather than the files list. A click on a chip
+    opens what the teammate gets. The composer shows it as a numbered row of
+    its pending edits, with a note for what should change there (the
+    block's `note`), beside the comments made on a design's canvas
+    (`apps/web/lib/pending-edits.ts`): all go in one message with what is
+    written, in the order they were made. The message carries it as a
+    `<preview-element>` block
+    (`packages/contracts/src/preview-elements.ts`), so the teammate reads it as
+    text, with no new field for the API or runner to pass on, and the thread
+    shows the chip in its place. Esc in the page turns select mode off; it stays
+    on across the page's navigations.
+  - **The page's path in the bar.** The panel's bar shows the path the page is
+    at (`/`, `/app?tab=2`), never the preview's host. Once the panel answers the
+    page's `ready` (`hello`), the same script says its `location`, and again on
+    each `pushState`, `replaceState`, Back or `#hash` change. The path is
+    editable: Enter sends `navigate`, and the page opens it with
+    `location.assign`, only when it is a path on its own address (`/…`, not
+    `//…`). From a runner without it, the bar shows the address's path and Enter
+    loads the frame there, with the address's query (its token)
+    (`apps/web/lib/preview-path.ts`).
+  - **Opening an element's code.** The panel's second select button (`</>`, for
+    whoever may write to the thread, from runners at `CODE_EDIT_PROTOCOL`) uses
+    the same script, but a click looks the element's text up in the preview's
+    folder instead (`POST /threads/:id/source`, then `thread.source.find`):
+    `git grep --no-index --exclude-standard -i -F` for the whole text, then its
+    clauses longest first, since markup or line breaks may split it in the
+    source and CSS may change its case. Source files outside tests come first,
+    then those named after one of its components. One file holding it opens in
+    the file panel at its line; several, the person picks. Text that comes from
+    data or is put together is not found, and says so.
+  - **Editing it.** A text file of a teammate's working folder (never the
+    library mirror, nor a file cut at 1 MB) opens in a CodeMirror editor
+    (`apps/web/components/code-editor.tsx`, its own chunk) for whoever may write
+    to the thread; Markdown shows rendered until they press Edit. A read gives
+    the file's SHA-256 (`hash`), and ⌘S saves with it (`PUT /threads/:id/file`,
+    then `thread.file.write`): the runner writes the file in place, as the
+    teammate's user in the thread's namespaces on a cloud computer (through the
+    same view of the folder as the preview's dev server, whose watcher must see
+    the change), only while it still has that hash.
+    Otherwise the panel says it changed on the computer, and the person reloads
+    it or keeps theirs. Saves of one file run one at a time on the runner, so two
+    from the same hash cannot both pass. Unsaved edits are kept outside the panel
+    (`apps/web/lib/code-drafts.ts`) while another file, the preview or a page takes
+    its place, and come back with the file; closing it asks before dropping them.
+    The dev server sees the change, so the preview reloads.
+    The thread gets a note (`thread.note`), once per file and person in 15
+    minutes, so its teammates know at their next turn that the file changed and
+    is not committed.
+  - **The code beside the preview.** The panel's `</>` button shows the code of
+    the copy the preview runs (the teammate's who started it) with the preview
+    (`apps/web/components/code-workspace.tsx`): under it in the side panel, left
+    of it once the panel is laid over the window, one at a time on a phone (a
+    Preview / Code switch). A bar between them sets their shares, kept in the
+    browser. The frame stays the same element in every layout, so showing or
+    hiding the code never reloads the page in it. Files open as tabs (their
+    editors stay while another is in front, for undo; a dot marks unsaved edits),
+    kept per thread for the browser tab's session (`apps/web/lib/code-tabs.ts`),
+    and the working folder's tree is left of the editor, over it when the panel
+    is narrow. Its filter finds files by name, or with `?` first, lines holding a
+    text (`GET /threads/:id/code`, `/code/find`, `/code/grep`, then `thread.code`
+    from runners at `CODE_TREE_PROTOCOL`; `find`, and `git grep` leaving out what
+    git ignores, skipping dependencies and builds). The crosshair in the code's
+    bar picks an element of the page to open its code in a tab.
+  - **Live with the computer.** While a file shows, its hash is asked every 2.5
+    seconds (`POST /threads/:id/code/hashes`). Changed on the computer, most
+    likely by the teammate: with nothing typed, the new text comes in as one
+    change, so the cursor and scroll stay ("Updated from the computer"); with
+    unsaved edits, the panel says so at once rather than at the save. A file
+    gone, or no longer text, says so too.
+  - **Which copy.** A file opened from a message comes from its author's folder.
+    While the preview runs another teammate's copy, the file panel says edits
+    there won't show in it and opens the same path in the preview's copy; with
+    the same copy, a button opens it beside the preview.
 - **Crashes restart.** An app that stops after it answered starts again after
   1, 3 and 10 seconds; a fourth stop within 10 minutes fails the preview. An app
   that never answered fails at once, as before: its command is wrong, and the
   teammate should see that.
+- **A runner update keeps previews running.** The runner updates itself several
+  times a day (each merge that changes its bundle), and restarting every preview
+  with its setup took minutes for Brigade's own. Now the runner hands its
+  previews over to the next one, as it hands over turns (`handOver` and
+  `adopt` in `previews.ts`):
+  - **The app is detached from the runner.** On this computer it runs under a
+    wrapper shell of the runner's user (`WRAPPER`), which leads its process
+    group and notes how it ended in a file, since only the process that started
+    it could wait for it. Its output goes to a file in the runner's state
+    (`preview-runs/<thread>-<run>/output.log`), not a pipe that would end with
+    the runner (a dev server writing to it then dies of `EPIPE`); the runner
+    reads it as it grows. Past 16 MB read, what was read becomes a hole: its
+    disk comes back, while the file's size, every offset and what the app
+    writes meanwhile stay (emptying it lost the lines written between the last
+    read and the truncation, review of #762). On Linux with `fallocate
+--punch-hole`, on macOS with `fcntl(F_PUNCHHOLE)` through the system's
+    perl. Where neither works (another filesystem), the file is emptied once
+    read to a line's end past 64 MB, and the log says a line written at that
+    moment may be missing: the disk stays bounded. Each run has its own file
+    (`output-<run>.log`), so a hole meant for one run never lands in the next
+    one's (a restart's). On a thread's machine the app runs
+    in a session of its own there (`setsid nohup`, as its commands do), its
+    output in `.brigade/run/output-<run>.log`, how it ended and the machine's boot id
+    beside it, followed with `tail -f --pid` from the byte reached: a cut
+    connection is made again and read on, rather than ending the app. Its
+    disk comes back the same way past 16 MB read.
+  - **The old runner hands over.** Nothing more starts, restarts, freezes or
+    stops on its own; what is under way (a freeze, a launch or sleep on the
+    machine) gets 20 seconds to end. Each preview's state goes to
+    `previews-handed.json` (0600): its seat, start, addresses, process group,
+    cgroup, frozen or asleep, paused containers, the env files its credentials
+    were released as, restarts, last use, the log people saw and the byte its
+    output is read to (the start of the line not finished). No secret's value
+    in it: the repository's settings are kept, its secrets by name. The values
+    its log hides go in a file of their own beside its output (`hidden`, 0600,
+    the runner's), read and removed as the next runner takes it up: the app
+    still holds those, whatever the API holds by then (a secret changed since
+    would otherwise show in its log, review of #762); a preview whose file
+    could not be written is not handed over, nor one whose values were lost on
+    the way (its output hidden since): it stops and starts again, as with
+    what the API holds now. Its proxy closes,
+    and on its machine its sync, log reader and connection end; the app, its
+    cgroup, its containers and the machine are left as they are.
+  - **The next runner takes them up** as it starts, before anything looks for
+    quiet threads (`processGroups.reap` keeps their groups on a Mac). For each:
+    the app's leader still runs (its pid, started when noted, `ps`), its proxy
+    listens again on the same port (so the same addresses and origins), it is
+    said running again (the API takes a preview reported before the runner's
+    process started as lost), and its log is read on. A frozen preview stays
+    frozen (its cgroup, or `SIGSTOP`, and its paused containers, kept out of
+    those the runner resumes as it starts), one asleep on its machine stays
+    asleep, and restarts, freezing and the TTL go on from what was noted. Once
+    connected: a preview with secret variables reads them again (`variables`,
+    audited) before its log is read, hiding those too, and its environment is
+    made again for a restart; on its machine, the machine is asked `up` (held for
+    the preview again), reached, its app's state asked there, its ports
+    forwarded, the sync started and its log followed. People find its port
+    closed only from the old runner's exit to the new one's start, and on its
+    machine until the new runner is connected.
+  - **Otherwise it starts again, and says why.** A preview whose app died
+    meanwhile, or that could not be taken up (its port, its machine, a reboot
+    or a hand-over older than 10 minutes), starts again as it last started,
+    with the credentials it was given, and its log says why; one nobody was
+    using (frozen, asleep) stops. One the old runner could not hand over (a
+    restart after a crash under way, its machine waking) stops and starts
+    again as before. Secrets that could not be read again keep it from
+    starting again after a crash; values to hide that were lost leave its
+    output hidden.
+  - **What keeps the app alive.** On a cloud computer, the wrapper
+    (`bin/brigade-runner`) starts the new runner itself on exit code 75, so
+    systemd never stops the service: `KillMode=mixed` (SIGKILL to what is left
+    in the service's cgroup) applies only when the service stops, and previews
+    sit in `previews/` beside `runner/` in the service's delegated cgroup,
+    where the new runner finds them. The app is in a session of its own
+    (`detached`), so no hang-up reaches it. On a Mac, the desktop app signals
+    only the wrapper's process group, and only when it stops the runner; the
+    wrapper loops there too. A runner stopped for good (the computer stops, the
+    app quits) still stops its previews.
+
 - **New tab as the way out.** The pane has an "Open in a new tab" button and,
   under the frame, a line saying to use it when signing in does not work.
   Opened in a tab the preview is a first-party site and everything works.
@@ -99,6 +359,13 @@ provider and hands out the address with its token (`apps/api/src/app-previews.ts
   started, or from the saved setup of a repository checked out in the thread,
   then checks its pages itself. With nothing saved, the dashboard explains what
   setting one up involves (the first time only, unless kept) and asks the teammate.
+- **A teammate offers it with a button.** Its offer ends with a `[preview]` line
+  in its replies: Brigade's own button, shown while no preview runs, which starts
+  it as Preview does, without a turn. Asked in the chat, teammates took 10
+  seconds to over 2 minutes before even calling start_preview (October 15 to 21,
+  2026), often longer than the start itself. When the runner cannot start it
+  alone (nothing saved, or vault credentials), the click goes to the teammate as
+  the person's message, as a reply's button does.
 - **No browser testing by default.** Measured on four days of threads (October
   15 to 18, 2026), teammates testing their own changes in a browser took about
   22% of their active time in threads that changed code, 60% of it unasked, and
@@ -117,7 +384,7 @@ provider and hands out the address with its token (`apps/api/src/app-previews.ts
   `startedAt`, and their `running` still reads as running.
 - **Its last start is remembered** per thread, in the runner's state
   (`previews.json`), so Start again works after it expired, failed or the runner
-  restarted. Not its credentials: a preview that uses vault credentials is
+  restarted (a running one goes on through an update, above). Not its credentials: a preview that uses vault credentials is
   started again by its teammate, who releases them. While one runs, its
   credentials' env files are copied beside the turn's (removed when it ends), so
   a restart after a crash, or by a person, still has them after the turn parked.
@@ -131,10 +398,38 @@ provider and hands out the address with its token (`apps/api/src/app-previews.ts
   stops its thread's preview. Saved setups are listed with their repository
   (its page under Pull requests, and the Repos tab of each project that links
   it), where an owner or admin forgets one.
-- **A stable address per repository.** A repository's preview gets its proxy
-  port from its name (30000 + a hash), so its address stays the same on that
-  computer: an OAuth callback registered once keeps working. Across computers
-  it changes until previews have their own domain.
+- **A stable address per thread.** A repository's preview gets its proxy
+  port from its name (30000 + a hash), so its address at the provider stays
+  the same on that computer. Its address people open is the thread's too
+  (above): it stays the same across the thread's runs, so an OAuth callback
+  registered once keeps working in that thread, and another thread, or
+  another computer, has another.
+- **On a member's Mac, each thread's preview at a name of its own.** It opens at
+  `http://<thread>.localhost:<port>` (the proxy's port), not `localhost`: a
+  browser keeps cookies by name, not port, so on plain `localhost` signing in
+  to one thread's preview signed another's out. Browsers and macOS take
+  `*.localhost` to the loopback without setup (measured on October 27, 2026:
+  macOS 27's resolver, Playwright's WebKit and Chromium; each name keeps its own
+  cookies). Frameworks' dev servers accept the name as they accept `localhost`
+  (Next's dev origins allow `**.localhost`, Vite's hosts `.localhost`). The
+  runner says the address in `preview.logs.result` (`origin`); the API hands
+  out plain `localhost` for runners before it. In a frame of the dashboard
+  (HTTPS), both engines block `http://localhost` and `http://<thread>.localhost`
+  alike, so the pane is no worse off than before: the new tab is the way out.
+- **On a member's Mac, a preview nobody uses stops where it is.** There is no
+  cgroup to freeze it, so after `FREEZE_MS` without use its process group gets
+  `SIGSTOP`, and the running containers of its thread's Compose project are
+  paused in the member's Docker; the next request through the proxy, or a turn
+  in the thread, sends `SIGCONT` and resumes them. A dev server's file watching
+  and its database spend no CPU meanwhile, and macOS compresses or swaps what
+  they hold. It still stops after `TTL_MS` (30 minutes) as before. A process
+  that left the preview's group (`setsid`) keeps running. A runner that died
+  with previews stopped leaves them stopped: the next one resumes them as it
+  stops them (`SIGCONT` after `SIGTERM`), and resumes the containers it noted
+  as paused. Containers are paused one by one (one that stopped meanwhile does
+  not hide the others), and those Docker does not resume (Docker Desktop not
+  answering) stay noted in `paused-containers.json` and are tried again each
+  minute until resumed or gone.
 - **Each teammate has its own Docker.** Projects run their database, cache and
   mail with `docker compose`; giving teammates the root daemon's socket would
   make them root. The root setup installs what rootless Docker needs (`uidmap`,
@@ -143,37 +438,498 @@ provider and hands out the address with its token (`apps/api/src/app-previews.ts
   starts a daemon under the teammate's user session (`loginctl enable-linger`).
   The runner sets `DOCKER_HOST` and `XDG_RUNTIME_DIR` for that teammate's turns,
   terminals and previews. Where the computer has no Docker, nothing changes.
+- **One Docker per teammate, each thread's ports its own.** Where threads have
+  their own network (cloud computers), a teammate's threads share one rootless
+  Docker on the computer's network: one daemon (about 190 MB idle) and one copy
+  of each image (PostgreSQL's is 646 MB), instead of one of each per thread.
+  Each thread still gets its own ports: a container that publishes 5432 in
+  thread A answers on thread A's `localhost:5432`, and thread B's can publish
+  5432 too.
+  - **A proxy per teammate** (`apps/runner/src/docker-proxy.ts`, the user unit
+    `brigade-docker-proxy`) holds a socket in each of its threads' folders,
+    `/run/brigade-docker/<thread>/<user>/docker.sock`, the threads'
+    `DOCKER_HOST`. It relays to the teammate's Docker as is, connections Docker
+    takes over (attach, exec, BuildKit) included, and reads only the requests:
+    a container create gets the label `brigade.thread=<thread>`, and each port
+    it publishes goes on the thread's own loopback address (`127.231.x.y` for
+    thread n, written by root beside the teammate's folder, never in it), same port number (`-P` too, from the
+    image's exposed ports). A container's start is answered once its ports are
+    up; Docker's events do the same when one starts or stops by itself.
+  - **Why a loopback address per thread.** Measured with Docker 29.7 and
+    rootlesskit 3.0.2: rootless Docker publishes a port number once per
+    loopback address (127.231.0.45:15432 and 127.231.0.46:15432 both work),
+    but only once for every other address, since it reaches its containers
+    through its own 127.0.0.1 for those ("Bind for 127.0.0.1:15432 failed:
+    port is already allocated" for 10.231.x.y). So no port is renumbered:
+    `docker ps` and `docker compose port` show the port that was asked for.
+  - **The thread's localhost.** The root thread helper's `docker-ports`
+    (called by the proxy through sudo, for its own user only) reads the
+    teammate's running containers as the teammate, keeps the ports published on
+    that thread's address, and puts up NAT rules: in the thread's network,
+    `127.0.0.1:<port>` (and `127.231.x.y:<port>`) go to the host's side of its
+    pair, which sends them to `127.231.x.y:<port>`. Only that thread's
+    interface has those rules, so no other thread reaches its containers. The
+    rules are made again from scratch at each change, per thread and teammate
+    (chains `BD-<n>-<uid>` on the host, `BD-<uid>` in the thread's network).
+  - **Started on first use, stopped when unused.** The teammate's Docker is a
+    transient unit of its own systemd, `brigade-docker`, that the proxy starts
+    at a thread's first connection (0.4 s on a test VM): a thread that never
+    runs docker costs nothing. It runs with the systemd cgroup driver, so
+    `docker pause` (a frozen preview's database) works, and with
+    `--ip=127.0.0.1`, so a container published without the proxy is not on the
+    computer's public address. The runner stops a quiet thread's containers and
+    removes its socket (`docker-stop`); once nothing runs in that Docker and
+    nobody works in any of the teammate's threads, it stops it
+    (`docker-down`). At rest the Docker takes about 185 MB (dockerd 99,
+    containerd 60, rootlesskit 26) and the proxy 60 MB; the proxy runs on the
+    runner's Node.js, starts again if it fails, and ends with its last thread
+    folder.
+  - **Not Podman.** It has no daemon, keeps one image store per user and
+    publishes ports in the caller's network, which would have made the ports
+    simple. But it is another engine, `docker compose` goes through its API
+    service anyway, and the member asked for Docker.
+
+- **On a machine of its own, for whoever chooses it** (the `preview_machines`
+  feature, `src/preview-machines.ts` in the API, `apps/runner/src/preview-machine.ts`).
+  A cloud computer runs every teammate's turns, typechecks and previews in its
+  8 GB; a preview's dev server and database take one to three of them. A member
+  with the feature (docs/feature-flags.md) turns on "Keep heavy work off the
+  shared computer" in Preferences (`Member.previewMachines`, off by default;
+  the switch shows only to members who have the feature, and
+  `PUT /me/preview-machines` answers 404 to the others). Then each thread they
+  start gets a VM of its own at the provider (boat's `large`: 8 vCPU, 16 GB),
+  where its preview runs and its teammates run heavy commands (below), while its
+  code stays here. Off, or without the feature, nothing
+  changes: the runner asks, the API says `{ machine: null }`, and the preview
+  runs on the computer as before (an API before it answers that it could not
+  read the call, which does the same).
+  - **The API holds the machines** (`PreviewMachine`, one row per thread, no
+    foreign key: a deleted thread or workspace leaves its row until the sweep
+    destroyed the VM). The runner's `preview.machine` call: `up` makes it (or
+    starts it again, or makes another once the provider lost it), with an
+    idempotency key so a retry makes no second; then lets the runner's SSH key
+    in and gives the address and the host key, which comes over the provider's
+    API and is pinned. `sleep` stops it (its disk kept, free), `touch` says it
+    is used, which pushes back the provider's own stop (2 hours after the last
+    one, should Brigade be gone). At most 5 are up at once per workspace (being
+    made or running): past that, a preview runs on the computer and says why.
+    The sweep (each minute) destroys the machine of a deleted thread and one
+    stopped 12 days (the provider keeps a stopped disk 14), stops one its
+    runner said nothing of (no `up`, no `touch`) for 20 minutes (why 20: below,
+    where the preview and the commands share the machine), and destroys what a
+    making cut short may have made. It reads only the rows with work due, so rows with none
+    never hold others back.
+  - **One operation on a machine at a time.** Whoever makes, starts, stops or
+    destroys a machine holds its row (`claimedUntil`, 10 minutes from when it
+    took it, longer than any provider call); the provider's work is done holding
+    it. Every change of who holds a machine (an `up`'s reserve, a stop, a
+    destroy) and every touch is decided under one lock per workspace (an
+    advisory lock), on the row read under that lock and taken only as it was
+    read: a destroy never slips
+    between a reserve's read and its write, the sweep judges each row it listed
+    again as it acts (an `up` since then wins), and an `up` that finds its
+    machine being destroyed waits, then makes a new one. Starts in several
+    threads at once never exceed 5 machines up. A stop holds its row as
+    `stopping`, still counted as up, until the provider confirms it: a stop the
+    provider failed leaves it running and due for the sweep's next stop, and
+    one whose process was lost is taken up by the sweep once its claim ran out.
+  - **No secret of Brigade's goes there**: the machine is made with none of the
+    provider account's (boat's `noEnv`), no Claude or Codex login, no other
+    thread's files. It gets the checkout, the preview's settings and variables
+    and the credentials the start released, as the computer's preview does,
+    and those only while the app runs: the run's folder there is made again
+    for each run, and its settings and credentials are deleted as the app
+    stops (it sleeps or ends). Teammates of one thread share its machine: the
+    last start's checkout replaces the copy there.
+  - **The code, one way.** The runner holds one SSH connection to the machine
+    (OpenSSH's ControlMaster, a socket of its own per link). Over it,
+    `preview-sync-reader.ts`, run as the teammate in its thread's namespaces,
+    sends the checkout (the git work tree of the preview's folder): first a
+    manifest, then what the machine lacks, then each change as `fs.watch` sees
+    it, 15 ms batched. `preview-sync-receiver.ts` writes each file's bytes as
+    they come into a staging folder beside its state file, outside the copy,
+    then moves the file in place whole, so the dev server there reloads as for
+    a local edit.
+    Left out: `.git` and `node_modules` anywhere, and what git ignores (asked of
+    one `git check-ignore --stdin`), except `.env` files and the start's env
+    file; the machine installs and builds for itself. The receiver deletes only
+    what it wrote (its state file lists it), never what the machine made. One
+    way: nothing on the machine can write into the teammate's checkout, and the
+    machine, whose code nobody here vetted, gets only paths of the reader's own
+    manifest (never a path it names, `../`, a home's logins), read only inside
+    the checkout (a folder replaced by a link out of it is not read). git stops
+    its `check-ignore` for good at a path outside the repository: only paths in
+    the checkout are asked, and one that stopped starts again, its pending
+    answers taken as ignored, so nothing git ignores is sent on a guess. A
+    flush (a mark the receiver acknowledges) comes before the app starts and
+    before `check_preview`. Measured on November 5, 2026 between two boat VMs
+    with Brigade's own preview: an edit here served by the machine 92 to 133 ms
+    later (80 to 110 ms edited there directly); the checkout's 1,712 files in
+    under a second. A process per change was tried first: under a loaded
+    computer, spawning rsync took up to 3 s; the reader stays up.
+    - **Files up to 2 GB each** (raw footage for a render, say), neither side
+      holding one in memory. A frame is a JSON line, then exactly the bytes it
+      says. The reader sends a file over 8 MB 1 MiB at a time from one open
+      file, each chunk once the link took the one before. The receiver writes
+      each chunk to its staged file before it reads the next, so a disk or a
+      link slower than the other holds the reader back, through SSH; once all
+      came, the file is placed in its turn, after the frames before it (copied
+      beside its place first when the staging folder is on another
+      filesystem). The staging folder (`.brigade/sync/<id>.staging`) is emptied
+      as the receiver starts, and keeps nothing of a file placed, refused or
+      cut by the link's end. A file cut short while it goes still gets the size
+      its line said, the rest as zeros, and goes again at once, up to three
+      times, ahead of any mark asked for meanwhile; one still cut short then is
+      named in the next mark, and that flush fails (no command starts on a copy
+      padded with zeros). Such a copy stays named until a frame replaces or
+      deletes it there (the file whole, a link, a deletion of it or of its
+      folder), never merely because its path was looked at again; one whose
+      file became a folder, a pipe, or a path git now ignores is deleted there
+      at once. One that grew
+      goes as its line said, its watcher sending the rest; one that cannot be
+      read is deleted there, as before. The receiver decides a path on its
+      line: the bytes of one it refuses are read and dropped, and the next
+      frame applies. A file over 2 GB is left out, said once in the log, and
+      deleted there if an older copy was. A flush waits as long as bytes go to
+      the machine, and fails after 60 seconds with none (5 minutes for the
+      first sync, which may read files the computer is still restoring from its
+      snapshot). Once its input ends, the receiver ends by itself, its last
+      save included: `process.exit()` hung there in 6 of 30 ends after a file
+      of 99 MiB (none in 80 since). Measured on November 6, 2026 on a thread's
+      machine, both halves built and joined by a pipe (no SSH, no network): a
+      file of 2 GiB in 3.0 to 4.7 seconds (once 18.6, the first run after its
+      2 GiB were written), the same bytes there, with the reader at most 122
+      MB of memory and the receiver 94 MB (52 MB each for 1 KB). On
+      the cloud computer, a file of 99 MiB (under the old limit of 100 MB) took
+      the code before 151 and 255 MB; now 116 and 78.
+  - **The app runs there, reached here.** Its settings go into files there by
+    stdin (never a command line), with its credentials; its script sources
+    them, runs the setup unless it restarts, then its command. The shell sshd
+    starts leads the app's process group, noted, so a stop signals all of it,
+    what an earlier run left included. Its ports are forwarded to 127.0.0.1
+    here, where the proxy reaches them (`forward`): the gateway, the address,
+    cookies, element picking, the code panel and checks are as for any
+    preview. Readiness asks the machine whether the port listens (a forward
+    accepts any connection), then asks for `/` through it. Each thread's work on
+    its machine (a launch, a sleep, the cleanup when a preview ends) runs one
+    step after another: a launch a stop cut short gives up before it changes
+    anything there, and a replacement's launch starts after the old preview's
+    cleanup.
+  - **Sleep, then wake on the next request.** A machine bills while it runs,
+    and waking one takes far longer than thawing a frozen preview, so instead
+    of freezing after 5 minutes, it sleeps after 30 (`SLEEP_MS`): the app stops,
+    the machine stops with it. The next request through the proxy wakes it and
+    goes on at once, so the page says it starts meanwhile; a check wakes it and
+    waits. A wake runs the setup again: what it started (a database, a service)
+    stopped with the machine, and a machine made again (the provider lost the
+    old one) has none of it. Waking (measured): the machine is up in about 6
+    seconds and answers SSH a few later; Brigade's app again in 25 to 40
+    seconds, its setup included. For a few minutes after a wake, boat serves
+    the machine's home through `ascii-lazyfs`, which keeps whole seconds of a
+    file's time only. So the receiver takes two times as the same when they are
+    equal, or in the same second with one of them having nothing under it:
+    compared to the millisecond, the whole checkout went again after each wake,
+    twice (seen on November 6, 2026: once while lazyfs served the home, once
+    just after, for what it wrote meanwhile). A preview unused 4 hours stops,
+    its machine stays stopped.
+    A replaced preview, or one the next runner takes up or starts again after an
+    update, keeps its machine up for it.
+  - **Heavy commands there too** (`apps/runner/src/machine-runs.ts`). A thread
+    with a machine (`ThreadSpec.machine`, which the API sets as it would give
+    one: the feature, the starter's switch, a cloud computer) gives its
+    teammates `run_on_machine` and `machine_run`, and a "Heavy work" section in
+    their instructions: run there the work the cloud computer cannot take
+    without slowing every teammate (a render or encode of video or audio, a
+    transcription, a model run on video or images, Docker), even where a skill
+    shows it run here, and keep code work and quick commands here. Code work
+    means installs, builds, a typecheck, lint and the tests of a change: they
+    are lighter than starting the machine, sending the checkout and installing
+    there; a whole test suite is left to the repository's checks, which run on
+    each pull request (or run here one package at a time when it has none).
+    The member chose this scope on November 6, 2026, after machines started for
+    a typecheck or a review's tests; it widens only when a real case needs it.
+    `run_on_machine` is always in view (Claude
+    Code's tool search leaves it out of the list otherwise): on November 6, a
+    video edit followed its skill's local steps and never searched for it.
+    Without a machine, neither the tools, the instructions nor the agent's key
+    change. A command's folder goes first, by the same one-way sync, into the
+    teammate's own copy (`commands/<teammate>/…` on the machine, apart from the
+    preview's `work/`, so a build never writes under a running dev server): the
+    whole checkout it is in, or the folder alone outside a checkout (never the
+    whole working directory). The copy stays between commands with what they
+    installed, and the next command sends only what changed. At most 3 commands
+    of a thread run at once.
+    - **The thread's attached files are there too** (`machine-files.ts`), at the
+      same place in the teammate's copy as in its folder
+      (`commands/<teammate>/attachments/…`), so a command names them as it would
+      here (`../attachments/clip.mov` from a checkout beside them), whatever
+      their size, and their bytes never go through the cloud computer, whose
+      memory every teammate shares. Before the command's folder goes, the
+      machine fetches each file it lacks itself, straight from the bucket, three
+      at a time, one command's files after another's. The runner asks the API as
+      for its own copy (`GET /runner/attachments/<id>`), reads the signed URL
+      from its redirect without following it, and gives the machine only that
+      URL, valid a few minutes, as curl's config on stdin (`curl -K -`), never
+      on a command line; the runner's token never goes there. Without a bucket
+      (on a laptop) the API sends the bytes, which go over the link as they
+      come, never held whole. The machine writes each to a temporary file,
+      checks its size and SHA-256, then moves it into place; one that does not
+      match, or does not come, is left out with a note, and the command runs
+      anyway. It remembers what it placed
+      (`.brigade/attachments/<teammate>.json`: path, SHA-256, size and time), so
+      the next command fetches only what it lacks, and says what it fetched
+      ("Fetched 1 attached file (512.0 MB) from storage"). A file of the right
+      size it did not place (the sync's) is checked by its SHA-256 instead of
+      fetched. It gets each file as given to the thread: a copy the teammate
+      edited or removed here does not change it there. The one exception is a
+      folder the sync sends as it is (a command run in `attachments`): there a
+      file is placed only when the teammate's copy is still the one given, as
+      its SHA-256 says (its size alone may be an edit's), and it gets that
+      copy's time and mode, so the sync finds it already there and does not send
+      it; any other copy there, edited or removed, is the sync's, like any file
+      of that folder, and nothing is placed for it. The copy is read as the
+      teammate by Node itself (`fs` and `crypto`, opened without following a
+      link, hashed as it streams), not by GNU's `stat` or `sha256sum`, which a
+      Mac lacks; one that cannot be read is not placed either, and the run says
+      so, never guessing from its size. Elsewhere a placed file keeps its own
+      time and mode. Previews do not get them: a preview's copy is its checkout
+      alone.
+    - **Detached there, followed here.** The command runs in a session of its
+      own (`.brigade/runs/<id>/`), with bash; its settings and credentials are
+      sourced, then deleted from the disk. Its output goes to a file the runner
+      follows (`tail -f --pid`) from the byte it reached: a cut connection loses
+      and repeats nothing, and once it ended, what the follow had not read yet
+      is read to the end. It counts as running while any process of its group
+      does (the boot id tells a machine stopped since), so a stop or its time
+      limit (60 minutes unless said, 6 hours at most) sends TERM to the whole
+      group, then KILL to what is left 10 seconds later: a TERM ends its script
+      before what it started, and what ignores TERM outlives both.
+    - **It outlives the call and the runner.** `machine_run` waits for it again;
+      an update leaves it running there, and the next runner follows it from its
+      state file (`machine-runs.json`, with no secret in it). That file keeps the
+      last 200 lines of an ended command's output, so `machine_run` still
+      answers after a restart (the turn a wake-up starts, say).
+    - **A message ends the wait, not the command** (`apps/runner/src/harness/arrivals.ts`).
+      The turn reads a message given to it only with its next tool result, so
+      a wait of 10 minutes kept a person's message unread as long. A wait under
+      way ends as one is steered in, and so does one that starts before the turn
+      read it: the call answers with the command still running and a note to
+      read the message, then wait again with `machine_run`. An update ends it
+      too, as it hands the turn over: an open call would hold the turn past
+      the hand-over's 20 seconds, and the turn would start again without the
+      command's id.
+    - **Its outputs come back, then it ends.** Once it ran, succeeded or not, the
+      files and folders it names in `outputs` (inside its folder, 2 GB at most)
+      come back to the same place in the teammate's folder, written as the
+      teammate (tar over the link, times and modes kept, so the next sync does
+      not send them back). It says it ended only once they are back: a runner
+      that stops meanwhile leaves it unfinished in its state, and the next one
+      brings them back.
+    - **Saved to the library from there** (`machine-library.ts`). The files a
+      command names in `library` (`[{ from: "renders/video.mp4", to:
+"Projects/X/videos/video.mp4" }]`, 20 at most) go to the library from the
+      machine once it succeeded, never through the cloud computer: a render is
+      not brought back to be uploaded again. The steps and rules are
+      `save_to_library`'s: the machine reads each file's size and SHA-256, the
+      runner asks the API where to PUT it (`POST /runner/uploads`, purpose
+      `library`, as the teammate), which refuses a path the teammate may not
+      save to before any byte goes (403, as the save itself would) and a file
+      over 500 MB; the machine PUTs it at the bucket's signed URL, given as
+      curl's config on stdin like a download's (never the runner's token, never
+      on a command line); the API reads back what arrived and checks it (a
+      mismatch is sent again, once); then the hub's `library.call` saves it as
+      the teammate, and its mention comes back in the command's result and
+      `machine_run`, for the reply. Without a bucket (on a laptop) the bytes go
+      over the link to the API's stand-in as they come. A file saved this way
+      does not come back unless `outputs` names it too: teammates bring back
+      only what they need to look at (frames, a report). A command that failed
+      saves nothing, and says how to save once it is right (a command such as
+      `true` with the same `library`). Each save is kept in the state file by
+      its upload before it goes, and does not go when that write fails; each
+      outcome is kept as it comes, with its note. A runner that stops
+      meanwhile leaves the rest to the next one, which sends a save it had
+      sent that very way again, never a new upload. The API takes an upload
+      for one save alone (`claimUpload`: of two at once, one gets it), so a
+      save made before the runner stopped is not made again, nor over what
+      was saved at that path since. The runner's connection marks a call's
+      failure when the API answered it (a refusal) or it never went: nothing
+      was made. Any other failure (the connection lost while it was under way),
+      and a save refused when sent again, may have been made: the run says
+      the file may already be in the library, to check before saving it again,
+      and never sends or uploads it again. Only a teammate that may save somewhere in
+      the library sees `library`, and its "Heavy work" instructions say to save
+      renders this way rather than bring them back.
+    - **Credentials' values are hidden in its output**, read as a shell reads
+      the released file (`export NAME='…'`, a ' inside as `'\''`; a key over
+      several lines is hidden line by line too), and the end of a line still
+      being written that may begin one is hidden until the line ends. A runner
+      that started after the command does not know them, and shows none of its
+      output.
+  - **The preview and the commands share the machine** (`machine-holds.ts`).
+    The runner tells the API `sleep` only once neither uses it, and after a
+    command only 10 minutes later, should another follow: each start counts at
+    the provider (200 a day included in the plan); it touches the machine as
+    those 10 minutes begin, so the sweep counts from then. A thread's ups and
+    sleeps go to the API one after the other: an up waits for a sleep under
+    way, and a sleep not under way yet is not made once someone comes for the
+    machine. While a command runs, the runner touches the machine every 5
+    minutes as busy: the sweep and the provider's own stop stay away, and the
+    API marks the runner's computer in use too, as with a thread running. Its
+    idle stop (30 minutes without a running thread) would otherwise stop the
+    runner under a long command whose turn ended, and the machine, untouched,
+    20 minutes later. A preview's touch does not keep the computer up: a
+    person viewing it does, from the dashboard. What the machine has (November
+    6, 2026): Ubuntu, Node.js 24, pnpm, Docker, Python 3.12, ffmpeg, Chrome and
+    passwordless sudo, 120 GB free. Measured that day, driven from a cloud
+    computer: Brigade's whole `pnpm install`, then the runner's typecheck, 40
+    seconds on a fresh copy; the same after an edit, 4 seconds (one file sent);
+    a 20-second 1080p render with ffmpeg, its file back here, in about 7.
+    - **The stops outlive the runner.** Which threads' machines may be up, and
+      when each may stop (the end of its 10 minutes after a command), are kept
+      in `machine-holds.json`. An update (several a day while runner changes
+      merge) starts a new runner, which used to know nothing of a machine left
+      waiting there, or that nothing held any more: only the sweep stopped it,
+      45 minutes after its last use (November 6: a review thread's machine,
+      last used at 14:33, the runner updated at 14:36, still running at
+      15:17). The next runner stops no machine until it took up what the one
+      before left: once the previews handed over are taken up and the commands
+      followed again (each has asked for its machine again, which holds it),
+      each machine nobody holds stops when it was due to, at once if that
+      passed. A preview or a command that comes for it later cancels that stop,
+      as it would have before the update.
+    - **Why the sweep waits 20 minutes** (`UNUSED_STOP_MS`): it is the safety
+      net for a runner gone, so it waits past the longest a runner that keeps a
+      machine says nothing of it. A command's machine is touched every 5
+      minutes from when it is connected (90 seconds at most after its `up`),
+      its folder and attached files going there included: about 6.5 minutes.
+      After the last command, the machine is touched as it is kept 10 minutes,
+      then slept: 10 minutes, 15 should that touch be lost. A preview is touched
+      every 5 minutes (checked each minute) from its start, a long setup
+      included: 6 minutes; a preview waking is not touched until it answers,
+      which it must within 10 minutes or it stops: about 11. An update takes a
+      minute or two, after which the next runner asks again for the machine of
+      what it takes up. An `up` sets the time of last use as it ends, and holds
+      the row until then. 20 minutes leaves 9 past the longest of those, and 5
+      past a lost touch after a command; a forgotten machine costs 20 minutes
+      and the minute between sweeps, instead of 45.
+  - **Not done**: making a machine from a saved image per repository (a
+    prebuild). The first preview of a thread installs everything on a fresh
+    machine (about 90 seconds for Brigade, measured); later ones in the thread
+    find it all on the machine's disk. Images wait until that first start proves
+    too slow in use.
 
 ## Known limits
 
-- **Safari** blocks third-party cookies, and may not keep partitioned ones: not
-  tested. Sign-in there needs the new tab.
+- **Safari** blocks third-party cookies, partitioned ones too (Playwright's
+  WebKit dropped an app's rewritten session cookie in the frame): pages load in
+  the pane through the gateway, but signing in to the app there needs the new
+  tab.
+- **In Safari's frame, the grant's host is what lets people in**, for the
+  preview's run and 12 hours at most. The gateway answers `Referrer-Policy:
+same-origin` (over the app's own), so links, images and fonts do not send it
+  to other sites; a page's `<meta name="referrer">` can still loosen that, and a
+  cross-origin request with CORS (a font from Google Fonts, an API the app
+  calls) sends it as its `Origin`. There, a script, image or style the app
+  loads from its own absolute address (not a path) is refused: it carries
+  neither the cookie nor the grant.
+- **The app's server cannot call its own public address**: the gateway lets
+  in only browsers that came with a token, so a server-side fetch of
+  `BRIGADE_PREVIEW_URL` gets 403. It calls itself at localhost.
+- **Dropping a route can fail** (the gateway does not answer three times):
+  the address then leads nowhere once the preview's port closed, until the
+  next preview at that provider address, of any thread, drops it. Previews
+  lost with their runner (the computer stopped) report no stop, and are left
+  the same way.
+- **Access tokens are not tied to the run**: one minted just before a
+  preview stops still lets in, for its 5 minutes, the same thread's next run.
+- **Old addresses.** Provider addresses with their token handed out before
+  the gateway (`https://box-….on.boat.dev?_token=…`) still work at the
+  provider for as long as it keeps that token.
 - **Google, GitHub and Microsoft sign-in** refuse to load in a frame on another
   site, whatever the cookies.
-- **Cookies set by scripts** (`document.cookie`) do not pass the proxy. Rare for
-  sessions; storage (`localStorage`, as Supabase and Firebase use) works in the
-  frame, kept for it.
-- **The provider's own token cookie** must also work in a cross-site frame
-  (`SameSite=None`, ideally `Partitioned`). It does in Chrome today.
+- **Picking elements** sees only the page's DOM: its picture is the DOM drawn
+  again (cross-origin images without CORS and some CSS, like backdrop filters,
+  can be missing from it), and there is no source file (React 19 no longer
+  exposes `_debugSource`), only its components' names: opening its code finds
+  it by its text. A page whose CSP forbids `'self'` scripts, or a compressed
+  page the app sends whatever it is asked, gets no select button.
+- **Cookies set by scripts** (`document.cookie`) do not pass the proxy or the
+  gateway. Rare for sessions; storage (`localStorage`, as Supabase and Firebase
+  use) works in the frame, kept for it. A script can still set a
+  `Domain=brigade.surf` cookie that other previews' apps receive: only the
+  Public Suffix List (below) stops that.
+- **The provider's own token cookie** works in a cross-site frame in Chrome only:
+  without the gateway, Safari's pane stays white.
 - **Rootless Docker** cannot bind ports under 1024 and keeps images in each
   teammate's home: a project that publishes port 80, or many large images, needs
-  changing. Not tested on a workspace computer yet (see below).
+  changing. Until October 22, 2026, a thread's Docker never started on a cloud
+  computer (containerd's socket paths under `/run/brigade-docker/<thread>/<user>`
+  were longer than 104 characters, #315); the shared Docker's are under
+  `/run/user/<uid>`. Systemd and root are not tested from a thread (see below).
+- **What a teammate's threads share in its Docker**: container names given with
+  `--name`, `docker ps` (it lists all the teammate's containers), volumes
+  created by name, and the bridge network. Compose names its containers,
+  volumes and networks after the thread's project (`COMPOSE_PROJECT_NAME`), so
+  `docker compose` stays per thread.
+- **Processes on the computer itself**, outside any thread (the runner),
+  reach every thread's published ports on its `127.231.x.y` address; threads
+  reach only their own.
+- **Two teammates in one thread** cannot both publish the same port, as before
+  (they share its address). And `localhost` over IPv6 (`::1`) reaches no
+  container: clients that try `::1` first (libpq, Node) fall back to
+  127.0.0.1.
 - **Seeds that call third-party APIs** (a Stripe product list) fail without a
   key: the teammate asks for a test-mode key as a preview variable, or seeds
   what it can and says what is empty.
 
 ## Before customers use it
 
-1. **A preview domain Brigade owns** (e.g. `brigade-preview.app`), one subdomain
-   per preview, served by the provider or a gateway in front of it. Today
-   previews are on `*.on.boat.dev`.
+1. **A preview domain Brigade owns**: `brigade.surf`, one subdomain per preview,
+   through the preview gateway (above).
 2. **That domain on the Public Suffix List** (github.com/publicsuffix/list), as
    `vercel.app`, `netlify.app`, `github.io` and `csb.app` are. Without it every
-   preview is the same site as every other, and one customer's preview can set
-   cookies another's receives. `boat.dev` is not on the list. Inclusion takes
+   preview is the same site as every other, and one customer's preview's scripts
+   can set cookies another's receives (the gateway strips `Domain` only from
+   `Set-Cookie` headers). Neither `brigade.surf` nor `boat.dev` is on the list. Inclusion takes
    weeks: start early.
-3. **Test in Safari and Firefox**: signing in to an app in the pane, and the
-   provider's token cookie in the frame.
-4. **Test rootless Docker on a workspace computer** after deploying: the root
-   setup runs again by itself (its stamp changed); then a teammate runs
-   `docker compose up -d` in a repository with Postgres and Redis.
+3. **Test in Safari and Firefox**: signing in to an app in the pane.
+4. **Check the teammates' Docker on a cloud computer** after deploying the API
+   and the runner (the root setup runs again by itself, its stamp changed).
+   Run on a test boat VM on October 22, 2026 (Ubuntu 24.04, Docker 29.7,
+   systemd 255) with the branch's root setup and runner, the runner's calls
+   made by hand: all eight passed (#317). With
+   `U=<teammate user>`, `UI=$(id -u $U)`, and
+   `as() { sudo -u $U XDG_RUNTIME_DIR=/run/user/$UI "$@"; }` on the computer:
+   1. **The setup**: `grep -c docker-ports /usr/local/sbin/brigade-thread` is
+      not 0, and `/etc/sudoers.d/brigade-thread` has the
+      `%brigade-teammates ... docker-ports *` line.
+   2. **Nothing before first use**: after a turn started in thread A, its
+      `echo $DOCKER_HOST` is `unix:///run/brigade-docker/<A>/<U>/docker.sock`,
+      `as systemctl --user is-active brigade-docker-proxy` is `active` and
+      `as systemctl --user is-active brigade-docker` is `inactive`.
+   3. **Started once**: in thread A, `docker info` answers within a few
+      seconds and shows `Cgroup Driver: systemd`; `brigade-docker` is now
+      active, and `pgrep -u $U -c dockerd` is 1.
+   4. **Each thread's 5432**: in threads A and B of the same teammate, a
+      `compose.yml` with `postgres:17` and `ports: ["5432:5432"]`, then
+      `docker compose up -d` in each. Both start; `docker compose ps` shows
+      `127.231.x.y:5432` with another address in each. In each thread,
+      `psql -h localhost -U postgres` (or `pg_isready -h localhost`) works;
+      write a different row in each, and each reads back its own. Thread B's
+      `up` pulled nothing, and `pgrep -u $U -c dockerd` is still 1.
+   5. **Output**: `docker run --rm busybox echo ok` prints `ok`;
+      `docker exec -i <container> sh -c 'sleep 2; echo late' </dev/null`
+      prints `late`; `sleep 30 | docker compose exec -T db echo quick` returns
+      at once; `docker compose exec db psql -U postgres` works in a person's
+      terminal (a TTY).
+   6. **Isolation**: from thread B, `nc -zv -w 3 <A's host-side address> 5432`
+      (A's `ip route` gateway) fails; `sudo iptables -t nat -S | grep BD-`
+      shows rules for A's interface and B's only.
+   7. **Stopped when unused**: `docker compose down` in A; the thread's
+      rules go (`iptables -t nat -S BD-<n>-$UI` is empty). With both threads
+      quiet for an hour, the runner's log says "stopped ... container(s) of
+      quiet thread" then "stopped the Docker of $U", and `brigade-docker` is
+      inactive; a new turn's `docker info` starts it again.
+   8. **A frozen preview**: a preview whose setup runs `docker compose up -d`,
+      left until it freezes: its log says "Paused 1 of the thread's
+      containers", and they run again when it is used.

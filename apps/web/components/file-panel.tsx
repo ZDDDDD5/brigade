@@ -1,12 +1,37 @@
 'use client'
-// A file the thread mentions, beside it: from the library, the thread's
-// attachments, or the teammate's working folder on its computer. Takes the
-// desktop panel's place. Text shows as text, images and PDFs as themselves.
-import { designFolderOf, type ThreadFile } from '@brigade/contracts'
-import { Check, Copy, Download, FileText, Library, X } from 'lucide-react'
+// A file the thread mentions, beside it: the thread's attachments, or the
+// teammate's working folder on its computer. Takes the desktop panel's place.
+// Text shows as text, images and PDFs as themselves. A library file opens in the
+// file panel instead (components/document-panel.tsx), and a design as the design.
+// A text file of the working folder opens in the code editor (components/code-file.tsx),
+// to edit for whoever may write to the thread (Markdown once they ask to edit it).
+// While the thread's preview runs, it opens beside it too; when the preview runs
+// another teammate's copy, the panel says that edits here will not show in it.
+import {
+  designFolderOf,
+  designOptionsOf,
+  toolFolderOf,
+  type DesignWhere,
+  type ThreadFile,
+} from '@brigade/contracts'
+import {
+  Globe,
+  Check,
+  Copy,
+  Download,
+  FileText,
+  Library,
+  Palette,
+  Pencil,
+  TriangleAlert,
+  X,
+} from 'lucide-react'
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { CodeFile, editableFile } from '@/components/code-file'
 import { DesignPanel } from '@/components/design-view'
+import { useDashboard } from '@/components/dashboard'
+import { ToolPanel } from '@/components/tool-view'
 import { FileLinksProvider, type OpenFile } from '@/components/file-links'
 import { FilePreview, PdfView } from '@/components/file-preview'
 import { Markdown } from '@/components/markdown'
@@ -15,6 +40,7 @@ import { libraryDocument, useDocumentPanel } from '@/components/document-panel'
 import { PanelExpandButton, SidePanel } from '@/components/side-panel'
 import { Button } from '@/components/ui/button'
 import { api, attachmentUrl, threadImageUrl } from '@/lib/api'
+import { draftKey, getDraft, setDraft } from '@/lib/code-drafts'
 import { API_URL } from '@/lib/config'
 
 const IMAGE = /^image\/(png|jpeg|gif|webp)$/
@@ -31,16 +57,131 @@ type FilePanelProps = {
   teammateId?: string
   /** Names whose working folder a file came from. */
   teammateName: (id: string | undefined) => string
+  /** The person may write to the thread: a text file of a working folder opens to edit. */
+  mayEdit?: boolean
+  /**
+   * The thread's running preview: whose copy it runs, and how to open a path of it in
+   * the code beside it. A file of another copy says its edits will not show there.
+   */
+  previewCopy?: { teammateId: string; name: string; open: (path: string) => void }
   onOpen: OpenFile
   onClose: () => void
 }
 
-/** A library design's folder ("acme/pricing.design") shows as the design; anything else as a file. */
+/**
+ * A library design's folder ("acme/pricing.design") shows as the design, a tool's
+ * ("acme/review.tool") as the tool, for people who have tools; anything else as a file.
+ */
 export function FilePanel(props: FilePanelProps) {
+  const { me } = useDashboard()
   const folder = props.path.trim().replace(/\/+$/, '')
+  const tools = me.features?.includes('tools') ?? false
+  if (tools && !folder.startsWith('/') && toolFolderOf(folder) === folder)
+    return <ToolPanel folder={folder} threadId={props.threadId} onClose={props.onClose} />
   if (!folder.startsWith('/') && designFolderOf(folder) === folder)
-    return <DesignPanel folder={folder} threadId={props.threadId} onClose={props.onClose} />
+    return <DesignFolderPanel folder={folder} threadId={props.threadId} onClose={props.onClose} />
   return <ThreadFilePanel {...props} />
+}
+
+/**
+ * A design's folder beside a thread: the design, or one of its options as an earlier message
+ * named it. Kept while another thread shows (components/kept-previews.tsx), hidden.
+ */
+export function DesignFolderPanel({
+  folder,
+  threadId,
+  onClose,
+  hidden = false,
+}: {
+  folder: string
+  threadId: string
+  onClose: () => void
+  hidden?: boolean
+}) {
+  return designOptionsOf(folder) ? (
+    <OptionPanel folder={folder} threadId={threadId} onClose={onClose} hidden={hidden} />
+  ) : (
+    <DesignPanel folder={folder} threadId={threadId} onClose={onClose} hidden={hidden} />
+  )
+}
+
+/**
+ * One of a design's options, as an earlier message named it: once one is
+ * picked, it has become the design, and the others are in the trash.
+ */
+function OptionPanel({
+  folder,
+  threadId,
+  onClose,
+  hidden = false,
+}: {
+  folder: string
+  threadId: string
+  onClose: () => void
+  hidden?: boolean
+}) {
+  const [where, setWhere] = useState<DesignWhere>()
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    let live = true
+    setWhere(undefined)
+    setError(undefined)
+    api<DesignWhere>('/designs/where', { body: { path: folder } }).then(
+      (w) => live && setWhere(w),
+      (e: Error) => live && setError(e.message),
+    )
+    return () => {
+      live = false
+    }
+  }, [folder])
+
+  if (where && !where.trashed)
+    return <DesignPanel folder={where.path} threadId={threadId} onClose={onClose} hidden={hidden} />
+
+  const slash = folder.lastIndexOf('/')
+  return (
+    <SidePanel
+      aria-label={`Design ${folder.slice(slash + 1)}`}
+      hidden={hidden}
+      onClose={onClose}
+      raiseKey={folder}
+    >
+      <div className="flex flex-nowrap items-center gap-2 border-b px-3 py-2.5">
+        <Palette aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <strong className="truncate text-sm font-semibold">{folder.slice(slash + 1)}</strong>
+          <span
+            className="truncate font-mono text-xs text-muted-foreground"
+            title={folder.slice(0, slash)}
+          >
+            {folder.slice(0, slash)}
+          </span>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          onClick={onClose}
+          aria-label="Close design"
+        >
+          <X aria-hidden />
+        </Button>
+      </div>
+      {error ? (
+        <p className="p-4 text-sm text-destructive-text">{error}</p>
+      ) : where ? (
+        <p className="p-4 text-sm text-muted-foreground">
+          Another option was picked, so this one is in the trash.{' '}
+          <Link href="/app/library?tab=trash" className="font-medium text-primary hover:underline">
+            Open the trash
+          </Link>
+        </p>
+      ) : (
+        <p className="p-4 text-sm text-muted-foreground">Opening {folder}…</p>
+      )}
+    </SidePanel>
+  )
 }
 
 function ThreadFilePanel({
@@ -48,31 +189,64 @@ function ThreadFilePanel({
   path,
   teammateId,
   teammateName,
+  mayEdit = false,
+  previewCopy,
   onOpen,
-  onClose,
+  onClose: close,
 }: FilePanelProps) {
   const [file, setFile] = useState<ThreadFile>()
   /** A file of a library design: the design shows instead. */
   const [design, setDesign] = useState<string>()
+  /** A file of a library tool: the tool shows instead, for people who have tools. */
+  const [tool, setTool] = useState<string>()
+  const { me } = useDashboard()
+  const tools = me.features?.includes('tools') ?? false
   const [error, setError] = useState<string>()
   const [copied, setCopied] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
   const documents = useDocumentPanel()
+  const name = path
+    .replace(/:\d+(:\d+)?$/, '')
+    .split('/')
+    .pop()
+  const draft = file?.teammateId ? draftKey(threadId, file.teammateId, file.path) : undefined
+  // Unsaved edits are not dropped without asking.
+  const onClose = useCallback(() => {
+    if (draft && getDraft(draft)) {
+      if (!window.confirm(`Discard your unsaved changes to ${name}?`)) return
+      setDraft(draft, undefined)
+    }
+    close()
+  }, [draft, name, close])
 
   useEffect(() => {
     let live = true
     setFile(undefined)
     setError(undefined)
-    const query = new URLSearchParams({ path, ...(teammateId ? { teammateId } : {}) })
+    const query = new URLSearchParams({
+      path: path.replace(/:\d+(:\d+)?$/, ''),
+      ...(teammateId ? { teammateId } : {}),
+    })
     api<ThreadFile>(`/threads/${threadId}/file?${query}`).then(
       (f) => {
         if (!live) return
-        // The library's own Markdown is a document: it opens in the document panel, to edit.
-        if (f.source === 'library' && f.documentId && f.contentType === 'text/markdown') {
-          documents.open(libraryDocument({ id: f.documentId, path: f.path }))
+        const toolFolder = f.source === 'library' && tools ? toolFolderOf(f.path) : undefined
+        if (toolFolder && f.contentType !== 'text/markdown') return setTool(toolFolder)
+        const folder = f.source === 'library' ? designFolderOf(f.path) : undefined
+        // A library file opens in the file panel (components/document-panel.tsx), as from the
+        // library: a document to edit, a text file, a preview. A design's own files show as the
+        // design, but its Markdown as a document, as before.
+        if (
+          f.source === 'library' &&
+          f.documentId &&
+          (!folder || f.contentType === 'text/markdown')
+        ) {
+          documents.open(
+            libraryDocument({ id: f.documentId, path: f.path, contentType: f.contentType }),
+          )
           onClose()
           return
         }
-        const folder = f.source === 'library' ? designFolderOf(f.path) : undefined
         if (folder) return setDesign(folder)
         setFile(f)
       },
@@ -85,6 +259,7 @@ function ThreadFilePanel({
   }, [threadId, path, teammateId])
 
   if (design) return <DesignPanel folder={design} threadId={threadId} onClose={onClose} />
+  if (tool) return <ToolPanel folder={tool} threadId={threadId} onClose={onClose} />
 
   const shown = file?.path ?? path
   const slash = shown.lastIndexOf('/')
@@ -99,6 +274,18 @@ function ThreadFilePanel({
   const own = file && (content ?? threadImageUrl(threadId, file.path, file.teammateId))
   const image = file && IMAGE.test(file.contentType) ? own : undefined
   const pdf = file?.contentType === 'application/pdf' ? own : undefined
+  // `src/app.tsx:42` opens at line 42.
+  const line = Number(/:(\d+)(?::\d+)?$/.exec(path)?.[1]) || undefined
+  const code = editableFile(file)
+  const editable = mayEdit && code
+  const markdown = file?.contentType === 'text/markdown'
+  // Markdown shows rendered, until edited (or left with unsaved edits).
+  const editing = code && (!markdown || editOpen || (!!draft && !!getDraft(draft)))
+  // Another teammate's copy than the one the preview runs: edits here will not show in it.
+  const otherCopy =
+    previewCopy && file?.source === 'thread' && file.teammateId !== previewCopy.teammateId
+      ? previewCopy
+      : undefined
 
   return (
     <SidePanel aria-label={`File ${shown}`} onClose={onClose} raiseKey={shown}>
@@ -126,7 +313,7 @@ function ThreadFilePanel({
           variant="ghost"
           size="icon-sm"
           aria-label={copied ? 'Copied' : 'Copy path'}
-          title={copied ? 'Copied' : 'Copy path'}
+          tooltip={copied ? 'Copied' : 'Copy path'}
           onClick={() =>
             void navigator.clipboard.writeText(shown).then(() => {
               setCopied(true)
@@ -136,15 +323,39 @@ function ThreadFilePanel({
         >
           {copied ? <Check aria-hidden /> : <Copy aria-hidden />}
         </Button>
+        {editable && !editing && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Edit"
+            tooltip="Edit the file"
+            onClick={() => setEditOpen(true)}
+          >
+            <Pencil aria-hidden />
+          </Button>
+        )}
+        {previewCopy && !otherCopy && code && file && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Open it with the preview"
+            tooltip="Open it in the code beside the preview, to see your edits as you save"
+            onClick={() => previewCopy.open(file.path)}
+          >
+            <Globe aria-hidden />
+          </Button>
+        )}
         {content && (
-          <Button asChild variant="ghost" size="icon-sm" title="Download">
+          <Button asChild variant="ghost" size="icon-sm" tooltip="Download">
             <a href={`${content}?download`} aria-label="Download">
               <Download aria-hidden />
             </a>
           </Button>
         )}
         {file?.source === 'library' && (
-          <Button asChild variant="ghost" size="icon-sm" title="Open the library">
+          <Button asChild variant="ghost" size="icon-sm" tooltip="Open the library">
             <Link
               href={file.documentId ? `/app/library?file=${file.documentId}` : '/app/library'}
               aria-label="Open the library"
@@ -164,7 +375,25 @@ function ThreadFilePanel({
           <X aria-hidden />
         </Button>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto">
+      {otherCopy && file && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b bg-warning/8 px-3 py-2 text-xs"
+        >
+          <TriangleAlert aria-hidden className="size-4 shrink-0 text-warning" />
+          <span className="min-w-0 flex-1">
+            The preview runs {otherCopy.name}&rsquo;s copy: edits here won&rsquo;t show in it.
+          </span>
+          <button
+            type="button"
+            className="font-medium underline-offset-2 hover:underline"
+            onClick={() => otherCopy.open(file.path)}
+          >
+            Open {otherCopy.name}&rsquo;s copy
+          </button>
+        </div>
+      )}
+      <div className={editing ? 'min-h-0 flex-1 overflow-hidden' : 'min-h-0 flex-1 overflow-auto'}>
         {error ? (
           <p className="p-4 text-sm text-destructive-text">{error}</p>
         ) : !file ? (
@@ -201,6 +430,17 @@ function ThreadFilePanel({
               )}
             </p>
           )
+        ) : editing && file.teammateId ? (
+          <CodeFile
+            threadId={threadId}
+            teammateId={file.teammateId}
+            path={file.path}
+            file={file}
+            teammateName={teammateName(file.teammateId)}
+            mayEdit={editable}
+            line={line}
+            className="h-full"
+          />
         ) : file.contentType === 'text/markdown' ? (
           // Its own relative links open next to it.
           <FileLinksProvider value={{ open: onOpen, base: folder, teammateId: file.teammateId }}>

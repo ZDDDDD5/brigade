@@ -1,3 +1,5 @@
+import { previewElementsToText } from './preview-elements.js'
+
 /**
  * Mentions inside message text. The composer writes them as `@[Label](kind:id)`:
  * a teammate reads the label and the reference; the dashboard renders a chip.
@@ -6,7 +8,8 @@
  * file (`document`) is labelled with its library path; a design's id and label are
  * its folder's library path ("acme/pricing.design"); a design system's id is its
  * library folder ("design-systems/acme") and its label its name. A project's id
- * is its Project id. Messages from before projects named a repository as
+ * is its Project id. An email's id is its mail's (email_read's), and its label its sender and
+ * subject. Messages from before projects named a repository as
  * `project` with an owner/name id; those still render as repositories.
  */
 export const MENTION_KINDS = [
@@ -21,6 +24,8 @@ export const MENTION_KINDS = [
   'design-system',
   'design',
   'project',
+  // A mail of the Inbox: its id is the MailMessage's, which email_read takes.
+  'email',
 ] as const
 export type MentionKind = (typeof MENTION_KINDS)[number]
 
@@ -45,11 +50,28 @@ export function parseMentions(text: string): (string | Mention)[] {
   return parts
 }
 
-/** Mentions reduced to their labels, for titles and previews. */
+/** Mentions (and elements picked in a preview) reduced to their labels, for titles and previews. */
 export const mentionsToText = (text: string) =>
-  text.replace(MENTION, (_, label: string, kind: MentionKind) =>
+  previewElementsToText(text).replace(MENTION, (_, label: string, kind: MentionKind) =>
     kind === 'teammate' ? `@${label}` : label,
   )
+
+/**
+ * Text from outside (an email) with its mentions made plain: put in a member's message, it
+ * summons nobody and grants nothing. Again until none is left, since a label may hold the start
+ * of another.
+ */
+export function unmention(text: string) {
+  let out = text
+  while (
+    out !==
+    (out = out.replace(
+      MENTION,
+      (_, label: string, kind: string, id: string) => `${label} (${kind}: ${id})`,
+    ))
+  );
+  return out
+}
 
 /** A `project` mention from before projects: its id is a repository (owner/name). */
 export const isLegacyProjectMention = (m: { kind: MentionKind; id: string }) =>

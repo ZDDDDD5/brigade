@@ -1,9 +1,10 @@
 // Home under the composer, for one member: their loose ends (nobody is blocked, but
 // nothing moves on its own) and what came back since they last looked. Only what
 // Brigade knows for sure: a reply ending on buttons nobody clicked, a running thread
-// with no event for a while, a thread that failed, a routine whose last run failed. Pull requests and
-// tickets that wait on a person are Waiting on you, not here. With the results, a line per active
-// playbook that ran this week (playbook-metrics.ts).
+// with no event for a while. Pull requests, tickets, choices nobody picked, failed threads and
+// failing routines that wait on a person are Needs you, not here (failuresWaitingOn,
+// src/failed.ts; choicesWaitingOn, src/choices-waiting.ts). With the
+// results, a line per active playbook that ran this week (playbook-metrics.ts).
 import {
   bareToolName,
   OFFER_CHOICES_TOOL,
@@ -12,8 +13,10 @@ import {
   SUGGEST_REPLIES_TOOL,
   THREAD_NOTE_SOURCE,
 } from '@brigade/contracts'
+import { choicesWaitingAmong, choicesWaitingOn } from './choices-waiting.js'
 import type { ScopedDb } from './db.js'
-import { eventsWaitingSince } from './hub.js'
+import { failuresWaitingOn } from './failed.js'
+import { hubs } from './hub.js'
 import { playbookLines } from './playbook-metrics.js'
 import { waitingOnPerson } from './pull-requests.js'
 
@@ -52,24 +55,6 @@ export type LooseEnd =
       quietSince: string
       offline: boolean
     }
-  | {
-      kind: 'failed'
-      key: string
-      at: string
-      thread: { id: string; title: string }
-      teammate: { id: string; name: string }
-      /** What the teammate's last error said, when it said something. */
-      error: string | null
-    }
-  | {
-      kind: 'routine'
-      key: string
-      at: string
-      schedule: { id: string; title: string }
-      /** The failed run, when one started. */
-      run: { id: string } | null
-      error: string | null
-    }
 
 /** A thread with a teammate's reply the member has not read. */
 export type HomeResult = {
@@ -87,8 +72,10 @@ export async function homeFor(db: ScopedDb, memberId: string, now = new Date()) 
       startedByMemberId: memberId,
       parentId: null,
       archivedAt: null,
+      // Nor those the member put away for later (src/later.ts).
+      laters: { none: { memberId, until: { gt: new Date() } } },
       // A playbook's runs stay out of sight until a person takes part, as in the sidebar.
-      OR: [{ playbookRunId: null }, { surfacedAt: { not: null } }],
+      OR: [{ playbookRunId: null, quiet: false }, { surfacedAt: { not: null } }],
       updatedAt: { gte: new Date(now.getTime() - RECENT) },
     },
     orderBy: { updatedAt: 'desc' },
@@ -99,12 +86,13 @@ export async function homeFor(db: ScopedDb, memberId: string, now = new Date()) 
       status: true,
       lastSeq: true,
       updatedAt: true,
-      scheduleId: true,
+      workspaceId: true,
+      choicesDismissedSeq: true,
       teammate: { select: { id: true, name: true } },
     },
   })
   const ids = threads.map((t) => t.id)
-  const [latest, reads, tickets, pullsWaiting, dismissed, schedules, lines] = await Promise.all([
+  const [latest, reads, tickets, pullsWaiting, choices, dismissed, lines] = await Promise.all([
     ids.length
       ? db.sessionEvent.groupBy({
           by: ['sessionId', 'type'],
@@ -121,7 +109,7 @@ export async function homeFor(db: ScopedDb, memberId: string, now = new Date()) 
           select: { sessionId: true, seenAt: true },
         })
       : [],
-    // A thread held by an open ticket is Waiting on you, not here.
+    // A thread held by an open ticket is Needs you, not here.
     ids.length
       ? db.ticket.findMany({
           where: { sessionId: { in: ids }, status: 'open' },
@@ -135,27 +123,18 @@ export async function homeFor(db: ScopedDb, memberId: string, now = new Date()) 
           select: { sessionId: true },
         })
       : [],
+    // And one whose choices nobody picked yet (src/choices-waiting.ts).
+    choicesWaitingAmong(db, ids, now),
     db.homeDismissal.findMany({ where: { memberId }, select: { key: true } }),
-    db.schedule.findMany({
-      where: { ownerMemberId: memberId, pausedAt: null },
-      select: {
-        id: true,
-        title: true,
-        lastError: true,
-        updatedAt: true,
-        sessions: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-          select: { id: true, status: true, updatedAt: true },
-        },
-      },
-    }),
     // A line per active playbook that ran this week, shown with the results.
     playbookLines(db, memberId, now),
   ])
   const max = (id: string, type: string) =>
     latest.find((l) => l.sessionId === id && l.type === type)?._max
-  const held = new Set([...tickets, ...pullsWaiting].map((t) => t.sessionId))
+  const held = new Set([
+    ...[...tickets, ...pullsWaiting].map((t) => t.sessionId),
+    ...choices.keys(),
+  ])
   const gone = new Set(dismissed.map((d) => d.key))
 
   // The buttons or choices each idle thread ended on. The runner takes them out of the
@@ -209,6 +188,8 @@ export async function homeFor(db: ScopedDb, memberId: string, now = new Date()) 
       notes.find((n) => n.sessionId === thread.id)?._max.seq ?? -1,
     )
     if (settled > event.seq) continue
+    // Choices a person dismissed, that card or a later one: settled too.
+    if ((thread.choicesDismissedSeq ?? -1) >= event.seq) continue
     const { toolName, input } = event.data as { toolName?: string; input?: unknown }
     const name = bareToolName(String(toolName ?? ''))
     const replies = name === SUGGEST_REPLIES_TOOL ? safeReplies(input) : null
@@ -225,7 +206,7 @@ export async function homeFor(db: ScopedDb, memberId: string, now = new Date()) 
       at: event.at.toISOString(),
       thread: { id: thread.id, title: thread.title },
       teammate: thread.teammate,
-      // A Brigade action (merge) runs from the thread's own button, not from here.
+      // A Brigade action (merge, preview) runs from the thread's own button, not from here.
       reply: replies?.replies[0] ?? null,
       offers,
     })
@@ -240,8 +221,11 @@ export async function homeFor(db: ScopedDb, memberId: string, now = new Date()) 
         _max: { at: true },
       })
     : []
+  const waitingSince = running.length
+    ? await hubs.get(running[0]!.workspaceId).eventsWaitingSince(running.map((t) => t.id))
+    : {}
   for (const t of running) {
-    const waiting = eventsWaitingSince(t.id)
+    const waiting = waitingSince[t.id]
     const last = lastEvents.find((e) => e.sessionId === t.id)?._max.at
     const quietSince = waiting ? new Date(waiting) : last
     if (!quietSince || now.getTime() - quietSince.getTime() < STALLED_AFTER) continue
@@ -258,45 +242,15 @@ export async function homeFor(db: ScopedDb, memberId: string, now = new Date()) 
     })
   }
 
-  // Threads that failed: until someone writes in them again, nothing moves. A routine's
-  // run is its routine's loose end, below.
-  const failed = threads.filter((t) => t.status === 'failed' && !t.scheduleId && !held.has(t.id))
-  const errors = failed.length
-    ? await db.sessionEvent.findMany({
-        where: { sessionId: { in: failed.map((t) => t.id) }, type: 'error' },
-        orderBy: { seq: 'desc' },
-        distinct: ['sessionId'],
-        select: { sessionId: true, at: true, data: true },
-      })
-    : []
-  loose.push(...failedLooseEnds(failed, errors, gone))
-
-  // Routines whose last firing could not start, or whose last run failed.
-  for (const s of schedules) {
-    const run = s.sessions[0]
-    const failedRun = run?.status === 'failed' ? run : null
-    if (!s.lastError && !failedRun) continue
-    const key = s.lastError
-      ? `routine:${s.id}:error:${s.updatedAt.getTime()}`
-      : `routine:${s.id}:${failedRun!.id}`
-    if (gone.has(key)) continue
-    loose.push({
-      kind: 'routine',
-      key,
-      at: (s.lastError ? s.updatedAt : failedRun!.updatedAt).toISOString(),
-      schedule: { id: s.id, title: s.title },
-      run: failedRun ? { id: failedRun.id } : null,
-      error: s.lastError,
-    })
-  }
   loose.sort((a, b) => b.at.localeCompare(a.at))
 
   // What came back: threads with a teammate's reply they have not read. Not their own
-  // decisions: they made them; what came of one is the reply that follows.
-  const looseThreads = new Set(loose.flatMap((l) => ('thread' in l ? [l.thread.id] : [])))
+  // decisions: they made them; what came of one is the reply that follows. Not a failed one
+  // either: its last turn did not come back, and once it waits on them it is Needs you.
+  const looseThreads = new Set(loose.map((l) => l.thread.id))
   const unread = threads.filter((t) => {
     if (looseThreads.has(t.id) || held.has(t.id)) return false
-    if (t.status === 'running' || t.status === 'starting') return false
+    if (t.status === 'running' || t.status === 'starting' || t.status === 'failed') return false
     const turn = max(t.id, 'turn.completed')?.at
     const seen = reads.find((r) => r.sessionId === t.id)?.seenAt
     return !!turn && (!seen || turn > seen)
@@ -338,45 +292,13 @@ export async function homeFor(db: ScopedDb, memberId: string, now = new Date()) 
   return { looseEnds: loose, results: results.slice(0, LISTED), playbooks: lines }
 }
 
-/**
- * Failed threads as loose ends: reading one does not mend it, so it stays until the thread
- * runs again (it is no longer failed) or the member sets it aside. Its last error says
- * when and why; a thread that never ran (its computer offline) has no error event.
- */
-export function failedLooseEnds(
-  failed: {
-    id: string
-    title: string
-    lastSeq: number
-    updatedAt: Date
-    teammate: { id: string; name: string }
-  }[],
-  errors: { sessionId: string; at: Date; data: unknown }[],
-  gone: Set<string>,
-): LooseEnd[] {
-  return failed.flatMap((t): LooseEnd[] => {
-    // The thread's events so far: a new failure after another message is a new loose end.
-    const key = `failed:${t.id}:${t.lastSeq}`
-    if (gone.has(key)) return []
-    const error = errors.find((e) => e.sessionId === t.id)
-    const message = (error?.data as { message?: unknown } | undefined)?.message
-    return [
-      {
-        kind: 'failed',
-        key,
-        at: (error?.at ?? t.updatedAt).toISOString(),
-        thread: { id: t.id, title: t.title },
-        teammate: t.teammate,
-        error: typeof message === 'string' && message.trim() ? message.trim() : null,
-      },
-    ]
-  })
-}
-
 /** The keys a loose end can have, one prefix per kind built above. */
-export const LOOSE_END_KEY = /^(proposal|stalled|routine|failed):[\w:-]{1,200}$/
+export const LOOSE_END_KEY = /^(proposal|stalled):[\w:-]{1,200}$/
 
-/** Set a loose end aside: it stays gone until the thing it names changes. */
+/**
+ * Set a loose end aside: it stays gone until the thing it names changes. Not what waits on the
+ * member: a failed thread is put away for later or archived instead.
+ */
 export async function dismissLooseEnd(
   db: ScopedDb,
   scope: { organizationId: string; workspaceId: string; memberId: string },
@@ -392,4 +314,44 @@ export async function dismissLooseEnd(
     },
     update: { dismissedAt: new Date() },
   })
+}
+
+/**
+ * Home's Needs you beside its tickets and pull requests: the failed threads and failing
+ * routines waiting on this member (src/failed.ts), the choices they have to pick from
+ * (src/choices-waiting.ts), and when to ask again.
+ */
+export async function homeWaiting(db: ScopedDb, memberId: string, now = new Date()) {
+  const [{ threads, routines, recheckAt }, choices] = await Promise.all([
+    failuresWaitingOn(db, memberId, now),
+    choicesWaitingOn(db, memberId, now),
+  ])
+  return {
+    choices: choices.map((c) => ({
+      id: c.id,
+      title: c.title,
+      teammate: c.teammate,
+      // Its card's event: what a Dismiss names.
+      seq: c.seq,
+      at: c.at.toISOString(),
+      choices: c.choices,
+    })),
+    threads: threads.map((t) => ({
+      id: t.id,
+      title: t.title,
+      teammate: t.teammate,
+      at: t.at.toISOString(),
+      error: t.error,
+    })),
+    routines: routines.map((r) => ({
+      scheduleId: r.scheduleId,
+      title: r.title,
+      runId: r.runId,
+      runParentId: r.runParentId,
+      couldNotStart: r.couldNotStart,
+      at: r.at.toISOString(),
+      error: r.error,
+    })),
+    recheckAt: recheckAt?.toISOString() ?? null,
+  }
 }

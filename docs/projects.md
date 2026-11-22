@@ -1,7 +1,7 @@
 # Projects
 
 A project groups the work of one venture or line of work inside a workspace: its threads,
-tasks, library folder, GitHub repositories and their saved previews. It is for organizing
+library folder, GitHub repositories and their saved previews. It is for organizing
 and for context, not for isolation. Every workspace resource stays shared: teammates,
 computers, AI accounts, connections, the vault, caps and members. A teammate works across
 all projects; the **thread** carries the project, and with it the project's context.
@@ -17,11 +17,11 @@ checkout setup, and a GitHub connection made it redundant. The name is free agai
   When it shares those and only separates the work, it is a project.
 - **Not part of scope.** `AuthSession` keeps only the organization and workspace;
   `scoped()` does not change. Pages filter by project through the URL (`?project=<id>`).
-- **Optional everywhere.** `projectId` is nullable. A thread or task without a project
+- **Optional everywhere.** `projectId` is nullable. A thread without a project
   works as one does today, and existing rows need no backfill. Workspaces that never make a
   project see no difference beyond the sidebar section.
 - **Things keep their natural owner; the project collects them.** Only what starts work
-  (threads, tasks, schedules, triggers) stores a `projectId`. Everything else is reached
+  (threads, schedules, triggers) stores a `projectId`. Everything else is reached
   through its thread, its repository or its library folder.
 - **One project per item**, like a folder. Not tags.
 - **A project focuses, it does not restrict.** A project thread is given the project's
@@ -33,10 +33,10 @@ checkout setup, and a GitHub connection made it redundant. The name is free agai
 | Stores `projectId`      | Reached through the thread or repository           | Shared, never grouped                     |
 | ----------------------- | -------------------------------------------------- | ----------------------------------------- |
 | `Session` (threads)     | `Ticket`, via `sessionId`                          | `Teammate`, `Computer`, `Runner`          |
-| `Task`                  | `PullRequest`, via its thread, else its repository | `Account`                                 |
-| `Schedule`              | `PreviewRecipe`, via its repository                | `Connection`, `Grant`, vault, credentials |
-| `Trigger`               | `Attachment`, `Comment`, `SessionEvent`            | `Member`, caps                            |
-| `DesignSystem` (target) | `ConnectionCall`, `AuditEntry`, thread summaries   |                                           |
+| `Schedule`              | `PullRequest`, via its thread, else its repository | `Account`                                 |
+| `Trigger`               | `PreviewRecipe`, via its repository                | `Connection`, `Grant`, vault, credentials |
+| `DesignSystem` (target) | `Attachment`, `Comment`, `SessionEvent`            | `Member`, caps                            |
+|                         | `ConnectionCall`, `AuditEntry`, thread summaries   |                                           |
 |                         | Library files, by path under the project's folder  |                                           |
 
 ## Data
@@ -120,8 +120,9 @@ the same recipe in both. A per-project override (an optional `projectId` on
 - **Design systems** gain the project as a target. The order becomes: named in the
   message, then folder, repository, **project**, teammate, default.
 - **Inheritance.**
-  - A thread started from a project page, or from a task, schedule or trigger with a
-    project, gets that project.
+  - A thread started from a project page, or from a schedule or trigger with a project, gets
+    that project; one a teammate starts (`start_thread`), the project it names, else its list's,
+    else its starting thread's (docs/hand-offs.md).
   - A thread started anywhere else gets none, unless the composer's picker sets one.
 - **Moving a thread** to another project, or out of one, sets `projectId`. Its next turn
   gets the new context. Earlier turns and the thread's summary stay as they were.
@@ -148,10 +149,9 @@ A project is mentionable like a teammate or a repository: `@[Acme web](project:<
 Support · Acme            ⌄
 Search…
 Work
-  Home
+  Today
   Tickets
   Threads
-  Tasks
   Pull requests
   Library
   Routines
@@ -173,43 +173,96 @@ Workspace settings
 
 ### Project page
 
-`/app/projects/<id>` replaces today's redirect in `apps/web/app/app/projects/page.tsx`.
-The project is highlighted in the sidebar; nothing else in the sidebar changes. It is a
-place, not a mode: the global pages stay unfiltered.
+`/app/projects/<id>` is one page, with no tabs (2 Nov 2026). It says what only the project
+can say, and leaves what the rest of the dashboard already shows: its threads are in the
+sidebar (clicking the project filters them), what needs a person is in the sidebar and on
+Today, and its pull requests, files and routines are the workspace's pages, filtered on it.
 
-Header: icon, name, brief, **New thread** (project preset) and a menu.
+- **Header:** icon, name, brief on one line, and the library folder with its file count,
+  which opens the library at that folder. A settings button (gear) opens `…/settings`; on
+  the settings, the same button goes back.
+- **Composer:** a new thread in the project, as before.
+- **Lists:** the project's lists (those whose file is under its folder, docs/lists.md),
+  the ones something moves on (an item in progress or waiting on a person), else the last
+  changed, four at most. "All" opens Lists. With none, a line says how to start one.
+- **Runs on its own:** its playbooks, schedules and triggers, a dot for each one's health
+  and when it runs or last ran. "All" opens Routines filtered on the project.
+- Whichever of the two has something comes first.
+- **Decisions:** its specs, notes and designs with their status (see Decisions below), Open
+  ones first (draft, accepted, and any that looks behind), then Shipped and All. A row opens
+  the file, or the design. A project with none shows nothing.
 
-| Tab                | URL                  | Shows                                                                                  | Built from                                    |
-| ------------------ | -------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------- |
-| Overview           | `/app/projects/<id>` | Needs you, running now, open tasks, PRs, repositories and previews, context, this week | New: aggregates from existing endpoints       |
-| Threads            | `…/threads`          | The threads list                                                                       | Existing list, `?project=<id>`                |
-| Tasks              | `…/tasks`            | The board                                                                              | Existing board, `?project=<id>`               |
-| Pull requests      | `…/pulls`            | PRs of its threads and repositories                                                    | Existing list, filtered                       |
-| Library            | `…/library`          | The library opened at the project's folder                                             | Existing page with a root path                |
-| Repos and previews | `…/repos`            | Each repository, its saved preview, live previews                                      | `SavedPreviews`, filtered to its repositories |
-| Routines           | `…/routines`         | Its schedules and triggers                                                             | Existing page, `?project=<id>`                |
-| Settings           | `…/settings`         | Name, icon, brief, repositories, folder, preferred connections, archive                | New form                                      |
+The settings (`…/settings`) are one page in sections, with a nav beside them that follows the
+scroll (a row above them on a phone): **General** (name, logo or letters, website, brief, library
+folder), **Repositories** and their saved previews (once a tab of their own), **Code review**,
+**Apps** (preferred accounts), **Email** (mailboxes), **Memory**, and **Archive or delete**
+(2 Nov 2026). Each change saves on its own, as the workspace's settings do: a text field when it
+loses focus, a choice at once; there is no Save button.
 
-On the overview:
+- **Set up the project:** a checklist above the sections while something is missing: the brief, a
+  library folder, a repository, a saved preview. Each missing step scrolls to its field. It goes
+  once all four are done, or when someone hides it (for that project, in that browser, since a
+  project without code never links a repository).
+- **Preferred accounts:** one choice per App that has more than one account (grouped by App, so two
+  custom MCP servers are never offered as alternatives), "Let the teammate pick" by default. Apps
+  with a single account are only counted: there is nothing to choose. Picking an account replaces
+  any other preferred account of the same App; preferences on single-account Apps stay as they are.
 
-- **Needs you:** open tickets of the project's threads. It comes first and is hidden
-  when nothing is open.
-- **Running now:** threads running or waiting, with live previews.
-- **Context:** what teammates receive in this project (brief, memory, folder, preferred
-  connections), each editable from there.
-- **This week:** working time, threads and merged PRs, counted from the logs as caps
-  are. It is a report, not a limit.
+The old tabs' addresses still work: `…/threads` opens the project page, `…/pulls` the Pull
+requests page and `…/routines` the Routines page with `?project=<id>`, `…/library` the
+library at the project's folder, `…/repos` the settings at `#repositories`. The Pull requests
+and Routines pages read `?project=<id|none>` as their opening filter.
+
+What the page showed before and why it went: the latest threads and Needs you repeated the
+sidebar; the pull requests box repeated its tab, and for a project with an old repository
+listed years-old pull requests; Context (brief length, memory lines) repeated the settings;
+This week's numbers led to no decision.
+
+### Decisions
+
+A project's library folder holds two kinds of documents, kept apart (5 Nov 2026, from the
+trial on Brigade's own folder: `Projects/Brigade/decisions/project-library-spec.md` in the
+library). A **decision** (a spec, a proposal, a note, a design) says what was chosen and why, at
+a date, with a status; once shipped it is history. The **reference** says what is true today:
+the repository's `docs/` for a project with code, `reference/` in the folder otherwise. How
+teammates file them is the built-in skill `brigade-library` (docs/skills.md), which an admin can
+turn off.
+
+Nobody keeps an index: Brigade reads the status from the files (`src/decisions.ts`,
+`GET /api/projects/:id/decisions`), from the `text` the library already keeps for search.
+
+- **A spec's status line** is its third line: `Spec, 2026-10-19. Status: shipped (#241). …`,
+  one of six words (draft, accepted, shipped, paused, dropped, superseded), always English
+  (`parseStatusLine` in `packages/contracts/src/decisions.ts`). Any Markdown file under the
+  folder with such a line is a decision; one under `decisions/` without it shows as **No
+  status** (its `README.md` aside), so it gets fixed rather than missed.
+- **A design's status** is in its `design.json`: `status`, same words, and `pullRequests`.
+  A design with one is a decision; one under `designs/` without it shows as No status.
+  Options (`*.options/`) are not decisions.
+- **Flags** say what looks behind: still draft or accepted though a pull request linked to it
+  (below) is merged; shipped with no reference named on its line (a path in backticks, or a
+  link).
+
+**A merge ships the spec.** `github_create_pull_request` takes
+`specs: { ships: [path], partOf: [path] }`, library paths of Markdown files or design folders,
+kept as `SpecPull` rows when the author may change them; a path it may not is told back in the
+thread. When the pull request is merged (by Brigade or on GitHub), `settleSpecsOnMerge`
+writes its number on each, under the file's lock, credited to its author: those it `ships`
+get `shipped`, the others keep their status. Each link is settled once done, or for good when
+the file is gone, out of the author's reach, or has no status line to change (the thread is
+told to fix it); the others are tried again every 10 minutes (`spec-merge-sweep`). Its thread
+is told what changed and asked to name the reference on each shipped spec.
 
 ### Repository page
 
 `/app/pulls/<owner>/<name>` is new. It shows a repository's open PRs and its saved
-preview, whether or not the repository is in a project. The project's Repos tab links to
+preview, whether or not the repository is in a project. The project's settings link to
 it. Saved previews leave the Computers page: `<SavedPreviews />` comes out of
 `apps/web/app/app/computers/page.tsx`, and `docs/previews.md` is updated to match.
 
 ### Composer
 
-The new-thread and new-task forms have a project picker, never required. It defaults to
+The new-thread form has a project picker, never required. It defaults to
 the project the person is in, else "No project".
 
 ## From a website
@@ -242,17 +295,17 @@ while they are being filled, so nothing typed is lost; "Fill it in myself" stops
 - `PUT /api/projects/:id/repositories`: replaces the list. Only repositories that
   `workspaceRepositories` returns are accepted.
 - `GET /api/projects/:id/overview`: the overview's sections in one response.
-- `?project=<id|none>` on the threads, tasks, tickets, pull requests, schedules and
-  triggers lists.
-- `PATCH` on a thread or task accepts `projectId`, so items can be moved.
+- `?project=<id|none>` on the threads, tickets, pull requests, schedules and triggers
+  lists.
+- `PATCH` on a thread accepts `projectId`, so items can be moved.
 
 ## Edge cases
 
-- **Archiving a project** keeps its threads, tasks, folder and repository links. Its
+- **Archiving a project** keeps its threads, folder and repository links. Its
   schedules and triggers keep firing; the project page says so, and pausing them is a
   separate action.
-- **Deleting a project** sets `projectId` to null on its threads, tasks, schedules and
-  triggers, and deletes its repository links and memory file. The library folder and the
+- **Deleting a project** sets `projectId` to null on its threads, schedules and triggers,
+  and deletes its repository links and memory file. The library folder and the
   repositories stay.
 - **A project folder moved or renamed** in the library updates `Project.folder` in the
   same transaction as the path rewrite.

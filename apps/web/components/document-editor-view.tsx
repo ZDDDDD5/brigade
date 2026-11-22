@@ -1,12 +1,11 @@
 'use client'
 import '@blocknote/shadcn/style.css'
-import { DOCUMENT_FRAGMENT, type EditSession, type EditTarget } from '@brigade/contracts'
+import { DOCUMENT_FRAGMENT, type EditSession } from '@brigade/contracts'
 import { withCollaboration } from '@blocknote/core/yjs'
 import { blocksToMarkdown, markdownToBlocks } from '@brigade/editor'
 import { useCreateBlockNote } from '@blocknote/react'
+import { TextSelection } from '@tiptap/pm/state'
 import { useEffect, useRef, useState } from 'react'
-import YProvider from 'y-partyserver/provider'
-import * as Y from 'yjs'
 import {
   DocumentBlockNoteView,
   editorFiles,
@@ -14,106 +13,89 @@ import {
   type DocumentBlockEditor,
 } from '@/components/document-blocks'
 import type { DocumentEditorProps } from '@/components/document-editor'
+import { blockDropCursor, blockDropExtension } from '@/components/document-block-drop'
+import { blockSelectExtension } from '@/components/document-block-select'
+import { checkboxTapExtension } from '@/components/document-checkbox'
+import { checklistLookExtension } from '@/components/document-checklist'
+import { agentTyping, typeNextUpdate, type Writer } from '@/components/document-typing'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
+import { DocumentLoading, documentFadeIn } from '@/components/document-loading'
+import { Hint } from '@/components/ui/tooltip'
 import { api } from '@/lib/api'
+import { debouncedSave } from '@/lib/debounced-save'
+import { DEMO } from '@/lib/demo/flag'
+import { setDemoEditor, type DemoEditorHandle } from '@/lib/demo/editor-handle'
+import { openDocument, useLiveSession, type LiveConnection } from '@/lib/live-documents'
+import { useLive } from '@/lib/use-live'
 import { cn } from '@/lib/utils'
 
-const openDocument = (target: EditTarget) => api<EditSession>('/library/edit', { body: target })
-
 export function DocumentEditorView(props: DocumentEditorProps) {
-  const [session, setSession] = useState<EditSession>()
-  const [error, setError] = useState<string>()
-  const key = JSON.stringify(props.target)
-
-  useEffect(() => {
-    let current = true
-    setSession(undefined)
-    setError(undefined)
-    openDocument(props.target).then(
-      (s) => current && setSession(s),
-      (e: Error) => current && setError(e.message),
-    )
-    return () => {
-      current = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the target, by value
-  }, [key])
+  // Open already when it was prepared (lib/prepare-document.ts) or shown a moment ago: then
+  // the editor shows it at once.
+  const { session, error, connection, held, deleted } = useLiveSession(props.target)
 
   if (error) return <p className="text-sm text-destructive-text">{error}</p>
-  if (!session) return <Skeleton className="h-32 w-full" />
-  return session.live ? (
-    <LiveDocument key={session.documentId} session={session} {...props} />
-  ) : (
-    <SavedDocument key={session.documentId} session={session} {...props} />
-  )
-}
-
-type Connection = { doc: Y.Doc; provider: YProvider }
-type Status = 'connecting' | 'live' | 'offline' | 'deleted'
-
-/** Synced through the collab server: no save button, edits land as people type. */
-function LiveDocument({
-  session,
-  target,
-  ...props
-}: DocumentEditorProps & { session: EditSession }) {
-  const live = session.live!
-  const [connection, setConnection] = useState<Connection>()
-
-  useEffect(() => {
-    const doc = new Y.Doc()
-    const url = new URL(live.url)
-    // The first connection uses the token that came with the session; reconnects ask for a new one.
-    let token: string | undefined = live.token
-    const provider = new YProvider(url.host, live.room, doc, {
-      party: live.party,
-      protocol: url.protocol === 'https:' ? 'wss' : 'ws',
-      params: async () => {
-        const fresh = token ?? (await openDocument(target).catch(() => null))?.live?.token
-        token = undefined
-        return { token: fresh ?? '' }
-      },
-    })
-    setConnection({ doc, provider })
-    return () => {
-      provider.destroy()
-      doc.destroy()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- one connection per room
-  }, [live.room])
-
-  if (!connection) return <Skeleton className="h-32 w-full" />
+  if (!session) return <DocumentLoading />
+  if (!session.live) return <SavedDocument key={session.documentId} session={session} {...props} />
+  if (!connection) return <DocumentLoading />
+  const { target, ...rest } = props
   return (
     <LiveEditor
+      key={connection.id}
       connection={connection}
-      user={live.user}
+      user={session.live.user}
       documentId={session.documentId}
-      {...props}
+      list={target.kind === 'library'}
+      held={held}
+      deleted={deleted}
+      {...rest}
     />
   )
 }
 
+type Status = 'connecting' | 'live' | 'offline' | 'deleted'
+
+/** Synced through the collab server: no save button, edits land as people type. */
 function LiveEditor({
   connection: { doc, provider },
   user,
   documentId,
   label,
   className,
+  ask,
+  list,
+  held,
+  deleted,
 }: Omit<DocumentEditorProps, 'target'> & {
-  connection: Connection
+  connection: LiveConnection
   user: { name: string; color: string }
   documentId: string
+  list: boolean
+  /** Read only until the room's check is done. */
+  held: boolean
+  deleted?: boolean
 }) {
-  const [status, setStatus] = useState<Status>('connecting')
-  const [synced, setSynced] = useState(false)
+  // Opened before it was shown, it may be connected and synced already: no skeleton then.
+  const [status, setStatus] = useState<Status>(() =>
+    deleted ? 'deleted' : provider.wsconnected ? 'live' : 'connecting',
+  )
+  const [synced, setSynced] = useState(() => provider.synced)
   const [others, setOthers] = useState<{ name: string; color: string }[]>([])
+  const [typing, setTyping] = useState<Writer | null>(null)
 
   const self = useRef<DocumentBlockEditor>(null)
   const editor = useCreateBlockNote(
     withCollaboration({
       schema: editorSchema,
       ...editorFiles(documentId, self),
+      dropCursor: blockDropCursor(),
+      extensions: [
+        agentTyping(setTyping),
+        checklistLookExtension(),
+        checkboxTapExtension(),
+        blockDropExtension(),
+        blockSelectExtension(),
+      ],
       collaboration: {
         provider,
         fragment: doc.getXmlFragment(DOCUMENT_FRAGMENT),
@@ -150,31 +132,61 @@ function LiveEditor({
       }
       setOthers([...seen.values()])
     }
+    // A teammate saved the document: the update that follows is its edit.
+    const onMessage = (message: string) => {
+      let notice: { type?: string; writer?: Writer }
+      try {
+        notice = JSON.parse(message) as typeof notice
+      } catch {
+        return
+      }
+      if (notice.type !== 'typing' || !notice.writer) return
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+      typeNextUpdate(editor, notice.writer)
+    }
     provider.on('status', onStatus)
     provider.on('sync', onSync)
     provider.on('connection-close', onClose)
+    provider.on('custom-message', onMessage)
     provider.awareness.on('change', onAwareness)
-    // It may have connected and synced before this listened.
+    // It may have connected and synced before this listened, and others may be here already.
     if (provider.wsconnected) setStatus((s) => (s === 'deleted' ? s : 'live'))
     if (provider.synced) setSynced(true)
+    onAwareness()
     return () => {
       provider.off('status', onStatus)
       provider.off('sync', onSync)
       provider.off('connection-close', onClose)
+      provider.off('custom-message', onMessage)
       provider.awareness.off('change', onAwareness)
     }
-  }, [provider, doc])
+  }, [provider, doc, editor])
 
   if (status === 'deleted')
     return <p className="text-sm text-muted-foreground">This document was deleted.</p>
   return (
     <div className={cn('flex flex-col gap-2', className)}>
       {synced ? (
-        <DocumentBlockNoteView editor={editor} documentId={documentId} label={label} />
+        <div className={documentFadeIn}>
+          <DocumentBlockNoteView
+            editor={editor}
+            documentId={documentId}
+            label={label}
+            ask={ask}
+            list={list}
+            readOnly={held}
+          />
+        </div>
       ) : (
-        <Skeleton className="h-32 w-full" />
+        <DocumentLoading />
       )}
-      <EditorStatus status={status} synced={synced} others={others} />
+      <EditorStatus
+        status={status}
+        synced={synced}
+        others={
+          typing && !others.some((o) => o.name === typing.name) ? [typing, ...others] : others
+        }
+      />
     </div>
   )
 }
@@ -188,83 +200,164 @@ function EditorStatus({
   synced: boolean
   others: { name: string; color: string }[]
 }) {
-  const text =
+  // Saving as you type is the norm, so nothing says so: the row speaks only when edits
+  // cannot reach the document. A reconnect in progress stays quiet, its edits are kept.
+  const problem =
     status === 'offline'
       ? synced
         ? 'Offline. Your edits are kept and sync when you reconnect.'
         : 'Could not reach the document. Retrying…'
-      : status === 'connecting' || !synced
-        ? 'Connecting…'
-        : 'Changes save as you type.'
+      : undefined
+  // Both at the foot of the panel. The notice is a child of the editor's column, which spans the
+  // whole document, so it stays in view while the document scrolls.
   return (
-    <div className="flex min-h-6 items-center justify-between gap-3 text-xs text-muted-foreground">
-      <span role="status" className="flex items-center gap-1.5">
-        <span
-          aria-hidden
-          className={cn(
-            'size-1.5 rounded-full',
-            status === 'live' && synced
-              ? 'bg-success'
-              : status === 'offline'
-                ? 'bg-warning'
-                : 'bg-muted-foreground/50',
-          )}
-        />
-        {text}
-      </span>
+    <>
       {others.length > 0 && (
-        <span className="flex items-center gap-2">
+        <span className="mt-auto flex items-center justify-end gap-2 text-xs text-muted-foreground">
           <span className="flex -space-x-1.5">
             {others.slice(0, 4).map((o) => (
-              <span
-                key={o.name}
-                title={o.name}
-                className="flex size-6 items-center justify-center rounded-full border-2 border-card text-[10px] font-semibold text-white"
-                style={{ backgroundColor: o.color }}
-              >
-                {o.name.slice(0, 1).toUpperCase()}
-              </span>
+              <Hint key={o.name} label={o.name}>
+                <span
+                  className="flex size-6 items-center justify-center rounded-full border-2 border-card text-[10px] font-semibold text-white"
+                  style={{ backgroundColor: o.color }}
+                >
+                  {o.name.slice(0, 1).toUpperCase()}
+                </span>
+              </Hint>
             ))}
           </span>
           {others.length === 1 ? `${others[0]!.name} is here` : `${others.length} others here`}
         </span>
       )}
-    </div>
+      <p
+        role="status"
+        className={cn(
+          'sticky bottom-0 flex items-center gap-2 rounded-md bg-[color-mix(in_oklch,var(--warning)_14%,var(--card))] px-3 py-2 text-xs text-foreground empty:hidden',
+          others.length === 0 && 'mt-auto',
+        )}
+      >
+        {problem && (
+          <>
+            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-warning" />
+            {problem}
+          </>
+        )}
+      </p>
+    </>
   )
 }
 
-/** Without a collab server: edited alone and saved whole. */
+/** How long the demo waits after the last change before it saves (it has no Save button). */
+const DEMO_SAVE_MS = 600
+
+/**
+ * Without a collab server: edited alone and saved whole. While it has no unsaved change, it
+ * follows the file as others change it (Brigade ticking a list's line, say). In the demo, which
+ * has no collab server, it saves on its own as the live editor does.
+ */
 function SavedDocument({
   session,
   label,
   className,
   onSaved,
+  ask,
+  target,
 }: DocumentEditorProps & { session: EditSession }) {
   const self = useRef<DocumentBlockEditor>(null)
   const editor = useCreateBlockNote({
     schema: editorSchema,
     ...editorFiles(session.documentId, self),
+    dropCursor: blockDropCursor(),
+    extensions: [
+      checklistLookExtension(),
+      checkboxTapExtension(),
+      blockDropExtension(),
+      blockSelectExtension(),
+    ],
   })
   self.current = editor
-  const [saved, setSaved] = useState(session.text)
+  // The demo's walkthrough types and selects through the editor (lib/demo/editor-handle.ts).
+  useEffect(() => (DEMO ? setDemoEditor(demoHandle(editor)) : undefined), [editor])
+  // Always there without `live`; again from the API when someone else changed it.
+  const [source, setSource] = useState(() => ({ text: session.text ?? '', n: 0 }))
+  const stored = source.text
+  const [saved, setSaved] = useState(stored)
+  // For onChange, which runs with the render it was made in.
+  const savedText = useRef(stored)
+  savedText.current = saved
+  // While the stored text fills it, its changes are not the person's.
+  const filling = useRef(true)
   const [dirty, setDirty] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
+  // For the live listener, which runs outside renders.
+  const unsaved = useRef(false)
+  unsaved.current = dirty || busy
+  // The demo saves a moment after the last change; leaving the page saves what waits at once.
+  const saveNow = useRef<(text: string) => Promise<void>>(async () => {})
+  const [autosave] = useState(() => debouncedSave((text) => saveNow.current(text), DEMO_SAVE_MS))
+  useEffect(() => () => autosave.close(), [autosave])
 
+  // The session may be one kept open for another view of this file (the document panel, say),
+  // from before a change made since: shown, the file is read again.
   useEffect(() => {
+    let live = true
+    void openDocument(target).then(
+      (fresh) => {
+        const text = fresh.text
+        if (!live || text === undefined || unsaved.current) return
+        setSource((s) => (text === s.text ? s : { text, n: s.n + 1 }))
+      },
+      () => {},
+    )
+    return () => {
+      live = false
+    }
+    // Once, as it shows: later changes come with library.updated (below).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // Changed elsewhere: shown, unless edits here are not saved yet (saving would replace it).
+  useLive((message) => {
+    if (message.type !== 'library.updated' || unsaved.current || filling.current) return
+    void openDocument(target).then(
+      (fresh) => {
+        const text = fresh.text
+        if (text === undefined || unsaved.current || filling.current) return
+        if (text === savedText.current || text === source.text) return
+        setSource((s) => ({ text, n: s.n + 1 }))
+      },
+      () => {},
+    )
+  })
+  useEffect(() => {
+    // Only the last load fills the editor: an earlier one, still converting, would replace
+    // blocks that are gone by then.
+    let live = true
+    filling.current = true
     void (async () => {
-      editor.replaceBlocks(editor.document, (await markdownToBlocks(editor, session.text)) as never)
+      const blocks = await markdownToBlocks(editor, stored)
+      if (!live) return
+      editor.replaceBlocks(editor.document, blocks as never)
       // What the editor writes back for the text as stored: unchanged until this differs.
-      setSaved(await blocksToMarkdown(editor, editor.document))
+      const text = await blocksToMarkdown(editor, editor.document)
+      if (!live) return
+      savedText.current = text
+      setSaved(text)
+      setDirty(false)
+      filling.current = false
     })()
-  }, [editor, session.text])
+    return () => {
+      live = false
+    }
+  }, [editor, stored, source.n])
 
-  async function save() {
+  async function save(given?: string) {
     setBusy(true)
     setError(undefined)
-    const text = await blocksToMarkdown(editor, editor.document)
+    const text = given ?? (await blocksToMarkdown(editor, editor.document))
     try {
       await api(`/library/edit/${session.documentId}`, { method: 'PUT', body: { text } })
+      savedText.current = text
       setSaved(text)
       setDirty(false)
       onSaved?.()
@@ -273,24 +366,84 @@ function SavedDocument({
     }
     setBusy(false)
   }
+  saveNow.current = save
 
   return (
     <div className={cn('flex flex-col gap-2', className)}>
-      <DocumentBlockNoteView
-        editor={editor}
-        documentId={session.documentId}
-        label={label}
-        onChange={() =>
-          void blocksToMarkdown(editor, editor.document).then((text) => setDirty(text !== saved))
-        }
-      />
-      {error && <p className="text-sm text-destructive-text">{error}</p>}
-      <div className="flex items-center justify-end gap-3">
-        <span className="text-xs text-muted-foreground">{dirty ? 'Unsaved changes' : 'Saved'}</span>
-        <Button size="sm" disabled={!dirty || busy} onClick={() => void save()}>
-          Save
-        </Button>
+      <div className={documentFadeIn}>
+        <DocumentBlockNoteView
+          editor={editor}
+          documentId={session.documentId}
+          label={label}
+          ask={ask}
+          list={target.kind === 'library'}
+          readOnly={session.readOnly}
+          onChange={() => {
+            if (filling.current) return
+            void blocksToMarkdown(editor, editor.document).then((text) => {
+              const changed = text !== savedText.current
+              unsaved.current = changed || busy
+              setDirty(changed)
+              if (!DEMO) return
+              // Back to what was saved (ticked then unticked, an undo): nothing waits any more.
+              if (changed) autosave.schedule(text)
+              else autosave.cancel()
+            })
+          }}
+        />
       </div>
+      {error && <p className="text-sm text-destructive-text">{error}</p>}
+      {!session.readOnly && !DEMO && (
+        <div className="flex items-center justify-end gap-3">
+          <span className="text-xs text-muted-foreground">
+            {dirty ? 'Unsaved changes' : 'Saved'}
+          </span>
+          <Button size="sm" disabled={!dirty || busy} onClick={() => void save()}>
+            Save
+          </Button>
+        </div>
+      )}
     </div>
   )
+}
+
+/** The demo walkthrough's hold on a document's editor (lib/demo/editor-handle.ts). */
+function demoHandle(editor: DocumentBlockEditor): DemoEditorHandle {
+  const checks = () => editor.document.filter((b) => b.type === 'checkListItem')
+  const elementOf = (id: string) =>
+    editor.prosemirrorView.dom.querySelector<HTMLElement>(
+      `[data-id="${id}"] .bn-block-content[data-content-type="checkListItem"]`,
+    ) ?? undefined
+  const textOf = (block: { content?: unknown }) =>
+    Array.isArray(block.content)
+      ? block.content.map((c: { text?: string }) => c.text ?? '').join('')
+      : ''
+  return {
+    caretAtLastLine: () => {
+      const last = checks().at(-1)
+      if (!last) return undefined
+      editor.focus()
+      editor.setTextCursorPosition(last.id, 'end')
+      return elementOf(last.id)
+    },
+    newLineAtEnd: () => {
+      const last = checks().at(-1) ?? editor.document.at(-1)
+      if (!last) return
+      const [line] = editor.insertBlocks([{ type: 'checkListItem' }], last.id, 'after')
+      editor.focus()
+      if (line) editor.setTextCursorPosition(line.id, 'start')
+    },
+    insertText: (text) => editor.insertInlineContent(text),
+    selectLine: (text) => {
+      const block = checks().find((b) => textOf(b).includes(text))
+      const inline = block && elementOf(block.id)?.querySelector('.bn-inline-content')
+      if (!inline) return false
+      const view = editor.prosemirrorView
+      const from = view.posAtDOM(inline, 0)
+      const to = view.posAtDOM(inline, inline.childNodes.length)
+      editor.focus()
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)))
+      return true
+    },
+  }
 }

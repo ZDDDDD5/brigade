@@ -1,5 +1,20 @@
-import type { CSSProperties } from 'react'
+'use client'
+import { useCallback, useEffect, useRef, type CSSProperties } from 'react'
 import { cn } from '@/lib/utils'
+
+/**
+ * One watcher for every pebble: those out of sight stand still. Each morph repaints its
+ * pebble on every frame, which a long thread's hundreds of replies, each with its
+ * teammate's pebble, turned into seconds of work.
+ */
+let watcher: IntersectionObserver | undefined
+function stillOutOfSight(node: HTMLElement) {
+  watcher ??= new IntersectionObserver((entries) => {
+    for (const e of entries) e.target.toggleAttribute('data-still', !e.isIntersecting)
+  })
+  watcher.observe(node)
+  return () => watcher?.unobserve(node)
+}
 
 /** A 32-bit hash of the seed (cyrb53's mixing, folded down). */
 function hash(seed: string) {
@@ -25,9 +40,81 @@ function random(seed: number) {
   }
 }
 
-/** The pebble's look, all of it drawn from the seed: colours, the three outlines it
- * morphs between, its eyes and when it blinks and glances. */
+/**
+ * The brand's teammate colours, those of the og-image (Projects/Brigade/brand/og-image.png),
+ * as OKLCH [hue, lightness, chroma], by hue. They are the waypoints of the curve every
+ * pebble's colour sits on, not a list to pick from: any hue has a colour, as light and as
+ * vivid as the brand colours either side of it (a bright yellow, a deep purple, a soft pink).
+ */
+const BRAND: readonly (readonly [number, number, number])[] = [
+  [21, 0.801, 0.079], // pink #edaaa8
+  [50, 0.741, 0.17], // orange #fd8637
+  [90, 0.871, 0.14], // yellow #f8d05c
+  [155, 0.781, 0.161], // green #4ed589
+  [250, 0.721, 0.13], // blue #60aaf3
+  [290, 0.621, 0.22], // purple #8a63fe
+]
+
+/** A pebble's colour for a hue (0 to 360), on the brand's curve: lightness and chroma
+ * go in a straight line from one brand colour to the next, around the circle. */
+export function pebbleColor(hue: number) {
+  const h = ((hue % 360) + 360) % 360
+  const next = BRAND.findIndex(([at]) => at > h)
+  const [h1, l1, c1] = BRAND.at(next === -1 ? -1 : next - 1)!
+  const [h2, l2, c2] = BRAND[next === -1 ? 0 : next]!
+  const span = (h2 - h1 + 360) % 360
+  const t = ((h - h1 + 360) % 360) / span
+  const l = l1 + t * (l2 - l1)
+  const c = c1 + t * (c2 - c1)
+  return `oklch(${l.toFixed(3)} ${c.toFixed(3)} ${h})`
+}
+
+/** The eyes' ink, the og-image's: one for every pebble, dark on every colour. */
+const INK = '#1b1230'
+
+/** How many points draw a shaped pebble's outline: enough for its lobes to stay round at
+ * 64px. Every outline has as many, so the browser can morph one into the other. */
+const POINTS = 48
+
+/**
+ * A shaped pebble's outline, as a `clip-path` polygon in % of its box: a circle pushed out
+ * into `lobes` soft lobes (radius 1 + depth·cos(lobes·θ)): a rounded triangle with 3, a
+ * clover with 4, a star with 5, a flower with 6. `tilt` turns it from its upright pose,
+ * where a lobe points up; `phase` sets a slight wobble, so its three outlines differ and
+ * it still morphs like a pebble.
+ */
+export function pebbleOutline(lobes: number, depth: number, tilt: number, phase: number) {
+  const wobble = (a: number) =>
+    0.035 * Math.sin(2 * a + phase) + 0.025 * Math.sin(3 * a - 2 * phase)
+  // The widest it can get fills the box, and no wider.
+  const scale = 50 / (1 + depth + 0.06)
+  const up = -Math.PI / 2 + tilt
+  const points: string[] = []
+  for (let k = 0; k < POINTS; k++) {
+    const a = (k / POINTS) * 2 * Math.PI
+    const r = scale * (1 + depth * Math.cos(lobes * (a - up)) + wobble(a))
+    points.push(`${(50 + r * Math.cos(a)).toFixed(1)}% ${(50 + r * Math.sin(a)).toFixed(1)}%`)
+  }
+  return `polygon(${points.join(',')})`
+}
+
+/** A pebble's look is worked out once per seed: a long thread draws the same few
+ * teammates' pebbles hundreds of times. */
+const looks = new Map<string, CSSProperties>()
+
+/** The pebble's look, all of it drawn from the seed: its colour, its shape (a plain
+ * pebble, or one with 3 to 6 lobes) and the three outlines it morphs between, its eyes
+ * and when it blinks and glances. */
 export function pebbleStyle(seed: string): CSSProperties {
+  let look = looks.get(seed)
+  if (!look) {
+    look = drawLook(seed)
+    looks.set(seed, look)
+  }
+  return look
+}
+
+function drawLook(seed: string): CSSProperties {
   const r = random(hash(seed))
   const between = (min: number, max: number) => min + r() * (max - min)
   const whole = (min: number, max: number) => Math.round(between(min, max))
@@ -38,13 +125,15 @@ export function pebbleStyle(seed: string): CSSProperties {
     const [a, b, c, d] = [whole(30, 70), whole(30, 70), whole(30, 70), whole(30, 70)]
     return `${a}% ${100 - a}% ${b}% ${100 - b}% / ${c}% ${d}% ${100 - d}% ${100 - c}%`
   }
-  const hue = whole(0, 359)
-  const hue2 = (hue + (r() < 0.5 ? -1 : 1) * whole(30, 80) + 360) % 360
-  const sat = whole(75, 95)
-  return {
-    '--pebble-c1': `hsl(${hue} ${sat}% 68%)`,
-    '--pebble-c2': `hsl(${hue2} ${sat}% 60%)`,
-    '--pebble-eye': `hsl(${hue} 55% 11%)`,
+  const color = pebbleColor(whole(0, 359))
+  // Draws the gradient's second hue and saturation used to take, so each teammate keeps
+  // the outline, eyes and rhythm it had.
+  for (let i = 0; i < 3; i++) r()
+  const look = {
+    // Flat, as on the og-image: one colour, no gradient.
+    '--pebble-c1': color,
+    '--pebble-c2': color,
+    '--pebble-eye': INK,
     '--pebble-angle': `${whole(0, 359)}deg`,
     '--pebble-r1': outline(),
     '--pebble-r2': outline(),
@@ -60,7 +149,139 @@ export function pebbleStyle(seed: string): CSSProperties {
     '--pebble-look-at': secs(-between(0, 9)),
     '--pebble-blink': secs(between(4, 7)),
     '--pebble-blink-at': secs(-between(0, 7)),
-  } as CSSProperties
+  } as Record<string, string>
+  // Its shape, drawn after the rest so each teammate keeps its colour, eyes and rhythm:
+  // as often a plain pebble as each lobed shape, from a rounded triangle to a flower.
+  const lobes = [0, 3, 4, 5, 6][Math.min(4, Math.floor(r() * 5))]!
+  const depth = between(0.08, 0.17)
+  const tilt = between(-0.3, 0.3) * (Math.PI / Math.max(lobes, 1))
+  const phase = between(0, 2 * Math.PI)
+  if (lobes) {
+    for (const [i, shift] of [0, 2.1, 4.2].entries()) {
+      look[`--pebble-p${i + 1}`] = pebbleOutline(lobes, depth, tilt, phase + shift)
+    }
+  }
+  return look as CSSProperties
+}
+
+/** Whether the seed's pebble has lobes (pebbleStyle gave it outlines to clip it to). */
+function shaped(look: CSSProperties) {
+  return '--pebble-p1' in look
+}
+
+/** A teammate's name in its pebble's colour (`.teammate-name` sets how light, for the
+ * theme): the same teammate reads the same in the thread as its pebble does at the top. */
+export function pebbleInk(seed: string): CSSProperties {
+  return { '--pebble-c1': pebbleStyle(seed)['--pebble-c1' as keyof CSSProperties] } as CSSProperties
+}
+
+/** The Working line's pebble: solid grey, its eyes cut out in the colour of the page under
+ * it. Grey is no teammate's colour, so it reads as a status and never as someone. */
+const NEUTRAL = {
+  '--pebble-c1': 'var(--muted-foreground)',
+  '--pebble-c2': 'var(--muted-foreground)',
+  '--pebble-eye': 'var(--background)',
+  // Eyes about a third bigger than a seed's, centred: its expressions read at 20px.
+  '--pebble-eye-w': '11%',
+  '--pebble-eye-h': '22%',
+  '--pebble-eye-gap': '13%',
+  '--pebble-eye-top': '34%',
+  '--pebble-eye-x': '0%',
+} as CSSProperties
+
+/** What the Working pebble's eyes do, by the kind of step it is on. */
+export type PebbleExpression = 'read' | 'think' | 'focus' | 'curious' | 'aha' | 'glance'
+
+/** Where the eyes look (x, y in % of the pebble) and each eye's size, [width, height]. */
+type Pose = { x: number; y: number; eyes: [[number, number], [number, number]] }
+const pose = (x: number, y: number, sx = 1, sy = 1, right?: [number, number]): Pose => ({
+  x,
+  y,
+  eyes: [[sx, sy], right ?? [sx, sy]],
+})
+const SPRING = 'cubic-bezier(.34,1.56,.64,1)'
+const EASE = 'cubic-bezier(.4,0,.2,1)'
+/** A pose, how long the eyes take to reach it (ms), how long they stay there, and how. */
+type Move = [Pose, number, number, string?]
+const EXPRESSIONS: Record<PebbleExpression, Move[]> = {
+  // Eyes down, scanning a line, back to the start of the next.
+  read: [
+    [pose(-7, 7, 1, 0.85), 350, 250],
+    [pose(7, 7, 1, 0.85), 900, 150, EASE],
+    [pose(-7, 10, 1, 0.85), 260, 200],
+    [pose(7, 10, 1, 0.85), 900, 150, EASE],
+  ],
+  // Up and to the side, drifting slowly.
+  think: [
+    [pose(7, -8, 1, 0.92), 450, 900],
+    [pose(-5, -9, 1, 0.92), 1200, 600, EASE],
+    [pose(3, -10, 1, 0.92), 900, 500, EASE],
+  ],
+  // A squint, as when reading up close.
+  focus: [
+    [pose(0, 2, 1.05, 0.5), 300, 1300],
+    [pose(2, 2, 1.05, 0.42), 700, 600, EASE],
+  ],
+  // One eye bigger, the other squinted: a raised brow.
+  curious: [
+    [pose(4, -2, 1.15, 1.3, [0.95, 0.72]), 350, 1300],
+    [pose(2, -1, 1.05, 1.1, [1, 0.85]), 600, 500, EASE],
+  ],
+  // Both widen, then settle.
+  aha: [
+    [pose(0, -3, 1.3, 1.38), 260, 800],
+    [pose(0, 0), 400, 600],
+  ],
+  // A quick look left, then right.
+  glance: [
+    [pose(-8, 0), 220, 500],
+    [pose(8, 0), 260, 500],
+    [pose(0, 0), 300, 300],
+  ],
+}
+
+/**
+ * Moves the pebble's eyes through its expression, one move after another, by writing their
+ * transforms (no re-render). A new expression takes over once the move under way ends, so the
+ * eyes never jump. Still while out of sight (`data-still`) and for those who ask for less motion.
+ */
+function useExpression(expression: PebbleExpression | undefined) {
+  const node = useRef<HTMLElement | null>(null)
+  const current = useRef(expression)
+  useEffect(() => {
+    current.current = expression
+  }, [expression])
+  const on = expression !== undefined
+  useEffect(() => {
+    const el = node.current
+    if (!on || !el || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const face = el.querySelector<HTMLElement>('.pebble-face')
+    const eyes = [...el.querySelectorAll<HTMLElement>('.pebble-eye')]
+    let queue: Move[] = []
+    let timer: ReturnType<typeof setTimeout>
+    const next = () => {
+      if (el.hasAttribute('data-still')) {
+        timer = setTimeout(next, 1_000)
+        return
+      }
+      if (!queue.length) queue = [...EXPRESSIONS[current.current ?? 'think']]
+      const [p, ms, hold, ease = SPRING] = queue.shift()!
+      const transition = `transform ${ms}ms ${ease}`
+      if (face) {
+        face.style.transition = transition
+        face.style.transform = `translate(${p.x}%, ${p.y}%)`
+      }
+      eyes.forEach((eye, i) => {
+        const [sx, sy] = p.eyes[i] ?? [1, 1]
+        eye.style.transition = transition
+        eye.style.transform = `scale(${sx}, ${sy})`
+      })
+      timer = setTimeout(next, ms + hold)
+    }
+    next()
+    return () => clearTimeout(timer)
+  }, [on])
+  return node
 }
 
 /** An agent's picture: a softly morphing pebble with pill eyes that blink into happy
@@ -71,22 +292,43 @@ export function PebbleAvatar({
   className,
   title,
   crown = false,
+  tone,
+  expression,
 }: {
   seed: string
   className?: string
   title?: string
   crown?: boolean
+  /** In neutral grey, its eyes the page's own (a Working line), not its seed's colours. */
+  tone?: 'neutral'
+  /** Its eyes move as this says (EXPRESSIONS above) instead of glancing around now and then. */
+  expression?: PebbleExpression
 }) {
+  const expressive = useExpression(expression)
+  const look = pebbleStyle(seed)
+  const ref = useCallback(
+    (node: HTMLElement | null) => {
+      expressive.current = node
+      return node ? stillOutOfSight(node) : undefined
+    },
+    [expressive],
+  )
   return (
     <span
+      ref={ref}
+      data-expressive={expression ? '' : undefined}
       data-slot="avatar"
       role="img"
       aria-label={title}
       title={title}
       className={cn('pebble relative flex size-8 shrink-0', className)}
-      style={pebbleStyle(seed)}
+      style={tone === 'neutral' ? { ...look, ...NEUTRAL } : look}
     >
-      <span className="pebble-body" />
+      {/* The Working pebble stays a plain pebble: a status, not someone. */}
+      <span
+        className="pebble-body"
+        data-shaped={shaped(look) && tone !== 'neutral' ? '' : undefined}
+      />
       <span className="pebble-face">
         {[0, 1].map((i) => (
           <span key={i} className="pebble-eye">
