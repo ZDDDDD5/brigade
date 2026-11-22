@@ -501,6 +501,40 @@ start_holder() {
   systemctl stop "$UNIT" 2>/dev/null || true
   return 1
 }
+# Boat restores a resumed computer's disk lazily: its system folders (/home/*, /opt/brigade,
+# /var/lib/brigade...) are at first mounts of its ascii-lazyfs over the disk, which it moves aside on
+# the host (retires) once their files are all there, and may cut off later. A holder started before
+# keeps them in its own mount table, as a move reaches no other namespace, whatever its
+# propagation: its thread goes on through them, and on Nov 22 every path under one failed once
+# lazyfs cut it ("can't cd to" the thread's own folder). The holder's lazyfs mounts the host no
+# longer has at the same place (same device, same mount point), topmost first; /tmp and /var/tmp,
+# its own, aside (sync_holder binds them again).
+lazy_gone() { # <host's mountinfo> <holder's mountinfo>
+  awk 'NR == FNR { if ($0 ~ / - [^ ]+ ascii-lazyfs/) host[$3 " " $5] = 1; next }
+    $0 ~ / - [^ ]+ ascii-lazyfs/ && !(($3 " " $5) in host) && $5 != "/tmp" && $5 != "/var/tmp" { print $5 }' \\
+    "$1" "$2" | tac
+}
+same() { [ "$(stat -L -c %d:%i "$1" 2>/dev/null)" = "$(stat -L -c %d:%i "$2" 2>/dev/null)" ]; }
+# Whether the thread's holder still has what the host retired, or a /tmp or /var/tmp no longer the
+# thread's on the disk (they were on one of those, or were cut off with it).
+holder_stale() { # <thread> <pid>
+  [ -n "$(lazy_gone /proc/self/mountinfo "/proc/$2/mountinfo")" ] ||
+    ! same "/proc/$2/root/tmp" "$TMPS/$1/tmp" || ! same "/proc/$2/root/var/tmp" "$TMPS/$1/var-tmp"
+}
+# The holder's mounts brought in line with the host's, under the lock: what the host retired
+# unmounted in it too, lazily as the host did, so a process still inside goes on and lets go of it
+# as it ends; then its /tmp and /var/tmp bound again from where they now are on the disk. The
+# holder's PID namespace too, for its /proc, which umount reads.
+sync_holder() { # <thread> <pid>
+  holder_stale "$1" "$2" || return 0
+  nsenter --target "$2" --mount --pid -- sh -c '
+    for M in $1; do umount -l "$M" 2>/dev/null || true; done
+    [ "$(stat -c %d:%i "$0/tmp" 2>/dev/null)" = "$(stat -c %d:%i /tmp 2>/dev/null)" ] ||
+      { umount -l /tmp 2>/dev/null || true; mount --bind "$0/tmp" /tmp; }
+    [ "$(stat -c %d:%i "$0/var-tmp" 2>/dev/null)" = "$(stat -c %d:%i /var/tmp 2>/dev/null)" ] ||
+      { umount -l /var/tmp 2>/dev/null || true; mount --bind "$0/var-tmp" /var/tmp; }
+  ' "$TMPS/$1" "$(lazy_gone /proc/self/mountinfo "/proc/$2/mountinfo")"
+}
 
 case "\${1:-}" in
   up) # <thread>: its network namespace, made if needed; prints its address there
@@ -556,11 +590,29 @@ case "\${1:-}" in
       [ -f "$STATE/$2" ] && [ -e "/run/netns/bt-$2" ] || make_net "$2"
       P=$(holder "$2") || { start_holder "$2" && P=$(holder "$2"); } || fail "the holder of thread $2 did not start"
       exec 9>&-
+    elif holder_stale "$2" "$P"; then
+      # Started while boat restored the disk: in line with the host first (sync_holder). A command
+      # that fails to be goes on as before.
+      lock
+      sync_holder "$2" "$P" || true
+      exec 9>&-
     fi
     U=$3
     shift 3
     exec nsenter --target "$P" --net --mount --ipc --pid -- \\
       setpriv --reuid="$U" --regid="$U" --init-groups --inh-caps=-all -- env USER="$U" LOGNAME="$U" "$@"
+    ;;
+  sync) # [<thread>]: sync_holder for that thread's holder, else for every thread's: the runner's, once
+    # boat has restored the disk, so a thread nobody enters (a dev server going on) lets go too
+    [ -z "\${2:-}" ] || thread_ok "$2"
+    lock
+    for F in "$STATE"/*.holder; do
+      [ -f "$F" ] || continue
+      N=$(basename "$F" .holder)
+      [ -z "\${2:-}" ] || [ "$N" = "$2" ] || continue
+      P=$(holder "$N") || continue
+      sync_holder "$N" "$P" || echo "brigade-thread: the holder of thread $N could not be brought in line" >&2
+    done
     ;;
   down) # <thread> [purge]: its holder and network taken down when none of its processes is left (exit
     # 3 otherwise), its address kept; with purge (its folder is gone), its address and /tmp too

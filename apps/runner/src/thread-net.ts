@@ -165,6 +165,74 @@ export async function takeDown(sessionId: string, purge = false) {
 }
 
 /**
+ * Every thread's holder brought in line with the computer's mounts (the helper's `sync`): what
+ * boat retired on the computer once its disk was restored, dropped in the holder too. Nothing
+ * where threads have no namespaces; an older helper has no `sync`.
+ */
+export async function syncHolders() {
+  if (!ENABLED || !existsSync(THREAD_HELPER)) return
+  try {
+    await run('sudo', ['-n', THREAD_HELPER, 'sync'], { cwd: '/', timeout: 120_000 })
+  } catch (error) {
+    const { stderr } = error as { stderr?: string }
+    if (!stderr?.includes('unknown command'))
+      console.warn(
+        `could not bring the threads' holders in line with the disk: ${(stderr || String(error)).trim()}`,
+      )
+  }
+}
+
+/**
+ * Boat restores a resumed computer's disk lazily, through mounts of its own that it retires once
+ * the disk is whole, and a thread's holder started before keeps them in its own mount table,
+ * until boat cuts them off and every path of the thread fails (the helper's lazy_gone). The
+ * helper's `enter` drops them before each command; this drops them from every holder once the
+ * restore is over, so a thread nobody enters (a dev server going on in it) lets go of them too:
+ * `sync` some time after (boat retires its mounts within seconds of saying the disk restored),
+ * and once more later. A runner that starts after the restore does so as well, for the holders
+ * the one before left. A restore only happens as the computer boots: watched for `forMs` after
+ * the start. Returns how to stop watching.
+ */
+export function syncHoldersAfterRestore(
+  restoring: () => Promise<boolean>,
+  sync: () => Promise<unknown> = syncHolders,
+  { everyMs = 30_000, afterMs = [60_000, 5 * 60_000], forMs = 3 * 60 * 60_000 } = {},
+): () => void {
+  const timers = new Set<ReturnType<typeof setTimeout>>()
+  const later = (ms: number, then: () => void) => {
+    const timer = setTimeout(() => {
+      timers.delete(timer)
+      then()
+    }, ms)
+    timer.unref?.()
+    timers.add(timer)
+  }
+  // As if a restore had just ended, for a runner that starts after one.
+  let was = true
+  let checking = false
+  const check = async () => {
+    if (checking) return
+    checking = true
+    try {
+      const now = await restoring().catch(() => false)
+      if (was && !now) for (const ms of afterMs) later(ms, () => void sync().catch(() => undefined))
+      was = now
+    } finally {
+      checking = false
+    }
+  }
+  const watch = setInterval(() => void check(), everyMs)
+  watch.unref?.()
+  void check()
+  later(forMs, () => clearInterval(watch))
+  return () => {
+    clearInterval(watch)
+    for (const timer of timers) clearTimeout(timer)
+    timers.clear()
+  }
+}
+
+/**
  * The teammate's Docker, as the thread sees it: the socket of its proxy in the
  * thread (docker-proxy.ts), which starts that Docker on first use, or null
  * where the computer has no rootless Docker. What its containers publish there

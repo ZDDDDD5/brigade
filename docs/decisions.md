@@ -898,6 +898,20 @@ fingerprint>"`, sending the page `no-store`, and adds a bridge script first in i
 - **Root setup on cloud computers.** The helper and the library folder are one versioned setup script
   (`setupScript` in `cloud-bootstrap.ts`). A cloud runner reports the setup it has on connect; the API reapplies the
   current one through the provider when they differ. This replaces reinstalling the helper by hand.
+- **Threads' namespaces and boat's restore** (`lazy_gone` and `sync_holder` in the thread helper,
+  `syncHoldersAfterRestore` in `apps/runner/src/thread-net.ts`). While boat restores a resumed computer's disk, its
+  system folders (`/home/*`, `/opt/brigade`, `/var/lib/brigade`…) are `ascii-lazyfs` FUSE mounts over the disk; once
+  their files are all there, boat moves each aside on the host (it "retires" them) and may cut one off later. A
+  thread's holder has a mount namespace of its own: one started during the restore kept those mounts, as a move reaches
+  no other namespace (with private or slave propagation alike, checked on a VM), and when boat cut one off on Nov 22,
+  17 minutes after the restore, every command of the thread failed ("can't cd to" its own folder) until the holder was
+  taken down. So `enter` first brings a holder in line with the host when they differ: the lazyfs mounts the host no
+  longer has at the same place are unmounted in it lazily, as the host did (a process still inside goes on), and its
+  `/tmp` and `/var/tmp`, bound from one of them, are bound again from the disk. That also mends a holder whose mount
+  was cut off already. The runner does the same for every holder (`brigade-thread sync`) a minute and five minutes
+  after boat says the disk is restored, and once after it starts, so a thread nobody enters (a dev server running in
+  it) lets go of them too. Starting holders again instead would kill what runs in them, and holding namespaces back
+  until the restore ends would leave threads without their own `/tmp` and processes for up to an hour.
 - **Files in a thread.** A file path in a teammate's reply (inline code such as `faq/support.md` or `src/a.ts:42`, or a
   relative Markdown link) opens in a panel beside the thread, in the desktop panel's place (a bottom sheet on narrow
   screens). `GET /api/threads/:id/file` serves a library path from the library, so it opens while the computer is
