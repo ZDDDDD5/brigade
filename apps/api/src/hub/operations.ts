@@ -22,6 +22,7 @@ type Actor = { type: 'member' | 'system'; id: string }
 export const operations = {
   // Its computers' connections.
   isOnline: (hub: WorkspaceHub, computerId: string) => hub.isOnline(computerId),
+  connectedSince: (hub: WorkspaceHub, computerId: string) => hub.connectedSince(computerId),
   isRestarting: (hub: WorkspaceHub, computerId: string) => hub.isRestarting(computerId),
   runnerAway: (hub: WorkspaceHub, computerId: string) => hub.runnerAway(computerId),
   runnerProtocol: (hub: WorkspaceHub, computerId: string) => hub.runnerProtocol(computerId),

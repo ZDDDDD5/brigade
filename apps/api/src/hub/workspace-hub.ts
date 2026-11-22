@@ -181,6 +181,17 @@ export class WorkspaceHub {
   }
 
   /**
+   * Since when the computer's runner has been connected without a break (Date.now()), or null
+   * when it is not: one restarting into an update is connected as of now. A laptop that sleeps
+   * drops its connection and makes a new one as it wakes, even briefly (src/ops/checks.ts).
+   */
+  connectedSince(computerId: string, now = Date.now()): number | null {
+    const conn = this.runners.get(computerId)
+    if (conn) return conn.connectedAt
+    return this.isRestarting(computerId) ? now : null
+  }
+
+  /**
    * Since when a computer's runner has been away, kept with the hub: it outlives the hub's
    * hibernation and the Api object's restarts. Kept in the Api object's memory before, it was
    * forgotten at each restart, which ended the computer's alert and started its count again (on

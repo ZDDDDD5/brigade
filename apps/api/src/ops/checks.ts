@@ -476,7 +476,25 @@ export const SILENT_TURN_MS = 60 * MINUTE
 /** This long: critical. */
 export const SILENT_TURN_CRITICAL_MS = 4 * 60 * MINUTE
 
-type SilentThread = { id: string; title: string; computerId: string; lastAt: Date }
+type SilentThread = {
+  id: string
+  title: string
+  computerId: string
+  lastAt: Date
+  /** Since when its runner has been connected without a break (WorkspaceHub.connectedSince). */
+  connectedAt?: Date
+}
+
+/**
+ * How long a thread has been silent while its runner was connected: from its last event, or
+ * from the runner's connection when that is newer. A laptop asleep drops its connection and
+ * makes a new one at each wake, however brief: on 2026-11-22 a member's Mac that slept mid-turn
+ * raised this alert at 00:20, ended it at 00:28 as its runner dropped, and raised it again at
+ * 00:29 as it came back, for the same thread still silent since 22:59. Counted from the
+ * connection, a runner back a minute ago has not been silent for an hour.
+ */
+export const silentFor = (thread: SilentThread, now: number) =>
+  now - Math.max(thread.lastAt.getTime(), thread.connectedAt?.getTime() ?? 0)
 
 /**
  * Threads marked running whose runner, connected, has sent nothing for an hour, as alerts by
@@ -490,15 +508,15 @@ export function silentTurnProblems(
   names: Map<string, string>,
   now: number,
 ): Alert[] {
-  const silent = threads.filter((t) => now - t.lastAt.getTime() >= SILENT_TURN_MS)
+  const silent = threads.filter((t) => silentFor(t, now) >= SILENT_TURN_MS)
   return [...Map.groupBy(silent, (t) => t.computerId)].map(([computerId, on]) => {
-    const longest = Math.max(...on.map((t) => now - t.lastAt.getTime()))
+    const longest = Math.max(...on.map((t) => silentFor(t, now)))
     return {
       key: `turn-silent:${computerId}`,
       severity: longest >= SILENT_TURN_CRITICAL_MS ? 'critical' : 'warning',
       title: `Threads running with nothing from their runner: ${names.get(computerId) ?? computerId}`,
       detail: [
-        `${on.length} thread(s) marked running whose runner, connected, has sent no event for ${Math.round(longest / MINUTE)} min at most: a turn stuck open, whose reply or report waits, and the messages queued behind it.`,
+        `${on.length} thread(s) marked running whose runner, connected all along, has sent no event for ${Math.round(longest / MINUTE)} min at most: a turn stuck open, whose reply or report waits, and the messages queued behind it.`,
         on
           .slice(0, 10)
           .map(
@@ -506,10 +524,31 @@ export function silentTurnProblems(
               `${t.id} (${t.title.slice(0, 60)}) since ${t.lastAt.toISOString().slice(0, 16)}Z`,
           )
           .join('\n'),
-        "A long command or Monitor can be quiet this long too. Stop in the thread ends a stuck turn; the runner's journal (journalctl -u brigade-runner) says what its harness last did.",
+        "A long command or Monitor can be quiet this long too; a model's response quiet for 20 min with nothing running ends the turn by itself (apps/runner/src/harness/stall.ts). Stop in the thread ends a stuck turn; the runner's journal (journalctl -u brigade-runner) says what its harness last did.",
       ].join('\n\n'),
     }
   })
+}
+
+/**
+ * The running threads whose computer's runner is connected now, each with since when it has
+ * been connected without a break, as the computer's hub says (WorkspaceHub.connectedSince).
+ */
+export async function onConnectedRunners(
+  running: (SilentThread & { workspaceId: string })[],
+): Promise<{ silent: SilentThread[]; computerIds: string[] }> {
+  const online = new Map<string, number | null>()
+  const silent: SilentThread[] = []
+  for (const thread of running) {
+    if (!online.has(thread.computerId))
+      online.set(
+        thread.computerId,
+        await hubs.get(thread.workspaceId).connectedSince(thread.computerId),
+      )
+    const since = online.get(thread.computerId)
+    if (since != null) silent.push({ ...thread, connectedAt: new Date(since) })
+  }
+  return { silent, computerIds: [...online.keys()] }
 }
 
 /**
@@ -526,14 +565,7 @@ async function checkSilentTurns(now: number) {
       AND COALESCE(e.at, s."updatedAt") < ${new Date(now - SILENT_TURN_MS)}
     ORDER BY "lastAt"
     LIMIT 100`
-  const online = new Map<string, boolean>()
-  const silent: SilentThread[] = []
-  for (const thread of running) {
-    if (!online.has(thread.computerId))
-      online.set(thread.computerId, await hubs.get(thread.workspaceId).isOnline(thread.computerId))
-    if (online.get(thread.computerId)) silent.push(thread)
-  }
-  const ids = [...online.keys()]
+  const { silent, computerIds: ids } = await onConnectedRunners(running)
   const computers = ids.length
     ? await prisma.computer.findMany({
         where: { id: { in: ids } },

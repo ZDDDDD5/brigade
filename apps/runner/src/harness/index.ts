@@ -139,6 +139,7 @@ import { filesFieldsOf, withUploads } from './call-files.js'
 import { stageStream, type StagedFile } from '../uploads.js'
 import { readCommand, reportWithFiles } from './report-files.js'
 import { backgroundTasks, backgroundWait, reportWaitsFor } from './background.js'
+import { StallWatch } from './stall.js'
 import {
   answerMessageTool,
   ASK_USER_TOOL,
@@ -822,6 +823,11 @@ export class HarnessThread {
   private readonly reasoning = new Map<string, string>()
   /** Built-in tool calls waiting for a person's approval, by approval id. */
   private readonly approvals = new Map<string, { toolName: string; input: unknown }>()
+  /**
+   * The turn's tool calls still open, by id, as their events went out: quiet is expected while
+   * one runs (a command, a sub-agent, a ticket waiting on a person), StallWatch in turn().
+   */
+  private readonly openCalls = new Set<string>()
   /** Kept answers handed out to go in (answersToGive), by call id, until their turn takes them. */
   private readonly given = new Set<string>()
   /** The teammate's browser is being started for this thread (browserUsed). */
@@ -1802,14 +1808,32 @@ export class HarnessThread {
     // Ends the stream being read once the turn is answered and only Claude Code's guess is
     // left (drain): each stream gets a signal of its own, with the turn's.
     let tail = new AbortController()
+    // Stops a stream that went quiet with nothing running (stall.ts): the turn fails, shown.
+    const stall = new AbortController()
     const streamSignal = () => {
       tail = new AbortController()
-      return AbortSignal.any([signal, tail.signal])
+      return AbortSignal.any([signal, tail.signal, stall.signal])
     }
     // A stream the turn may end in (consumeLast); the bridge says when it is answered.
     let mayAnswer = false
     let early = false
     let drained: () => void = () => {}
+    // A call of a turn before this one waits on nothing now (an answer is this turn's input).
+    this.openCalls.clear()
+    const open = this.openCalls
+    const watch = new StallWatch({
+      busy: () =>
+        early ||
+        frozenUnder() ||
+        open.size > 0 ||
+        this.approvals.size > 0 ||
+        this.background.length > 0 ||
+        this.waitingSince !== undefined,
+      onStall: (message) => {
+        console.warn(`thread ${this.spec.sessionId}: ${message}`)
+        stall.abort()
+      },
+    })
     // Answered, with a reply the person can read: done for everyone now, while Claude Code
     // guesses what they may write next (drain). A turn that owes a reply is asked for it in a
     // stream of its own, which ends the turn instead. False when it cannot end so now.
@@ -1865,6 +1889,8 @@ export class HarnessThread {
     }
     const mapper = new EventMapper(
       (event) => {
+        // Stopped for its quiet, the stream's own error on the way out is not the turn's.
+        if (watch.stalled && event.type === 'error') return
         // Parked, what is left is done again; handed over, it is up to where the next runner goes on.
         if (frozenUnder() && !this.handingOver) return
         if (answered(event)) {
@@ -1975,8 +2001,10 @@ export class HarnessThread {
             ? this.approvals.get(input.approvalId)
             : undefined
       const consume = async (stream: TurnStream) => {
+        const read = watch.streaming()
         try {
           for await (const part of stream) {
+            watch.heard()
             mapper.map(part)
             // A message given to the turn is read once the step's results went back and the
             // model writes again (arrivals.ts).
@@ -1984,10 +2012,15 @@ export class HarnessThread {
             const image = generatedImage(part)
             if (image) await this.keepImage(image)
           }
+        } catch (error) {
+          if (!watch.stalled) throw error
         } finally {
+          read()
           // A reply's last streamed text, before what ends the turn: a stream may end mid-reply.
           mapper.flush()
         }
+        // Stopped for its quiet: the turn fails with why (the catch below shows it).
+        if (watch.stalled) throw new Error(watch.stalled)
       }
       // A stream that may be the turn's last: answered there, the turn completes for everyone
       // while Claude Code guesses the person's next message (drain).
@@ -2037,7 +2070,7 @@ export class HarnessThread {
         const alone = text === ''
         const frozen = await live.agent.continueStream({
           session: live.session,
-          abortSignal: alone ? streamSignal() : signal,
+          abortSignal: alone ? streamSignal() : AbortSignal.any([signal, stall.signal]),
         })
         if (alone) {
           await consumeLast(frozen.fullStream)
@@ -2211,6 +2244,7 @@ export class HarnessThread {
       return { kind: 'done', result: { status: 'failed', error: message } }
     } finally {
       clearTimeout(staleTimer)
+      watch.stop()
     }
   }
 
@@ -3006,6 +3040,10 @@ export class HarnessThread {
    * went out before it, held ones (a done block's call) included.
    */
   private out(event: AgentEvent) {
+    // Tracked as events go out, held ones included: a done block's call and Codex's asks finish
+    // through the outbox, never through the turn's mapper.
+    if (event.type === 'tool.started') this.openCalls.add(event.toolCallId)
+    if (event.type === 'tool.finished') this.openCalls.delete(event.toolCallId)
     if (event.type === 'tool.finished') {
       this.toolStats.calls++
       if (event.isError) this.toolStats.errors++
