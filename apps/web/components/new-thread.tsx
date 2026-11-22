@@ -3,7 +3,7 @@ import { ArrowUp, Check, ChevronDown, CircleUser, FolderKanban, List, Plus, X } 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { defaultEffort, loginName, loginOf, type Effort } from '@brigade/contracts'
+import { defaultEffort, harnessName, loginName, loginOf, type Effort } from '@brigade/contracts'
 import {
   ComposerMenu,
   ComputerIcon,
@@ -54,6 +54,7 @@ import { Hint } from '@/components/ui/tooltip'
 import {
   api,
   computerName,
+  isAdmin,
   isList,
   preload,
   preloadSettled,
@@ -513,6 +514,19 @@ export function NewThread({
       !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()),
   )
   const account = pickAccount(usable, accountId)
+  // No account for its login, and one of the other's ready there: an admin is shown where to run
+  // it on that one, its profile, which changes it for the whole workspace (a Chief that was never
+  // in a thread moves by itself: src/chief-harness.ts in the API).
+  const other =
+    teammate.harness === 'claude_code' || teammate.harness === 'codex'
+      ? (accounts.data ?? []).find(
+          (a) =>
+            a.computer.id === computer?.id &&
+            a.provider === (teammate.harness === 'codex' ? 'claude_code' : 'codex') &&
+            (a.status === 'ready' || a.status === 'unverified') &&
+            !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()),
+        )?.provider
+      : undefined
 
   const loaded = computers.data && accounts.data
   const ready =
@@ -676,6 +690,24 @@ export function NewThread({
           Link your machine
         </Link>{' '}
         to run threads on it.
+      </>
+    )
+  else if (loaded && !account && other && isAdmin(me))
+    notice = (
+      <>
+        No {loginName(login)} account on {computerName(computer!)}.{' '}
+        <Link
+          href="/app/accounts"
+          onClick={(e) => clickSettings(e, '/app/accounts')}
+          className={link}
+        >
+          Add one
+        </Link>
+        , or{' '}
+        <Link href={`/app/teammates/${teammate.id}`} className={link}>
+          run {teammate.name} on {harnessName(other as 'claude_code' | 'codex')}
+        </Link>{' '}
+        from its profile.
       </>
     )
   else if (loaded && !account)
