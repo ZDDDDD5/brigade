@@ -525,7 +525,11 @@ test("a thread's holder drops the restore's mounts that boat retired on the host
   )
   // A holder started after the restore: nothing to drop.
   assert.equal(gone(join(dir, 'host'), join(dir, 'host')), '')
-  assert.match(THREAD_HELPER, /elif holder_stale "\$2" "\$P"; then\n/)
+  assert.match(THREAD_HELPER, /elif holder_stale "\$2" "\$P" && sync_plan "\$2" "\$P"; then\n/)
+  // A running thread keeps what it uses until it no longer answers, and its /tmp is bound over the
+  // old one, never unmounted first: not for a moment the host's.
+  assert.match(THREAD_HELPER, /if holder_busy "\$2"; then\n[^]*?holder_dead "\$2" "\$M"/)
+  assert.doesNotMatch(THREAD_HELPER, /umount -l \/(var\/)?tmp/)
 })
 
 test("each thread's containers publish on a loopback address of its own", () => {

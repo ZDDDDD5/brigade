@@ -514,26 +514,81 @@ lazy_gone() { # <host's mountinfo> <holder's mountinfo>
     $0 ~ / - [^ ]+ ascii-lazyfs/ && !(($3 " " $5) in host) && $5 != "/tmp" && $5 != "/var/tmp" { print $5 }' \\
     "$1" "$2" | tac
 }
-same() { [ "$(stat -L -c %d:%i "$1" 2>/dev/null)" = "$(stat -L -c %d:%i "$2" 2>/dev/null)" ]; }
+# Whether two paths are the same folder, both answering within 3 seconds (a hung lazyfs does not).
+same() { # <path> <path>
+  S=$(timeout -s KILL 3 stat -L -c %d:%i "$1" "$2" 2>/dev/null) || return 1
+  set -- $S
+  [ "$#" = 2 ] && [ "$1" = "$2" ]
+}
 # Whether the thread's holder still has what the host retired, or a /tmp or /var/tmp no longer the
 # thread's on the disk (they were on one of those, or were cut off with it).
 holder_stale() { # <thread> <pid>
   [ -n "$(lazy_gone /proc/self/mountinfo "/proc/$2/mountinfo")" ] ||
     ! same "/proc/$2/root/tmp" "$TMPS/$1/tmp" || ! same "/proc/$2/root/var/tmp" "$TMPS/$1/var-tmp"
 }
-# The holder's mounts brought in line with the host's, under the lock: what the host retired
-# unmounted in it too, lazily as the host did, so a process still inside goes on and lets go of it
-# as it ends; then its /tmp and /var/tmp bound again from where they now are on the disk. The
-# holder's PID namespace too, for its /proc, which umount reads.
+# Whether the thread runs anything besides its holder and the sleep it waits on: the processes of
+# its PID namespace, in the holder's own /proc. Busy when that cannot be read.
+holder_busy() { # <pid>
+  L=$(ls "/proc/$1/root/proc" 2>/dev/null) || return 0
+  for Q in $L; do
+    case "$Q" in *[!0-9]* | 1) continue ;; esac
+    [ "$(awk '/^PPid:/ { print $2 }' "/proc/$1/root/proc/$Q/status" 2>/dev/null)" = 1 ] &&
+      [ "$(tr '\\0' ' ' <"/proc/$1/root/proc/$Q/cmdline" 2>/dev/null)" = "sleep 2147483647 " ] && continue
+    return 0
+  done
+  return 1
+}
+# Whether a mount of the holder no longer answers: cut off (lazyfs aborted it) or hung.
+holder_dead() { # <pid> <mount point>
+  ! timeout -s KILL 3 stat -f -c %t "/proc/$1/root$2" >/dev/null 2>&1
+}
+# What sync_holder does for the holder, in G (the mounts to unmount) and B (/tmp or /var/tmp to bind
+# again), without taking from a running process what it still uses: a process keeps a mount
+# detached under it, but the path of its folder no longer resolves (getcwd fails) and a new client
+# no longer finds the sockets it listens on in /tmp. So while the thread runs something (its
+# preview, a turn), only what no longer answers anyway; once it runs nothing (as its next turn
+# starts), all of it. Whether there is anything to do.
+sync_plan() { # <thread> <pid>
+  G=$(lazy_gone /proc/self/mountinfo "/proc/$2/mountinfo")
+  B=""
+  if holder_busy "$2"; then
+    K=""
+    for M in $G; do
+      if holder_dead "$2" "$M"; then K="$K $M"; fi
+    done
+    G=$K
+    for V in /tmp /var/tmp; do
+      if holder_dead "$2" "$V"; then B="$B $V"; fi
+    done
+  else
+    same "/proc/$2/root/tmp" "$TMPS/$1/tmp" || B=/tmp
+    same "/proc/$2/root/var/tmp" "$TMPS/$1/var-tmp" || B="$B /var/tmp"
+  fi
+  [ -n "$G$B" ]
+}
+# The holder's mounts brought in line with the host's (sync_plan), under the lock: what the host
+# retired unmounted in it too, lazily as the host did; then the thread's /tmp and /var/tmp from the
+# disk bound over the old ones, which stay beneath, out of reach, until the holder ends: never for
+# a moment the host's. The holder's PID namespace too, for its /proc, which umount reads. Fails when
+# /tmp or /var/tmp is not the thread's on the disk after.
 sync_holder() { # <thread> <pid>
-  holder_stale "$1" "$2" || return 0
+  holder_stale "$1" "$2" && sync_plan "$1" "$2" || return 0
+  X=0
+  [ -z "$B" ] || install -d -m 1777 "$TMPS/$1/tmp" "$TMPS/$1/var-tmp" || { X=1; B=""; }
   nsenter --target "$2" --mount --pid -- sh -c '
     for M in $1; do umount -l "$M" 2>/dev/null || true; done
-    [ "$(stat -c %d:%i "$0/tmp" 2>/dev/null)" = "$(stat -c %d:%i /tmp 2>/dev/null)" ] ||
-      { umount -l /tmp 2>/dev/null || true; mount --bind "$0/tmp" /tmp; }
-    [ "$(stat -c %d:%i "$0/var-tmp" 2>/dev/null)" = "$(stat -c %d:%i /var/tmp 2>/dev/null)" ] ||
-      { umount -l /var/tmp 2>/dev/null || true; mount --bind "$0/var-tmp" /var/tmp; }
-  ' "$TMPS/$1" "$(lazy_gone /proc/self/mountinfo "/proc/$2/mountinfo")"
+    E=0
+    for V in $2; do
+      if [ "$V" = /tmp ]; then S=$0/tmp; else S=$0/var-tmp; fi
+      mount --bind "$S" "$V" || E=1
+    done
+    exit $E
+  ' "$TMPS/$1" "$G" "$B" || X=1
+  for V in $B; do
+    if [ "$V" = /tmp ]; then same "/proc/$2/root/tmp" "$TMPS/$1/tmp" || X=1
+    else same "/proc/$2/root/var/tmp" "$TMPS/$1/var-tmp" || X=1; fi
+  done
+  return "$X"
 }
 
 case "\${1:-}" in
@@ -590,11 +645,11 @@ case "\${1:-}" in
       [ -f "$STATE/$2" ] && [ -e "/run/netns/bt-$2" ] || make_net "$2"
       P=$(holder "$2") || { start_holder "$2" && P=$(holder "$2"); } || fail "the holder of thread $2 did not start"
       exec 9>&-
-    elif holder_stale "$2" "$P"; then
-      # Started while boat restored the disk: in line with the host first (sync_holder). A command
-      # that fails to be goes on as before.
+    elif holder_stale "$2" "$P" && sync_plan "$2" "$P"; then
+      # Started while boat restored the disk: in line with the host first (sync_holder), under the
+      # lock only when there is something to do. A command that fails to be goes on as before.
       lock
-      sync_holder "$2" "$P" || true
+      sync_holder "$2" "$P" || echo "brigade-thread: the holder of thread $2 could not be brought in line" >&2
       exec 9>&-
     fi
     U=$3
@@ -603,16 +658,18 @@ case "\${1:-}" in
       setpriv --reuid="$U" --regid="$U" --init-groups --inh-caps=-all -- env USER="$U" LOGNAME="$U" "$@"
     ;;
   sync) # [<thread>]: sync_holder for that thread's holder, else for every thread's: the runner's, once
-    # boat has restored the disk, so a thread nobody enters (a dev server going on) lets go too
+    # boat has restored the disk, so a quiet thread nobody enters lets go of its mounts too
     [ -z "\${2:-}" ] || thread_ok "$2"
     lock
+    R=0
     for F in "$STATE"/*.holder; do
       [ -f "$F" ] || continue
       N=$(basename "$F" .holder)
       [ -z "\${2:-}" ] || [ "$N" = "$2" ] || continue
       P=$(holder "$N") || continue
-      sync_holder "$N" "$P" || echo "brigade-thread: the holder of thread $N could not be brought in line" >&2
+      sync_holder "$N" "$P" || { echo "brigade-thread: the holder of thread $N could not be brought in line" >&2; R=1; }
     done
+    exit "$R"
     ;;
   down) # <thread> [purge]: its holder and network taken down when none of its processes is left (exit
     # 3 otherwise), its address kept; with purge (its folder is gone), its address and /tmp too

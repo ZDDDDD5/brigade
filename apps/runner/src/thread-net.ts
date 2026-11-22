@@ -186,10 +186,10 @@ export async function syncHolders() {
  * Boat restores a resumed computer's disk lazily, through mounts of its own that it retires once
  * the disk is whole, and a thread's holder started before keeps them in its own mount table,
  * until boat cuts them off and every path of the thread fails (the helper's lazy_gone). The
- * helper's `enter` drops them before each command; this drops them from every holder once the
- * restore is over, so a thread nobody enters (a dev server going on in it) lets go of them too:
- * `sync` some time after (boat retires its mounts within seconds of saying the disk restored),
- * and once more later. A runner that starts after the restore does so as well, for the holders
+ * helper's `enter` drops them before a command, once nothing runs in the thread or they no longer
+ * answer (sync_plan: never from under a running preview); this does the same for every holder
+ * once the restore is over, so a quiet thread nobody enters lets go of them too: `sync` some time
+ * after (boat retires its mounts within seconds of saying the disk restored), and once more later. A runner that starts after the restore does so as well, for the holders
  * the one before left. A restore only happens as the computer boots: watched for `forMs` after
  * the start. Returns how to stop watching.
  */

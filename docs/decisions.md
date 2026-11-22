@@ -906,12 +906,16 @@ fingerprint>"`, sending the page `no-store`, and adds a bridge script first in i
   no other namespace (with private or slave propagation alike, checked on a VM), and when boat cut one off on Nov 22,
   17 minutes after the restore, every command of the thread failed ("can't cd to" its own folder) until the holder was
   taken down. So `enter` first brings a holder in line with the host when they differ: the lazyfs mounts the host no
-  longer has at the same place are unmounted in it lazily, as the host did (a process still inside goes on), and its
-  `/tmp` and `/var/tmp`, bound from one of them, are bound again from the disk. That also mends a holder whose mount
-  was cut off already. The runner does the same for every holder (`brigade-thread sync`) a minute and five minutes
-  after boat says the disk is restored, and once after it starts, so a thread nobody enters (a dev server running in
-  it) lets go of them too. Starting holders again instead would kill what runs in them, and holding namespaces back
-  until the restore ends would leave threads without their own `/tmp` and processes for up to an hour.
+  longer has at the same place are unmounted in it lazily, as the host did, and its `/tmp` and `/var/tmp`, bound from
+  one of them, get the thread's folders on the disk bound over them (never unmounted first, so they are never the
+  host's for a moment). A mount detached under a running process breaks it all the same: the path of its folder no
+  longer resolves (`getcwd` fails) and new clients no longer find the sockets it listens on in `/tmp`. So while the
+  thread runs anything besides its holder (a preview, a turn), only the mounts that no longer answer are dropped
+  (`sync_plan`); the rest go once it runs nothing, as its next turn starts. That also mends a holder whose mount was cut
+  off already. The runner does the same for every holder (`brigade-thread sync`) a minute and five minutes after boat
+  says the disk is restored, and once after it starts, so a quiet thread nobody enters lets go of them too. Starting
+  holders again instead would kill what runs in them, and holding namespaces back until the restore ends would leave
+  threads without their own `/tmp` and processes for up to an hour.
 - **Files in a thread.** A file path in a teammate's reply (inline code such as `faq/support.md` or `src/a.ts:42`, or a
   relative Markdown link) opens in a panel beside the thread, in the desktop panel's place (a bottom sheet on narrow
   screens). `GET /api/threads/:id/file` serves a library path from the library, so it opens while the computer is
