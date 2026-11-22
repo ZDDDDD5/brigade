@@ -914,10 +914,11 @@ fingerprint>"`, sending the page `no-store`, and adds a bridge script first in i
   dropped (`sync_plan`); one that merely stalls is kept and tried again by the next command. The rest go once it runs
   nothing, as its next turn starts. Every command entering a holder not in line waits for the helper's lock, so none
   enters between that check and the change. An idle holder that cannot be mended in place (its `/tmp` folder deleted
-  under it) is started again, with nothing in it to lose. That also mends a holder whose mount was cut off already. The runner does the same for every holder (`brigade-thread sync`) a minute and five minutes after boat
-  says the disk is restored, and once after it starts, so a quiet thread nobody enters lets go of them too. Starting
-  holders again instead would kill what runs in them, and holding namespaces back until the restore ends would leave
-  threads without their own `/tmp` and processes for up to an hour.
+  under it) is started again, with nothing in it to lose. That also mends a holder whose mount was cut off already. The
+  runner does the same for every holder (`brigade-thread sync`) a minute and five minutes after boat says the disk is
+  restored, and once after it starts, so a quiet thread nobody enters lets go of them too. Starting every holder again
+  instead would kill what runs in them, and holding namespaces back until the restore ends would leave threads without
+  their own `/tmp` and processes for up to an hour.
 - **Files in a thread.** A file path in a teammate's reply (inline code such as `faq/support.md` or `src/a.ts:42`, or a
   relative Markdown link) opens in a panel beside the thread, in the desktop panel's place (a bottom sheet on narrow
   screens). `GET /api/threads/:id/file` serves a library path from the library, so it opens while the computer is
