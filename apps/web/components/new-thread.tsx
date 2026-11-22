@@ -3,7 +3,7 @@ import { ArrowUp, Check, ChevronDown, CircleUser, FolderKanban, List, Plus, X } 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { defaultEffort, loginName, loginOf, type Effort } from '@brigade/contracts'
+import { defaultEffort, harnessName, loginName, loginOf, type Effort } from '@brigade/contracts'
 import {
   ComposerMenu,
   ComputerIcon,
@@ -54,6 +54,7 @@ import { Hint } from '@/components/ui/tooltip'
 import {
   api,
   computerName,
+  isAdmin,
   isList,
   preload,
   preloadSettled,
@@ -436,7 +437,7 @@ export function NewThread({
 }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { me, projects } = useDashboard()
+  const { me, projects, reloadTeammates } = useDashboard()
   const pickable = projects.filter((p) => !p.archivedAt)
   // A project page's own project first; else the one picked last, while it is still pickable.
   const [last, remember] = useLastProject()
@@ -513,6 +514,30 @@ export function NewThread({
       !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()),
   )
   const account = pickAccount(usable, accountId)
+  // No account for its login, and one of the other's ready there: an admin can move it to that
+  // one (a Chief that never ran moves by itself, src/chief-harness.ts in the API).
+  const other =
+    teammate.harness === 'claude_code' || teammate.harness === 'codex'
+      ? (accounts.data ?? []).find(
+          (a) =>
+            a.computer.id === computer?.id &&
+            a.provider === (teammate.harness === 'codex' ? 'claude_code' : 'codex') &&
+            (a.status === 'ready' || a.status === 'unverified') &&
+            !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()),
+        )?.provider
+      : undefined
+  const [moving, setMoving] = useState(false)
+  async function moveTo(harness: 'claude_code' | 'codex') {
+    setMoving(true)
+    setError(undefined)
+    try {
+      await api(`/teammates/${teammate.id}`, { method: 'PATCH', body: { harness, model: null } })
+      await reloadTeammates()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+    setMoving(false)
+  }
 
   const loaded = computers.data && accounts.data
   const ready =
@@ -676,6 +701,28 @@ export function NewThread({
           Link your machine
         </Link>{' '}
         to run threads on it.
+      </>
+    )
+  else if (loaded && !account && other && isAdmin(me))
+    notice = (
+      <>
+        No {loginName(login)} account on {computerName(computer!)}.{' '}
+        <button
+          type="button"
+          className={link}
+          disabled={moving}
+          onClick={() => void moveTo(other as 'claude_code' | 'codex')}
+        >
+          Run {teammate.name} on {harnessName(other as 'claude_code' | 'codex')}
+        </button>{' '}
+        or{' '}
+        <Link
+          href="/app/accounts"
+          onClick={(e) => clickSettings(e, '/app/accounts')}
+          className={link}
+        >
+          add one
+        </Link>
       </>
     )
   else if (loaded && !account)

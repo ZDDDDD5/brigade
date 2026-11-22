@@ -1,9 +1,12 @@
-// The vendor CLIs that sign accounts in and read their limits: `claude` and `codex`. On macOS and
-// Linux, the ones on the PATH, as the person installed them. On Windows, where the people Brigade
-// runs for rarely have them, the copies the harnesses install for their turns anyway, in the same
-// folder (~/.ai-sdk-harness/.harness-bootstrap/<harness>), installed by the sign-in when missing:
-// the same files and the same `pnpm install`, so a turn's bootstrap finds them there, with nothing
-// downloaded twice. Turns themselves always run the harnesses' copies (harness/index.ts).
+// The vendor CLIs that sign accounts in and read their limits: `claude` and `codex`. A sign-in runs
+// the copy the harnesses install for their turns, on every system, in their folder
+// (~/.ai-sdk-harness/.harness-bootstrap/<harness>), installed by the sign-in when missing: the same
+// files and the same `pnpm install`, so a turn's bootstrap finds them there, with nothing
+// downloaded twice. A Mac's own `codex` can be older than the flags a sign-in uses: Codex before
+// October 2025 has no `login --device-auth`, and a sign-in on it failed at once with its usage.
+// Reading a machine's own login and limits keeps, on macOS and Linux, the ones on the PATH, as the
+// person installed them; on Windows, where they rarely have them, the harnesses' copies too.
+// Turns themselves always run the harnesses' copies (harness/index.ts).
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -82,14 +85,15 @@ async function install(vendor: Vendor) {
 
 /**
  * The command that runs a vendor's CLI, and the arguments it starts with: its name on macOS and
- * Linux; on Windows the harnesses' copy, installed first when `install` (a sign-in) and missing.
- * Undefined on Windows when it is not installed and `install` is false.
+ * Linux; on Windows, or for a sign-in (`own`) on any system, the harnesses' copy, installed first
+ * when `install` and missing. Undefined when that copy is wanted, is not installed and `install`
+ * is false.
  */
 export async function vendorCli(
   vendor: Vendor,
-  options: { install?: boolean } = {},
+  options: { install?: boolean; own?: boolean } = {},
 ): Promise<[string, string[]] | undefined> {
-  if (!WINDOWS) return [vendor, []]
+  if (!WINDOWS && !options.own) return [vendor, []]
   const found = installed(vendor)
   if (found || !options.install) return found
   let pending = installing.get(vendor)

@@ -311,12 +311,14 @@ class Login {
     await rm(join(this.dir, '.credentials.json'), { force: true })
   }
 
+  /** What it failed with: its `error:` line if it wrote one (a CLI's usage ends on a hint), else its last. */
   private lastLine() {
-    const last = strip(this.raw)
+    const lines = strip(this.raw)
       .split('\n')
-      .filter((l) => l.trim())
-      .at(-1)
-    return redact(last?.trim() ?? 'Sign-in failed').slice(0, 300)
+      .map((l) => l.trim())
+      .filter(Boolean)
+    const said = lines.find((l) => /^error\b/i.test(l)) ?? lines.at(-1)
+    return redact(said ?? 'Sign-in failed').slice(0, 300)
   }
 
   private finished = false
@@ -483,12 +485,17 @@ export class Accounts {
     let cli: [string, string[]] | undefined
     try {
       await mkdir(dir, { recursive: true, mode: 0o700 })
-      // On Windows, the CLI may have to be installed first: a minute or two, once. Antigravity's
-      // is the runner's own pinned copy, downloaded on first use.
+      // On a member's machine, the harnesses' own copy of the CLI, whatever version the machine
+      // has (vendor-cli.ts): it may have to be installed first, a minute or two, once. A cloud
+      // computer's are Brigade's own already. Antigravity's is the runner's own pinned copy,
+      // downloaded on first use.
       cli =
         account.provider === 'antigravity'
           ? [await installAgy(), []]
-          : await this.cliFor(account.provider === 'codex' ? 'codex' : 'claude', { install: true })
+          : await this.cliFor(account.provider === 'codex' ? 'codex' : 'claude', {
+              install: true,
+              own: !CLOUD,
+            })
     } finally {
       this.installing.delete(loginId)
     }

@@ -14,6 +14,7 @@ import {
 import { trackTurns } from '../analytics.js'
 import { handlePreviewCall, handlePreviewExpose, notePreviewEvents } from '../app-previews.js'
 import { audit } from '../audit.js'
+import { alignChief } from '../chief-harness.js'
 import { noteChildEvents } from '../children.js'
 import { noteChiefAnswered } from '../chief-answers.js'
 import { notePassEvents } from '../chief-pass.js'
@@ -349,6 +350,8 @@ async function hello(
       .catch((error) => console.error(`giving homes back on ${computer.id} failed`, error))
   if (computer.kind === 'member_machine' && computer.memberId && message.machineLogins) {
     await syncMachineLogins(computer, computer.memberId, message.machineLogins)
+    // A login found here may be the workspace's only one: its Chief runs on it.
+    if (await alignChief(computer.workspaceId)) hub.notifyList('teammates.updated')
   }
   // A runner that reconnects has lost any sign-in it was running. Those this hub never knew
   // (it restarted meanwhile) end too: an account is never left signing in.
@@ -496,7 +499,11 @@ async function noteLogin(
     actor: { type: 'member', id: login.memberId },
     action: message.ok ? 'account.signed_in' : 'account.sign_in_failed',
     target: { type: 'account', id: login.accountId },
+    // What the vendor's CLI said, redacted by the runner: the person saw it, support can too.
+    ...(!message.ok && message.error ? { data: { error: message.error.slice(0, 300) } } : {}),
   })
+  // The workspace's first login of its kind: its Chief runs on it.
+  if (message.ok && (await alignChief(conn.workspaceId))) hub.notifyList('teammates.updated')
   hub.sendToMember(login.memberId, {
     type: 'account.login',
     accountId: login.accountId,

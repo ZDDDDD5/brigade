@@ -47,7 +47,9 @@ runner-install-windows.ts`) to a file and runs it with Windows PowerShell 5.1, w
 - **The vendor CLIs** (`apps/runner/src/vendor-cli.ts`): signing in needs `claude` or `codex`, which the people
   Brigade runs for on Windows rarely have. The first sign-in installs the harnesses' own copy, in the folder their
   bootstrap uses (`~/.ai-sdk-harness/.harness-bootstrap/<harness>`), with the same files and `pnpm install`, so a
-  turn's bootstrap finds it there and nothing is downloaded twice.
+  turn's bootstrap finds it there and nothing is downloaded twice. A sign-in on a Mac or a Linux machine does the
+  same: the person's own `codex` can be too old for it (no `login --device-auth` before October 2025). Reading the
+  machine's own login and limits keeps the CLIs on the PATH there.
 - **Instructions**: teammates are told they are on Windows (`windowsComputer` in `instructions.ts`): Git Bash for
   Claude Code, PowerShell for Codex, Windows paths for Brigade's tools, line endings, what Linux has and Windows
   lacks.
