@@ -13,9 +13,11 @@ const WORKS = ['ready', 'unverified', 'exhausted'] as const
 /**
  * As onboarding's finish, for the member whose login just turned ready: an owner or admin of a
  * workspace with no teammate but its Chief, whose Chief has never been in a thread (its own or
- * one it was called into) and runs on Claude Code or Codex, while every account that member may
- * run on is of the other login. The Chief moves to that login, with its default model. Another
- * member's account never moves it: theirs alone, the owner could not run on it. True when it moved.
+ * one it was called into) and runs on Claude Code or Codex, while that member may run on the
+ * other login and nobody in the workspace has an account of the Chief's. The Chief moves to that
+ * login, with its default model. A plain member's account never moves it (theirs alone, the
+ * owner could not run on it), nor does an admin's while the owner has one of the Chief's login,
+ * so two people's logins never take it in turns. True when it moved.
  */
 export async function alignChief(workspaceId: string, memberId: string): Promise<boolean> {
   const member = await prisma.member.findFirst({
@@ -31,19 +33,21 @@ export async function alignChief(workspaceId: string, memberId: string): Promise
   // A team set up already: its owner chose what it runs on.
   if (!chief || team.length > 1) return false
   if (chief.harness !== 'claude_code' && chief.harness !== 'codex') return false
-  const ready = await prisma.account.findMany({
+  const harness = chief.harness === 'codex' ? 'claude_code' : 'codex'
+  const theirs = await prisma.account.count({
     where: {
       workspaceId,
       AND: [usableBy(memberId)],
-      provider: { in: ['claude_code', 'codex'] },
+      provider: harness,
       status: { in: [...WORKS] },
     },
-    select: { provider: true },
   })
-  if (ready.length === 0 || ready.some((a) => a.provider === chief.harness)) return false
-  const harness = chief.harness === 'codex' ? 'claude_code' : 'codex'
-  // In one statement: only as it was read, and only while it is in no thread, so a person
-  // changing it, or a thread starting with it, meanwhile wins.
+  if (theirs === 0) return false
+  // Nobody's account of the Chief's login: no thread can start on it, so none races this move.
+  const kept = { provider: chief.harness, status: { in: [...WORKS] } }
+  if ((await prisma.account.count({ where: { workspaceId, ...kept } })) > 0) return false
+  // In one statement: only as it was read, while it is in no thread and its login is still
+  // nobody's, so a person changing it, a thread or an account of its login meanwhile wins.
   const { count } = await prisma.teammate.updateMany({
     where: {
       id: chief.id,
@@ -51,6 +55,7 @@ export async function alignChief(workspaceId: string, memberId: string): Promise
       model: chief.model,
       sessions: { none: {} },
       threadSeats: { none: {} },
+      workspace: { accounts: { none: kept } },
     },
     data: { harness, model: null },
   })

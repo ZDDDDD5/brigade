@@ -44,8 +44,13 @@ const { alignChief } = await import('../src/chief-harness.js')
 
 const run = randomUUID().slice(0, 8)
 const org = `org-chief-harness-${run}`
-const users = { owner: `u-chief-owner-${run}`, member: `u-chief-member-${run}` }
+const users = {
+  owner: `u-chief-owner-${run}`,
+  admin: `u-chief-admin-${run}`,
+  member: `u-chief-member-${run}`,
+}
 const owner = `m-chief-owner-${run}`
+const admin = `m-chief-admin-${run}`
 const plain = `m-chief-member-${run}`
 
 before(async () => {
@@ -53,6 +58,7 @@ before(async () => {
   await prisma.organization.create({ data: { id: org, name: 'Chief harness', slug: org } })
   for (const [id, userId, role] of [
     [owner, users.owner, 'owner'],
+    [admin, users.admin, 'admin'],
     [plain, users.member, 'member'],
   ] as const) {
     await prisma.user.create({ data: { id: userId, name: role, email: `${userId}@example.com` } })
@@ -120,6 +126,31 @@ test("a member's own login never moves the workspace's Chief", { skip }, async (
   // Their Mac's Codex is theirs alone: the owner could not run Chief on it.
   const w = await workspace('claude_code', ['codex'], plain)
   assert.equal(await alignChief(w.workspaceId, plain), false)
+  assert.equal(await alignChief(w.workspaceId, owner), false)
+  assert.equal(await w.harness(), 'claude_code')
+})
+
+test("an admin's login never takes the Chief from the owner's", { skip }, async () => {
+  // The owner on Claude, an admin on Codex, each on a Mac of their own: Chief stays on Claude,
+  // however often either signs in again.
+  const w = await workspace('claude_code', ['claude_code'])
+  const adminMac = (
+    await w.db.computer.create({
+      data: { kind: 'member_machine', memberId: admin, name: 'Ada’s Mac' },
+    } as never)
+  ).id
+  await w.db.account.create({
+    data: {
+      memberId: admin,
+      computerId: adminMac,
+      provider: 'codex',
+      source: 'machine',
+      label: 'codex',
+      status: 'ready',
+      isDefault: true,
+    },
+  } as never)
+  assert.equal(await alignChief(w.workspaceId, admin), false)
   assert.equal(await alignChief(w.workspaceId, owner), false)
   assert.equal(await w.harness(), 'claude_code')
 })
