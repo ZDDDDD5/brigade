@@ -17,8 +17,9 @@ export default function SignIn() {
   const router = useRouter()
   const [error, setError] = useState<string>()
   // In Brigade.app's windows, the browser signs in (lib/brigade-app.ts): its own session is
-  // out of reach here. 'waiting': the browser is open; 'form': the form here after all.
-  const [app, setApp] = useState<'browser' | 'waiting' | 'form'>()
+  // out of reach here, and the form's Cloudflare check fails in the app. 'waiting': the
+  // browser is open.
+  const [app, setApp] = useState<'browser' | 'waiting'>()
   // In Brigade.app, with guests open (docs/guests.md): a window nobody ever signed in to starts
   // as a guest at once ('starting'); one someone signed out of offers it ('offered').
   const [guest, setGuest] = useState<'offered' | 'starting'>()
@@ -179,19 +180,13 @@ export default function SignIn() {
               >
                 Sign in with your browser
               </Button>
-              <p className="text-sm text-muted-foreground">
-                {app === 'waiting'
-                  ? 'Finish in your browser: Brigade.app signs in once you choose Open Brigade.app there.'
-                  : 'Already signed in to Brigade in your browser? Nothing to type.'}
-              </p>
+              {app === 'waiting' && (
+                <p className="text-sm text-muted-foreground">
+                  Finish in your browser: Brigade.app signs in once you choose Open Brigade.app
+                  there.
+                </p>
+              )}
               {error && <p className="text-sm text-destructive-text">{error}</p>}
-              <button
-                type="button"
-                onClick={() => setApp('form')}
-                className="self-center text-sm text-muted-foreground underline-offset-4 hover:underline"
-              >
-                Sign in here instead
-              </button>
               {guest && (linked || linking) && (
                 <button
                   type="button"
