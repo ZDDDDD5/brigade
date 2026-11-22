@@ -437,7 +437,7 @@ export function NewThread({
 }) {
   const router = useRouter()
   const pathname = usePathname()
-  const { me, projects, reloadTeammates } = useDashboard()
+  const { me, projects } = useDashboard()
   const pickable = projects.filter((p) => !p.archivedAt)
   // A project page's own project first; else the one picked last, while it is still pickable.
   const [last, remember] = useLastProject()
@@ -514,8 +514,9 @@ export function NewThread({
       !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()),
   )
   const account = pickAccount(usable, accountId)
-  // No account for its login, and one of the other's ready there: an admin can move it to that
-  // one (a Chief that never ran moves by itself, src/chief-harness.ts in the API).
+  // No account for its login, and one of the other's ready there: an admin is shown where to run
+  // it on that one, its profile, which changes it for the whole workspace (a Chief that was never
+  // in a thread moves by itself: src/chief-harness.ts in the API).
   const other =
     teammate.harness === 'claude_code' || teammate.harness === 'codex'
       ? (accounts.data ?? []).find(
@@ -526,18 +527,6 @@ export function NewThread({
             !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()),
         )?.provider
       : undefined
-  const [moving, setMoving] = useState(false)
-  async function moveTo(harness: 'claude_code' | 'codex') {
-    setMoving(true)
-    setError(undefined)
-    try {
-      await api(`/teammates/${teammate.id}`, { method: 'PATCH', body: { harness, model: null } })
-      await reloadTeammates()
-    } catch (e) {
-      setError((e as Error).message)
-    }
-    setMoving(false)
-  }
 
   const loaded = computers.data && accounts.data
   const ready =
@@ -707,22 +696,18 @@ export function NewThread({
     notice = (
       <>
         No {loginName(login)} account on {computerName(computer!)}.{' '}
-        <button
-          type="button"
-          className={link}
-          disabled={moving}
-          onClick={() => void moveTo(other as 'claude_code' | 'codex')}
-        >
-          Run {teammate.name} on {harnessName(other as 'claude_code' | 'codex')}
-        </button>{' '}
-        or{' '}
         <Link
           href="/app/accounts"
           onClick={(e) => clickSettings(e, '/app/accounts')}
           className={link}
         >
-          add one
+          Add one
         </Link>
+        , or{' '}
+        <Link href={`/app/teammates/${teammate.id}`} className={link}>
+          run {teammate.name} on {harnessName(other as 'claude_code' | 'codex')}
+        </Link>{' '}
+        from its profile.
       </>
     )
   else if (loaded && !account)

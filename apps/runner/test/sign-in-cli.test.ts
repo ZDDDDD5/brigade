@@ -1,4 +1,4 @@
-// A sign-in on a member's machine runs the harnesses' own copy of the vendor CLI, not the one on
+// A Codex sign-in on a member's machine runs the harnesses' own copy of the CLI, not the one on
 // the PATH: a Mac's Codex from before October 2025 has no `login --device-auth`, and each sign-in
 // on it failed at once, saying only "For more information, try '--help'." (vendor-cli.ts).
 import assert from 'node:assert/strict'
@@ -15,9 +15,13 @@ const { Accounts } = await import('../src/accounts.js')
 const { vendorCli } = await import('../src/vendor-cli.js')
 
 const codex = { id: 'acct-old', provider: 'codex', source: 'brigade' } as never
+const claude = { id: 'acct-claude', provider: 'claude_code', source: 'brigade' } as never
 
 /** A sign-in's result, with the CLI `cli` gives and what it was asked for. */
-async function signIn(cli: (vendor: string, options: object) => Promise<[string, string[]]>) {
+async function signIn(
+  cli: (vendor: string, options: object) => Promise<[string, string[]]>,
+  account = codex,
+) {
   const asked: object[] = []
   const done = new Promise<{ ok: boolean; error?: string }>((resolve) => {
     const accounts = new Accounts(
@@ -27,14 +31,19 @@ async function signIn(cli: (vendor: string, options: object) => Promise<[string,
         return cli(vendor, options)
       }) as never,
     )
-    void accounts.start('login', codex)
+    void accounts.start('login', account)
   })
   return { result: await done, asked }
 }
 
-test("a member's machine signs in with the harnesses' own CLI, installed if need be", async () => {
-  const { asked } = await signIn(async () => [process.execPath, ['-e', 'process.exit(1)']])
-  assert.deepEqual(asked, [{ install: true, own: true }])
+test("a member's machine signs in to Codex with the harnesses' own CLI, installed if need be", async () => {
+  const fail = async (): Promise<[string, string[]]> => [
+    process.execPath,
+    ['-e', 'process.exit(1)'],
+  ]
+  assert.deepEqual((await signIn(fail)).asked, [{ install: true, own: true }])
+  // Claude's sign-in, status and sign-out (a Mac's keychain) stay with the machine's own CLI.
+  assert.deepEqual((await signIn(fail, claude)).asked, [{ install: true, own: false }])
 })
 
 test("a CLI that refuses the sign-in's flags says why, not its usage's last line", async () => {

@@ -109,9 +109,9 @@ curl -fsSL https://api.brigade.lol/runner/install.sh | sh \
 ### Your AI login stays on your computer
 
 Sign in with **Sign in with Claude** or **Sign in with ChatGPT (Codex)** on the computer's card, or keep the `claude`
-or `codex` login you already have in your terminal: it shows up by itself. The first sign-in on a computer downloads
-Brigade's own copy of Claude Code or Codex, once, whatever version the computer has. Until it has started a thread,
-Chief runs on whichever of the two your workspace has. The runner removes API keys such as
+or `codex` login you already have in your terminal: it shows up by itself. The first ChatGPT sign-in on a computer
+downloads Brigade's own copy of Codex, once, whatever version the computer has. Until it has been in a thread, Chief
+runs on whichever of the two you have. The runner removes API keys such as
 `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` from what the teammate sees, so the work always runs on your plan, never on
 a key that bills per use.
 

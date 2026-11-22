@@ -485,16 +485,17 @@ export class Accounts {
     let cli: [string, string[]] | undefined
     try {
       await mkdir(dir, { recursive: true, mode: 0o700 })
-      // On a member's machine, the harnesses' own copy of the CLI, whatever version the machine
-      // has (vendor-cli.ts): it may have to be installed first, a minute or two, once. A cloud
-      // computer's are Brigade's own already. Antigravity's is the runner's own pinned copy,
-      // downloaded on first use.
+      // Codex on a member's machine: the harnesses' own copy, whatever version the machine has
+      // (vendor-cli.ts), which may have to be installed first, a minute or two, once. Claude's
+      // sign-in, status and sign-out (its keychain on a Mac) stay with the machine's CLI, off
+      // Windows; a cloud computer's are Brigade's own already. Antigravity's is the runner's own
+      // pinned copy, downloaded on first use.
       cli =
         account.provider === 'antigravity'
           ? [await installAgy(), []]
           : await this.cliFor(account.provider === 'codex' ? 'codex' : 'claude', {
               install: true,
-              own: !CLOUD,
+              own: account.provider === 'codex' && !CLOUD,
             })
     } finally {
       this.installing.delete(loginId)

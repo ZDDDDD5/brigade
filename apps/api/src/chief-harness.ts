@@ -1,7 +1,9 @@
-// The Chief runs on a login its workspace has. Onboarding moves it to Codex when that is the only
-// login there, but only while its page is open as the login turns ready: a Mac's own Codex login,
-// found by the runner minutes after the Mac was linked, came once the page was closed, and that
-// person met a Chief on Claude Code that nothing could start ("No Claude Code account").
+// The Chief runs on a login its workspace's owner has. Onboarding moves it to Codex when that is
+// the owner's or admin's only login, but only while its page is open as the login turns ready: a
+// Mac's own Codex login, found by the runner minutes after the Mac was linked, came once the page
+// was closed, and that person met a Chief on Claude Code that nothing could start ("No Claude Code
+// account"). This does what onboarding's finish does, whenever such a login turns ready.
+import { usableBy } from './account-sharing.js'
 import { audit } from './audit.js'
 import { prisma } from './db.js'
 
@@ -9,28 +11,47 @@ import { prisma } from './db.js'
 const WORKS = ['ready', 'unverified', 'exhausted'] as const
 
 /**
- * A Chief that never ran, on Claude Code or Codex, while its workspace has ready accounts of the
- * other login only: it moves to that one, with the login's default model. One that ran keeps
- * what it runs on, as does one on Pi or Antigravity. True when it moved.
+ * As onboarding's finish, for the member whose login just turned ready: an owner or admin of a
+ * workspace with no teammate but its Chief, whose Chief has never been in a thread (its own or
+ * one it was called into) and runs on Claude Code or Codex, while every account that member may
+ * run on is of the other login. The Chief moves to that login, with its default model. Another
+ * member's account never moves it: theirs alone, the owner could not run on it. True when it moved.
  */
-export async function alignChief(workspaceId: string): Promise<boolean> {
-  const chief = await prisma.teammate.findFirst({
-    where: { workspaceId, kind: 'chief', archivedAt: null },
-    select: { id: true, organizationId: true, harness: true, model: true },
+export async function alignChief(workspaceId: string, memberId: string): Promise<boolean> {
+  const member = await prisma.member.findFirst({
+    where: { id: memberId, removingAt: null },
+    select: { role: true },
   })
-  if (!chief || (chief.harness !== 'claude_code' && chief.harness !== 'codex')) return false
+  if (member?.role !== 'owner' && member?.role !== 'admin') return false
+  const team = await prisma.teammate.findMany({
+    where: { workspaceId, archivedAt: null },
+    select: { id: true, kind: true, organizationId: true, harness: true, model: true },
+  })
+  const chief = team.find((t) => t.kind === 'chief')
+  // A team set up already: its owner chose what it runs on.
+  if (!chief || team.length > 1) return false
+  if (chief.harness !== 'claude_code' && chief.harness !== 'codex') return false
   const ready = await prisma.account.findMany({
-    where: { workspaceId, provider: { in: ['claude_code', 'codex'] }, status: { in: [...WORKS] } },
+    where: {
+      workspaceId,
+      AND: [usableBy(memberId)],
+      provider: { in: ['claude_code', 'codex'] },
+      status: { in: [...WORKS] },
+    },
     select: { provider: true },
-    orderBy: { createdAt: 'asc' },
   })
-  const other = ready.find((a) => a.provider !== chief.harness)
-  if (!other || ready.some((a) => a.provider === chief.harness)) return false
-  if ((await prisma.session.count({ where: { teammateId: chief.id } })) > 0) return false
-  const harness = other.provider as 'claude_code' | 'codex'
-  // Only as it was read: a person changing it meanwhile wins.
+  if (ready.length === 0 || ready.some((a) => a.provider === chief.harness)) return false
+  const harness = chief.harness === 'codex' ? 'claude_code' : 'codex'
+  // In one statement: only as it was read, and only while it is in no thread, so a person
+  // changing it, or a thread starting with it, meanwhile wins.
   const { count } = await prisma.teammate.updateMany({
-    where: { id: chief.id, harness: chief.harness, model: chief.model },
+    where: {
+      id: chief.id,
+      harness: chief.harness,
+      model: chief.model,
+      sessions: { none: {} },
+      threadSeats: { none: {} },
+    },
     data: { harness, model: null },
   })
   if (count === 0) return false
@@ -40,7 +61,7 @@ export async function alignChief(workspaceId: string): Promise<boolean> {
     actor: { type: 'system', id: 'brigade' },
     action: 'teammate.updated',
     target: { type: 'teammate', id: chief.id },
-    data: { fields: ['harness', 'model'], harness, reason: 'only_login' },
+    data: { fields: ['harness', 'model'], harness, reason: 'only_login', memberId },
   })
   return true
 }

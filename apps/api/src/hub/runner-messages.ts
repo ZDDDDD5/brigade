@@ -350,8 +350,9 @@ async function hello(
       .catch((error) => console.error(`giving homes back on ${computer.id} failed`, error))
   if (computer.kind === 'member_machine' && computer.memberId && message.machineLogins) {
     await syncMachineLogins(computer, computer.memberId, message.machineLogins)
-    // A login found here may be the workspace's only one: its Chief runs on it.
-    if (await alignChief(computer.workspaceId)) hub.notifyList('teammates.updated')
+    // A login found here may be its owner's only one: their Chief runs on it.
+    if (await alignChief(computer.workspaceId, computer.memberId))
+      hub.notifyList('teammates.updated')
   }
   // A runner that reconnects has lost any sign-in it was running. Those this hub never knew
   // (it restarted meanwhile) end too: an account is never left signing in.
@@ -502,8 +503,9 @@ async function noteLogin(
     // What the vendor's CLI said, redacted by the runner: the person saw it, support can too.
     ...(!message.ok && message.error ? { data: { error: message.error.slice(0, 300) } } : {}),
   })
-  // The workspace's first login of its kind: its Chief runs on it.
-  if (message.ok && (await alignChief(conn.workspaceId))) hub.notifyList('teammates.updated')
+  // Its member's only login, an owner's or admin's: their Chief runs on it.
+  if (message.ok && (await alignChief(conn.workspaceId, login.memberId)))
+    hub.notifyList('teammates.updated')
   hub.sendToMember(login.memberId, {
     type: 'account.login',
     accountId: login.accountId,
