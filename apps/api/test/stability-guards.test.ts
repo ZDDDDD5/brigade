@@ -30,6 +30,7 @@ const {
   RULES,
   eventsWaitingProblems,
   silentTurnProblems,
+  silentFor,
   backlogMatters,
   backlogProblem,
   BACKLOG_AGE_MS,
@@ -183,6 +184,36 @@ describe('alerts on what waits', () => {
     assert.match(alert!.detail!, /s2 \(Santé quotidienne\)/)
     const [warning] = silentTurnProblems([thread('s1', 'c1', 90 * MIN)], names, now)
     assert.equal(warning!.severity, 'warning')
+  })
+
+  test('silence counts only while the runner is connected: a laptop waking does not flap it', () => {
+    // 2026-11-22: a thread silent since 22:59; its Mac's runner dropped at 00:28 and was back at
+    // 00:29. The alert ended at 00:28 and was raised again at 00:29 for the same thread.
+    const names = new Map([['mac', 'Mac (Acme, mac)']])
+    const at = (hhmm: string) => new Date(`2026-11-22T${hhmm}:00Z`).getTime()
+    const thread = (connectedAt: number) => ({
+      id: 's1',
+      title: 'Mission',
+      computerId: 'mac',
+      lastAt: new Date('2026-11-21T22:59:00Z'),
+      connectedAt: new Date(connectedAt),
+    })
+    // Connected all along since before the thread went quiet: an hour of silence alerts.
+    const [alert] = silentTurnProblems([thread(at('00:00') - 3 * 60 * MIN)], names, at('00:20'))
+    assert.equal(alert?.key, 'turn-silent:mac')
+    assert.match(alert!.detail!, /for 81 min/)
+    // Back a minute after dropping: not raised again, nor for the next hour.
+    assert.deepEqual(silentTurnProblems([thread(at('00:29'))], names, at('00:29')), [])
+    assert.deepEqual(silentTurnProblems([thread(at('00:29'))], names, at('01:28')), [])
+    // Connected an hour since, still silent: raised again, its silence counted from then.
+    const [again] = silentTurnProblems([thread(at('00:29'))], names, at('01:29'))
+    assert.match(again!.detail!, /for 60 min/)
+    assert.match(again!.detail!, /since 2026-11-21T22:59Z/)
+    // Before this fix, the last event alone counted: raised again at once.
+    assert.equal(
+      silentFor({ ...thread(at('00:29')), connectedAt: undefined }, at('00:29')),
+      90 * MIN,
+    )
   })
 
   test('a backlog of commands: by count, or by the age of the oldest', () => {
