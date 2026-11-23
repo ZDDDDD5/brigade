@@ -2,50 +2,78 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 // machine.logins, once the runner's own Claude Code is installed, is read when the API has
-// welcomed the connection, not before: a value read while away could be older than a hello since
-// (a sign-out meanwhile). It is not dropped either (src/send-once-connected.ts).
+// welcomed the connection and sent only on that same connection: a value read while away, or
+// across a reconnect, could be older than a hello since (a sign-out meanwhile). It is not dropped
+// either (src/send-once-connected.ts).
 const { sendOnceConnected } = await import('../src/send-once-connected.js')
 
-test('read and sent once welcomed: a sign-out while away is what is sent', async () => {
-  let connected = false
+const tick = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('read once welcomed: a sign-out while away is what is sent', async () => {
+  let welcome: number | undefined
   let signedIn = true
   const sent: boolean[] = []
-  // Away; signed out meanwhile; then welcomed (its hello said signed out too).
   setTimeout(() => (signedIn = false), 10)
-  setTimeout(() => (connected = true), 25)
-  const delivered = await sendOnceConnected(
-    () => connected,
-    async () => {
-      sent.push(signedIn)
+  setTimeout(() => (welcome = 1), 25)
+  const result = await sendOnceConnected(
+    () => welcome,
+    async () => signedIn,
+    (value) => {
+      sent.push(value)
       return true
     },
     { everyMs: 5, tries: 50 },
   )
-  assert.equal(delivered, true)
+  assert.equal(result, 'sent')
   assert.deepEqual(sent, [false], 'read once, after the welcome, signed out')
 })
 
-test('lost between the read and the send: it waits and reads again', async () => {
-  let reads = 0
-  const delivered = await sendOnceConnected(
-    () => true,
-    async () => ++reads >= 2,
+test('a reconnect during the read: nothing stale is sent on the new connection', async () => {
+  // Read on connection 1 (signed in); it drops; signed out; connection 2's hello says so.
+  let welcome: number | undefined = 1
+  let signedIn = true
+  const sent: boolean[] = []
+  const result = await sendOnceConnected(
+    () => welcome,
+    async () => {
+      const value = signedIn
+      welcome = undefined
+      signedIn = false
+      await tick(5)
+      welcome = 2
+      return value
+    },
+    (value) => {
+      sent.push(value)
+      return true
+    },
     { everyMs: 1, tries: 5 },
   )
-  assert.equal(delivered, true)
+  assert.equal(result, 'superseded')
+  assert.deepEqual(sent, [], 'the read from connection 1 is never sent')
+})
+
+test('refused on the same connection: it waits and reads again', async () => {
+  let reads = 0
+  let sends = 0
+  const result = await sendOnceConnected(
+    () => 1,
+    async () => ++reads,
+    () => ++sends >= 2,
+    { everyMs: 1, tries: 5 },
+  )
+  assert.equal(result, 'sent')
   assert.equal(reads, 2)
 })
 
-test('never welcomed: nothing read, it gives up after its tries', async () => {
+test('never welcomed: nothing read, it gives up', async () => {
   let reads = 0
-  const delivered = await sendOnceConnected(
-    () => false,
-    async () => {
-      reads++
-      return true
-    },
+  const result = await sendOnceConnected(
+    () => undefined,
+    async () => ++reads,
+    () => true,
     { everyMs: 1, tries: 3 },
   )
-  assert.equal(delivered, false)
+  assert.equal(result, 'gave up')
   assert.equal(reads, 0)
 })

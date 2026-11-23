@@ -126,6 +126,8 @@ export class Connection {
   /** Commands being taken now, by commandId: one sent again meanwhile waits for their ack. */
   private taking = new Set<string>()
   private ready = false
+  /** How many times the API welcomed this runner: a new one is a new hello, read anew. */
+  welcomes = 0
   private backoff = 1000
   /** The most added at random to each wait before connecting again (tests make it 0). */
   reconnectSpreadMs = RECONNECT_SPREAD_MS
@@ -210,6 +212,7 @@ export class Connection {
           )
         }
         this.ready = true
+        this.welcomes++
         // What it was told before, it forgot with the old connection.
         this.reported = new Map()
         this.flush()
@@ -553,6 +556,11 @@ export class Connection {
   /** Welcomed by the API and open: what is sent now is taken. */
   get connected() {
     return this.ready && this.ws?.readyState === WebSocket.OPEN
+  }
+
+  /** The welcome now, when connected: what was read under it goes only on the same connection. */
+  get welcome(): number | undefined {
+    return this.connected ? this.welcomes : undefined
   }
 
   sendIfConnected(message: RunnerToApi) {

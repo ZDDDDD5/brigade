@@ -879,9 +879,9 @@ async function start() {
       // Read once welcomed, never before: newer than any hello it follows (send-once-connected.ts).
       .then(() =>
         sendOnceConnected(
-          () => connection.connected,
-          async () =>
-            connection.sendIfConnected({ type: 'machine.logins', logins: await machineLogins() }),
+          () => connection.welcome,
+          () => machineLogins(),
+          (logins) => connection.sendIfConnected({ type: 'machine.logins', logins }),
         ),
       )
       .catch((error) => console.warn(`could not install Claude Code to read its login: ${error}`))
