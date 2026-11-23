@@ -608,8 +608,10 @@ test(
   { skip },
   async () => {
     const path = `Briefs/brief-${id}.md`
+    const db = scoped(scope)
+    const { saveLibraryFile, StaleMemory } = await import('../src/library.js')
     const text = async () =>
-      (await scoped(scope).document.findFirstOrThrow({ where: { path, deletedAt: null } })).text
+      (await db.document.findFirstOrThrow({ where: { path, deletedAt: null } })).text
     const save = async (body: string, extra: Record<string, unknown> = {}) => {
       const { id: uploadId, complete } = await runnerUpload('library', path, strToU8(body))
       assert.equal(complete.status, 200)
@@ -625,45 +627,88 @@ test(
       json({ path, uploadId: await ready('library', path, edited) }),
     )
     assert.ok(saved.status < 300, await saved.clone().text())
-    // Then another thread changes it too (a list's change, say): still a change this one has not seen.
-    const other = await prisma.session.create({
-      data: {
-        organizationId: scope.organizationId,
-        workspaceId: scope.workspaceId,
-        startedByMemberId: ids.member,
-        computerId: seat.computerId,
-        teammateId: seat.teammateId,
-        title: 'Other',
-        status: 'idle',
-        origin: 'member',
-      } as never,
-    })
-    const { saveLibraryFile } = await import('../src/library.js')
+    // Then the same thread adds a list line (add_item): its file on this computer lacks both.
     const latest = strToU8('# Brief\n\nKeep\n\nMore\n\n* [ ] Item\n')
     await saveLibraryFile(
-      scoped(scope),
+      db,
       scope,
       { type: 'teammate', id: seat.teammateId },
       { path, bytes: latest },
-      { sessionId: other.id },
+      { sessionId: seat.sessionId },
     )
     // The thread's stale copy, with the deleted line back: refused, with the file as it is now.
     const refused = await save('# Brief\n\nKeep\n\nDrop\n\nMore\n\nNew line\n')
     assert.equal(refused.ok, false)
-    assert.match(refused.error!, /Ada/)
     assert.match(refused.error!, new RegExp(`base: "${sha(latest)}"`))
     assert.ok(refused.error!.includes('* [ ] Item'), refused.error)
     assert.equal(await text(), new TextDecoder().decode(latest))
     // Built on an older text: refused too.
     assert.equal((await save('x', { base: sha(edited) })).ok, false)
-    // Built on the text it gave: saved.
+    // Built on the text it gave: saved; and its next save builds on that.
     const rebased = '# Brief\n\nKeep\n\nMore\n\n* [ ] Item\n\nNew line\n'
     const ok = await save(rebased, { base: sha(latest) })
     assert.equal(ok.ok, true, ok.error)
     assert.equal(await text(), rebased)
+    assert.equal((await save(`${rebased}\nAnother\n`)).ok, true)
+    // A person's edit, then another thread's save: refused, last by that thread's teammate.
+    await saveLibraryFile(db, scope, { type: 'member', id: ids.member }, { path, bytes: edited })
+    await saveLibraryFile(
+      db,
+      scope,
+      { type: 'teammate', id: seat.teammateId },
+      { path, bytes: latest },
+      { sessionId: 'another-thread' },
+    )
+    assert.equal((await save(rebased)).ok, false)
     // A save without the guard (a machine's render) is as before.
     const { id: uploadId } = await runnerUpload('library', path, strToU8('plain'))
     assert.equal((await libraryCall({ name: 'save', path, upload: { id: uploadId } })).ok, true)
+
+    // What it expects to replace holds as it commits: a file, or none.
+    const fresh = `Briefs/fresh-${id}.md`
+    const teammate = { type: 'teammate' as const, id: seat.teammateId }
+    await assert.rejects(
+      saveLibraryFile(
+        db,
+        scope,
+        teammate,
+        { path: fresh, bytes: strToU8('a') },
+        {},
+        {
+          expect: { sha256: sha(strToU8('gone')) },
+        },
+      ),
+      StaleMemory,
+      'no file where one was expected',
+    )
+    await saveLibraryFile(db, scope, teammate, { path: fresh, bytes: strToU8('made meanwhile') })
+    await assert.rejects(
+      saveLibraryFile(
+        db,
+        scope,
+        teammate,
+        { path: fresh, bytes: strToU8('b') },
+        {},
+        {
+          expect: { absent: true },
+        },
+      ),
+      StaleMemory,
+      'a file where none was expected',
+    )
+    // A base for a file that is gone: refused, not made anew.
+    const gone = await libraryCall({ name: 'delete', path: fresh })
+    assert.equal(gone.ok, true, gone.error)
+    const { id: up } = await runnerUpload('library', fresh, strToU8('c'))
+    const recreated = await libraryCall({
+      name: 'save',
+      path: fresh,
+      upload: { id: up },
+      guard: true,
+      base: sha(strToU8('made meanwhile')),
+    })
+    assert.equal(recreated.ok, false)
+    assert.match(recreated.error!, /Nothing is at/)
   },
 )
 

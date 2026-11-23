@@ -239,6 +239,11 @@ export async function saveLibraryFile(
     lease?: LibraryLease
     /** Only a new file: one there already, made meanwhile, stays as it is (and is returned). */
     createOnly?: boolean
+    /**
+     * What it must replace, checked again as it commits, else nothing is written (StaleMemory):
+     * the file with this SHA-256, or no file at all.
+     */
+    expect?: { sha256: string } | { absent: true }
   } = {},
 ): Promise<Awaited<ReturnType<typeof writeLibraryFile>>> {
   // A Markdown file is changed one save at a time: a list's lines are read, changed and written
@@ -427,7 +432,11 @@ async function writeLibraryFile(
     where: { kind: 'library', path: input.path, deletedAt: null },
   })
   if (options.createOnly && existing) return existing
-  if (options.baseSha && existing && existing.sha256 !== options.baseSha) throw new StaleMemory()
+  const expect = options.expect
+  if (expect && ('absent' in expect ? !!existing : existing?.sha256 !== expect.sha256))
+    throw new StaleMemory()
+  const baseSha = options.baseSha ?? (expect && 'sha256' in expect ? expect.sha256 : undefined)
+  if (baseSha && existing && existing.sha256 !== baseSha) throw new StaleMemory()
   // The same bytes again: nothing changed, nothing to record.
   if (
     existing &&
@@ -465,11 +474,11 @@ async function writeLibraryFile(
   // still this save's (a save past it changes nothing, and its object is never read).
   const commit = async (tx: Prisma.TransactionClient) => {
     await claimObject(tx, key)
-    if (existing && options.baseSha) {
+    if (existing && baseSha) {
       // Built on the text it read: written only if nobody saved it since, whichever way they
       // saved it (a JSON file's saves take no lock). Else nothing is, and the caller reads again.
       const { count } = await tx.document.updateMany({
-        where: { id, sha256: options.baseSha, deletedAt: null },
+        where: { id, sha256: baseSha, deletedAt: null },
         data: { ...fields, bytesStaleAt: null },
       })
       if (!count) throw new StaleMemory()
@@ -491,7 +500,14 @@ async function writeLibraryFile(
       },
     })
   }
-  const row = options.lease ? await options.lease.fence(commit) : await prisma.$transaction(commit)
+  const row = await (
+    options.lease ? options.lease.fence(commit) : prisma.$transaction(commit)
+  ).catch((error: unknown) => {
+    // Expected none, and one was made meanwhile at that path.
+    if (expect && error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+      throw new StaleMemory()
+    throw error
+  })
   await recordVersion(db, scope, { ...row, objectKey: key }, actor, {
     sessionId,
     ...(options.restoredFromId ? { restoredFromId: options.restoredFromId } : {}),
@@ -501,7 +517,7 @@ async function writeLibraryFile(
     actor,
     action: existing ? 'library.file_replaced' : 'library.file_added',
     target: { type: 'document', id: row.id },
-    data: { path: row.path, size: row.size, ...context },
+    data: { path: row.path, size: row.size, sha256: row.sha256, ...context },
   })
   void hubs.get(scope.workspaceId).notifyLibraryChanged()
   if (existing && !options.fromCollab && isMarkdown(row)) notifyCollab(row.id)

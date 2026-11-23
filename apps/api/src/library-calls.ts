@@ -11,12 +11,12 @@ import {
 } from '@brigade/contracts'
 import { HTTPException } from 'hono/http-exception'
 import { audit } from './audit.js'
-import { scoped, type Scope } from './db.js'
+import { scoped, type Scope, type ScopedDb } from './db.js'
 import { personEdits, saveTeammateDesignSystem } from './designs.js'
 import { hubs } from './hub.js'
 import { libraryChangeRefusal } from './library-changes.js'
 import { moveFolder, saveRefusal, teammateLibraryAccess, trashFolder } from './library-folders.js'
-import { othersSaves, trashLibraryFile } from './library-history.js'
+import { actorNames, trashLibraryFile } from './library-history.js'
 import {
   editMemory,
   moveLibraryFile,
@@ -165,19 +165,22 @@ export async function handleLibraryCall(
   const refusal = saveRefusal(teammate.name, access, op.path)
   if (refusal) return fail(refusal)
   const actor = { type: 'teammate' as const, id: teammate.id }
-  // save_to_library's guard: never over a change it has not seen. The check holds as it commits
-  // (baseSha): a save meanwhile refuses this one too.
-  let baseSha: string | undefined
-  if (op.guard || op.base) {
-    const { row: current, by } = await othersSaves(db, session, op.path)
-    if (op.base ? current?.sha256 !== op.base : by.length > 0)
-      return fail(await overwriteRefusal(scope, op.path, current, by))
-    baseSha = current?.sha256
+  // save_to_library's guard: never over a change it has not seen. What it may replace is checked
+  // again as it commits (expect): a save meanwhile refuses this one too.
+  const guarded = !!(op.guard || op.base)
+  let expect: { sha256: string } | { absent: true } | undefined
+  if (guarded) {
+    const check = await guardedBase(db, session, op.path, op.base)
+    if (!check.ok) return fail(await overwriteRefusal(db, scope, op.path, check.row))
+    expect = check.expect
   }
+  const context = { sessionId: session.id, ...(guarded ? { guardedBy: session.id } : {}) }
   const stale = async (error: unknown) => {
     if (!(error instanceof StaleMemory)) return false
-    const { row: current, by } = await othersSaves(db, session, op.path)
-    fail(await overwriteRefusal(scope, op.path, current, by))
+    const row = await db.document.findFirst({
+      where: { kind: 'library', path: op.path, deletedAt: null },
+    })
+    fail(await overwriteRefusal(db, scope, op.path, row))
     return true
   }
   let row
@@ -201,8 +204,8 @@ export async function handleLibraryCall(
           contentType: op.contentType ?? upload.contentType,
           upload: { key: uploadBytesKey(scope, upload), ...upload },
         },
-        { sessionId: session.id },
-        { baseSha },
+        context,
+        { expect },
       )
       await discardUpload(scope, upload.id)
     } catch (error) {
@@ -223,8 +226,8 @@ export async function handleLibraryCall(
         scope,
         actor,
         { path: op.path, bytes, contentType: op.contentType ?? null },
-        { sessionId: session.id },
-        { baseSha },
+        context,
+        { expect },
       )
     } catch (error) {
       if (await stale(error)) return
@@ -243,27 +246,70 @@ export async function handleLibraryCall(
 /** The library's text of a file save_to_library refuses to save over, at most this long. */
 const REFUSAL_TEXT_MAX = 200_000
 
+type LibraryRow = {
+  id: string
+  objectKey: string | null
+  size: number
+  sha256: string
+  contentType: string
+  updatedAt: Date
+  updatedByType: string | null
+  updatedById: string | null
+}
+
 /**
- * Why save_to_library saved nothing: who changed the file since this thread saved it, and the
- * file as it is now, to make the change on (the teammate's mirror may not have it yet).
+ * What a save_to_library save may replace: with `base`, the file with that SHA-256 (the one a
+ * refusal gave); else the file exactly as this thread last saved it whole with save_to_library,
+ * or, never having, a file nobody changed since the thread started, or no file. Anything else is
+ * a change it has not seen: a person's, another thread's, a list's (its own add_item included,
+ * which its file on this computer lacks too).
  */
-async function overwriteRefusal(
-  scope: Scope,
+async function guardedBase(
+  db: ScopedDb,
+  session: { id: string; createdAt: Date; workspaceId: string },
   path: string,
-  row: {
-    id: string
-    objectKey: string | null
-    size: number
-    sha256: string
-    contentType: string
-  } | null,
-  by: string[],
-) {
+  base: string | undefined,
+): Promise<
+  | { ok: true; expect: { sha256: string } | { absent: true } }
+  | { ok: false; row: LibraryRow | null }
+> {
+  const row = await db.document.findFirst({ where: { kind: 'library', path, deletedAt: null } })
+  if (base)
+    return row?.sha256 === base ? { ok: true, expect: { sha256: base } } : { ok: false, row }
+  if (!row) return { ok: true, expect: { absent: true } }
+  // Its last guarded save of this file: the audit entry is written with the save, before it
+  // answers, and names the SHA-256 it wrote.
+  const last = await db.auditEntry.findFirst({
+    where: {
+      workspaceId: session.workspaceId,
+      targetType: 'document',
+      targetId: row.id,
+      action: { in: ['library.file_added', 'library.file_replaced'] },
+      at: { gte: session.createdAt },
+      data: { path: ['guardedBy'], equals: session.id },
+    },
+    orderBy: { at: 'desc' },
+    select: { data: true },
+  })
+  const saved = (last?.data as { sha256?: unknown } | null)?.sha256
+  const unchanged =
+    typeof saved === 'string'
+      ? row.sha256 === saved
+      : row.updatedAt.getTime() <= session.createdAt.getTime()
+  return unchanged ? { ok: true, expect: { sha256: row.sha256 } } : { ok: false, row }
+}
+
+/**
+ * Why save_to_library saved nothing: who changed the file last, and the file as it is now, to
+ * make the change on (the teammate's mirror may not have it yet).
+ */
+async function overwriteRefusal(db: ScopedDb, scope: Scope, path: string, row: LibraryRow | null) {
   if (!row)
-    return `Nothing is at \`${path}\` in the library any more. Nothing was saved: save again without base to add it anew.`
-  const who = by.length ? by.join(', ') : 'Someone'
+    return `Nothing is at \`${path}\` in the library now: it was moved or deleted since. Nothing was saved. Save again without base to add it anew.`
+  const name = await actorNames(db, [{ type: row.updatedByType ?? '', id: row.updatedById ?? '' }])
+  const who = name(row.updatedByType, row.updatedById)?.name ?? 'Someone'
   const head =
-    `${who} changed \`${path}\` in the library since you last saved it, and your file would undo that. Nothing was saved. ` +
+    `\`${path}\` changed in the library since you last saved it (last by ${who}), and your file would undo that. Nothing was saved. ` +
     `Make your change on the library's file as it is now (SHA-256 ${row.sha256}), then save it with base: "${row.sha256}".`
   const text =
     row.size <= REFUSAL_TEXT_MAX &&
