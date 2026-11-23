@@ -45,7 +45,6 @@ import {
   type Teammate,
   type ThreadSummary,
 } from '@/lib/api'
-import { authClient } from '@/lib/auth-client'
 import { inDesktopApp } from '@/lib/brigade-app'
 import { computerTaken } from '@/lib/guest'
 import { detectDevice, type Device } from '@/lib/device'
@@ -57,15 +56,6 @@ import { useLive } from '@/lib/use-live'
 import { cn } from '@/lib/utils'
 import { Questions } from './questions'
 import { Shell } from './shell'
-
-const slugify = (name: string) =>
-  `${
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 40) || 'org'
-  }-${Math.random().toString(36).slice(2, 6)}`
 
 /**
  * The line of the workspace's Getting started list the setup thread works on, so the list shows
@@ -84,8 +74,8 @@ async function setupLine() {
 }
 
 /**
- * First run: name the project (its organization and first workspace), connect
- * an AI account, then meet the chief. Also where a new workspace is made, and
+ * First run: the project (its organization and first workspace) is made at once, named after
+ * the person, then they connect an AI account and meet the chief. Also where a new workspace is made, and
  * where a member without an AI account in this workspace is sent.
  */
 export default function Onboarding() {
@@ -135,14 +125,19 @@ export default function Onboarding() {
   }, [reload])
 
   // Someone invited and not in an organization yet: join one rather than start their own.
-  const [invitations, setInvitations] = useState<OpenInvitation[]>([])
+  // Undefined until read: without any, their project is made at once, with no form to fill.
+  // 'failed' when they could not be read: then nothing is made, since they may have some.
+  const [invitations, setInvitations] = useState<OpenInvitation[] | 'failed'>()
   const noOrganization = !!me && !me.activeOrganizationId
-  useEffect(() => {
-    if (!noOrganization) return
+  const readInvitations = useCallback(() => {
+    setInvitations(undefined)
     api<OpenInvitation[]>('/invitations')
       .then(setInvitations)
-      .catch(() => setInvitations([]))
-  }, [noOrganization])
+      .catch(() => setInvitations('failed'))
+  }, [])
+  useEffect(() => {
+    if (noOrganization) readInvitations()
+  }, [noOrganization, readInvitations])
 
   async function join(invitation: OpenInvitation) {
     setBusy(true)
@@ -156,27 +151,40 @@ export default function Onboarding() {
     setBusy(false)
   }
 
-  /** A new organization and its first workspace, both named after the project. */
-  async function createProject(form: FormData) {
+  /**
+   * Their own organization and its first workspace, both named after them ("Ada's workspace"):
+   * onboarding asks no name, and Settings › Workspace renames it. The API makes them once per
+   * person, so a second tab or a reload meanwhile makes no second one.
+   */
+  async function createProject() {
+    if (sending.current) return
+    sending.current = true
     setBusy(true)
     setError(undefined)
-    const name = String(form.get('name')).trim()
     try {
-      const { error } = await authClient.organization.create({ name, slug: slugify(name) })
-      if (error) throw new Error(error.message ?? 'Could not create your project')
-      // Reading /me makes the new organization the session's.
-      await api<Me>('/me')
-      await api('/workspaces', { body: { name } })
+      await api('/me/first-workspace', { body: {} })
       const next = await reload()
       setAsking(next?.onboardingAnswers === null)
     } catch (e) {
       setError((e as Error).message)
-      // An organization made before a later step failed is the one to go on with: shown
-      // again, this form would make another.
       await reload()
     }
     setBusy(false)
+    sending.current = false
   }
+
+  // Invited nowhere (read, not failed): their project is made straight away; and one whose setup
+  // was cut (a failure or a reload during it) is finished the same way. Once per page (a ref,
+  // for React's double effects in development); the API sees to other tabs.
+  const autoCreated = useRef(false)
+  const autoCreate =
+    (noOrganization && Array.isArray(invitations) && invitations.length === 0) || !!me?.setupPending
+  useEffect(() => {
+    if (!autoCreate || autoCreated.current) return
+    autoCreated.current = true
+    void createProject()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCreate])
 
   async function createWorkspace(form: FormData) {
     setBusy(true)
@@ -204,48 +212,77 @@ export default function Onboarding() {
     )
 
   if (!me.activeOrganizationId) {
+    if (invitations === 'failed')
+      return (
+        <Shell>
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-center text-sm text-destructive-text">
+              Could not reach Brigade. Check your connection and try again.
+            </p>
+            <Button onClick={readInvitations}>Try again</Button>
+          </div>
+        </Shell>
+      )
+    if (!invitations?.length)
+      return (
+        <Shell>
+          {error ? (
+            <div className="flex flex-col items-center gap-3">
+              <p className="text-center text-sm text-destructive-text">{error}</p>
+              <Button disabled={busy} onClick={() => void createProject()}>
+                Try again
+              </Button>
+            </div>
+          ) : (
+            <p className="text-center text-sm text-muted-foreground">Setting up your workspace…</p>
+          )}
+        </Shell>
+      )
     return (
       <Shell
-        title="What are you building?"
-        description="Name your project. Your AI team works on it, and you can rename it later."
+        title="You were invited"
+        description="Join your team, or start a workspace of your own."
       >
-        {invitations.length > 0 && (
-          <Card>
-            <CardContent className="flex flex-col gap-4">
-              <p className="text-sm text-muted-foreground">You were invited to join:</p>
-              {invitations.map((i) => (
-                <div key={i.id} className="flex items-center gap-3">
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate font-semibold">{i.organization}</span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      Invited by {i.invitedBy}
-                    </span>
-                  </div>
-                  <Button disabled={busy} onClick={() => void join(i)}>
-                    Join
-                  </Button>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
         <Card>
-          <CardContent>
-            <form onSubmit={onSubmit(createProject)} className="flex flex-col gap-5">
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="name">Project name</Label>
-                <Input id="name" name="name" placeholder="Acme" required autoFocus />
+          <CardContent className="flex flex-col gap-4">
+            {invitations.map((i) => (
+              <div key={i.id} className="flex items-center gap-3">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate font-semibold">{i.organization}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    Invited by {i.invitedBy}
+                  </span>
+                </div>
+                <Button disabled={busy} onClick={() => void join(i)}>
+                  Join
+                </Button>
               </div>
-              {error && <p className="text-sm text-destructive-text">{error}</p>}
-              <Button type="submit" size="lg" className="w-full" disabled={busy}>
-                Continue
-              </Button>
-            </form>
+            ))}
           </CardContent>
         </Card>
+        {error && <p className="text-center text-sm text-destructive-text">{error}</p>}
+        <Button variant="ghost" disabled={busy} onClick={() => void createProject()}>
+          Start my own workspace
+        </Button>
       </Shell>
     )
   }
+
+  if (me.setupPending)
+    return (
+      <Shell>
+        {error ? (
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-center text-sm text-destructive-text">{error}</p>
+            <Button disabled={busy} onClick={() => void createProject()}>
+              Try again
+            </Button>
+          </div>
+        ) : (
+          <p className="text-center text-sm text-muted-foreground">Setting up your workspace…</p>
+        )}
+      </Shell>
+    )
 
   if (me.activeWorkspaceId && !adding && asking)
     return (

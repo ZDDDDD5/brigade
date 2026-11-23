@@ -453,6 +453,8 @@ export type Me = {
   organizations: { id: string; name: string; slug: string; role: string }[]
   activeOrganizationId: string | null
   role: 'owner' | 'admin' | 'member' | 'viewer' | null
+  /** Their first workspace's setup was cut: onboarding finishes it (POST /me/first-workspace). */
+  setupPending?: boolean
   /** `logo`: its stored logo's version (workspaceLogoPath); null: its letter shows. */
   workspaces: { id: string; name: string; logo: string | null }[]
   activeWorkspaceId: string | null

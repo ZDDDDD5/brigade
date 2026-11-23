@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto'
 import {
   AccountDeletionCode,
+  CHIEF_NAME,
   CreateWorkspace,
   DeleteAccount,
   DeleteWorkspace,
@@ -72,6 +74,75 @@ async function accountToDelete(userId: string, email: string) {
   if (email.trim().toLowerCase() !== user.email.toLowerCase())
     throw new HTTPException(400, { message: 'Type your email address to confirm' })
   return user
+}
+
+/** For tests only: a failure after the first workspace's commit, as a cut request. */
+export const firstWorkspaceFaults: { afterCommit?: () => void | Promise<void> } = {}
+
+/**
+ * An organization made by POST /me/first-workspace whose workspace is not set up yet: marked in
+ * Organization.metadata, which nothing else writes, from its transaction until its setup is done.
+ */
+const SETUP_PENDING = JSON.stringify({ firstWorkspaceSetup: 'pending' })
+function setupPending(metadata: string | null) {
+  if (!metadata) return false
+  try {
+    return (
+      (JSON.parse(metadata) as { firstWorkspaceSetup?: string }).firstWorkspaceSetup === 'pending'
+    )
+  } catch {
+    return false
+  }
+}
+
+/** The name of someone's first workspace, and of its organization: "Ada's workspace". */
+export function firstWorkspaceName(userName: string) {
+  const first = userName.trim().split(/\s+/)[0]?.slice(0, 40)
+  return first && !first.includes('@') ? `${first}'s workspace` : 'My workspace'
+}
+
+const organizationSlug = (name: string) =>
+  `${
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40) || 'org'
+  }-${randomUUID().slice(0, 4)}`
+
+/**
+ * What a new workspace gets once made: its hub, its audit line, Chief, its Getting started list
+ * and its cloud computer.
+ */
+async function setUpWorkspace(
+  workspace: { id: string; organizationId: string; name: string },
+  memberId: string,
+  // Done again to finish a cut setup (POST /me/first-workspace): the audit line only once, and
+  // the hub only while it is not in its object yet.
+  again: { audit: boolean; placeHub: boolean } = { audit: true, placeHub: true },
+) {
+  const { organizationId } = workspace
+  // Its hub in an object of its own from the start (docs/workspace-hubs-plan.md), before
+  // anything below asks it for something.
+  if (again.placeHub) await placeNewHub(workspace.id)
+  if (again.audit)
+    await audit({
+      organizationId,
+      workspaceId: workspace.id,
+      actor: { type: 'member', id: memberId },
+      action: 'workspace.created',
+      target: { type: 'workspace', id: workspace.id },
+      data: { name: workspace.name },
+    })
+  await ensureChief(workspace)
+  // Its first list, so Lists shows from day one how lines go to teammates. A failed save
+  // leaves the workspace without it: nothing else needs it.
+  await seedGettingStarted({ organizationId, workspaceId: workspace.id }).catch((error) =>
+    console.warn(`workspaces: no getting-started list in ${workspace.id}: ${String(error)}`),
+  )
+  // Every workspace gets its own cloud computer (when a provider is configured), unless
+  // billing is on: then with its Cloud plan (src/billing.ts).
+  await createWorkspaceComputer(workspace)
 }
 
 export const workspaces = new Hono<AppEnv>()
@@ -156,6 +227,8 @@ export const workspaces = new Hono<AppEnv>()
       })),
       activeOrganizationId: membership ? orgId : null,
       role: membership?.role ?? null,
+      // Their first workspace's setup was cut (POST /me/first-workspace): onboarding asks again.
+      setupPending: membership?.role === 'owner' && setupPending(membership.organization.metadata),
       workspaces: workspaceList.map((w) => ({ id: w.id, name: w.name, logo: w.logo })),
       activeWorkspaceId: scope?.workspaceId ?? null,
       memberId: scope?.memberId ?? null,
@@ -303,31 +376,123 @@ export const workspaces = new Hono<AppEnv>()
       throw new HTTPException(403, { message: 'Only an owner or admin can create a workspace' })
     }
     const workspace = await prisma.workspace.create({ data: { organizationId, name } })
-    // Its hub in an object of its own from the start (docs/workspace-hubs-plan.md), before
-    // anything below asks it for something.
-    await placeNewHub(workspace.id)
     await prisma.authSession.update({
       where: { id: c.var.authSessionId },
       data: { activeWorkspaceId: workspace.id },
     })
-    await audit({
-      organizationId,
-      workspaceId: workspace.id,
-      actor: { type: 'member', id: member.id },
-      action: 'workspace.created',
-      target: { type: 'workspace', id: workspace.id },
-      data: { name },
-    })
-    await ensureChief(workspace)
-    // Its first list, so Lists shows from day one how lines go to teammates. A failed save
-    // leaves the workspace without it: nothing else needs it.
-    await seedGettingStarted({ organizationId, workspaceId: workspace.id }).catch((error) =>
-      console.warn(`workspaces: no getting-started list in ${workspace.id}: ${String(error)}`),
-    )
-    // Every workspace gets its own cloud computer (when a provider is configured), unless
-    // billing is on: then with its Cloud plan (src/billing.ts).
-    await createWorkspaceComputer(workspace)
+    await setUpWorkspace(workspace, member.id)
     return c.json({ id: workspace.id, name: workspace.name }, 201)
+  })
+
+  /**
+   * Onboarding's first step, with nothing to fill: someone in no organization gets one of their
+   * own and its first workspace, named after them, and the session moves there. Once per person,
+   * whatever the tabs or reloads: under a lock on them, the organization, its owner, the
+   * workspace and its Chief are made in one transaction, or found when made already. What
+   * follows (hub, Getting started list, cloud computer) stays marked pending on the organization
+   * until done: /me says so (setupPending), and onboarding calls again to finish it.
+   */
+  .post('/me/first-workspace', async (c) => {
+    const { userId, authSessionId } = c.var
+    const made = await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`first-workspace:${userId}`}, 0))`
+        // One this route left pending first, whichever organization is the oldest of theirs (an
+        // invitation taken meanwhile is not it), else the oldest.
+        const memberSelect = {
+          id: true,
+          organizationId: true,
+          role: true,
+          organization: true,
+        } as const
+        const existing =
+          (await tx.member.findFirst({
+            where: { userId, role: 'owner', organization: { metadata: SETUP_PENDING } },
+            orderBy: { createdAt: 'asc' },
+            select: memberSelect,
+          })) ??
+          (await tx.member.findFirst({
+            where: { userId },
+            orderBy: { createdAt: 'asc' },
+            select: memberSelect,
+          }))
+        if (existing) {
+          // Set up again only what this route made and left unfinished: never another
+          // organization's workspace, whoever they are in it.
+          const resume = existing.role === 'owner' && setupPending(existing.organization.metadata)
+          const workspace = await tx.workspace.findFirst({
+            where: { organizationId: existing.organizationId },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true, organizationId: true, name: true, hubMode: true },
+          })
+          return { created: false, resume, member: existing, workspace }
+        }
+        const user = await tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { name: true },
+        })
+        const name = firstWorkspaceName(user.name)
+        const organization = await tx.organization.create({
+          data: {
+            id: randomUUID(),
+            name,
+            slug: organizationSlug(name),
+            metadata: SETUP_PENDING,
+          },
+        })
+        const member = await tx.member.create({
+          data: { id: randomUUID(), organizationId: organization.id, userId, role: 'owner' },
+          select: { id: true, organizationId: true },
+        })
+        const workspace = await tx.workspace.create({
+          data: { organizationId: organization.id, name },
+          select: { id: true, organizationId: true, name: true, hubMode: true },
+        })
+        await tx.teammate.create({
+          data: {
+            organizationId: organization.id,
+            workspaceId: workspace.id,
+            name: CHIEF_NAME,
+            kind: 'chief',
+          },
+        })
+        return { created: true, resume: true, member, workspace }
+      },
+      { timeout: 15_000 },
+    )
+    const { created, resume, member, workspace } = made
+    // The session first: whatever follows fails, /me shows this workspace, and onboarding sees
+    // its setup pending (setupPending) and asks this route to finish it.
+    await prisma.authSession.update({
+      where: { id: authSessionId },
+      data: {
+        activeOrganizationId: member.organizationId,
+        ...(workspace && { activeWorkspaceId: workspace.id }),
+      },
+    })
+    if (created)
+      await audit({
+        organizationId: member.organizationId,
+        workspaceId: null,
+        actor: { type: 'member', id: member.id },
+        action: 'organization.created',
+        target: { type: 'organization', id: member.organizationId },
+        data: { name: workspace!.name },
+      })
+    if (resume && workspace) {
+      await firstWorkspaceFaults.afterCommit?.()
+      await setUpWorkspace(workspace, member.id, {
+        audit: created,
+        placeHub: workspace.hubMode !== 'object',
+      })
+      await prisma.organization.updateMany({
+        where: { id: member.organizationId, metadata: SETUP_PENDING },
+        data: { metadata: null },
+      })
+    }
+    return created
+      ? c.json({ created: true, id: workspace!.id, name: workspace!.name }, 201)
+      : c.json({ created: false })
   })
 
   /** Make another workspace of the active organization the session's scope. */
