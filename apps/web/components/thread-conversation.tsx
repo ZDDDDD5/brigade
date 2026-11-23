@@ -720,7 +720,11 @@ export function ThreadConversation({
         ),
     )
   }, [outgoing, seen, events])
-  const inThreadOut = pendingOut.filter(inThread)
+  // One marked not delivered while this thread was closed (its timer ran on, with no view to see
+  // the thread get it) shows only once the thread's latest events are in: it most often got
+  // there, and the loaded events then take it away, rather than it flashing red meanwhile.
+  const shownOut = eventsLoaded ? pendingOut : pendingOut.filter((o) => o.state !== 'failed')
+  const inThreadOut = shownOut.filter(inThread)
   const lastOut = inThreadOut.at(-1)
   // Once the thread has them, they go, and their files' previews with them.
   useEffect(() => {
@@ -1882,7 +1886,7 @@ export function ThreadConversation({
             <>
               {!atEnd && <JumpToEnd onClick={() => follower.toEnd(true)} />}
               <MessagesOnTheirWay
-                outgoing={pendingOut}
+                outgoing={shownOut}
                 onRetry={retryOutgoing}
                 onEdit={editOutgoing}
                 onDiscard={(messageId) => {
