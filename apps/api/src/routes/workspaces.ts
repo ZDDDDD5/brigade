@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import {
   AccountDeletionCode,
   CreateWorkspace,
@@ -72,6 +73,52 @@ async function accountToDelete(userId: string, email: string) {
   if (email.trim().toLowerCase() !== user.email.toLowerCase())
     throw new HTTPException(400, { message: 'Type your email address to confirm' })
   return user
+}
+
+/** The name of someone's first workspace, and of its organization: "Ada's workspace". */
+export function firstWorkspaceName(userName: string) {
+  const first = userName.trim().split(/\s+/)[0]?.slice(0, 40)
+  return first && !first.includes('@') ? `${first}'s workspace` : 'My workspace'
+}
+
+const organizationSlug = (name: string) =>
+  `${
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 40) || 'org'
+  }-${randomUUID().slice(0, 4)}`
+
+/**
+ * What a new workspace gets once made: its hub, its audit line, Chief, its Getting started list
+ * and its cloud computer.
+ */
+async function setUpWorkspace(
+  workspace: { id: string; organizationId: string; name: string },
+  memberId: string,
+) {
+  const { organizationId } = workspace
+  // Its hub in an object of its own from the start (docs/workspace-hubs-plan.md), before
+  // anything below asks it for something.
+  await placeNewHub(workspace.id)
+  await audit({
+    organizationId,
+    workspaceId: workspace.id,
+    actor: { type: 'member', id: memberId },
+    action: 'workspace.created',
+    target: { type: 'workspace', id: workspace.id },
+    data: { name: workspace.name },
+  })
+  await ensureChief(workspace)
+  // Its first list, so Lists shows from day one how lines go to teammates. A failed save
+  // leaves the workspace without it: nothing else needs it.
+  await seedGettingStarted({ organizationId, workspaceId: workspace.id }).catch((error) =>
+    console.warn(`workspaces: no getting-started list in ${workspace.id}: ${String(error)}`),
+  )
+  // Every workspace gets its own cloud computer (when a provider is configured), unless
+  // billing is on: then with its Cloud plan (src/billing.ts).
+  await createWorkspaceComputer(workspace)
 }
 
 export const workspaces = new Hono<AppEnv>()
@@ -303,31 +350,85 @@ export const workspaces = new Hono<AppEnv>()
       throw new HTTPException(403, { message: 'Only an owner or admin can create a workspace' })
     }
     const workspace = await prisma.workspace.create({ data: { organizationId, name } })
-    // Its hub in an object of its own from the start (docs/workspace-hubs-plan.md), before
-    // anything below asks it for something.
-    await placeNewHub(workspace.id)
     await prisma.authSession.update({
       where: { id: c.var.authSessionId },
       data: { activeWorkspaceId: workspace.id },
     })
-    await audit({
-      organizationId,
-      workspaceId: workspace.id,
-      actor: { type: 'member', id: member.id },
-      action: 'workspace.created',
-      target: { type: 'workspace', id: workspace.id },
-      data: { name },
-    })
-    await ensureChief(workspace)
-    // Its first list, so Lists shows from day one how lines go to teammates. A failed save
-    // leaves the workspace without it: nothing else needs it.
-    await seedGettingStarted({ organizationId, workspaceId: workspace.id }).catch((error) =>
-      console.warn(`workspaces: no getting-started list in ${workspace.id}: ${String(error)}`),
-    )
-    // Every workspace gets its own cloud computer (when a provider is configured), unless
-    // billing is on: then with its Cloud plan (src/billing.ts).
-    await createWorkspaceComputer(workspace)
+    await setUpWorkspace(workspace, member.id)
     return c.json({ id: workspace.id, name: workspace.name }, 201)
+  })
+
+  /**
+   * Onboarding's first step, with nothing to fill: someone in no organization gets one of their
+   * own and its first workspace, named after them, and the session moves there. Once per person,
+   * whatever the tabs or reloads: under a lock on them, someone who has an organization already
+   * is only moved to it (`created: false`).
+   */
+  .post('/me/first-workspace', async (c) => {
+    const { userId, authSessionId } = c.var
+    const made = await prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`first-workspace:${userId}`}, 0))`
+        const existing = await tx.member.findFirst({
+          where: { userId },
+          orderBy: { createdAt: 'asc' },
+          select: { organizationId: true },
+        })
+        if (existing) {
+          const workspace = await tx.workspace.findFirst({
+            where: { organizationId: existing.organizationId },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true },
+          })
+          return {
+            created: false as const,
+            organizationId: existing.organizationId,
+            workspaceId: workspace?.id ?? null,
+          }
+        }
+        const user = await tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { name: true },
+        })
+        const name = firstWorkspaceName(user.name)
+        const organization = await tx.organization.create({
+          data: { id: randomUUID(), name, slug: organizationSlug(name) },
+        })
+        const member = await tx.member.create({
+          data: { id: randomUUID(), organizationId: organization.id, userId, role: 'owner' },
+        })
+        const workspace = await tx.workspace.create({
+          data: { organizationId: organization.id, name },
+        })
+        return { created: true as const, organization, member, workspace }
+      },
+      { timeout: 15_000 },
+    )
+    if (!made.created) {
+      await prisma.authSession.update({
+        where: { id: authSessionId },
+        data: {
+          activeOrganizationId: made.organizationId,
+          ...(made.workspaceId && { activeWorkspaceId: made.workspaceId }),
+        },
+      })
+      return c.json({ created: false })
+    }
+    const { organization, member, workspace } = made
+    await prisma.authSession.update({
+      where: { id: authSessionId },
+      data: { activeOrganizationId: organization.id, activeWorkspaceId: workspace.id },
+    })
+    await audit({
+      organizationId: organization.id,
+      workspaceId: null,
+      actor: { type: 'member', id: member.id },
+      action: 'organization.created',
+      target: { type: 'organization', id: organization.id },
+      data: { name: organization.name },
+    })
+    await setUpWorkspace(workspace, member.id)
+    return c.json({ created: true, id: workspace.id, name: workspace.name }, 201)
   })
 
   /** Make another workspace of the active organization the session's scope. */

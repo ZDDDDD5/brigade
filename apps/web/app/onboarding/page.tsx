@@ -45,7 +45,6 @@ import {
   type Teammate,
   type ThreadSummary,
 } from '@/lib/api'
-import { authClient } from '@/lib/auth-client'
 import { inDesktopApp } from '@/lib/brigade-app'
 import { computerTaken } from '@/lib/guest'
 import { detectDevice, type Device } from '@/lib/device'
@@ -57,21 +56,6 @@ import { useLive } from '@/lib/use-live'
 import { cn } from '@/lib/utils'
 import { Questions } from './questions'
 import { Shell } from './shell'
-
-const slugify = (name: string) =>
-  `${
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 40) || 'org'
-  }-${Math.random().toString(36).slice(2, 6)}`
-
-/** The name of someone's first project, from their first name: "Ada's workspace". */
-const defaultProjectName = (userName: string) => {
-  const first = userName.trim().split(/\s+/)[0]
-  return first && !first.includes('@') ? `${first}'s workspace` : 'My workspace'
-}
 
 /**
  * The line of the workspace's Getting started list the setup thread works on, so the list shows
@@ -142,14 +126,18 @@ export default function Onboarding() {
 
   // Someone invited and not in an organization yet: join one rather than start their own.
   // Undefined until read: without any, their project is made at once, with no form to fill.
-  const [invitations, setInvitations] = useState<OpenInvitation[]>()
+  // 'failed' when they could not be read: then nothing is made, since they may have some.
+  const [invitations, setInvitations] = useState<OpenInvitation[] | 'failed'>()
   const noOrganization = !!me && !me.activeOrganizationId
-  useEffect(() => {
-    if (!noOrganization) return
+  const readInvitations = useCallback(() => {
+    setInvitations(undefined)
     api<OpenInvitation[]>('/invitations')
       .then(setInvitations)
-      .catch(() => setInvitations([]))
-  }, [noOrganization])
+      .catch(() => setInvitations('failed'))
+  }, [])
+  useEffect(() => {
+    if (noOrganization) readInvitations()
+  }, [noOrganization, readInvitations])
 
   async function join(invitation: OpenInvitation) {
     setBusy(true)
@@ -164,37 +152,31 @@ export default function Onboarding() {
   }
 
   /**
-   * A new organization and its first workspace, both named after the person ("Ada's workspace"):
-   * onboarding asks no name, and Settings › Workspace renames it.
+   * Their own organization and its first workspace, both named after them ("Ada's workspace"):
+   * onboarding asks no name, and Settings › Workspace renames it. The API makes them once per
+   * person, so a second tab or a reload meanwhile makes no second one.
    */
   async function createProject() {
-    if (!me || sending.current) return
+    if (sending.current) return
     sending.current = true
     setBusy(true)
     setError(undefined)
-    const name = defaultProjectName(me.user.name)
     try {
-      const { error } = await authClient.organization.create({ name, slug: slugify(name) })
-      if (error) throw new Error(error.message ?? 'Could not create your project')
-      // Reading /me makes the new organization the session's.
-      await api<Me>('/me')
-      await api('/workspaces', { body: { name } })
+      await api('/me/first-workspace', { body: {} })
       const next = await reload()
       setAsking(next?.onboardingAnswers === null)
     } catch (e) {
       setError((e as Error).message)
-      // An organization made before a later step failed is the one to go on with: tried
-      // again, this would make another.
       await reload()
     }
     setBusy(false)
     sending.current = false
   }
 
-  // Not invited anywhere: their project is made straight away, once (a ref, so React's
-  // double effects in development and a re-render while it runs make no second one).
+  // Invited nowhere (read, not failed): their project is made straight away. Once per page (a
+  // ref, for React's double effects in development); the API sees to other tabs.
   const autoCreated = useRef(false)
-  const autoCreate = noOrganization && invitations?.length === 0
+  const autoCreate = noOrganization && Array.isArray(invitations) && invitations.length === 0
   useEffect(() => {
     if (!autoCreate || autoCreated.current) return
     autoCreated.current = true
@@ -228,6 +210,17 @@ export default function Onboarding() {
     )
 
   if (!me.activeOrganizationId) {
+    if (invitations === 'failed')
+      return (
+        <Shell>
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-center text-sm text-destructive-text">
+              Could not reach Brigade. Check your connection and try again.
+            </p>
+            <Button onClick={readInvitations}>Try again</Button>
+          </div>
+        </Shell>
+      )
     if (!invitations?.length)
       return (
         <Shell>
