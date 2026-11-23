@@ -99,7 +99,8 @@ export const operations = {
     _hub: WorkspaceHub,
     input: { accountId: string; memberId: string; computerId: string; account: AccountRef },
     computer: { id: string; kind: string },
-  ) => (await logins()).startLogin(input, computer),
+    options?: { keepLive?: boolean },
+  ) => (await logins()).startLogin(input, computer, options),
   loginStates: async (_hub: WorkspaceHub, accountIds: string[]) =>
     (await logins()).loginStates(accountIds),
   submitLoginCode: async (

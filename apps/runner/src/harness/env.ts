@@ -90,6 +90,11 @@ export function usePersonPath(): void {
     '/opt/homebrew/bin',
     '/usr/local/bin',
     ...(process.env.PATH ?? '').split(delimiter),
+    // Last, so a codex of their own comes first: the one the ChatGPT app ships, for a Mac with
+    // only that app.
+    ...['/Applications', join(home, 'Applications')].map((apps) =>
+      join(apps, 'ChatGPT.app', 'Contents', 'Resources', 'codex-cli', 'bin'),
+    ),
   ]
   process.env.PATH = [...new Set(dirs.filter(Boolean))].join(delimiter)
 }

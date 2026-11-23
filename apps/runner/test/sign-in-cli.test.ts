@@ -2,7 +2,7 @@
 // the PATH: a Mac's Codex from before October 2025 has no `login --device-auth`, and each sign-in
 // on it failed at once, saying only "For more information, try '--help'." (vendor-cli.ts).
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -60,7 +60,35 @@ test("a CLI that refuses the sign-in's flags says why, not its usage's last line
 
 test('off Windows, the PATH CLI reads the machine, and the own copy is only there once installed', async () => {
   if (process.platform === 'win32') return
-  assert.deepEqual(await vendorCli('codex'), ['codex', []])
+  const bin = join(home, 'path-bin')
+  await mkdir(bin, { recursive: true })
+  await writeFile(join(bin, 'codex'), '#!/bin/sh\n', { mode: 0o755 })
+  assert.deepEqual(await vendorCli('codex', { path: bin }), ['codex', []])
   // Not installed in this home, and not asked to install: none.
-  assert.equal(await vendorCli('codex', { own: true }), undefined)
+  assert.equal(await vendorCli('codex', { own: true, path: bin }), undefined)
+})
+
+test("a Mac without the claude command (only the Claude app) signs in with the harnesses' copy", async () => {
+  if (process.platform === 'win32') return
+  const empty = join(home, 'empty-path')
+  await mkdir(empty, { recursive: true })
+  // Was ['claude', []] whatever the PATH held, and the sign-in failed: spawn claude ENOENT.
+  assert.equal(await vendorCli('claude', { path: empty }), undefined)
+  // Installed by then (a turn's bootstrap, or the sign-in's own install): that copy.
+  const cli = join(
+    home,
+    '.ai-sdk-harness',
+    '.harness-bootstrap',
+    'claude-code',
+    'node_modules',
+    '@anthropic-ai',
+    'claude-code',
+    'bin',
+  )
+  await mkdir(cli, { recursive: true })
+  await writeFile(join(cli, 'claude.exe'), '#!/bin/sh\n', { mode: 0o755 })
+  assert.deepEqual(await vendorCli('claude', { path: empty }), [join(cli, 'claude.exe'), []])
+  // A command of their own on the PATH still comes first.
+  await writeFile(join(empty, 'claude'), '#!/bin/sh\n', { mode: 0o755 })
+  assert.deepEqual(await vendorCli('claude', { path: empty }), ['claude', []])
 })

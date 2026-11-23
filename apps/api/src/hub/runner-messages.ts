@@ -35,7 +35,7 @@ import type { SessionStatus } from '../generated/prisma/enums.js'
 import { bringBackFromLater } from '../later.js'
 import { reopenThread } from '../thread-done.js'
 import { handleLibraryCall, handleMemoryTidy, handleMemoryUpdate } from '../library-calls.js'
-import { endLogin, loginById, loginsOnComputer, updateLogin } from '../logins.js'
+import { endLogin, loginById, loginsOnComputer, updateLogin, type PendingLogin } from '../logins.js'
 import { noteMailLeft } from '../mail/outcomes.js'
 import { noteGoalTurnEnded, noteMeasured } from '../goals.js'
 import { movesOn, onReleased } from '../move.js'
@@ -468,7 +468,30 @@ async function noteLogin(
     hub.sendToMember(login.memberId, last)
     return
   }
-  endLogin(login.loginId)
+  // Ended once its row says how (below): until then it stays, marked, so a retry that comes
+  // meanwhile finds it rather than starting another (logins.ts startLogin).
+  if (login.finishing) return
+  updateLogin(login.loginId, { finishing: true })
+  try {
+    await finishLogin(hub, conn, login, message)
+  } finally {
+    endLogin(login.loginId)
+  }
+  hub.sendToMember(login.memberId, {
+    type: 'account.login',
+    accountId: login.accountId,
+    state: message.ok ? 'done' : 'failed',
+    ...(message.error ? { error: message.error } : {}),
+  })
+}
+
+/** A sign-in's outcome on its account: its row, its tickets, its audit line, Chief. */
+async function finishLogin(
+  hub: WorkspaceHub,
+  conn: RunnerConn,
+  login: PendingLogin,
+  message: Extract<RunnerToApi, { type: 'account.login.done' }>,
+) {
   if (message.ok) {
     const resolved = await prisma.ticket.updateManyAndReturn({
       where: {
@@ -506,12 +529,6 @@ async function noteLogin(
   // The workspace owner's only login: their Chief runs on it.
   if (message.ok && (await alignChief(conn.workspaceId, login.memberId)))
     hub.notifyList('teammates.updated')
-  hub.sendToMember(login.memberId, {
-    type: 'account.login',
-    accountId: login.accountId,
-    state: message.ok ? 'done' : 'failed',
-    ...(message.error ? { error: message.error } : {}),
-  })
 }
 
 /**

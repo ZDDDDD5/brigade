@@ -15,6 +15,23 @@ export type PendingLogin = {
   email?: string
   /** The last progress message, so a dashboard that opens later can catch up. */
   last: Extract<ApiToBrowser, { type: 'account.login' }>
+  /**
+   * Its runner said it ended: kept until the account's row says so (noteLogin), so that no
+   * moment shows neither an attempt nor its outcome (startLogin's keepLive).
+   */
+  finishing?: boolean
+}
+
+/** Whether the account is signed in, as its row says: a seam for tests. */
+export const loginRows = {
+  ready: async (accountId: string) => {
+    const { prisma } = await import('./db.js')
+    const row = await prisma.account.findUnique({
+      where: { id: accountId },
+      select: { status: true },
+    })
+    return row?.status === 'ready'
+  },
 }
 
 /** The running hub's sign-ins, by id: kept with it, a sign-in outlives its hibernation. */
@@ -40,7 +57,10 @@ export const loginForAccount = (accountId: string) =>
 export const endLogin = (loginId: string) => logins().delete(loginId)
 
 /** Change a sign-in under way: its email, its last progress. */
-export function updateLogin(loginId: string, patch: Partial<Pick<PendingLogin, 'email' | 'last'>>) {
+export function updateLogin(
+  loginId: string,
+  patch: Partial<Pick<PendingLogin, 'email' | 'last' | 'finishing'>>,
+) {
   const login = logins().get(loginId)
   if (login) logins().set(loginId, { ...login, ...patch })
 }
@@ -54,13 +74,26 @@ export function loginsOnComputer(computerId: string) {
 
 /**
  * In the hub: start the vendor's sign-in on the computer, and tell the member's dashboards.
- * 'offline' when a member's machine is not connected.
+ * 'offline' when a member's machine is not connected. With `keepLive`, an attempt already under
+ * way for the account stands and is returned: a repeated request never replaces the attempt
+ * whose link the member may have opened. Checked and begun with no await between, so two at once
+ * make one.
  */
 export async function startLogin(
   input: Omit<PendingLogin, 'loginId' | 'last'>,
   computer: { id: string; kind: string },
+  options: { keepLive?: boolean } = {},
 ) {
   const hub = currentHub()
+  if (options.keepLive) {
+    if (loginForAccount(input.accountId)) return loginForAccount(input.accountId)!.last
+    // None under way: one that just succeeded has its row ready already (noteLogin ends an
+    // attempt only once its row is written), and is not started again.
+    if (await loginRows.ready(input.accountId)) return 'ready' as const
+    // Looked again after that wait, with none between this and beginLogin.
+    const live = loginForAccount(input.accountId)
+    if (live) return live.last
+  }
   const login = beginLogin(input)
   const sent = await hub.dispatch(computer, {
     type: 'account.login.start',

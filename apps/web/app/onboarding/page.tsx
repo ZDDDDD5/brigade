@@ -669,8 +669,10 @@ function ConnectAI({
   async function signIn(computerId: string, provider: Account['provider']) {
     setBusy(true)
     setError(undefined)
+    // One that never got through is signed in again by the API itself (POST /accounts), from
+    // its own rows: another click makes no second card.
     try {
-      await api('/accounts', { body: { computerId, provider } })
+      await api('/accounts', { body: { computerId, provider, retry: true } })
       await accounts.reload()
     } catch (e) {
       setError((e as Error).message)

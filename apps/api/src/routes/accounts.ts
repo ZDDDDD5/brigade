@@ -12,7 +12,7 @@ import { HTTPException } from 'hono/http-exception'
 import { isShared, mayManage, usableBy } from '../account-sharing.js'
 import { audit } from '../audit.js'
 import { featuresOfMember, requireFeature } from '../features.js'
-import type { ScopedDb } from '../db.js'
+import { prisma, type ScopedDb } from '../db.js'
 import { hubs } from '../hub.js'
 import {
   parseBody,
@@ -101,6 +101,7 @@ async function startLogin(
   scope: WorkspaceScope,
   account: AccountRow & { computerId: string },
   computer: { id: string; kind: string },
+  options?: { keepLive?: boolean },
 ) {
   const started = await hubs.get(scope.workspaceId).startLogin(
     {
@@ -110,6 +111,7 @@ async function startLogin(
       account: accountRef(account),
     },
     computer,
+    options,
   )
   if (started === 'offline') throw new HTTPException(409, { message: 'That computer is offline' })
 }
@@ -176,32 +178,70 @@ export const accounts = new Hono<AppEnv>()
             "This computer's Brigade is too old to sign in to Antigravity. It updates by itself after a quiet while; try again then.",
         })
     }
-    const count = await db.account.count({
-      where: { memberId: scope.memberId, provider: input.provider },
+    // Onboarding's retry, under a lock on the member, computer and provider: a sign-in of theirs
+    // that never got through (failed, or left signing in) is signed in again rather than joined
+    // by another row, whatever their dashboard had loaded, and two clicks at once make one row and
+    // one attempt (keepLive: one under way stands). Settings' Add, or a named account, adds one.
+    const where = {
+      organizationId: scope.organizationId,
+      workspaceId: scope.workspaceId,
+      memberId: scope.memberId,
+      provider: input.provider,
+    }
+    const { account, created, settled } = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`account-add:${scope.memberId}:${computer.id}:${input.provider}`}, 0))`
+      const unfinished =
+        !input.retry || input.label
+          ? null
+          : await tx.account.findFirst({
+              where: {
+                ...where,
+                computerId: computer.id,
+                source: 'brigade',
+                status: { in: ['needs_sign_in', 'signing_in'] },
+              },
+              orderBy: { createdAt: 'desc' },
+            })
+      if (unfinished) {
+        // Only while it is still unfinished: one whose attempt succeeded meanwhile (its row
+        // written ready outside this lock) stays ready, and no sign-in starts again.
+        const { count } = await tx.account.updateMany({
+          where: { id: unfinished.id, status: { in: ['needs_sign_in', 'signing_in'] } },
+          data: { status: 'signing_in' },
+        })
+        return {
+          account: await tx.account.findUniqueOrThrow({ where: { id: unfinished.id } }),
+          created: false,
+          settled: count === 0,
+        }
+      }
+      const count = await tx.account.count({ where })
+      const hasDefault = await tx.account.count({ where: { ...where, isDefault: true } })
+      return {
+        account: await tx.account.create({
+          data: {
+            ...where,
+            computerId: computer.id,
+            source: 'brigade',
+            label: input.label || `${providerName(input.provider)} account ${count + 1}`,
+            status: 'signing_in',
+            isDefault: hasDefault === 0,
+          },
+        }),
+        created: true,
+        settled: false,
+      }
     })
-    const hasDefault = await db.account.count({
-      where: { memberId: scope.memberId, provider: input.provider, isDefault: true },
-    })
-    const account = await db.account.create({
-      data: {
-        memberId: scope.memberId,
-        computerId: computer.id,
-        provider: input.provider,
-        source: 'brigade',
-        label: input.label || `${providerName(input.provider)} account ${count + 1}`,
-        status: 'signing_in',
-        isDefault: hasDefault === 0,
-      } as never,
-    })
-    await audit({
-      ...scope,
-      actor: { type: 'member', id: scope.memberId },
-      action: 'account.added',
-      target: { type: 'account', id: account.id },
-      data: { provider: account.provider, computerId: computer.id },
-    })
-    await startLogin(scope, account, computer)
-    return c.json({ id: account.id }, 201)
+    if (created)
+      await audit({
+        ...scope,
+        actor: { type: 'member', id: scope.memberId },
+        action: 'account.added',
+        target: { type: 'account', id: account.id },
+        data: { provider: account.provider, computerId: computer.id },
+      })
+    if (!settled) await startLogin(scope, account, computer, { keepLive: input.retry === true })
+    return c.json({ id: account.id }, created ? 201 : 200)
   })
 
   /** Sign an account in again, e.g. after its login expired. */
