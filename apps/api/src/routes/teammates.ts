@@ -15,6 +15,7 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { requireAccountManager } from '../apps.js'
 import { audit } from '../audit.js'
+import { planEntitled } from '../billing.js'
 import { computerStarting, desktopClipboard } from '../cloud.js'
 import type { ScopedDb } from '../db.js'
 import { COMPUTER_ASLEEP, watchDesktop } from '../desktop-proxy.js'
@@ -69,7 +70,11 @@ export const teammates = new Hono<AppEnv>()
    */
   .post('/:id/desktop', async (c) => {
     const { scope, db } = c.var
-    const { teammate, computer } = await teammateComputer(db, c.req.param('id'))
+    const found = await findTeammateComputer(db, c.req.param('id'))
+    // No cloud computer and no plan to have one: the screen offers Brigade Cloud (`noCloud`).
+    if (!found.computer && !(await planEntitled(scope.workspaceId)))
+      return c.json({ error: NO_CLOUD_COMPUTER, noCloud: true }, 409)
+    const { teammate, computer } = withComputer(found)
     if (
       computer.status !== 'running' &&
       (recorder(computer.id) === scope.memberId || c.req.query('wake') === '1')
@@ -380,17 +385,27 @@ async function refuseWithoutAntigravity(scope: { memberId: string; workspaceId: 
     throw new HTTPException(400, { message: 'Antigravity is not available in this workspace' })
 }
 
-async function teammateComputer(db: ScopedDb, id: string) {
+const NO_CLOUD_COMPUTER =
+  "This workspace has no cloud computer: its teammates run on members' machines"
+
+/** The teammate, and the workspace's cloud computer if it has one. */
+async function findTeammateComputer(db: ScopedDb, id: string) {
   const teammate = await db.teammate.findFirst({ where: { id, archivedAt: null } })
   if (!teammate) throw new HTTPException(404, { message: 'Teammate not found' })
   const computer = await db.computer.findFirst({
     where: { kind: 'cloud', status: { notIn: ['destroyed', 'error'] } },
   })
-  if (!computer)
-    throw new HTTPException(409, {
-      message: "This workspace has no cloud computer: its teammates run on members' machines",
-    })
   return { teammate, computer }
+}
+
+/** 409 without a cloud computer. */
+function withComputer<T, C>({ teammate, computer }: { teammate: T; computer: C | null }) {
+  if (!computer) throw new HTTPException(409, { message: NO_CLOUD_COMPUTER })
+  return { teammate, computer }
+}
+
+async function teammateComputer(db: ScopedDb, id: string) {
+  return withComputer(await findTeammateComputer(db, id))
 }
 
 async function memberName(db: ScopedDb, memberId: string) {

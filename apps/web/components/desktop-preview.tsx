@@ -1,6 +1,8 @@
 'use client'
 import { Maximize2, Minimize2, Moon, RotateCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { isAdmin, useMaybeDashboard } from '@/components/dashboard'
+import { ActivityIndicator } from '@/components/ui/activity-indicator'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Hint } from '@/components/ui/tooltip'
@@ -10,8 +12,9 @@ import {
   useKeyboardInset,
   useTouchScreen,
 } from '@/components/desktop-touch'
-import { api, ApiError } from '@/lib/api'
+import { api, ApiError, subscribeToCloud } from '@/lib/api'
 import type { DesktopInput } from '@/lib/desktop-input'
+import { useIsMac } from '@/lib/platform'
 import { useRememberedFlag } from '@/lib/use-remembered'
 import { cn } from '@/lib/utils'
 import { DesktopView, type DesktopConnection } from './desktop-view'
@@ -28,7 +31,8 @@ const RETRIES = 5
  * keyboard once this member has taken over, its controls in a toolbar floating
  * over its foot. On a touch screen, two fingers zoom, and with control the toolbar
  * adds a keyboard and copy and paste. A stopped cloud computer shows as asleep,
- * with Wake up.
+ * with Wake up. A workspace without Brigade Cloud has no screen to show: the teammate
+ * sleeps there, with an offer of Cloud.
  */
 export function DesktopScreen({
   source,
@@ -70,6 +74,8 @@ export function DesktopScreen({
   const [waiting, setWaiting] = useState<string>()
   /** The cloud computer is stopped: the screen offers Wake up. */
   const [asleep, setAsleep] = useState(false)
+  /** No cloud computer and no Cloud plan: the screen offers Brigade Cloud. */
+  const [noCloud, setNoCloud] = useState(false)
   /**
    * This member asked it to wake: ask with it until it is up. A ref, not state, so
    * that ending it does not ask again (a refused wake keeps its error on screen).
@@ -93,6 +99,7 @@ export function DesktopScreen({
         if (!live) return
         setWaiting(undefined)
         setAsleep(false)
+        setNoCloud(false)
         waking.current = false
         setConnection(r)
       })
@@ -109,7 +116,13 @@ export function DesktopScreen({
         }
         setWaiting(undefined)
         waking.current = false
-        if (e instanceof ApiError && (e.body as { asleep?: boolean } | undefined)?.asleep) {
+        const body =
+          e instanceof ApiError
+            ? (e.body as { asleep?: boolean; noCloud?: boolean } | undefined)
+            : undefined
+        setNoCloud(!!body?.noCloud)
+        if (body?.noCloud) return
+        if (body?.asleep) {
           setAsleep(true)
           return
         }
@@ -161,6 +174,7 @@ export function DesktopScreen({
   }
 
   const sleeping = asleep && !connection && !waiting
+  const offer = noCloud && !connection && !waiting
 
   const screen = connection ? (
     <DesktopView
@@ -176,6 +190,8 @@ export function DesktopScreen({
       }}
       onLost={onLost}
     />
+  ) : offer ? (
+    <CloudOffer teammateName={teammateName} size={mode === 'open' ? 'large' : 'small'} />
   ) : sleeping ? (
     <div className="flex flex-col items-center gap-3 p-4 text-center">
       <Moon aria-hidden className="size-5 text-muted-foreground" />
@@ -205,11 +221,12 @@ export function DesktopScreen({
   )
 
   // Asleep, the thumbnail holds Wake up: a button inside the one that opens the computer cannot be.
-  if (mode === 'thumbnail' && sleeping)
+  // Without Cloud, nothing opens, and nothing is viewed either.
+  if (mode === 'thumbnail' && (sleeping || offer))
     return (
       <div className="relative flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border bg-black">
         {screen}
-        {badge}
+        {!offer && badge}
       </div>
     )
 
@@ -290,5 +307,85 @@ export function DesktopScreen({
         )}
       </div>
     </section>
+  )
+}
+
+/**
+ * In place of the screen, without Brigade Cloud: the teammate asleep, since it works only while
+ * a member's machine is awake, and Cloud's Starter plan to keep it working. Members who may not
+ * subscribe are told who can.
+ */
+function CloudOffer({ teammateName, size }: { teammateName: string; size: 'small' | 'large' }) {
+  const dashboard = useMaybeDashboard()
+  const admin = !dashboard || isAdmin(dashboard.me)
+  const mac = useIsMac()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const large = size === 'large'
+
+  const subscribe = () => {
+    setBusy(true)
+    setError(undefined)
+    subscribeToCloud('billing', 'starter')
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div
+      className={cn(
+        'flex flex-col items-center text-center',
+        large ? 'max-w-sm gap-2 p-6' : 'gap-1 p-3',
+      )}
+    >
+      <SleepingTeammate className={large ? 'h-20 w-32' : 'h-11 w-17'} />
+      <p className={cn('font-semibold text-zinc-100', large ? 'mt-2 text-lg' : 'text-sm')}>
+        {teammateName} sleeps when your {mac ? 'Mac' : 'computer'} does
+      </p>
+      <p className={cn('text-zinc-400', large ? 'text-sm' : 'text-xs')}>
+        Give it a computer that never closes its lid.
+      </p>
+      {admin ? (
+        <Button
+          type="button"
+          size={large ? 'default' : 'sm'}
+          className={large ? 'mt-3' : 'mt-1.5'}
+          disabled={busy}
+          onClick={subscribe}
+        >
+          {busy && <ActivityIndicator label="Opening checkout" />}
+          Wake it up on Cloud
+        </Button>
+      ) : (
+        <p className={cn('text-zinc-400', large ? 'mt-3 text-sm' : 'mt-1.5 text-xs')}>
+          Ask an owner or admin to get Brigade Cloud.
+        </p>
+      )}
+      {error && <p className="text-xs text-destructive-text">{error}</p>}
+    </div>
+  )
+}
+
+/** A teammate asleep: a soft blob with closed eyes, and two z's in the brand's colour. */
+function SleepingTeammate({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 80 52" aria-hidden className={className}>
+      <ellipse cx="34" cy="34" rx="22" ry="17" fill="#3b3a52" />
+      <path
+        d="M24 33 q4 3 8 0 M38 33 q4 3 8 0"
+        stroke="#9e9bc0"
+        strokeWidth="2"
+        fill="none"
+        strokeLinecap="round"
+      />
+      <g className="fill-primary" fontWeight="700">
+        <text x="56" y="16" fontSize="11">
+          z
+        </text>
+        <text x="64" y="8" fontSize="8">
+          z
+        </text>
+      </g>
+    </svg>
   )
 }
