@@ -206,3 +206,53 @@ test('only who added a shared account changes it; an admin may remove it', { ski
   const me = (await (await call('bob', '/api/me')).json()) as { aiReady: boolean }
   assert.equal(me.aiReady, false)
 })
+
+test(
+  'signing in again reuses their own unfinished account, never another’s, one row at once',
+  { skip },
+  async () => {
+    const db = scoped({ organizationId: org, workspaceId })
+    // Bob's own sign-in on the cloud computer that failed: listed to Cat too, never hers to retry.
+    const bobs = await db.account.create({
+      data: {
+        memberId: member('bob'),
+        computerId: cloud,
+        provider: 'codex',
+        source: 'brigade',
+        label: 'bobFailed',
+        status: 'needs_sign_in',
+        isDefault: true,
+      },
+    } as never)
+    const cats = () =>
+      prisma.account.findMany({
+        where: { workspaceId, memberId: member('cat'), provider: 'codex' },
+      })
+    try {
+      // No runner here: the sign-in itself cannot start (409), the rows are what is checked.
+      const add = () =>
+        call('cat', '/api/accounts', { body: { computerId: cloud, provider: 'codex' } })
+      await Promise.all([add(), add()])
+      assert.equal((await cats()).length, 1, 'two clicks at once make one')
+      await prisma.account.updateMany({
+        where: { workspaceId, memberId: member('cat'), provider: 'codex' },
+        data: { status: 'needs_sign_in' },
+      })
+      await add()
+      const after = await cats()
+      assert.equal(after.length, 1, 'a failed one is signed in again')
+      assert.equal(after[0]!.status, 'signing_in')
+      const bob = await prisma.account.findUniqueOrThrow({ where: { id: bobs.id } })
+      assert.equal(bob.status, 'needs_sign_in', 'Bob’s stays his')
+      // Named, it is one more on purpose.
+      await call('cat', '/api/accounts', {
+        body: { computerId: cloud, provider: 'codex', label: 'Second' },
+      })
+      assert.equal((await cats()).length, 2)
+    } finally {
+      await prisma.account.deleteMany({
+        where: { workspaceId, provider: 'codex' },
+      })
+    }
+  },
+)

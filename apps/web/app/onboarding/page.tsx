@@ -669,18 +669,10 @@ function ConnectAI({
   async function signIn(computerId: string, provider: Account['provider']) {
     setBusy(true)
     setError(undefined)
-    // One that never got through (a sign-in that failed, or was left) is tried again: another
-    // click makes no second card of the same account.
-    const unfinished = (accounts.data ?? []).find(
-      (a) =>
-        a.source === 'brigade' &&
-        a.provider === provider &&
-        a.computer.id === computerId &&
-        a.status === 'needs_sign_in',
-    )
+    // One that never got through is signed in again by the API itself (POST /accounts), from
+    // its own rows: another click makes no second card.
     try {
-      if (unfinished) await api(`/accounts/${unfinished.id}/sign-in`, { method: 'POST' })
-      else await api('/accounts', { body: { computerId, provider } })
+      await api('/accounts', { body: { computerId, provider } })
       await accounts.reload()
     } catch (e) {
       setError((e as Error).message)

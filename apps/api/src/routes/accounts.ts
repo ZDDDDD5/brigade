@@ -12,7 +12,7 @@ import { HTTPException } from 'hono/http-exception'
 import { isShared, mayManage, usableBy } from '../account-sharing.js'
 import { audit } from '../audit.js'
 import { featuresOfMember, requireFeature } from '../features.js'
-import type { ScopedDb } from '../db.js'
+import { prisma, type ScopedDb } from '../db.js'
 import { hubs } from '../hub.js'
 import {
   parseBody,
@@ -176,32 +176,63 @@ export const accounts = new Hono<AppEnv>()
             "This computer's Brigade is too old to sign in to Antigravity. It updates by itself after a quiet while; try again then.",
         })
     }
-    const count = await db.account.count({
-      where: { memberId: scope.memberId, provider: input.provider },
+    // Under a lock on the member, computer and provider: a sign-in of theirs that never got
+    // through (failed, or left signing in) is signed in again rather than joined by another row,
+    // whatever their dashboard had loaded, and two clicks at once make one. Not when they name a
+    // new account (label): that is one more on purpose.
+    const where = {
+      organizationId: scope.organizationId,
+      workspaceId: scope.workspaceId,
+      memberId: scope.memberId,
+      provider: input.provider,
+    }
+    const { account, created } = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`account-add:${scope.memberId}:${computer.id}:${input.provider}`}, 0))`
+      const unfinished = input.label
+        ? null
+        : await tx.account.findFirst({
+            where: {
+              ...where,
+              computerId: computer.id,
+              source: 'brigade',
+              status: { in: ['needs_sign_in', 'signing_in'] },
+            },
+            orderBy: { createdAt: 'desc' },
+          })
+      if (unfinished)
+        return {
+          account: await tx.account.update({
+            where: { id: unfinished.id },
+            data: { status: 'signing_in' },
+          }),
+          created: false,
+        }
+      const count = await tx.account.count({ where })
+      const hasDefault = await tx.account.count({ where: { ...where, isDefault: true } })
+      return {
+        account: await tx.account.create({
+          data: {
+            ...where,
+            computerId: computer.id,
+            source: 'brigade',
+            label: input.label || `${providerName(input.provider)} account ${count + 1}`,
+            status: 'signing_in',
+            isDefault: hasDefault === 0,
+          },
+        }),
+        created: true,
+      }
     })
-    const hasDefault = await db.account.count({
-      where: { memberId: scope.memberId, provider: input.provider, isDefault: true },
-    })
-    const account = await db.account.create({
-      data: {
-        memberId: scope.memberId,
-        computerId: computer.id,
-        provider: input.provider,
-        source: 'brigade',
-        label: input.label || `${providerName(input.provider)} account ${count + 1}`,
-        status: 'signing_in',
-        isDefault: hasDefault === 0,
-      } as never,
-    })
-    await audit({
-      ...scope,
-      actor: { type: 'member', id: scope.memberId },
-      action: 'account.added',
-      target: { type: 'account', id: account.id },
-      data: { provider: account.provider, computerId: computer.id },
-    })
+    if (created)
+      await audit({
+        ...scope,
+        actor: { type: 'member', id: scope.memberId },
+        action: 'account.added',
+        target: { type: 'account', id: account.id },
+        data: { provider: account.provider, computerId: computer.id },
+      })
     await startLogin(scope, account, computer)
-    return c.json({ id: account.id }, 201)
+    return c.json({ id: account.id }, created ? 201 : 200)
   })
 
   /** Sign an account in again, e.g. after its login expired. */
