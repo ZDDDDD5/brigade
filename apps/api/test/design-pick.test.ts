@@ -130,4 +130,28 @@ describe('design picks', { skip: !database && 'no database answers' }, () => {
     assert.equal(await text(`${OPTIONS}/a-bold.design/index.html`), '<p>a-bold</p>')
     assert.equal(await text(`${OPTIONS}/b-calm.design/index.html`), '<p>b-calm</p>')
   })
+
+  test("a library file a person edited since the thread saved it is the person's edit", async () => {
+    const file = 'acme/social/brief.md'
+    const thread = { id: `thread-brief-${suffix}`, createdAt: new Date(Date.now() - 60_000) }
+    await library.saveLibraryFile(
+      db,
+      scope,
+      teammate,
+      { path: file, bytes: encode('v1') },
+      {
+        sessionId: thread.id,
+      },
+    )
+    assert.deepEqual(await designs.personEdits(db, thread, file), [], 'its own save')
+    await save(file, 'v1 without a line', member())
+    const edits = await designs.personEdits(db, thread, file)
+    assert.deepEqual(
+      edits.map((e) => [e.file, e.by]),
+      [['brief.md', 'Ada']],
+    )
+    const later = { id: `thread-later-${suffix}`, createdAt: new Date(Date.now() + 60_000) }
+    assert.deepEqual(await designs.personEdits(db, later, file), [], 'a thread started after it')
+    assert.deepEqual(await designs.personEdits(db, thread, 'acme/social/none.md'), [])
+  })
 })

@@ -92,7 +92,7 @@ function saving(spec: ThreadSpec) {
       .map((f) => `${f.path}/`)
       .join(', ')
   const how =
-    'write it on this computer, then call `save_to_library`; to move, rename or delete one, `move_in_library` or `delete_from_library`'
+    'write it on this computer, then call `save_to_library` (to change one, start from its library copy, which may have edits a person made since you saved it); to move, rename or delete one, `move_in_library` or `delete_from_library`'
   if (spec.library === 'read_write') {
     const readOnly = list('read')
     return (

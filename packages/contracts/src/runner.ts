@@ -727,7 +727,10 @@ export const RunnerToApi = z.discriminatedUnion('type', [
       z.object({ name: z.literal('delete'), path: LibraryPath }),
       /** Register a design system whose folder is saved, or change one. */
       z.object({ name: z.literal('design_system'), designSystem: TeammateDesignSystem }),
-      /** Files of a design a person changed since this thread last saved them: asked before saving it. */
+      /**
+       * Files a person changed since this thread last saved them: asked before saving a design (its
+       * files), or a library file (that file alone).
+       */
       z.object({ name: z.literal('design_edits'), path: LibraryPath }),
       /** Propose a skill, or a change to one: it waits for a person's approval in a ticket. */
       z.object({ name: z.literal('skill_proposal'), proposal: SkillProposal }),
