@@ -649,11 +649,15 @@ function ConnectAI({
   // (apps/desktop/src/links.ts). Not when it runs another workspace's teammates already: the link
   // would stop them, so it links by the button, which the app asks about first (docs/guests.md).
   const linkedHere = useRef(false)
+  // The workspace this computer runs the teammates of now, when not linked at once for it: said
+  // beside the button, so the step is not a mystery.
+  const [runsOther, setRunsOther] = useState<string>()
   useEffect(() => {
     if (!inApp || !computers.data || machine || linkedHere.current) return
     linkedHere.current = true
     void computerTaken().then((taken) => {
       if (!taken.linked && !taken.linking) void linkHere()
+      else if (taken.linked) setRunsOther(taken.linked)
     })
   }, [inApp, computers.data, machine, linkHere])
 
@@ -924,6 +928,12 @@ function ConnectAI({
               {app.icon}
               Link this {app.name}
             </Button>
+            {runsOther && !link && (
+              <p className="text-center text-xs text-muted-foreground">
+                This {app.name} runs the teammates of {runsOther} now. Linking it here moves it to
+                this workspace; switch back any time from the Workspace menu.
+              </p>
+            )}
             {link && waitFor(app.name, 'link')}
           </>
         ) : !link ? (
