@@ -488,7 +488,8 @@ export class Accounts {
       // Codex on a member's machine: the harnesses' own copy, whatever version the machine has
       // (vendor-cli.ts), which may have to be installed first, a minute or two, once. Claude's
       // sign-in, status and sign-out (its keychain on a Mac) stay with the machine's CLI, off
-      // Windows; a cloud computer's are Brigade's own already. Antigravity's is the runner's own
+      // Windows, when it has one; without (only the Claude app), the harnesses' copy, installed
+      // too; a cloud computer's are Brigade's own already. Antigravity's is the runner's own
       // pinned copy, downloaded on first use.
       cli =
         account.provider === 'antigravity'

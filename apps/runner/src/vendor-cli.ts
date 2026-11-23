@@ -1,5 +1,7 @@
 // The vendor CLIs that sign accounts in and read their limits: `claude` and `codex`. On macOS and
-// Linux, the ones on the PATH, as the person installed them, except a Codex sign-in. On Windows,
+// Linux, the ones on the PATH, as the person installed them, except a Codex sign-in; when none is
+// (a Mac with only the Claude app, which has no `claude` command: a sign-in failed with "spawn
+// claude ENOENT"), the harnesses' copy, as on Windows. On Windows,
 // where the people Brigade runs for rarely have them, and for a Codex sign-in anywhere (`own`),
 // the copies the harnesses install for their turns anyway, in the same folder
 // (~/.ai-sdk-harness/.harness-bootstrap/<harness>), installed by the sign-in when missing: the
@@ -8,11 +10,11 @@
 // October 2025 has no `login --device-auth`, and a sign-in on it failed at once with its usage.
 // Turns themselves always run the harnesses' copies (harness/index.ts).
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { harnessEnv } from './harness/env.js'
 import { WINDOWS } from './windows.js'
 
@@ -83,17 +85,32 @@ async function install(vendor: Vendor) {
   )
 }
 
+/** Whether a command of that name is on the PATH (the person's, harness/env.ts usePersonPath). */
+export function onPath(name: string, path = process.env.PATH ?? ''): boolean {
+  return path.split(delimiter).some((dir) => {
+    if (!dir) return false
+    const file = join(dir, name)
+    try {
+      if (!statSync(file).isFile()) return false
+      accessSync(file, constants.X_OK)
+      return true
+    } catch {
+      return false
+    }
+  })
+}
+
 /**
  * The command that runs a vendor's CLI, and the arguments it starts with: its name on macOS and
- * Linux; on Windows, or with `own` on any system, the harnesses' copy, installed first when
- * `install` and missing. Undefined when that copy is wanted, is not installed and `install` is
- * false.
+ * Linux when it is on the PATH; on Windows, with `own` on any system, or when the PATH has none,
+ * the harnesses' copy, installed first when `install` and missing. Undefined when that copy is
+ * wanted, is not installed and `install` is false.
  */
 export async function vendorCli(
   vendor: Vendor,
-  options: { install?: boolean; own?: boolean } = {},
+  options: { install?: boolean; own?: boolean; path?: string } = {},
 ): Promise<[string, string[]] | undefined> {
-  if (!WINDOWS && !options.own) return [vendor, []]
+  if (!WINDOWS && !options.own && onPath(vendor, options.path)) return [vendor, []]
   const found = installed(vendor)
   if (found || !options.install) return found
   let pending = installing.get(vendor)
