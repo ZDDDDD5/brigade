@@ -8,7 +8,11 @@ process.env.DATABASE_URL ??= 'postgresql://test@localhost/test'
 process.env.BETTER_AUTH_SECRET ??= 'test-secret-test-secret-test-secret'
 process.env.VAULT_KEY ??= Buffer.alloc(32).toString('base64')
 const { inHub } = await import('../src/hub/context.js')
-const { startLogin, loginForAccount, endLogin } = await import('../src/logins.js')
+const { startLogin, loginForAccount, endLogin, updateLogin, loginRows } =
+  await import('../src/logins.js')
+// The account's row, as the test sets it (no database here).
+let ready = false
+loginRows.ready = async () => ready
 
 function fakeHub() {
   const maps = new Map<string, Map<string, unknown>>()
@@ -39,6 +43,7 @@ const input = {
 const computer = { id: 'c-1', kind: 'member_machine' }
 
 test('two requests at once with keepLive make one attempt, and keep it', async () => {
+  ready = false
   const { hub, dispatched } = fakeHub()
   await inHub(hub, async () => {
     await Promise.all([
@@ -66,5 +71,24 @@ test('without keepLive (Sign in again), a new attempt replaces the one under way
     await startLogin(input, computer)
     assert.equal(dispatched.length, 2)
     assert.equal(loginForAccount('acct-1')!.loginId, dispatched[1]!.loginId)
+  })
+})
+
+test('a retry as an attempt succeeds starts no other: finishing, then ready', async () => {
+  ready = false
+  const { hub, dispatched } = fakeHub()
+  await inHub(hub, async () => {
+    await startLogin(input, computer, { keepLive: true })
+    const first = loginForAccount('acct-1')!
+    // The runner said it succeeded; its row is being written (noteLogin): the attempt stays.
+    updateLogin(first.loginId, { finishing: true })
+    await startLogin(input, computer, { keepLive: true })
+    assert.equal(dispatched.length, 1)
+    // Written ready, then ended: a retry finds the row ready and starts nothing.
+    ready = true
+    endLogin(first.loginId)
+    assert.equal(await startLogin(input, computer, { keepLive: true }), 'ready')
+    assert.equal(dispatched.length, 1)
+    assert.equal(loginForAccount('acct-1'), undefined)
   })
 })

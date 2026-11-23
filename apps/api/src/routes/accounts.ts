@@ -188,7 +188,7 @@ export const accounts = new Hono<AppEnv>()
       memberId: scope.memberId,
       provider: input.provider,
     }
-    const { account, created } = await prisma.$transaction(async (tx) => {
+    const { account, created, settled } = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`account-add:${scope.memberId}:${computer.id}:${input.provider}`}, 0))`
       const unfinished =
         !input.retry || input.label
@@ -202,14 +202,19 @@ export const accounts = new Hono<AppEnv>()
               },
               orderBy: { createdAt: 'desc' },
             })
-      if (unfinished)
+      if (unfinished) {
+        // Only while it is still unfinished: one whose attempt succeeded meanwhile (its row
+        // written ready outside this lock) stays ready, and no sign-in starts again.
+        const { count } = await tx.account.updateMany({
+          where: { id: unfinished.id, status: { in: ['needs_sign_in', 'signing_in'] } },
+          data: { status: 'signing_in' },
+        })
         return {
-          account: await tx.account.update({
-            where: { id: unfinished.id },
-            data: { status: 'signing_in' },
-          }),
+          account: await tx.account.findUniqueOrThrow({ where: { id: unfinished.id } }),
           created: false,
+          settled: count === 0,
         }
+      }
       const count = await tx.account.count({ where })
       const hasDefault = await tx.account.count({ where: { ...where, isDefault: true } })
       return {
@@ -224,6 +229,7 @@ export const accounts = new Hono<AppEnv>()
           },
         }),
         created: true,
+        settled: false,
       }
     })
     if (created)
@@ -234,7 +240,7 @@ export const accounts = new Hono<AppEnv>()
         target: { type: 'account', id: account.id },
         data: { provider: account.provider, computerId: computer.id },
       })
-    await startLogin(scope, account, computer, { keepLive: input.retry === true })
+    if (!settled) await startLogin(scope, account, computer, { keepLive: input.retry === true })
     return c.json({ id: account.id }, created ? 201 : 200)
   })
 
