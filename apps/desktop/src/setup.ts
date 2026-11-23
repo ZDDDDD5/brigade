@@ -222,7 +222,11 @@ async function act(id: string) {
       return
     }
     case 'connect':
-      return void (await shell.openExternal(`${dashboard()}/computers?desktop=1`))
+      // In the app's own window, never the browser: there the dashboard links this computer
+      // (onboarding for someone new, Computers for others), where the browser's would offer to
+      // download the app they are in.
+      window?.close()
+      return showDashboard(`${dashboard()}/computers?desktop=1`)
     case 'restart':
       return void ctx.supervisor.start()
     case 'logs':
@@ -320,13 +324,17 @@ export function show() {
 }
 
 /** On launch: opens the checklist when a step is missing. "Finish later" only closes it until
- * the next launch. */
+ * the next launch. Before this computer is connected to a workspace, the dashboard's window
+ * instead: it is the way in (Sign in with your browser, then onboarding links this computer in
+ * one Connect), and links.ts opens the checklist once it is connected. */
 export function showIfNeeded() {
   if (!hasSetup()) return
   // Let the runner start before judging it.
   setTimeout(() => {
     void steps().then((list) => {
-      if (missing(list).length > 0) show()
+      const left = missing(list)
+      if (left.includes('workspace')) showDashboard()
+      else if (left.length > 0) show()
     })
   }, 3_000)
 }
