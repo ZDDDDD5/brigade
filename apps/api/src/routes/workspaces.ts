@@ -397,11 +397,25 @@ export const workspaces = new Hono<AppEnv>()
     const made = await prisma.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`first-workspace:${userId}`}, 0))`
-        const existing = await tx.member.findFirst({
-          where: { userId },
-          orderBy: { createdAt: 'asc' },
-          select: { id: true, organizationId: true, role: true, organization: true },
-        })
+        // One this route left pending first, whichever organization is the oldest of theirs (an
+        // invitation taken meanwhile is not it), else the oldest.
+        const memberSelect = {
+          id: true,
+          organizationId: true,
+          role: true,
+          organization: true,
+        } as const
+        const existing =
+          (await tx.member.findFirst({
+            where: { userId, role: 'owner', organization: { metadata: SETUP_PENDING } },
+            orderBy: { createdAt: 'asc' },
+            select: memberSelect,
+          })) ??
+          (await tx.member.findFirst({
+            where: { userId },
+            orderBy: { createdAt: 'asc' },
+            select: memberSelect,
+          }))
         if (existing) {
           // Set up again only what this route made and left unfinished: never another
           // organization's workspace, whoever they are in it.

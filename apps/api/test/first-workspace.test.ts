@@ -245,3 +245,45 @@ test(
     )
   },
 )
+
+test('the pending organization is finished, not the oldest one they are in', { skip }, async () => {
+  const cookie = await signIn(`dora-${run}@example.com`)
+  const organization = async (slug: string) => {
+    const made = await call('/api/auth/organization/create', {
+      body: { name: slug, slug },
+      cookie,
+    })
+    assert.equal(made.status, 200, await made.clone().text())
+    const { id } = (await made.json()) as { id: string }
+    await call('/api/me', { cookie })
+    const workspace = await call('/api/workspaces', { body: { name: slug }, cookie })
+    assert.equal(workspace.status, 201, await workspace.clone().text())
+    return { id, workspaceId: ((await workspace.json()) as { id: string }).id }
+  }
+  // The oldest: a team they are in. The newer: their own, its setup cut.
+  const team = await organization(`team-${run}`)
+  const own = await organization(`own-${run}`)
+  await prisma.organization.update({
+    where: { id: own.id },
+    data: { metadata: JSON.stringify({ firstWorkspaceSetup: 'pending' }) },
+  })
+  const lists = (workspaceId: string) =>
+    prisma.document.count({ where: { workspaceId, kind: 'library', path: GETTING_STARTED.path } })
+  await prisma.document.deleteMany({
+    where: {
+      workspaceId: { in: [team.workspaceId, own.workspaceId] },
+      kind: 'library',
+      path: GETTING_STARTED.path,
+    },
+  })
+  assert.equal((await meOf(cookie)).setupPending, true)
+
+  const answer = await call('/api/me/first-workspace', { body: {}, cookie })
+  assert.equal(answer.status, 200, await answer.clone().text())
+  assert.equal(await lists(own.workspaceId), 1, 'their own is finished')
+  assert.equal(await lists(team.workspaceId), 0, 'the team is left as it is')
+  const me = await meOf(cookie)
+  assert.equal(me.activeOrganizationId, own.id)
+  assert.equal(me.activeWorkspaceId, own.workspaceId)
+  assert.equal(me.setupPending, false)
+})
