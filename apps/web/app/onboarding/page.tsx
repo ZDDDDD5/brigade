@@ -164,7 +164,8 @@ export default function Onboarding() {
     try {
       await api('/me/first-workspace', { body: {} })
       const next = await reload()
-      setAsking(next?.onboardingAnswers === null)
+      // Not in Brigade.app, where onboarding goes straight to this computer and Chief.
+      setAsking(next?.onboardingAnswers === null && !inDesktopApp())
     } catch (e) {
       setError((e as Error).message)
       await reload()
@@ -640,20 +641,21 @@ function ConnectAI({
     !cloudUsable &&
     (cloud ? ['pending', 'creating'].includes(cloud.status) : offerCloud && !planNeeded)
   const failed = !cloudUsable && cloud?.status === 'error'
-  // Once they set up their own machine, Brigade Cloud steps back to one line.
-  const cloudCompact = planNeeded && (!!link || !!machine)
+  // Once they set up their own machine, Brigade Cloud steps back to one line; in Brigade.app from
+  // the start, where this computer is the way in.
+  const cloudCompact = planNeeded && (inApp || !!link || !!machine)
 
-  // A guest chose to start here: this computer links at once, once. Not when it runs another
-  // workspace's teammates already: the link would stop them, so the guest links by the button,
-  // which the app asks about first (docs/guests.md).
+  // In Brigade.app, this computer links at once, once: the app asks before it connects
+  // (apps/desktop/src/links.ts). Not when it runs another workspace's teammates already: the link
+  // would stop them, so it links by the button, which the app asks about first (docs/guests.md).
   const linkedHere = useRef(false)
   useEffect(() => {
-    if (!guest || !inApp || !computers.data || machine || linkedHere.current) return
+    if (!inApp || !computers.data || machine || linkedHere.current) return
     linkedHere.current = true
     void computerTaken().then((taken) => {
       if (!taken.linked && !taken.linking) void linkHere()
     })
-  }, [guest, inApp, computers.data, machine, linkHere])
+  }, [inApp, computers.data, machine, linkHere])
 
   // On Chromebooks the command is the way in: show it straight away.
   const linuxLink = useRef(false)
