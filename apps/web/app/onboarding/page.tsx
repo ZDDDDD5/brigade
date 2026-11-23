@@ -67,6 +67,12 @@ const slugify = (name: string) =>
       .slice(0, 40) || 'org'
   }-${Math.random().toString(36).slice(2, 6)}`
 
+/** The name of someone's first project, from their first name: "Ada's workspace". */
+const defaultProjectName = (userName: string) => {
+  const first = userName.trim().split(/\s+/)[0]
+  return first && !first.includes('@') ? `${first}'s workspace` : 'My workspace'
+}
+
 /**
  * The line of the workspace's Getting started list the setup thread works on, so the list shows
  * it in progress with the chief. None without the list: the thread starts alone (and so it does
@@ -84,8 +90,8 @@ async function setupLine() {
 }
 
 /**
- * First run: name the project (its organization and first workspace), connect
- * an AI account, then meet the chief. Also where a new workspace is made, and
+ * First run: the project (its organization and first workspace) is made at once, named after
+ * the person, then they connect an AI account and meet the chief. Also where a new workspace is made, and
  * where a member without an AI account in this workspace is sent.
  */
 export default function Onboarding() {
@@ -135,7 +141,8 @@ export default function Onboarding() {
   }, [reload])
 
   // Someone invited and not in an organization yet: join one rather than start their own.
-  const [invitations, setInvitations] = useState<OpenInvitation[]>([])
+  // Undefined until read: without any, their project is made at once, with no form to fill.
+  const [invitations, setInvitations] = useState<OpenInvitation[]>()
   const noOrganization = !!me && !me.activeOrganizationId
   useEffect(() => {
     if (!noOrganization) return
@@ -156,11 +163,16 @@ export default function Onboarding() {
     setBusy(false)
   }
 
-  /** A new organization and its first workspace, both named after the project. */
-  async function createProject(form: FormData) {
+  /**
+   * A new organization and its first workspace, both named after the person ("Ada's workspace"):
+   * onboarding asks no name, and Settings › Workspace renames it.
+   */
+  async function createProject() {
+    if (!me || sending.current) return
+    sending.current = true
     setBusy(true)
     setError(undefined)
-    const name = String(form.get('name')).trim()
+    const name = defaultProjectName(me.user.name)
     try {
       const { error } = await authClient.organization.create({ name, slug: slugify(name) })
       if (error) throw new Error(error.message ?? 'Could not create your project')
@@ -171,12 +183,24 @@ export default function Onboarding() {
       setAsking(next?.onboardingAnswers === null)
     } catch (e) {
       setError((e as Error).message)
-      // An organization made before a later step failed is the one to go on with: shown
-      // again, this form would make another.
+      // An organization made before a later step failed is the one to go on with: tried
+      // again, this would make another.
       await reload()
     }
     setBusy(false)
+    sending.current = false
   }
+
+  // Not invited anywhere: their project is made straight away, once (a ref, so React's
+  // double effects in development and a re-render while it runs make no second one).
+  const autoCreated = useRef(false)
+  const autoCreate = noOrganization && invitations?.length === 0
+  useEffect(() => {
+    if (!autoCreate || autoCreated.current) return
+    autoCreated.current = true
+    void createProject()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoCreate])
 
   async function createWorkspace(form: FormData) {
     setBusy(true)
@@ -204,45 +228,47 @@ export default function Onboarding() {
     )
 
   if (!me.activeOrganizationId) {
+    if (!invitations?.length)
+      return (
+        <Shell>
+          {error ? (
+            <div className="flex flex-col items-center gap-3">
+              <p className="text-center text-sm text-destructive-text">{error}</p>
+              <Button disabled={busy} onClick={() => void createProject()}>
+                Try again
+              </Button>
+            </div>
+          ) : (
+            <p className="text-center text-sm text-muted-foreground">Setting up your workspace…</p>
+          )}
+        </Shell>
+      )
     return (
       <Shell
-        title="What are you building?"
-        description="Name your project. Your AI team works on it, and you can rename it later."
+        title="You were invited"
+        description="Join your team, or start a workspace of your own."
       >
-        {invitations.length > 0 && (
-          <Card>
-            <CardContent className="flex flex-col gap-4">
-              <p className="text-sm text-muted-foreground">You were invited to join:</p>
-              {invitations.map((i) => (
-                <div key={i.id} className="flex items-center gap-3">
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate font-semibold">{i.organization}</span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      Invited by {i.invitedBy}
-                    </span>
-                  </div>
-                  <Button disabled={busy} onClick={() => void join(i)}>
-                    Join
-                  </Button>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        )}
         <Card>
-          <CardContent>
-            <form onSubmit={onSubmit(createProject)} className="flex flex-col gap-5">
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="name">Project name</Label>
-                <Input id="name" name="name" placeholder="Acme" required autoFocus />
+          <CardContent className="flex flex-col gap-4">
+            {invitations.map((i) => (
+              <div key={i.id} className="flex items-center gap-3">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate font-semibold">{i.organization}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    Invited by {i.invitedBy}
+                  </span>
+                </div>
+                <Button disabled={busy} onClick={() => void join(i)}>
+                  Join
+                </Button>
               </div>
-              {error && <p className="text-sm text-destructive-text">{error}</p>}
-              <Button type="submit" size="lg" className="w-full" disabled={busy}>
-                Continue
-              </Button>
-            </form>
+            ))}
           </CardContent>
         </Card>
+        {error && <p className="text-center text-sm text-destructive-text">{error}</p>}
+        <Button variant="ghost" disabled={busy} onClick={() => void createProject()}>
+          Start my own workspace
+        </Button>
       </Shell>
     )
   }
