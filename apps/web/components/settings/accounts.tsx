@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Cloud, Laptop, ShieldCheck } from 'lucide-react'
 import { AccountRow, machineName } from '@/components/account-card'
 import { isAdmin, useDashboard } from '@/components/dashboard'
@@ -30,6 +30,14 @@ export default function Accounts() {
   const computers = useApi<ComputersResponse>('/computers')
   const [logins, setLogins] = useState<Record<string, AccountLogin>>({})
   const [error, setError] = useState<string>()
+
+  // A machine's own login can show up any time its runner reads them again (machine.logins):
+  // the list catches up by itself, as onboarding's does.
+  const reloadAccounts = accounts.reload
+  useEffect(() => {
+    const timer = setInterval(() => void reloadAccounts(), 15_000)
+    return () => clearInterval(timer)
+  }, [reloadAccounts])
 
   useLive((message) => {
     if (message.type !== 'account.login') return

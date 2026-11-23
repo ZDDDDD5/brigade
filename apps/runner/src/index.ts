@@ -37,6 +37,7 @@ import { watchAbuse } from './abuse.js'
 import { useWindowsTools } from './windows.js'
 import { Accounts, machineLogins } from './accounts.js'
 import { missingCli, vendorCli } from './vendor-cli.js'
+import { sendOnceConnected } from './send-once-connected.js'
 import { cleanRemoved, fenceRemoved } from './harness/antigravity.js'
 import { Attachments } from './attachments.js'
 import { SpecParts } from './spec-parts.js'
@@ -875,9 +876,13 @@ async function start() {
   const readLoginsOnceClaude = () => {
     if (CLOUD || claudeInstall || !missingCli('claude')) return
     claudeInstall = vendorCli('claude', { install: true })
-      .then(async () =>
-        connection.sendIfConnected({ type: 'machine.logins', logins: await machineLogins() }),
-      )
+      .then(async () => {
+        const logins = await machineLogins()
+        // Not welcomed yet, or away: kept until taken (send-once-connected.ts).
+        await sendOnceConnected(() =>
+          connection.sendIfConnected({ type: 'machine.logins', logins }),
+        )
+      })
       .catch((error) => console.warn(`could not install Claude Code to read its login: ${error}`))
   }
   const hello = async () => {

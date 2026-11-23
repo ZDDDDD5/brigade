@@ -5,10 +5,9 @@ import { after, before, test } from 'node:test'
 import pg from 'pg'
 
 // A login found on a member's own computer (hello's machineLogins, or machine.logins once the
-// runner could read it: src/hub/thread-events.ts syncMachineLogins) makes moot their sign-ins there
-// for the same provider that never got through: those go, from the computer too, and the working
-// login becomes the default. One that was used stays. Against apps/api/.env's database; skipped
-// without one.
+// runner could read it: src/hub/thread-events.ts syncMachineLogins) becomes their default when
+// their default does not work; no account is ever removed for it (one that looks unfinished may
+// hold a login whose last word was lost). Against apps/api/.env's database; skipped without one.
 const fromEnvFile = () => {
   try {
     const line = readFileSync(new URL('../.env', import.meta.url), 'utf8')
@@ -112,12 +111,10 @@ const account = (label: string, data: Record<string, unknown>) =>
   })
 
 test(
-  'a login found on the computer removes the sign-ins there that never got through',
+  'a login found becomes the default over one that does not work; nothing is removed',
   { skip },
   async () => {
     const failed = await account('failed', { isDefault: true })
-    const failedAgain = await account('failed again', {})
-    const used = await account('used once', { lastUsageAt: new Date() })
     const { hub, sent } = fakeHub()
     await inHub(hub, () =>
       syncMachineLogins(computer, memberId, [{ provider: 'codex', loggedIn: true }]),
@@ -129,28 +126,26 @@ test(
     assert.deepEqual(
       left.map((a) => [a.label, a.source, a.status, a.isDefault]),
       [
-        ['used once', 'brigade', 'needs_sign_in', false],
+        ['failed', 'brigade', 'needs_sign_in', false],
         ['Codex on MacBook Pro', 'machine', 'ready', true],
       ],
     )
-    // Their logins on the computer go too.
-    assert.deepEqual(
-      sent
-        .filter((m) => m.type === 'account.remove')
-        .map((m) => m.account?.id)
-        .sort(),
-      [failed.id, failedAgain.id].sort(),
-    )
-    assert.ok(!sent.some((m) => m.account?.id === used.id))
+    assert.equal(sent.length, 0, 'nothing signed out on the computer')
+    assert.ok(await prisma.account.findUnique({ where: { id: failed.id } }))
   },
 )
 
-test('no login found: nothing is removed', { skip }, async () => {
-  const failed = await account('claude failed', { provider: 'claude_code' })
-  const { hub, sent } = fakeHub()
+test('a working default stays the default', { skip }, async () => {
+  await account('claude working', { provider: 'claude_code', status: 'ready', isDefault: true })
+  const { hub } = fakeHub()
   await inHub(hub, () =>
-    syncMachineLogins(computer, memberId, [{ provider: 'claude_code', loggedIn: false }]),
+    syncMachineLogins(computer, memberId, [{ provider: 'claude_code', loggedIn: true }]),
   )
-  assert.ok(await prisma.account.findUnique({ where: { id: failed.id } }))
-  assert.equal(sent.length, 0)
+  const defaults = await prisma.account.findMany({
+    where: { memberId, provider: 'claude_code', isDefault: true },
+  })
+  assert.deepEqual(
+    defaults.map((a) => a.label),
+    ['claude working'],
+  )
 })
