@@ -117,6 +117,7 @@ async function signIn(email: string) {
 
 type Me = {
   user: { id: string }
+  setupPending?: boolean
   activeOrganizationId: string | null
   activeWorkspaceId: string | null
 }
@@ -166,45 +167,81 @@ test('two tabs at once make one organization and one workspace', { skip }, async
   assert.equal(await prisma.member.count({ where: { userId: user.id } }), 1)
 })
 
-test('a call cut after the commit is finished by the next', { skip }, async () => {
-  const cookie = await signIn(`bob-${run}@example.com`)
-  firstWorkspaceFaults.afterCommit = () => {
-    throw new Error('cut')
-  }
-  try {
-    const cut = await call('/api/me/first-workspace', { body: {}, cookie })
-    assert.equal(cut.status, 500)
-  } finally {
-    firstWorkspaceFaults.afterCommit = undefined
-  }
-  const { user } = await meOf(cookie)
-  const member = await prisma.member.findFirstOrThrow({ where: { userId: user.id } })
-  const workspace = await prisma.workspace.findFirstOrThrow({
-    where: { organizationId: member.organizationId },
-  })
-  // Made in the transaction: the workspace and its Chief, never one without the other.
-  assert.equal(
-    await prisma.teammate.count({ where: { workspaceId: workspace.id, kind: 'chief' } }),
-    1,
-  )
-  const list = () =>
-    prisma.document.count({
-      where: { workspaceId: workspace.id, kind: 'library', path: GETTING_STARTED.path },
+test(
+  'a setup cut after the commit shows pending in /me and onboarding finishes it',
+  { skip },
+  async () => {
+    const cookie = await signIn(`bob-${run}@example.com`)
+    firstWorkspaceFaults.afterCommit = () => {
+      throw new Error('cut')
+    }
+    try {
+      const cut = await call('/api/me/first-workspace', { body: {}, cookie })
+      assert.equal(cut.status, 500)
+    } finally {
+      firstWorkspaceFaults.afterCommit = undefined
+    }
+    // What onboarding reads next (a reload, or its own after the error).
+    const after = await meOf(cookie)
+    assert.equal(after.setupPending, true, 'onboarding sees the setup unfinished')
+    const member = await prisma.member.findFirstOrThrow({ where: { userId: after.user.id } })
+    const workspace = await prisma.workspace.findFirstOrThrow({
+      where: { organizationId: member.organizationId },
     })
-  assert.equal(await list(), 0, 'the setup after the commit did not run')
+    assert.equal(after.activeWorkspaceId, workspace.id, 'the session is in it already')
+    // Made in the transaction: the workspace and its Chief, never one without the other.
+    const chiefs = () =>
+      prisma.teammate.count({ where: { workspaceId: workspace.id, kind: 'chief' } })
+    assert.equal(await chiefs(), 1)
+    const list = () =>
+      prisma.document.count({
+        where: { workspaceId: workspace.id, kind: 'library', path: GETTING_STARTED.path },
+      })
+    assert.equal(await list(), 0, 'the setup after the commit did not run')
 
-  const again = await call('/api/me/first-workspace', { body: {}, cookie })
-  assert.equal(again.status, 200, await again.clone().text())
-  assert.equal(((await again.json()) as { created: boolean }).created, false)
-  assert.equal(await list(), 1, 'the next call finished it')
-  assert.equal(
-    await prisma.teammate.count({ where: { workspaceId: workspace.id, kind: 'chief' } }),
-    1,
-  )
-  assert.equal(
-    await prisma.workspace.count({ where: { organizationId: member.organizationId } }),
-    1,
-  )
-  const me = await meOf(cookie)
-  assert.equal(me.activeWorkspaceId, workspace.id)
-})
+    // Onboarding, on setupPending, calls again.
+    const again = await call('/api/me/first-workspace', { body: {}, cookie })
+    assert.equal(again.status, 200, await again.clone().text())
+    assert.equal(((await again.json()) as { created: boolean }).created, false)
+    assert.equal(await list(), 1, 'the next call finished it')
+    assert.equal(await chiefs(), 1)
+    assert.equal(
+      await prisma.workspace.count({ where: { organizationId: member.organizationId } }),
+      1,
+    )
+    assert.equal((await meOf(cookie)).setupPending, false, 'done: onboarding goes on')
+  },
+)
+
+test(
+  'an organization this route did not leave pending is never set up again',
+  { skip },
+  async () => {
+    const email = `cleo-${run}@example.com`
+    const cookie = await signIn(email)
+    // An organization made otherwise (before this route, or joined), its list since removed.
+    const created = await call('/api/auth/organization/create', {
+      body: { name: `Cleo ${run}`, slug: `cleo-${run}` },
+      cookie,
+    })
+    assert.equal(created.status, 200, await created.clone().text())
+    assert.equal((await call('/api/me', { cookie })).status, 200)
+    const made = await call('/api/workspaces', { body: { name: 'Cleo HQ' }, cookie })
+    assert.equal(made.status, 201, await made.clone().text())
+    const { id: workspaceId } = (await made.json()) as { id: string }
+    await prisma.document.deleteMany({
+      where: { workspaceId, kind: 'library', path: GETTING_STARTED.path },
+    })
+    assert.equal((await meOf(cookie)).setupPending, false)
+
+    const answer = await call('/api/me/first-workspace', { body: {}, cookie })
+    assert.equal(((await answer.json()) as { created: boolean }).created, false)
+    assert.equal(
+      await prisma.document.count({
+        where: { workspaceId, kind: 'library', path: GETTING_STARTED.path },
+      }),
+      0,
+      'the removed list stays removed',
+    )
+  },
+)

@@ -173,10 +173,12 @@ export default function Onboarding() {
     sending.current = false
   }
 
-  // Invited nowhere (read, not failed): their project is made straight away. Once per page (a
-  // ref, for React's double effects in development); the API sees to other tabs.
+  // Invited nowhere (read, not failed): their project is made straight away; and one whose setup
+  // was cut (a failure or a reload during it) is finished the same way. Once per page (a ref,
+  // for React's double effects in development); the API sees to other tabs.
   const autoCreated = useRef(false)
-  const autoCreate = noOrganization && Array.isArray(invitations) && invitations.length === 0
+  const autoCreate =
+    (noOrganization && Array.isArray(invitations) && invitations.length === 0) || !!me?.setupPending
   useEffect(() => {
     if (!autoCreate || autoCreated.current) return
     autoCreated.current = true
@@ -265,6 +267,22 @@ export default function Onboarding() {
       </Shell>
     )
   }
+
+  if (me.setupPending)
+    return (
+      <Shell>
+        {error ? (
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-center text-sm text-destructive-text">{error}</p>
+            <Button disabled={busy} onClick={() => void createProject()}>
+              Try again
+            </Button>
+          </div>
+        ) : (
+          <p className="text-center text-sm text-muted-foreground">Setting up your workspace…</p>
+        )}
+      </Shell>
+    )
 
   if (me.activeWorkspaceId && !adding && asking)
     return (

@@ -79,6 +79,22 @@ async function accountToDelete(userId: string, email: string) {
 /** For tests only: a failure after the first workspace's commit, as a cut request. */
 export const firstWorkspaceFaults: { afterCommit?: () => void | Promise<void> } = {}
 
+/**
+ * An organization made by POST /me/first-workspace whose workspace is not set up yet: marked in
+ * Organization.metadata, which nothing else writes, from its transaction until its setup is done.
+ */
+const SETUP_PENDING = JSON.stringify({ firstWorkspaceSetup: 'pending' })
+function setupPending(metadata: string | null) {
+  if (!metadata) return false
+  try {
+    return (
+      (JSON.parse(metadata) as { firstWorkspaceSetup?: string }).firstWorkspaceSetup === 'pending'
+    )
+  } catch {
+    return false
+  }
+}
+
 /** The name of someone's first workspace, and of its organization: "Ada's workspace". */
 export function firstWorkspaceName(userName: string) {
   const first = userName.trim().split(/\s+/)[0]?.slice(0, 40)
@@ -211,6 +227,8 @@ export const workspaces = new Hono<AppEnv>()
       })),
       activeOrganizationId: membership ? orgId : null,
       role: membership?.role ?? null,
+      // Their first workspace's setup was cut (POST /me/first-workspace): onboarding asks again.
+      setupPending: membership?.role === 'owner' && setupPending(membership.organization.metadata),
       workspaces: workspaceList.map((w) => ({ id: w.id, name: w.name, logo: w.logo })),
       activeWorkspaceId: scope?.workspaceId ?? null,
       memberId: scope?.memberId ?? null,
@@ -371,8 +389,8 @@ export const workspaces = new Hono<AppEnv>()
    * own and its first workspace, named after them, and the session moves there. Once per person,
    * whatever the tabs or reloads: under a lock on them, the organization, its owner, the
    * workspace and its Chief are made in one transaction, or found when made already. What
-   * follows (hub, Getting started list, cloud computer) is done again by each call until done,
-   * so a call cut after the commit is finished by the next, then the session moves last.
+   * follows (hub, Getting started list, cloud computer) stays marked pending on the organization
+   * until done: /me says so (setupPending), and onboarding calls again to finish it.
    */
   .post('/me/first-workspace', async (c) => {
     const { userId, authSessionId } = c.var
@@ -382,15 +400,18 @@ export const workspaces = new Hono<AppEnv>()
         const existing = await tx.member.findFirst({
           where: { userId },
           orderBy: { createdAt: 'asc' },
-          select: { id: true, organizationId: true },
+          select: { id: true, organizationId: true, role: true, organization: true },
         })
         if (existing) {
+          // Set up again only what this route made and left unfinished: never another
+          // organization's workspace, whoever they are in it.
+          const resume = existing.role === 'owner' && setupPending(existing.organization.metadata)
           const workspace = await tx.workspace.findFirst({
             where: { organizationId: existing.organizationId },
             orderBy: { createdAt: 'asc' },
             select: { id: true, organizationId: true, name: true, hubMode: true },
           })
-          return { created: false, member: existing, workspace }
+          return { created: false, resume, member: existing, workspace }
         }
         const user = await tx.user.findUniqueOrThrow({
           where: { id: userId },
@@ -398,7 +419,12 @@ export const workspaces = new Hono<AppEnv>()
         })
         const name = firstWorkspaceName(user.name)
         const organization = await tx.organization.create({
-          data: { id: randomUUID(), name, slug: organizationSlug(name) },
+          data: {
+            id: randomUUID(),
+            name,
+            slug: organizationSlug(name),
+            metadata: SETUP_PENDING,
+          },
         })
         const member = await tx.member.create({
           data: { id: randomUUID(), organizationId: organization.id, userId, role: 'owner' },
@@ -416,11 +442,20 @@ export const workspaces = new Hono<AppEnv>()
             kind: 'chief',
           },
         })
-        return { created: true, member, workspace }
+        return { created: true, resume: true, member, workspace }
       },
       { timeout: 15_000 },
     )
-    const { created, member, workspace } = made
+    const { created, resume, member, workspace } = made
+    // The session first: whatever follows fails, /me shows this workspace, and onboarding sees
+    // its setup pending (setupPending) and asks this route to finish it.
+    await prisma.authSession.update({
+      where: { id: authSessionId },
+      data: {
+        activeOrganizationId: member.organizationId,
+        ...(workspace && { activeWorkspaceId: workspace.id }),
+      },
+    })
     if (created)
       await audit({
         organizationId: member.organizationId,
@@ -430,19 +465,17 @@ export const workspaces = new Hono<AppEnv>()
         target: { type: 'organization', id: member.organizationId },
         data: { name: workspace!.name },
       })
-    await firstWorkspaceFaults.afterCommit?.()
-    if (workspace)
+    if (resume && workspace) {
+      await firstWorkspaceFaults.afterCommit?.()
       await setUpWorkspace(workspace, member.id, {
         audit: created,
         placeHub: workspace.hubMode !== 'object',
       })
-    await prisma.authSession.update({
-      where: { id: authSessionId },
-      data: {
-        activeOrganizationId: member.organizationId,
-        ...(workspace && { activeWorkspaceId: workspace.id }),
-      },
-    })
+      await prisma.organization.updateMany({
+        where: { id: member.organizationId, metadata: SETUP_PENDING },
+        data: { metadata: null },
+      })
+    }
     return created
       ? c.json({ created: true, id: workspace!.id, name: workspace!.name }, 201)
       : c.json({ created: false })
