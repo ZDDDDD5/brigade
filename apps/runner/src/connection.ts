@@ -550,6 +550,11 @@ export class Connection {
   }
 
   /** Send now if connected and welcomed; false otherwise, for a caller that keeps it to try again. */
+  /** Welcomed by the API and open: what is sent now is taken. */
+  get connected() {
+    return this.ready && this.ws?.readyState === WebSocket.OPEN
+  }
+
   sendIfConnected(message: RunnerToApi) {
     if (!this.ready || this.ws?.readyState !== WebSocket.OPEN) return false
     this.ws.send(JSON.stringify(message))

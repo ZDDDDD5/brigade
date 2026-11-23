@@ -876,13 +876,14 @@ async function start() {
   const readLoginsOnceClaude = () => {
     if (CLOUD || claudeInstall || !missingCli('claude')) return
     claudeInstall = vendorCli('claude', { install: true })
-      .then(async () => {
-        const logins = await machineLogins()
-        // Not welcomed yet, or away: kept until taken (send-once-connected.ts).
-        await sendOnceConnected(() =>
-          connection.sendIfConnected({ type: 'machine.logins', logins }),
-        )
-      })
+      // Read once welcomed, never before: newer than any hello it follows (send-once-connected.ts).
+      .then(() =>
+        sendOnceConnected(
+          () => connection.connected,
+          async () =>
+            connection.sendIfConnected({ type: 'machine.logins', logins: await machineLogins() }),
+        ),
+      )
       .catch((error) => console.warn(`could not install Claude Code to read its login: ${error}`))
   }
   const hello = async () => {

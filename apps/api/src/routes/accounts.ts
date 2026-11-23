@@ -280,12 +280,20 @@ export const accounts = new Hono<AppEnv>()
     const account = await loadManaged(db, scope, c.req.param('id'), 'update')
     const input = await parseBody(c.req.raw, UpdateAccount)
     if (input.isDefault) {
-      await db.account.updateMany({
-        where: { memberId: scope.memberId, provider: account.provider },
-        data: { isDefault: false },
+      // Under the lock a login found on their computer takes to become their default
+      // (hub/thread-events.ts preferWorkingDefault): one of the two, never both halves.
+      const where = {
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
+        memberId: scope.memberId,
+        provider: account.provider,
+      }
+      await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`default:${scope.memberId}:${account.provider}`}, 0))`
+        await tx.account.updateMany({ where, data: { isDefault: false } })
+        await tx.account.updateMany({ where: { ...where, id: account.id }, data: input })
       })
-    }
-    await db.account.updateMany({ where: { id: account.id }, data: input })
+    } else await db.account.updateMany({ where: { id: account.id }, data: input })
     await audit({
       ...scope,
       actor: { type: 'member', id: scope.memberId },

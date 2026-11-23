@@ -6,7 +6,7 @@ import type { AgentEvent, RunnerToApi, SequencedEvent } from '@brigade/contracts
 import { noteAccountState } from '../account-health.js'
 import { prisma, scoped, type Prisma } from '../db.js'
 import type { Session } from '../generated/prisma/client.js'
-import type { SessionStatus } from '../generated/prisma/enums.js'
+import type { AccountStatus, SessionStatus } from '../generated/prisma/enums.js'
 import { autoMergeTurnEnded, resolveTurnEnded } from '../pull-requests.js'
 import type { QueuedMessage } from '../recovery.js'
 import { currentHub } from './context.js'
@@ -271,22 +271,23 @@ async function preferWorkingDefault(
     where: { computerId: computer.id, memberId, provider, source: 'machine', status: 'ready' },
   })
   if (!machine || machine.isDefault) return
-  const working = await prisma.account.count({
-    where: {
-      memberId,
-      provider,
-      isDefault: true,
-      status: { in: ['ready', 'unverified', 'exhausted'] },
-    },
-  })
-  if (working) return
-  await prisma.$transaction([
-    prisma.account.updateMany({
-      where: { memberId, provider, isDefault: true },
+  const working = { in: ['ready', 'unverified', 'exhausted'] as AccountStatus[] }
+  // Decided and applied together, under a lock on the member's provider, and only over a
+  // default that does not work: a default they made meanwhile (Make default, a sign-in that
+  // ended) stays.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`default:${memberId}:${provider}`}, 0))`
+    if (await tx.account.count({ where: { memberId, provider, isDefault: true, status: working } }))
+      return
+    await tx.account.updateMany({
+      where: { memberId, provider, isDefault: true, status: { notIn: working.in } },
       data: { isDefault: false },
-    }),
-    prisma.account.update({ where: { id: machine.id }, data: { isDefault: true } }),
-  ])
+    })
+    await tx.account.updateMany({
+      where: { id: machine.id, status: 'ready' },
+      data: { isDefault: true },
+    })
+  })
 }
 
 /**
