@@ -604,6 +604,144 @@ test(
 )
 
 test(
+  "save_to_library's save is refused over a change the thread has not seen, with the file as it is",
+  { skip },
+  async () => {
+    const path = `Briefs/brief-${id}.md`
+    const db = scoped(scope)
+    const { saveLibraryFile, StaleMemory } = await import('../src/library.js')
+    const text = async () =>
+      (await db.document.findFirstOrThrow({ where: { path, deletedAt: null } })).text
+    const save = async (body: string, extra: Record<string, unknown> = {}) => {
+      const { id: uploadId, complete } = await runnerUpload('library', path, strToU8(body))
+      assert.equal(complete.status, 200)
+      return libraryCall({ name: 'save', path, upload: { id: uploadId }, guard: true, ...extra })
+    }
+    // Its own saves, again and again.
+    assert.equal((await save('# Brief\n\nKeep\n\nDrop\n')).ok, true)
+    assert.equal((await save('# Brief\n\nKeep\n\nDrop\n\nMore\n')).ok, true)
+    // A person deletes a line.
+    const edited = strToU8('# Brief\n\nKeep\n\nMore\n')
+    const saved = await app.request(
+      '/api/library/files',
+      json({ path, uploadId: await ready('library', path, edited) }),
+    )
+    assert.ok(saved.status < 300, await saved.clone().text())
+    // Then the same thread adds a list line (add_item): its file on this computer lacks both.
+    const latest = strToU8('# Brief\n\nKeep\n\nMore\n\n* [ ] Item\n')
+    await saveLibraryFile(
+      db,
+      scope,
+      { type: 'teammate', id: seat.teammateId },
+      { path, bytes: latest },
+      { sessionId: seat.sessionId },
+    )
+    // The thread's stale copy, with the deleted line back: refused, with the file as it is now.
+    const refused = await save('# Brief\n\nKeep\n\nDrop\n\nMore\n\nNew line\n')
+    assert.equal(refused.ok, false)
+    assert.match(refused.error!, new RegExp(`base: "${sha(latest)}"`))
+    assert.ok(refused.error!.includes('* [ ] Item'), refused.error)
+    assert.equal(await text(), new TextDecoder().decode(latest))
+    // Built on an older text: refused too.
+    assert.equal((await save('x', { base: sha(edited) })).ok, false)
+    // Built on the text it gave: saved; and its next save builds on that.
+    const rebased = '# Brief\n\nKeep\n\nMore\n\n* [ ] Item\n\nNew line\n'
+    const ok = await save(rebased, { base: sha(latest) })
+    assert.equal(ok.ok, true, ok.error)
+    assert.equal(await text(), rebased)
+    assert.equal((await save(`${rebased}\nAnother\n`)).ok, true)
+    // A person's edit, then another thread's save: refused, last by that thread's teammate.
+    await saveLibraryFile(db, scope, { type: 'member', id: ids.member }, { path, bytes: edited })
+    await saveLibraryFile(
+      db,
+      scope,
+      { type: 'teammate', id: seat.teammateId },
+      { path, bytes: latest },
+      { sessionId: 'another-thread' },
+    )
+    assert.equal((await save(rebased)).ok, false)
+    // A save without the guard (a machine's render) is as before.
+    const { id: uploadId } = await runnerUpload('library', path, strToU8('plain'))
+    assert.equal((await libraryCall({ name: 'save', path, upload: { id: uploadId } })).ok, true)
+
+    // What it expects to replace holds as it commits: a file, or none.
+    const fresh = `Briefs/fresh-${id}.md`
+    const teammate = { type: 'teammate' as const, id: seat.teammateId }
+    await assert.rejects(
+      saveLibraryFile(
+        db,
+        scope,
+        teammate,
+        { path: fresh, bytes: strToU8('a') },
+        {},
+        {
+          expect: { sha256: sha(strToU8('gone')) },
+        },
+      ),
+      StaleMemory,
+      'no file where one was expected',
+    )
+    await saveLibraryFile(db, scope, teammate, { path: fresh, bytes: strToU8('made meanwhile') })
+    await assert.rejects(
+      saveLibraryFile(
+        db,
+        scope,
+        teammate,
+        { path: fresh, bytes: strToU8('b') },
+        {},
+        {
+          expect: { absent: true },
+        },
+      ),
+      StaleMemory,
+      'a file where none was expected',
+    )
+    // Moved between its lookup and its commit: nothing is written, at either path.
+    const moving = `Briefs/moving-${id}.md`
+    const moved = `Elsewhere/moved-${id}.md`
+    const before = strToU8('before the move')
+    const file = await saveLibraryFile(db, scope, teammate, { path: moving, bytes: before })
+    const { moveLibraryFile } = await import('../src/library.js')
+    await assert.rejects(
+      saveLibraryFile(
+        db,
+        scope,
+        teammate,
+        { path: moving, bytes: strToU8('after') },
+        {},
+        {
+          expect: { sha256: sha(before) },
+          lease: {
+            check: () => {},
+            fence: async (commit) => {
+              await moveLibraryFile(db, scope, { type: 'member', id: ids.member }, file.id, moved)
+              return prisma.$transaction(commit)
+            },
+          } as never,
+        },
+      ),
+      StaleMemory,
+    )
+    const after = await db.document.findFirstOrThrow({ where: { id: file.id } })
+    assert.equal(after.path, moved)
+    assert.equal(after.sha256, sha(before))
+    // A base for a file that is gone: refused, not made anew.
+    const gone = await libraryCall({ name: 'delete', path: fresh })
+    assert.equal(gone.ok, true, gone.error)
+    const { id: up } = await runnerUpload('library', fresh, strToU8('c'))
+    const recreated = await libraryCall({
+      name: 'save',
+      path: fresh,
+      upload: { id: up },
+      guard: true,
+      base: sha(strToU8('made meanwhile')),
+    })
+    assert.equal(recreated.ok, false)
+    assert.match(recreated.error!, /Nothing is at/)
+  },
+)
+
+test(
   'an upload taken for its use keeps its bytes from the sweep while it is used, however old',
   { skip },
   async () => {

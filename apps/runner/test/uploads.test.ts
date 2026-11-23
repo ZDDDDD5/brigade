@@ -206,6 +206,29 @@ test('a library save sends the upload, not the bytes; one too large for a thread
   assert.deepEqual(operation, { name: 'save', path: 'guides/refunds.md', upload: { id: 'up1' } })
   assert.ok(api.held.get('up1')!.equals(bytes))
 
+  // save_to_library's staged file keeps its guard, and the text it built on.
+  const staged = join(home, 'staged.md')
+  await writeFile(staged, bytes)
+  const base = 'a'.repeat(64)
+  const guarded = await libraryMessage(
+    { apiUrl: api.apiUrl, token: 'tok' },
+    { sessionId: 's1', teammateId: 't1' },
+    {
+      name: 'save',
+      path: 'guides/refunds.md',
+      file: { path: staged, size: bytes.length, sha256: sha256(bytes) },
+      guard: true,
+      base,
+    },
+  )
+  assert.deepEqual(guarded, {
+    name: 'save',
+    path: 'guides/refunds.md',
+    upload: { id: 'up2' },
+    guard: true,
+    base,
+  })
+
   const before = api.seen.length
   // Its size as staged, without holding 500 MB here; the staged file goes all the same.
   const big = join(home, 'big.bin')
@@ -348,7 +371,7 @@ test('save_to_library stages the file and hands it to the caller, which uploads 
     toolCallId: 'c1',
     messages: [],
   } as never)
-  assert.deepEqual(operations, [{ name: 'save', path: 'notes/a.txt', file }])
+  assert.deepEqual(operations, [{ name: 'save', path: 'notes/a.txt', file, guard: true }])
 })
 
 test('a file for a connector call goes to the bucket, and its id comes back once checked', async () => {

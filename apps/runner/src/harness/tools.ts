@@ -1406,8 +1406,10 @@ export function libraryTools(options: {
     tools.save_to_library = tool({
       description:
         `Add a file to the workspace's document library, or replace the one at that path, so the team and other teammates can use it. ` +
-        `Write the file on this computer first, then pass its path. The library copy at ${options.libraryDir} is read-only; it updates shortly after.`,
-      inputSchema: jsonSchema<{ file: string; path: string }>({
+        `Write the file on this computer first, then pass its path. The library copy at ${options.libraryDir} is read-only; it updates shortly after. ` +
+        `To change a file already there, start from that library copy: people and other threads change library files, ` +
+        `and a save over a change you have not seen is refused, with the file as it is now.`,
+      inputSchema: jsonSchema<{ file: string; path: string; base?: string }>({
         type: 'object',
         properties: {
           file: {
@@ -1419,13 +1421,24 @@ export function libraryTools(options: {
             type: 'string',
             description: 'Where it goes in the library, e.g. "guides/refunds.md"',
           },
+          base: {
+            type: 'string',
+            description:
+              'After a refused save: the SHA-256 it gave, once your file is the text it gave with your change on it. Saved only if the library file is still that one',
+          },
         },
         required: ['file', 'path'],
       }),
       execute: async (input, { toolCallId }) => {
         const file = await options.stageFile(input.file)
         return options.call({
-          operation: { name: 'save', path: input.path, file },
+          operation: {
+            name: 'save',
+            path: input.path,
+            file,
+            guard: true,
+            ...(input.base ? { base: input.base } : {}),
+          },
           toolCallId,
           toolName: 'save_to_library',
           input,
