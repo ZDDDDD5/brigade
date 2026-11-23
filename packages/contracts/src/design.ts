@@ -248,9 +248,9 @@ export const SaveDesignThumbnail = z
     message: 'Give the upload or the picture',
   })
 
-/** Files a person changed since a thread last saved them: `design_edits`. */
+/** Files of a design a person changed since a thread last saved them: `design_edits`. */
 export const DesignPersonEdit = z.object({
-  /** In the design folder; for a library file, its name. */
+  /** In the design folder. */
   file: z.string(),
   by: z.string(),
   at: z.string(),

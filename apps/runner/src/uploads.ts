@@ -221,7 +221,7 @@ export type LibraryOperation =
     >
   | { name: 'save'; path: string; bytes: Buffer }
   /** save_to_library's: a file staged on this computer, removed once sent. */
-  | { name: 'save'; path: string; file: StagedFile }
+  | { name: 'save'; path: string; file: StagedFile; guard?: true; base?: string }
   | {
       name: 'skill_proposal'
       proposal: Omit<SkillProposal, 'refs'>
@@ -251,7 +251,14 @@ export async function libraryMessage(
         name: operation.path,
         ...body,
       })
-      return { name: 'save', path: operation.path, upload: { id } }
+      const guard =
+        'file' in operation
+          ? {
+              ...(operation.guard ? { guard: operation.guard } : {}),
+              ...(operation.base ? { base: operation.base } : {}),
+            }
+          : {}
+      return { name: 'save', path: operation.path, upload: { id }, ...guard }
     } finally {
       if (staged) await rm(staged.path, { force: true })
     }

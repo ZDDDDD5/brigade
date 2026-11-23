@@ -1407,8 +1407,9 @@ export function libraryTools(options: {
       description:
         `Add a file to the workspace's document library, or replace the one at that path, so the team and other teammates can use it. ` +
         `Write the file on this computer first, then pass its path. The library copy at ${options.libraryDir} is read-only; it updates shortly after. ` +
-        `To change a file already there, start from that library copy: people edit library files by hand, and a save over their edits is refused once, saying what to do.`,
-      inputSchema: jsonSchema<{ file: string; path: string; overwrite?: boolean }>({
+        `To change a file already there, start from that library copy: people and other threads change library files, ` +
+        `and a save over a change you have not seen is refused, with the file as it is now.`,
+      inputSchema: jsonSchema<{ file: string; path: string; base?: string }>({
         type: 'object',
         properties: {
           file: {
@@ -1420,36 +1421,24 @@ export function libraryTools(options: {
             type: 'string',
             description: 'Where it goes in the library, e.g. "guides/refunds.md"',
           },
-          overwrite: {
-            type: 'boolean',
+          base: {
+            type: 'string',
             description:
-              'Save even though a person edited the library file since you last saved it: only when your file was made from the library copy that has their edits',
+              'After a refused save: the SHA-256 it gave, once your file is the text it gave with your change on it. Saved only if the library file is still that one',
           },
         },
         required: ['file', 'path'],
       }),
       execute: async (input, { toolCallId }) => {
-        if (!input.overwrite) {
-          // Before saving: a person may have edited the library file since this thread saved it.
-          const edited = (await options
-            .call({
-              operation: { name: 'design_edits', path: input.path },
-              toolCallId,
-              toolName: 'save_to_library',
-              input,
-            })
-            // An API that does not know the question: save as before.
-            .catch(() => [])) as DesignPersonEdit[]
-          if (edited.length)
-            throw new Error(
-              `${edited[0]!.by} edited \`${input.path}\` in the library after you last saved it, and your file would undo their changes. ` +
-                `Copy the library's copy (${options.libraryDir}/${input.path}) over your file and make your change on it, then save. ` +
-                'If your file was made from that copy, save again with overwrite: true. Nothing was saved.',
-            )
-        }
         const file = await options.stageFile(input.file)
         return options.call({
-          operation: { name: 'save', path: input.path, file },
+          operation: {
+            name: 'save',
+            path: input.path,
+            file,
+            guard: true,
+            ...(input.base ? { base: input.base } : {}),
+          },
           toolCallId,
           toolName: 'save_to_library',
           input,

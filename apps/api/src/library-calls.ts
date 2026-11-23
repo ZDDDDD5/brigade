@@ -16,13 +16,15 @@ import { personEdits, saveTeammateDesignSystem } from './designs.js'
 import { hubs } from './hub.js'
 import { libraryChangeRefusal } from './library-changes.js'
 import { moveFolder, saveRefusal, teammateLibraryAccess, trashFolder } from './library-folders.js'
-import { trashLibraryFile } from './library-history.js'
+import { othersSaves, trashLibraryFile } from './library-history.js'
 import {
   editMemory,
   moveLibraryFile,
+  readLibraryFile,
   saveLibraryFile,
   saveSummary,
   search,
+  StaleMemory,
   tidyMemory,
 } from './library.js'
 import { proposeSkill } from './skills.js'
@@ -163,6 +165,21 @@ export async function handleLibraryCall(
   const refusal = saveRefusal(teammate.name, access, op.path)
   if (refusal) return fail(refusal)
   const actor = { type: 'teammate' as const, id: teammate.id }
+  // save_to_library's guard: never over a change it has not seen. The check holds as it commits
+  // (baseSha): a save meanwhile refuses this one too.
+  let baseSha: string | undefined
+  if (op.guard || op.base) {
+    const { row: current, by } = await othersSaves(db, session, op.path)
+    if (op.base ? current?.sha256 !== op.base : by.length > 0)
+      return fail(await overwriteRefusal(scope, op.path, current, by))
+    baseSha = current?.sha256
+  }
+  const stale = async (error: unknown) => {
+    if (!(error instanceof StaleMemory)) return false
+    const { row: current, by } = await othersSaves(db, session, op.path)
+    fail(await overwriteRefusal(scope, op.path, current, by))
+    return true
+  }
   let row
   if (op.upload) {
     // Uploaded straight to the bucket by the runner, and checked (routes/runner-uploads.ts).
@@ -185,10 +202,12 @@ export async function handleLibraryCall(
           upload: { key: uploadBytesKey(scope, upload), ...upload },
         },
         { sessionId: session.id },
+        { baseSha },
       )
       await discardUpload(scope, upload.id)
     } catch (error) {
       if (error instanceof HTTPException) return fail(error.message)
+      if (await stale(error)) return discardUpload(scope, op.upload.id)
       throw error
     }
   } else {
@@ -198,13 +217,19 @@ export async function handleLibraryCall(
       return fail(
         "Files saved from a thread can be up to 25 MB until this computer's runner is updated",
       )
-    row = await saveLibraryFile(
-      db,
-      scope,
-      actor,
-      { path: op.path, bytes, contentType: op.contentType ?? null },
-      { sessionId: session.id },
-    )
+    try {
+      row = await saveLibraryFile(
+        db,
+        scope,
+        actor,
+        { path: op.path, bytes, contentType: op.contentType ?? null },
+        { sessionId: session.id },
+        { baseSha },
+      )
+    } catch (error) {
+      if (await stale(error)) return
+      throw error
+    }
   }
   // The mention opens this file from the teammate's reply, where a bare name may not.
   return done({
@@ -213,6 +238,44 @@ export async function handleLibraryCall(
     contentType: row.contentType,
     mention: formatMention({ kind: 'document', id: row.id, label: row.path }),
   })
+}
+
+/** The library's text of a file save_to_library refuses to save over, at most this long. */
+const REFUSAL_TEXT_MAX = 200_000
+
+/**
+ * Why save_to_library saved nothing: who changed the file since this thread saved it, and the
+ * file as it is now, to make the change on (the teammate's mirror may not have it yet).
+ */
+async function overwriteRefusal(
+  scope: Scope,
+  path: string,
+  row: {
+    id: string
+    objectKey: string | null
+    size: number
+    sha256: string
+    contentType: string
+  } | null,
+  by: string[],
+) {
+  if (!row)
+    return `Nothing is at \`${path}\` in the library any more. Nothing was saved: save again without base to add it anew.`
+  const who = by.length ? by.join(', ') : 'Someone'
+  const head =
+    `${who} changed \`${path}\` in the library since you last saved it, and your file would undo that. Nothing was saved. ` +
+    `Make your change on the library's file as it is now (SHA-256 ${row.sha256}), then save it with base: "${row.sha256}".`
+  const text =
+    row.size <= REFUSAL_TEXT_MAX &&
+    (/^text\//.test(row.contentType) || /json|markdown|xml|yaml/.test(row.contentType))
+      ? await readLibraryFile(scope, row)
+          .then((bytes) => new TextDecoder('utf-8', { fatal: true }).decode(bytes))
+          .catch(() => null)
+      : null
+  if (text === null)
+    return `${head} Its copy in your library mirror is that one once its SHA-256 matches; it updates shortly after a save.`
+  const fence = '`'.repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map((m) => m[0].length + 1)))
+  return `${head} It is:\n\n${fence}\n${text}\n${fence}`
 }
 
 /**

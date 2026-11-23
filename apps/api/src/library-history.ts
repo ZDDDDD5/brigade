@@ -169,6 +169,40 @@ export async function readVersion(
   return bytes
 }
 
+/**
+ * A library file, and who saved it besides this thread since it last saved it (or, never having
+ * saved it, since it started): a thread's save over that would undo their change. Every save
+ * keeps a version (recordVersion), whoever made it and however (a person on the page, a list's
+ * change, another thread).
+ */
+export async function othersSaves(
+  db: ScopedDb,
+  session: { id: string; createdAt: Date },
+  path: string,
+) {
+  const row = await db.document.findFirst({ where: { kind: 'library', path, deletedAt: null } })
+  if (!row) return { row, by: [] as string[] }
+  const versions = await db.documentVersion.findMany({
+    where: { documentId: row.id },
+    select: { actorType: true, actorId: true, sessionId: true, updatedAt: true },
+    orderBy: { updatedAt: 'desc' },
+  })
+  // A version's last change: saves moments apart fold into one version.
+  const lastSaved = Math.max(
+    session.createdAt.getTime(),
+    ...versions.filter((v) => v.sessionId === session.id).map((v) => v.updatedAt.getTime()),
+  )
+  const others = versions.filter(
+    (v) => v.sessionId !== session.id && v.updatedAt.getTime() > lastSaved,
+  )
+  const name = await actorNames(
+    db,
+    others.map((v) => ({ type: v.actorType, id: v.actorId })),
+  )
+  const by = [...new Set(others.map((v) => name(v.actorType, v.actorId)?.name ?? 'Someone'))]
+  return { row, by }
+}
+
 /** Names for the people and teammates who did things, by actor. */
 export async function actorNames(db: ScopedDb, actors: { type: string; id: string }[]) {
   const ids = (type: string) => [...new Set(actors.filter((a) => a.type === type).map((a) => a.id))]

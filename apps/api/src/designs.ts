@@ -686,11 +686,10 @@ export async function saveDesignThumbnail(
 }
 
 /**
- * Files a person changed since this thread last saved them (or, never having
- * saved them, since it started): a teammate asks before saving, so it does not
- * save over their edits unawares. For a design, its files (the picture is the
- * canvas's to keep up to date, not an edit); for any other path, the one library
- * file there, `file` being its name.
+ * Files of a design a person changed since this thread last saved them (or,
+ * never having saved them, since it started): a teammate asks before saving the
+ * design, so it does not save over their edits unawares. The picture is the
+ * canvas's to keep up to date, not an edit.
  */
 export async function personEdits(
   db: ScopedDb,
@@ -698,12 +697,10 @@ export async function personEdits(
   path: string,
 ): Promise<DesignPersonEdit[]> {
   const folder = path.replace(/\/+$/, '')
-  const design = designFolderOf(folder) === folder
-  const rows = (
-    design
-      ? await designRows(db, folder)
-      : await db.document.findMany({ where: { kind: 'library', deletedAt: null, path: folder } })
-  ).filter((r) => r.updatedByType === 'member' && r.path !== `${folder}/${DESIGN_THUMBNAIL}`)
+  if (designFolderOf(folder) !== folder) return []
+  const rows = (await designRows(db, folder)).filter(
+    (r) => r.updatedByType === 'member' && r.path !== `${folder}/${DESIGN_THUMBNAIL}`,
+  )
   if (rows.length === 0) return []
   const ours = await db.documentVersion.findMany({
     where: { documentId: { in: rows.map((r) => r.id) }, sessionId: session.id },
@@ -721,7 +718,7 @@ export async function personEdits(
     edited.map((r) => ({ type: 'member', id: r.updatedById! })),
   )
   return edited.map((r) => ({
-    file: design ? r.path.slice(folder.length + 1) : r.path.split('/').pop()!,
+    file: r.path.slice(folder.length + 1),
     by: name('member', r.updatedById)?.name ?? 'A person',
     at: r.updatedAt.toISOString(),
   }))

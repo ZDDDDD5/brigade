@@ -604,6 +604,70 @@ test(
 )
 
 test(
+  "save_to_library's save is refused over a change the thread has not seen, with the file as it is",
+  { skip },
+  async () => {
+    const path = `Briefs/brief-${id}.md`
+    const text = async () =>
+      (await scoped(scope).document.findFirstOrThrow({ where: { path, deletedAt: null } })).text
+    const save = async (body: string, extra: Record<string, unknown> = {}) => {
+      const { id: uploadId, complete } = await runnerUpload('library', path, strToU8(body))
+      assert.equal(complete.status, 200)
+      return libraryCall({ name: 'save', path, upload: { id: uploadId }, guard: true, ...extra })
+    }
+    // Its own saves, again and again.
+    assert.equal((await save('# Brief\n\nKeep\n\nDrop\n')).ok, true)
+    assert.equal((await save('# Brief\n\nKeep\n\nDrop\n\nMore\n')).ok, true)
+    // A person deletes a line.
+    const edited = strToU8('# Brief\n\nKeep\n\nMore\n')
+    const saved = await app.request(
+      '/api/library/files',
+      json({ path, uploadId: await ready('library', path, edited) }),
+    )
+    assert.ok(saved.status < 300, await saved.clone().text())
+    // Then another thread changes it too (a list's change, say): still a change this one has not seen.
+    const other = await prisma.session.create({
+      data: {
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
+        startedByMemberId: ids.member,
+        computerId: seat.computerId,
+        teammateId: seat.teammateId,
+        title: 'Other',
+        status: 'idle',
+        origin: 'member',
+      } as never,
+    })
+    const { saveLibraryFile } = await import('../src/library.js')
+    const latest = strToU8('# Brief\n\nKeep\n\nMore\n\n* [ ] Item\n')
+    await saveLibraryFile(
+      scoped(scope),
+      scope,
+      { type: 'teammate', id: seat.teammateId },
+      { path, bytes: latest },
+      { sessionId: other.id },
+    )
+    // The thread's stale copy, with the deleted line back: refused, with the file as it is now.
+    const refused = await save('# Brief\n\nKeep\n\nDrop\n\nMore\n\nNew line\n')
+    assert.equal(refused.ok, false)
+    assert.match(refused.error!, /Ada/)
+    assert.match(refused.error!, new RegExp(`base: "${sha(latest)}"`))
+    assert.ok(refused.error!.includes('* [ ] Item'), refused.error)
+    assert.equal(await text(), new TextDecoder().decode(latest))
+    // Built on an older text: refused too.
+    assert.equal((await save('x', { base: sha(edited) })).ok, false)
+    // Built on the text it gave: saved.
+    const rebased = '# Brief\n\nKeep\n\nMore\n\n* [ ] Item\n\nNew line\n'
+    const ok = await save(rebased, { base: sha(latest) })
+    assert.equal(ok.ok, true, ok.error)
+    assert.equal(await text(), rebased)
+    // A save without the guard (a machine's render) is as before.
+    const { id: uploadId } = await runnerUpload('library', path, strToU8('plain'))
+    assert.equal((await libraryCall({ name: 'save', path, upload: { id: uploadId } })).ok, true)
+  },
+)
+
+test(
   'an upload taken for its use keeps its bytes from the sweep while it is used, however old',
   { skip },
   async () => {

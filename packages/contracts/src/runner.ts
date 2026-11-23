@@ -717,6 +717,17 @@ export const RunnerToApi = z.discriminatedUnion('type', [
            */
           content: z.string().optional(),
           contentType: z.string().max(200).optional(),
+          /**
+           * save_to_library's: written only if nobody but this thread saved the file since it last
+           * did (or, never having, since it started), checked as it commits; else refused with
+           * the library's text and its `sha256`.
+           */
+          guard: z.literal(true).optional(),
+          /** Written only over this SHA-256 of the file, the one such a refusal gave. */
+          base: z
+            .string()
+            .regex(/^[0-9a-f]{64}$/)
+            .optional(),
         })
         .refine((op) => (op.upload === undefined) !== (op.content === undefined), {
           message: 'an upload or the content, one of them',
@@ -727,10 +738,7 @@ export const RunnerToApi = z.discriminatedUnion('type', [
       z.object({ name: z.literal('delete'), path: LibraryPath }),
       /** Register a design system whose folder is saved, or change one. */
       z.object({ name: z.literal('design_system'), designSystem: TeammateDesignSystem }),
-      /**
-       * Files a person changed since this thread last saved them: asked before saving a design (its
-       * files), or a library file (that file alone).
-       */
+      /** Files of a design a person changed since this thread last saved them: asked before saving it. */
       z.object({ name: z.literal('design_edits'), path: LibraryPath }),
       /** Propose a skill, or a change to one: it waits for a person's approval in a ticket. */
       z.object({ name: z.literal('skill_proposal'), proposal: SkillProposal }),
