@@ -54,13 +54,19 @@ export function loginsOnComputer(computerId: string) {
 
 /**
  * In the hub: start the vendor's sign-in on the computer, and tell the member's dashboards.
- * 'offline' when a member's machine is not connected.
+ * 'offline' when a member's machine is not connected. With `keepLive`, an attempt already under
+ * way for the account stands and is returned: a repeated request never replaces the attempt
+ * whose link the member may have opened. Checked and begun with no await between, so two at once
+ * make one.
  */
 export async function startLogin(
   input: Omit<PendingLogin, 'loginId' | 'last'>,
   computer: { id: string; kind: string },
+  options: { keepLive?: boolean } = {},
 ) {
   const hub = currentHub()
+  const live = options.keepLive ? loginForAccount(input.accountId) : undefined
+  if (live) return live.last
   const login = beginLogin(input)
   const sent = await hub.dispatch(computer, {
     type: 'account.login.start',

@@ -364,6 +364,11 @@ export const AddAccount = z.object({
   computerId: z.string(),
   provider: HarnessId,
   label: z.string().trim().max(80).optional(),
+  /**
+   * Onboarding's "Sign in with …": the member's own account there whose sign-in never got through
+   * is signed in again, rather than another added (Settings' Add adds one).
+   */
+  retry: z.boolean().optional(),
 })
 export const TakeOver = z.object({ interrupt: z.boolean().default(false) })
 export const HandBack = z.object({
