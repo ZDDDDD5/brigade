@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import {
   AccountDeletionCode,
+  CHIEF_NAME,
   CreateWorkspace,
   DeleteAccount,
   DeleteWorkspace,
@@ -75,6 +76,9 @@ async function accountToDelete(userId: string, email: string) {
   return user
 }
 
+/** For tests only: a failure after the first workspace's commit, as a cut request. */
+export const firstWorkspaceFaults: { afterCommit?: () => void | Promise<void> } = {}
+
 /** The name of someone's first workspace, and of its organization: "Ada's workspace". */
 export function firstWorkspaceName(userName: string) {
   const first = userName.trim().split(/\s+/)[0]?.slice(0, 40)
@@ -97,19 +101,23 @@ const organizationSlug = (name: string) =>
 async function setUpWorkspace(
   workspace: { id: string; organizationId: string; name: string },
   memberId: string,
+  // Done again to finish a cut setup (POST /me/first-workspace): the audit line only once, and
+  // the hub only while it is not in its object yet.
+  again: { audit: boolean; placeHub: boolean } = { audit: true, placeHub: true },
 ) {
   const { organizationId } = workspace
   // Its hub in an object of its own from the start (docs/workspace-hubs-plan.md), before
   // anything below asks it for something.
-  await placeNewHub(workspace.id)
-  await audit({
-    organizationId,
-    workspaceId: workspace.id,
-    actor: { type: 'member', id: memberId },
-    action: 'workspace.created',
-    target: { type: 'workspace', id: workspace.id },
-    data: { name: workspace.name },
-  })
+  if (again.placeHub) await placeNewHub(workspace.id)
+  if (again.audit)
+    await audit({
+      organizationId,
+      workspaceId: workspace.id,
+      actor: { type: 'member', id: memberId },
+      action: 'workspace.created',
+      target: { type: 'workspace', id: workspace.id },
+      data: { name: workspace.name },
+    })
   await ensureChief(workspace)
   // Its first list, so Lists shows from day one how lines go to teammates. A failed save
   // leaves the workspace without it: nothing else needs it.
@@ -361,8 +369,10 @@ export const workspaces = new Hono<AppEnv>()
   /**
    * Onboarding's first step, with nothing to fill: someone in no organization gets one of their
    * own and its first workspace, named after them, and the session moves there. Once per person,
-   * whatever the tabs or reloads: under a lock on them, someone who has an organization already
-   * is only moved to it (`created: false`).
+   * whatever the tabs or reloads: under a lock on them, the organization, its owner, the
+   * workspace and its Chief are made in one transaction, or found when made already. What
+   * follows (hub, Getting started list, cloud computer) is done again by each call until done,
+   * so a call cut after the commit is finished by the next, then the session moves last.
    */
   .post('/me/first-workspace', async (c) => {
     const { userId, authSessionId } = c.var
@@ -372,19 +382,15 @@ export const workspaces = new Hono<AppEnv>()
         const existing = await tx.member.findFirst({
           where: { userId },
           orderBy: { createdAt: 'asc' },
-          select: { organizationId: true },
+          select: { id: true, organizationId: true },
         })
         if (existing) {
           const workspace = await tx.workspace.findFirst({
             where: { organizationId: existing.organizationId },
             orderBy: { createdAt: 'asc' },
-            select: { id: true },
+            select: { id: true, organizationId: true, name: true, hubMode: true },
           })
-          return {
-            created: false as const,
-            organizationId: existing.organizationId,
-            workspaceId: workspace?.id ?? null,
-          }
+          return { created: false, member: existing, workspace }
         }
         const user = await tx.user.findUniqueOrThrow({
           where: { id: userId },
@@ -396,39 +402,50 @@ export const workspaces = new Hono<AppEnv>()
         })
         const member = await tx.member.create({
           data: { id: randomUUID(), organizationId: organization.id, userId, role: 'owner' },
+          select: { id: true, organizationId: true },
         })
         const workspace = await tx.workspace.create({
           data: { organizationId: organization.id, name },
+          select: { id: true, organizationId: true, name: true, hubMode: true },
         })
-        return { created: true as const, organization, member, workspace }
+        await tx.teammate.create({
+          data: {
+            organizationId: organization.id,
+            workspaceId: workspace.id,
+            name: CHIEF_NAME,
+            kind: 'chief',
+          },
+        })
+        return { created: true, member, workspace }
       },
       { timeout: 15_000 },
     )
-    if (!made.created) {
-      await prisma.authSession.update({
-        where: { id: authSessionId },
-        data: {
-          activeOrganizationId: made.organizationId,
-          ...(made.workspaceId && { activeWorkspaceId: made.workspaceId }),
-        },
+    const { created, member, workspace } = made
+    if (created)
+      await audit({
+        organizationId: member.organizationId,
+        workspaceId: null,
+        actor: { type: 'member', id: member.id },
+        action: 'organization.created',
+        target: { type: 'organization', id: member.organizationId },
+        data: { name: workspace!.name },
       })
-      return c.json({ created: false })
-    }
-    const { organization, member, workspace } = made
+    await firstWorkspaceFaults.afterCommit?.()
+    if (workspace)
+      await setUpWorkspace(workspace, member.id, {
+        audit: created,
+        placeHub: workspace.hubMode !== 'object',
+      })
     await prisma.authSession.update({
       where: { id: authSessionId },
-      data: { activeOrganizationId: organization.id, activeWorkspaceId: workspace.id },
+      data: {
+        activeOrganizationId: member.organizationId,
+        ...(workspace && { activeWorkspaceId: workspace.id }),
+      },
     })
-    await audit({
-      organizationId: organization.id,
-      workspaceId: null,
-      actor: { type: 'member', id: member.id },
-      action: 'organization.created',
-      target: { type: 'organization', id: organization.id },
-      data: { name: organization.name },
-    })
-    await setUpWorkspace(workspace, member.id)
-    return c.json({ created: true, id: workspace.id, name: workspace.name }, 201)
+    return created
+      ? c.json({ created: true, id: workspace!.id, name: workspace!.name }, 201)
+      : c.json({ created: false })
   })
 
   /** Make another workspace of the active organization the session's scope. */

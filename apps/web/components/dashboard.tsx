@@ -327,17 +327,16 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           : '/sign-in',
       )
     } else if (me.data) markSignedIn()
-    // No workspace yet, or no AI account to run anything: onboarding first. Not on the page that
-    // signs Brigade.app in from the browser: someone new is sent back to the app, where
-    // onboarding links that computer, rather than through it here (it offers to download the
-    // app they come from).
-    if (
-      me.data &&
-      (!me.data.activeWorkspaceId || !me.data.aiReady) &&
-      location.pathname !== DESKTOP_SIGN_IN
-    )
+  }, [me.data, me.error])
+
+  // No workspace yet, or no AI account to run anything: onboarding first. Not on the page that
+  // signs Brigade.app in from the browser: someone new is sent back to the app, where onboarding
+  // links that computer, rather than through it here (it offers to download the app they come
+  // from). Again on each route: leaving that page (⌘, to Settings) goes to onboarding.
+  useEffect(() => {
+    if (me.data && (!me.data.activeWorkspaceId || !me.data.aiReady) && pathname !== DESKTOP_SIGN_IN)
       router.replace('/onboarding')
-  }, [me.data, me.error, router])
+  }, [me.data, pathname, router])
 
   // Opened from a notification about another of the member's workspaces: switch to it.
   useEffect(() => {

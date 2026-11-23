@@ -48,7 +48,9 @@ const { HTTPException } = await import('hono/http-exception')
 const { auth } = await import('../src/auth.js')
 const { prisma } = await import('../src/db.js')
 const { env } = await import('../src/config.js')
-const { workspaces, firstWorkspaceName } = await import('../src/routes/workspaces.js')
+const { workspaces, firstWorkspaceName, firstWorkspaceFaults } =
+  await import('../src/routes/workspaces.js')
+const { GETTING_STARTED } = await import('@brigade/contracts')
 
 const app = new Hono()
 app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw))
@@ -162,4 +164,47 @@ test('two tabs at once make one organization and one workspace', { skip }, async
   const again = await call('/api/me/first-workspace', { body: {}, cookie: one })
   assert.equal(((await again.json()) as { created: boolean }).created, false)
   assert.equal(await prisma.member.count({ where: { userId: user.id } }), 1)
+})
+
+test('a call cut after the commit is finished by the next', { skip }, async () => {
+  const cookie = await signIn(`bob-${run}@example.com`)
+  firstWorkspaceFaults.afterCommit = () => {
+    throw new Error('cut')
+  }
+  try {
+    const cut = await call('/api/me/first-workspace', { body: {}, cookie })
+    assert.equal(cut.status, 500)
+  } finally {
+    firstWorkspaceFaults.afterCommit = undefined
+  }
+  const { user } = await meOf(cookie)
+  const member = await prisma.member.findFirstOrThrow({ where: { userId: user.id } })
+  const workspace = await prisma.workspace.findFirstOrThrow({
+    where: { organizationId: member.organizationId },
+  })
+  // Made in the transaction: the workspace and its Chief, never one without the other.
+  assert.equal(
+    await prisma.teammate.count({ where: { workspaceId: workspace.id, kind: 'chief' } }),
+    1,
+  )
+  const list = () =>
+    prisma.document.count({
+      where: { workspaceId: workspace.id, kind: 'library', path: GETTING_STARTED.path },
+    })
+  assert.equal(await list(), 0, 'the setup after the commit did not run')
+
+  const again = await call('/api/me/first-workspace', { body: {}, cookie })
+  assert.equal(again.status, 200, await again.clone().text())
+  assert.equal(((await again.json()) as { created: boolean }).created, false)
+  assert.equal(await list(), 1, 'the next call finished it')
+  assert.equal(
+    await prisma.teammate.count({ where: { workspaceId: workspace.id, kind: 'chief' } }),
+    1,
+  )
+  assert.equal(
+    await prisma.workspace.count({ where: { organizationId: member.organizationId } }),
+    1,
+  )
+  const me = await meOf(cookie)
+  assert.equal(me.activeWorkspaceId, workspace.id)
 })
