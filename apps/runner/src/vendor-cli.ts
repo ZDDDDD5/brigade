@@ -121,3 +121,11 @@ export async function vendorCli(
   await pending
   return installed(vendor)
 }
+
+/**
+ * Off Windows, a machine with neither the vendor's command nor the harnesses' copy: one with only
+ * the Claude app, whose Claude Code login (from another tool, or the Claude app's Code) only a
+ * claude can read. Such a runner installs its copy (installOwnClaude) and reads its logins again.
+ */
+export const missingCli = (vendor: Vendor, path?: string) =>
+  !WINDOWS && !onPath(vendor, path) && !installed(vendor)

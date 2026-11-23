@@ -420,6 +420,14 @@ export const AccountLogin = z.object({
 export type AccountLogin = z.infer<typeof AccountLogin>
 
 // Runner -> API
+/** A harness signed in on a member's own machine, as its CLI says. Never a credential. */
+const MachineLogin = z.object({
+  provider: HarnessId,
+  loggedIn: z.boolean(),
+  email: z.string().optional(),
+  plan: z.string().optional(),
+})
+
 export const RunnerToApi = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('hello'),
@@ -438,17 +446,13 @@ export const RunnerToApi = z.discriminatedUnion('type', [
      */
     startedAt: z.iso.datetime().optional(),
     /** On a member's machine: which harnesses are already signed in there. Never a credential. */
-    machineLogins: z
-      .array(
-        z.object({
-          provider: HarnessId,
-          loggedIn: z.boolean(),
-          email: z.string().optional(),
-          plan: z.string().optional(),
-        }),
-      )
-      .optional(),
+    machineLogins: z.array(MachineLogin).optional(),
   }),
+  /**
+   * On a member's machine, after hello: its logins read again once the runner could (its own
+   * Claude Code installed, on a machine without the `claude` command), as hello's machineLogins.
+   */
+  z.object({ type: z.literal('machine.logins'), logins: z.array(MachineLogin) }),
   z.object({ type: z.literal('events'), events: z.array(SequencedEvent) }),
   /**
    * The threads whose events the API has not acknowledged for minutes, with since when (the

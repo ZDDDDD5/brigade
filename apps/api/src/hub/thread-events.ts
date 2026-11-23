@@ -6,7 +6,7 @@ import type { AgentEvent, RunnerToApi, SequencedEvent } from '@brigade/contracts
 import { noteAccountState } from '../account-health.js'
 import { prisma, scoped, type Prisma } from '../db.js'
 import type { Session } from '../generated/prisma/client.js'
-import type { SessionStatus } from '../generated/prisma/enums.js'
+import type { AccountStatus, SessionStatus } from '../generated/prisma/enums.js'
 import { autoMergeTurnEnded, resolveTurnEnded } from '../pull-requests.js'
 import type { QueuedMessage } from '../recovery.js'
 import { currentHub } from './context.js'
@@ -252,7 +252,42 @@ export async function syncMachineLogins(
         },
       })
     }
+    if (login.loggedIn) await preferWorkingDefault(computer, memberId, login.provider)
   }
+}
+
+/**
+ * A login found on the member's own computer becomes their default for its provider when their
+ * default is not working (a sign-in that never got through, one signed out): threads then start
+ * on what works. Nothing is removed: a row that looks unfinished may hold a login whose last word
+ * was lost (its runner away as it ended), and only its member may sign it out.
+ */
+async function preferWorkingDefault(
+  computer: { id: string },
+  memberId: string,
+  provider: 'claude_code' | 'codex' | 'antigravity',
+) {
+  const machine = await prisma.account.findFirst({
+    where: { computerId: computer.id, memberId, provider, source: 'machine', status: 'ready' },
+  })
+  if (!machine || machine.isDefault) return
+  const working = { in: ['ready', 'unverified', 'exhausted'] as AccountStatus[] }
+  // Decided and applied together, under a lock on the member's provider, and only over a
+  // default that does not work: a default they made meanwhile (Make default, a sign-in that
+  // ended) stays.
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`default:${memberId}:${provider}`}, 0))`
+    if (await tx.account.count({ where: { memberId, provider, isDefault: true, status: working } }))
+      return
+    await tx.account.updateMany({
+      where: { memberId, provider, isDefault: true, status: { notIn: working.in } },
+      data: { isDefault: false },
+    })
+    await tx.account.updateMany({
+      where: { id: machine.id, status: 'ready' },
+      data: { isDefault: true },
+    })
+  })
 }
 
 /**
