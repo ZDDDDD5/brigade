@@ -36,6 +36,7 @@ import {
 import { watchAbuse } from './abuse.js'
 import { useWindowsTools } from './windows.js'
 import { Accounts, machineLogins } from './accounts.js'
+import { missingCli, vendorCli } from './vendor-cli.js'
 import { cleanRemoved, fenceRemoved } from './harness/antigravity.js'
 import { Attachments } from './attachments.js'
 import { SpecParts } from './spec-parts.js'
@@ -868,9 +869,23 @@ async function start() {
 
   // On a member's own machine, report which harnesses are already signed in there; on a
   // cloud computer, which root setup it has. Each connect also refreshes the library.
+  // A machine with no claude to ask (only the Claude app): its own copy is installed in the
+  // background, once, and its logins read again then, rather than holding hello for minutes.
+  let claudeInstall: Promise<unknown> | undefined
+  const readLoginsOnceClaude = () => {
+    if (CLOUD || claudeInstall || !missingCli('claude')) return
+    claudeInstall = vendorCli('claude', { install: true })
+      .then(async () =>
+        connection.sendIfConnected({ type: 'machine.logins', logins: await machineLogins() }),
+      )
+      .catch((error) => console.warn(`could not install Claude Code to read its login: ${error}`))
+  }
   const hello = async () => {
     void library.sync()
-    if (!CLOUD) return { machineLogins: await machineLogins(), machineId: machineId() }
+    if (!CLOUD) {
+      readLoginsOnceClaude()
+      return { machineLogins: await machineLogins(), machineId: machineId() }
+    }
     const setup = await readFile('/var/lib/brigade/setup', 'utf8').catch(() => '')
     return setup.trim() ? { setup: setup.trim() } : {}
   }

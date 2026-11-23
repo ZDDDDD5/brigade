@@ -123,6 +123,7 @@ async function handle(hub: WorkspaceHub, conn: RunnerConn, raw: string) {
   const message = parsed.data
 
   if (message.type === 'hello') return hello(hub, conn, message)
+  if (message.type === 'machine.logins') return machineLoginsFound(hub, conn, message.logins)
   if (conn.protocolVersion === undefined) return // must say hello first
   // Heard, which is all they say (onRunnerMessage).
   if (message.type === 'heartbeat' || message.type === 'keepalive') return
@@ -799,4 +800,17 @@ async function noteEventsWaiting(
   const still = new Set([...listed.keys()].filter((id) => before.has(id) || mine.has(id)))
   const changed = hub.setEventsWaiting(conn.computerId, mine, still)
   await hub.broadcastEventsWaiting(changed)
+}
+
+/** A member's machine read its logins again after hello (machine.logins): as hello's. Onboarding
+ * and the accounts page read them again by themselves. */
+async function machineLoginsFound(
+  hub: WorkspaceHub,
+  conn: RunnerConn,
+  logins: Extract<RunnerToApi, { type: 'machine.logins' }>['logins'],
+) {
+  const computer = await prisma.computer.findUnique({ where: { id: conn.computerId } })
+  if (computer?.kind !== 'member_machine' || !computer.memberId) return
+  await syncMachineLogins(computer, computer.memberId, logins)
+  if (await alignChief(computer.workspaceId, computer.memberId)) hub.notifyList('teammates.updated')
 }

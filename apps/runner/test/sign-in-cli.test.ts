@@ -92,3 +92,16 @@ test("a Mac without the claude command (only the Claude app) signs in with the h
   await writeFile(join(empty, 'claude'), '#!/bin/sh\n', { mode: 0o755 })
   assert.deepEqual(await vendorCli('claude', { path: empty }), ['claude', []])
 })
+
+test('a machine with no claude to ask installs its own copy to read the login', async () => {
+  if (process.platform === 'win32') return
+  const { missingCli } = await import('../src/vendor-cli.js')
+  const empty = join(home, 'empty-path-2')
+  await mkdir(empty, { recursive: true })
+  // Installed in this home by the test above: not missing.
+  assert.equal(missingCli('claude', empty), false)
+  await rm(join(home, '.ai-sdk-harness'), { recursive: true, force: true })
+  assert.equal(missingCli('claude', empty), true)
+  await writeFile(join(empty, 'claude'), '#!/bin/sh\n', { mode: 0o755 })
+  assert.equal(missingCli('claude', empty), false, 'one of their own on the PATH')
+})

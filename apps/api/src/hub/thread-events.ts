@@ -4,6 +4,7 @@
 // own but noteEvents' failures, which are the running hub's.
 import type { AgentEvent, RunnerToApi, SequencedEvent } from '@brigade/contracts'
 import { noteAccountState } from '../account-health.js'
+import { audit } from '../audit.js'
 import { prisma, scoped, type Prisma } from '../db.js'
 import type { Session } from '../generated/prisma/client.js'
 import type { SessionStatus } from '../generated/prisma/enums.js'
@@ -252,7 +253,59 @@ export async function syncMachineLogins(
         },
       })
     }
+    if (login.loggedIn) await dropMootSignIns(computer, memberId, login.provider)
   }
+}
+
+/**
+ * A login found on the member's own computer makes moot their sign-ins there for the same
+ * provider that never got through (failed, never used: no thread ran on them): those are removed,
+ * from the computer too, rather than left as dead cards beside the one that works, and the
+ * working one becomes the default when none is. One that worked once (used) stays: its member
+ * decides.
+ */
+async function dropMootSignIns(
+  computer: { id: string; organizationId: string; workspaceId: string },
+  memberId: string,
+  provider: 'claude_code' | 'codex' | 'antigravity',
+) {
+  const hub = currentHub()
+  const { accountRef } = await import('../routes/accounts.js')
+  const { loginForAccount } = await import('../logins.js')
+  const moot = await prisma.account.findMany({
+    where: {
+      computerId: computer.id,
+      memberId,
+      provider,
+      source: 'brigade',
+      status: 'needs_sign_in',
+      lastUsageAt: null,
+      sessions: { none: {} },
+    },
+  })
+  for (const account of moot) {
+    // A sign-in started again meanwhile is the member's to finish.
+    if (loginForAccount(account.id)) continue
+    const { count } = await prisma.account.deleteMany({
+      where: { id: account.id, status: 'needs_sign_in' },
+    })
+    if (!count) continue
+    hub.sendToRunner(computer.id, { type: 'account.remove', account: accountRef(account) })
+    await audit({
+      organizationId: computer.organizationId,
+      workspaceId: computer.workspaceId,
+      actor: { type: 'runner', id: computer.id },
+      action: 'account.removed',
+      target: { type: 'account', id: account.id },
+      data: { reason: 'machine_login', provider },
+    })
+  }
+  const hasDefault = await prisma.account.count({ where: { memberId, provider, isDefault: true } })
+  if (!hasDefault)
+    await prisma.account.updateMany({
+      where: { computerId: computer.id, memberId, provider, source: 'machine', status: 'ready' },
+      data: { isDefault: true },
+    })
 }
 
 /**
