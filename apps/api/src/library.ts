@@ -476,9 +476,11 @@ async function writeLibraryFile(
     await claimObject(tx, key)
     if (existing && baseSha) {
       // Built on the text it read: written only if nobody saved it since, whichever way they
-      // saved it (a JSON file's saves take no lock). Else nothing is, and the caller reads again.
+      // saved it (a JSON file's saves take no lock), nor moved it (a move takes no lock either,
+      // and the file may now be where the writer may not write). Else nothing is, and the caller
+      // reads again.
       const { count } = await tx.document.updateMany({
-        where: { id, sha256: baseSha, deletedAt: null },
+        where: { id, path: input.path, sha256: baseSha, deletedAt: null },
         data: { ...fields, bytesStaleAt: null },
       })
       if (!count) throw new StaleMemory()

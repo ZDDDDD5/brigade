@@ -696,6 +696,35 @@ test(
       StaleMemory,
       'a file where none was expected',
     )
+    // Moved between its lookup and its commit: nothing is written, at either path.
+    const moving = `Briefs/moving-${id}.md`
+    const moved = `Elsewhere/moved-${id}.md`
+    const before = strToU8('before the move')
+    const file = await saveLibraryFile(db, scope, teammate, { path: moving, bytes: before })
+    const { moveLibraryFile } = await import('../src/library.js')
+    await assert.rejects(
+      saveLibraryFile(
+        db,
+        scope,
+        teammate,
+        { path: moving, bytes: strToU8('after') },
+        {},
+        {
+          expect: { sha256: sha(before) },
+          lease: {
+            check: () => {},
+            fence: async (commit) => {
+              await moveLibraryFile(db, scope, { type: 'member', id: ids.member }, file.id, moved)
+              return prisma.$transaction(commit)
+            },
+          } as never,
+        },
+      ),
+      StaleMemory,
+    )
+    const after = await db.document.findFirstOrThrow({ where: { id: file.id } })
+    assert.equal(after.path, moved)
+    assert.equal(after.sha256, sha(before))
     // A base for a file that is gone: refused, not made anew.
     const gone = await libraryCall({ name: 'delete', path: fresh })
     assert.equal(gone.ok, true, gone.error)
