@@ -44,6 +44,16 @@ const savedBy = (fileId: string): Promise<Saver> =>
     () => ({ teammate: null, thread: null }),
   )
 
+type Saved = { by: Saver; thread: Thread | null }
+
+/** Who saved the file, and the thread that saved it last, when the person can still open it. */
+async function savedWith(fileId: string): Promise<Saved> {
+  const by = await savedBy(fileId)
+  const id = by.thread?.sessionId
+  const thread = id ? await api<Thread>(`/threads/${id}`).catch(() => null) : null
+  return { by, thread }
+}
+
 /**
  * Who answers: the teammate of the thread Ask opens, else the one that saved the file last
  * (in a new thread), while each is still one; else the one picked last, else the first.
@@ -66,7 +76,9 @@ export function useDocumentDiscussion(
   // Who saved it last, for the button's name: kept with the file it is for, so
   // another file's never shows while the new one's loads, nor after its load failed.
   const fileId = file?.id
-  const [saved, setSaved] = useState<{ fileId: string; by: Saver }>()
+  // With the thread Ask opens, fetched with it: a click then opens it at once, without
+  // waiting on the API (the click was 1 to 3 seconds of two requests in a row).
+  const [saved, setSaved] = useState<Saved & { fileId: string }>()
   const [changes, setChanges] = useState(0)
   useLive((message) => {
     if (message.type === 'library.updated') setChanges((n) => n + 1)
@@ -74,12 +86,13 @@ export function useDocumentDiscussion(
   useEffect(() => {
     if (!fileId) return
     let current = true
-    void savedBy(fileId).then((by) => current && setSaved({ fileId, by }))
+    void savedWith(fileId).then((got) => current && setSaved({ fileId, ...got }))
     return () => {
       current = false
     }
   }, [fileId, changes])
-  const last = saved?.fileId === fileId ? saved?.by : undefined
+  const known = saved?.fileId === fileId ? saved : undefined
+  const last = known?.by
   const { teammateId: picked } = panel
   const teammate = useMemo(() => answerer(teammates, last, picked), [teammates, last, picked])
 
@@ -94,10 +107,10 @@ export function useDocumentDiscussion(
         if (!passage) return named ? '' : `${mention} `
         return [...(named ? [] : [mention]), quote(passage)].join('\n') + '\n'
       }
-      // The thread that last changed this file, asked now: what the button shows may be late.
-      const by = await savedBy(file.id)
+      // The thread that last changed this file, as loaded with the file and kept up to date as
+      // the library changes; asked now only when that has not come yet.
+      const { by, thread }: Saved = known ?? (await savedWith(file.id))
       const threadId = by.thread?.sessionId
-      const thread = threadId ? await api<Thread>(`/threads/${threadId}`).catch(() => null) : null
       if (thread?.mayPrompt && threadId) {
         const added = text(replyDraft(threadId))
         if (added) addToReply(threadId, added)
@@ -114,7 +127,7 @@ export function useDocumentDiscussion(
       })
       newThreadPage()
     },
-    [file, teammates, picked, openThread, draft, chooseTeammate, newThreadPage],
+    [file, known, teammates, picked, openThread, draft, chooseTeammate, newThreadPage],
   )
   return useMemo(() => (file ? { teammate, ask } : null), [file, teammate, ask])
 }
