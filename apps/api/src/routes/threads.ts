@@ -1322,7 +1322,7 @@ export const threads = new Hono<AppEnv>()
       : undefined
     const { thread, outcome } = await startThread(db, scope, {
       // Chosen by the browser, which opened the thread already: never one that exists.
-      ...(setupId ?? input.id ? { id: setupId ?? input.id, fresh: true } : {}),
+      ...((setupId ?? input.id) ? { id: setupId ?? input.id, fresh: true } : {}),
       teammate,
       computer,
       memberId: scope.memberId,
