@@ -22,6 +22,7 @@ In a thread, start it with `start_preview({ repository: "gmpetrov/brigade" })`, 
 
 - `ada@example.com` (owner), `bob@example.com` (admin) or `carol@example.com` (member): straight into the sample Acme workspace, with teammates, projects, threads in each state, open tickets, library files and memory, connections, credentials, schedules and a pull request (`apps/api/prisma/seed-workspace.ts`). Nothing in it reaches an outside service: its secrets are placeholders, and no runner answers, so a new message to a teammate does not run.
 - `dana@example.com`: no organization yet, to try onboarding.
+- `erin@example.com`: a workspace just past onboarding, with an AI account and Chief alone: its threads page opens on Chief's first meeting, where onboarding ends (no runner answers what is sent).
 
 The seed runs with each `setup.sh` and adds the sample only when the Acme organization is missing; to start over, delete `.preview/` (embedded PostgreSQL) or run `docker compose down -v` (Docker), then `setup.sh` again.
 

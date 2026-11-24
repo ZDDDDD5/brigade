@@ -3,6 +3,9 @@
 // greeting, a few jobs to start with or one written in Something else (sent at once as the
 // thread's first message), and what helps it work (Apps, its role). Written here, from its
 // name and role: no model runs for it, and no thread exists until the member sends something.
+// Chief in a workspace with no team yet asks for one thing instead, the person's website or
+// repository (or a line on what they build), which its first reply turns into a first job done
+// and a proposed team: where onboarding ends (app/onboarding/page.tsx).
 import { ArrowUp, Plug, SlidersHorizontal } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
@@ -59,6 +62,18 @@ const GENERIC = [
 
 const CHIEF = ['Set up my team', 'Look at my website and suggest what to hand off', 'Plan my week']
 
+/**
+ * Chief before there is a team: its first meeting asks for the person's website, and what they
+ * send there or in the box goes with what onboarding's questions kept (chiefFirstMessage, which
+ * the thread's box adds: TeammateStart in components/thread-panel.tsx).
+ */
+export const settingUp = (teammate: Pick<Teammate, 'kind'>, teammates: Pick<Teammate, 'kind'>[]) =>
+  teammate.kind === 'chief' && !teammates.some((t) => t.kind !== 'chief')
+
+/** What Chief says first in a workspace with no team yet: one thing to send, no questions. */
+const SETUP_GREETING = (name: string) =>
+  `Hi! I’m ${name}. I run your team. Send me your website or repo: I’ll read it, do a first small job for you, and suggest who should be on your team.`
+
 /** What the teammate says first, and the jobs it offers. */
 export function firstWords(teammate: Pick<Teammate, 'name' | 'title' | 'kind' | 'instructions'>) {
   if (teammate.kind === 'chief')
@@ -101,14 +116,11 @@ export function FirstMeeting({
    */
   onSend: (text: string) => string | undefined
 }) {
-  const { me } = useDashboard()
+  const { me, teammates } = useDashboard()
+  const setup = settingUp(teammate, teammates)
   const { greeting, jobs } = firstWords(teammate)
-  const [other, setOther] = useState('')
   const [problem, setProblem] = useState<string>()
   const send = (text: string) => setProblem(onSend(text))
-  const sendOther = () => {
-    if (other.trim()) send(other.trim())
-  }
 
   return (
     // Two bubbles in a row from the teammate read as one group, as Midnight draws them: round
@@ -117,48 +129,55 @@ export function FirstMeeting({
       <div className="flex items-end gap-2">
         <TeammateAvatar teammate={teammate} className="size-7 shrink-0" />
         <p className="rounded-[1.3rem] rounded-bl-[0.45rem] bg-muted px-4 py-2.5 text-sm">
-          {greeting}
+          {setup ? SETUP_GREETING(teammate.name) : greeting}
         </p>
       </div>
       <div className="ml-9 flex flex-col gap-0.5 rounded-[1.3rem] rounded-tl-[0.45rem] bg-muted p-2">
-        <p className="px-2 pt-1.5 pb-2 text-sm font-semibold">What should we start with?</p>
-        {jobs.map((job, i) => (
-          <button
-            key={job}
-            type="button"
-            onClick={() => send(job)}
-            className={cn(ROW, 'hover:bg-background/50')}
-          >
-            <Letter>{LETTERS[i]!}</Letter>
-            {job}
-          </button>
-        ))}
-        {/* Something else: written right here, and sent as the jobs are. */}
-        <form
-          className={cn(ROW, 'py-1.5 focus-within:bg-background/50 hover:bg-background/50')}
-          onSubmit={(e) => {
-            e.preventDefault()
-            sendOther()
-          }}
-        >
-          <Letter>{LETTERS[jobs.length]!}</Letter>
-          <input
-            value={other}
-            onChange={(e) => setOther(e.target.value)}
-            placeholder="Something else"
-            aria-label="Something else"
-            className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-          />
-          {other.trim() && (
-            <button
-              type="submit"
-              aria-label="Send"
-              className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background"
-            >
-              <ArrowUp aria-hidden className="size-4" />
-            </button>
-          )}
-        </form>
+        <p className="px-2 pt-1.5 pb-2 text-sm font-semibold">
+          {setup ? 'Where can I look?' : 'What should we start with?'}
+        </p>
+        {setup ? (
+          <>
+            <WriteRow
+              letter="A"
+              placeholder="yoursite.com or github.com/you/app"
+              label="Your website or repository"
+              onSend={send}
+            />
+            <WriteRow
+              letter="B"
+              placeholder="No site yet? Tell me what you’re building"
+              label="What you are building"
+              onSend={send}
+            />
+            <WriteRow
+              letter="C"
+              placeholder="Something else"
+              label="Something else"
+              onSend={send}
+            />
+          </>
+        ) : (
+          <>
+            {jobs.map((job, i) => (
+              <button
+                key={job}
+                type="button"
+                onClick={() => send(job)}
+                className={cn(ROW, 'hover:bg-background/50')}
+              >
+                <Letter>{LETTERS[i]!}</Letter>
+                {job}
+              </button>
+            ))}
+            <WriteRow
+              letter={LETTERS[jobs.length]!}
+              placeholder="Something else"
+              label="Something else"
+              onSend={send}
+            />
+          </>
+        )}
       </div>
       {problem && <p className="mt-1.5 ml-9 px-1 text-sm text-destructive-text">{problem}</p>}
       <div className="mt-2 ml-9 flex flex-wrap gap-2">
@@ -166,8 +185,9 @@ export function FirstMeeting({
           <Plug aria-hidden />
           Connect apps
         </Chip>
-        {/* Its role and instructions, where an owner or admin shapes what it does. */}
-        {isAdmin(me) && (
+        {/* Its role and instructions, where an owner or admin shapes what it does. Not while
+            Chief sets up the team: one thing to do there. */}
+        {isAdmin(me) && !setup && (
           <Chip href={`/app/teammates/${teammate.id}`}>
             <SlidersHorizontal aria-hidden />
             Shape {teammate.name}’s role
@@ -175,6 +195,48 @@ export function FirstMeeting({
         )}
       </div>
     </div>
+  )
+}
+
+/** A row written in: sent as a job is, with its arrow once something is written. */
+function WriteRow({
+  letter,
+  placeholder,
+  label,
+  onSend,
+}: {
+  letter: string
+  placeholder: string
+  label: string
+  onSend: (text: string) => void
+}) {
+  const [text, setText] = useState('')
+  return (
+    <form
+      className={cn(ROW, 'py-1.5 focus-within:bg-background/50 hover:bg-background/50')}
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (text.trim()) onSend(text.trim())
+      }}
+    >
+      <Letter>{letter}</Letter>
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={placeholder}
+        aria-label={label}
+        className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+      />
+      {text.trim() && (
+        <button
+          type="submit"
+          aria-label="Send"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background"
+        >
+          <ArrowUp aria-hidden className="size-4" />
+        </button>
+      )}
+    </form>
   )
 }
 

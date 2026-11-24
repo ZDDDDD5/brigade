@@ -1,7 +1,8 @@
 // Local development data. Never run against a shared or production database.
 //   pnpm --filter @brigade/api db:seed
 // Ada (owner), Bob (admin) and Carol (member) share the sample Acme workspace
-// (seed-workspace.ts); Dana has no organization yet, to try onboarding.
+// (seed-workspace.ts); Dana has no organization yet, to try onboarding; Erin's workspace is just
+// past it, on Chief's first meeting (seed-new-workspace.ts).
 import { prisma } from '../src/db.js'
 
 export const DEV_PASSWORD = 'correct-horse-battery'
@@ -10,6 +11,7 @@ const DEV_USERS = {
   bob: { name: 'Bob', email: 'bob@example.com' },
   carol: { name: 'Carol', email: 'carol@example.com' },
   dana: { name: 'Dana', email: 'dana@example.com' },
+  erin: { name: 'Erin', email: 'erin@example.com' },
 }
 
 if (!/localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL ?? '')) {
@@ -35,11 +37,19 @@ await prisma.featureFlag.createMany({
 // start (scripts/preview/setup.sh runs this every time).
 const emails = Object.values(DEV_USERS).map((user) => user.email)
 const sharing = [DEV_USERS.ada.email, DEV_USERS.bob.email, DEV_USERS.carol.email]
-const [accounts, organized] = await Promise.all([
+const [accounts, organized, erinOrganized] = await Promise.all([
   prisma.user.count({ where: { email: { in: emails } } }),
   prisma.member.count({ where: { user: { email: { in: sharing } } } }),
+  // Erin's workspace, with its plan (seed-new-workspace.ts).
+  prisma.billingSubscription.count({
+    where: {
+      workspace: {
+        organization: { members: { some: { user: { email: DEV_USERS.erin.email } } } },
+      },
+    },
+  }),
 ])
-if (accounts === emails.length && organized) {
+if (accounts === emails.length && organized && erinOrganized) {
   console.log('exists: the dev accounts and their organization')
   // The sample's Inbox mail came after it: added to a sample without it (its reply set to leave
   // later marks the latest part). Checked here first,
@@ -87,6 +97,9 @@ const onboarded = await prisma.member.count({
 if (sample) console.log('exists: sample organization Acme')
 else if (onboarded) console.log('skipped: sample organization (Ada, Bob or Carol already has one)')
 else await seedWorkspace(users)
+// Erin's, made once; its plan added to one made before it had one.
+const { seedNewWorkspace } = await import('./seed-new-workspace.js')
+await seedNewWorkspace({ id: users.erin.id, email: DEV_USERS.erin.email })
 await (await import('./seed-inbox.js')).seedInbox()
 await (await import('./seed-missions.js')).seedMissions()
 

@@ -30,7 +30,6 @@ import { createWorkspaceComputer } from '../cloud.js'
 import { recordOnboardingAnswers } from '../analytics.js'
 import { prisma, Prisma } from '../db.js'
 import { checkDeletionCode, sendDeletionCode, type DeletionTarget } from '../deletion-code.js'
-import { seedGettingStarted } from '../lists.js'
 import { placeNewHub } from '../platform/node.js'
 import { LOGO_HEADERS, readLogo } from '../logos.js'
 import {
@@ -111,8 +110,8 @@ const organizationSlug = (name: string) =>
   }-${randomUUID().slice(0, 4)}`
 
 /**
- * What a new workspace gets once made: its hub, its audit line, Chief, its Getting started list
- * and its cloud computer.
+ * What a new workspace gets once made: its hub, its audit line, Chief and its cloud computer. No
+ * list: Today's Get started card shows its first steps, worked out from what it has.
  */
 async function setUpWorkspace(
   workspace: { id: string; organizationId: string; name: string },
@@ -135,11 +134,6 @@ async function setUpWorkspace(
       data: { name: workspace.name },
     })
   await ensureChief(workspace)
-  // Its first list, so Lists shows from day one how lines go to teammates. A failed save
-  // leaves the workspace without it: nothing else needs it.
-  await seedGettingStarted({ organizationId, workspaceId: workspace.id }).catch((error) =>
-    console.warn(`workspaces: no getting-started list in ${workspace.id}: ${String(error)}`),
-  )
   // Every workspace gets its own cloud computer (when a provider is configured), unless
   // billing is on: then with its Cloud plan (src/billing.ts).
   await createWorkspaceComputer(workspace)
@@ -389,7 +383,7 @@ export const workspaces = new Hono<AppEnv>()
    * own and its first workspace, named after them, and the session moves there. Once per person,
    * whatever the tabs or reloads: under a lock on them, the organization, its owner, the
    * workspace and its Chief are made in one transaction, or found when made already. What
-   * follows (hub, Getting started list, cloud computer) stays marked pending on the organization
+   * follows (hub, cloud computer) stays marked pending on the organization
    * until done: /me says so (setupPending), and onboarding calls again to finish it.
    */
   .post('/me/first-workspace', async (c) => {

@@ -446,23 +446,38 @@ function chief(spec: ThreadSpec) {
       'You have two jobs: set up the team, and answer or route what people ask.',
     '### Setting up the team',
     (roster.length === 0
-      ? 'This workspace has no other teammates yet, so start here. '
-      : 'When the person wants a new teammate or a different team, do this again for just that part. ') +
-      'Find out what they are building (for whom, how far along), what takes their time, and the tools the work ' +
-      'lives in (a GitHub repository, Gmail, Google Calendar, Google Drive, Docs or Sheets, Search Console, Google Analytics, Stripe). Ask one or two questions at a time, three ' +
-      'rounds at most; when they give a website or repository, look at it instead of asking about it.',
-    `Then call \`${PROPOSE_TEAM_TOOL}\` and describe the team you suggest in a few lines after it. Propose two or ` +
+      ? "This workspace has no other teammates yet, so start here. The person's first message is usually their " +
+        'website or repository, or a line on what they build, sometimes with their role and what the team ' +
+        'should start with. Do not answer with questions: read the site or repository yourself (its pages, its ' +
+        'README, its open issues), then, in this same turn, (1) say in two lines what you understood: what it ' +
+        'is, for whom, how far along; (2) do one small job yourself that they can see at once and that fits what ' +
+        'they want to start with, such as three concrete fixes for their homepage, a quick SEO check, or the ' +
+        'three issues in the repository worth fixing first; (3) propose the team as below. Ask one question ' +
+        'only when you cannot read what they sent and their message says too little. When they ask for ' +
+        'something else, answer or do it first, then offer in a line to set up their team from their website or ' +
+        'repository. '
+      : 'When the person wants a new teammate or a different team, do this again for just that part: find out ' +
+        'what it is for and the tools the work lives in (one or two questions at most; when they give a website ' +
+        'or repository, look at it instead of asking about it). ') +
+      'The tools the work lives in can be a GitHub repository, Gmail, Google Calendar, Google Drive, Docs or ' +
+      'Sheets, Search Console, Google Analytics or Stripe.',
+    `To propose the team, call \`${PROPOSE_TEAM_TOOL}\` and describe the team you suggest in a few lines after it. Propose two or ` +
       'three teammates, five at most, each only for work their answers call for. For one person building a company, ' +
       'think of a builder (the product and its code, on GitHub), growth (content, launches, outreach) and ' +
       'operations (the inbox, customers, billing). Give each a short first name (never ' +
       `"${CHIEF_NAME}"), a one-line role, and instructions written to them as "you": the first line repeats the ` +
-      'role, then what they own, how they work, and what they must ask a person about first. List only the ' +
-      'connections each needs, read unless the role must send or change something there; their writes ask a ' +
-      'person first.',
+      'role, then what they own, how they work, what they know of the business from what you read, and what ' +
+      'they must ask a person about first. List only the connections each needs, read unless the role must ' +
+      'send or change something there; their writes ask a person first.',
     'The card lets the person edit and create the team. Their answer is then "Created the team: …" naming the new ' +
-      'teammates: welcome them in one line each (names without the @), then offer one small first task per teammate that finishes in ' +
-      'minutes with something to see (in a choices block). When the person picks one, hand it to that ' +
-      'teammate as below. If they answer in their own words instead, change the proposal and propose it again.',
+      'teammates: start at once one small first job per new teammate, each in a thread of its own ' +
+      '(`start_thread` with its id from The team below, never its name), that finishes in minutes with ' +
+      'something to see and follows from what you learned (the job you did, carried on, for the one it fits). ' +
+      'Start a job only for a name that only one teammate in The team has: when two have it, you cannot tell ' +
+      'which one was just created, so start nothing for it and say so, with its first job in a line for the ' +
+      'person to hand over. Then welcome them in one line each (names without the @), saying who is on what; a ' +
+      'teammate whose job needs an App not connected yet asks for it in its thread. ' +
+      'If they answer in their own words instead, change the proposal and propose it again.',
     [
       '### Answering and routing',
       '- Answer yourself what one reply settles: questions about the workspace and its team ' +
@@ -480,7 +495,7 @@ function chief(spec: ThreadSpec) {
     ].join('\n'),
     rulesForChief(spec.rulesAct === true),
     roster.length > 0
-      ? `### The team\n\n${roster.map((t) => `- ${t.name}${t.role ? `: ${t.role}` : ''}`).join('\n')}`
+      ? `### The team\n\n${roster.map((t) => `- ${t.name} (id ${t.id})${t.role ? `: ${t.role}` : ''}`).join('\n')}`
       : '',
   ]
     .filter(Boolean)

@@ -66,13 +66,14 @@ import {
   type Teammate,
   type ThreadSummary,
 } from '@/lib/api'
-import { defaultAccount, pickAccount } from '@/lib/account-pick'
+import { defaultAccount, pickAccount, pickComputer } from '@/lib/account-pick'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { newThreadId, pendingRow, pendingThreads } from '@/lib/pending-threads'
 import { preloadThreadEvents } from '@/lib/use-thread-events'
 import { cn } from '@/lib/utils'
 import { captures, desktopPlatform } from '@/lib/brigade-app'
 import { clickSettings } from '@/lib/settings-dialog'
+import { lastTeammate, rememberTeammate } from '@/lib/last-teammate'
 
 const quietSelect =
   'h-8 border-transparent bg-transparent shadow-none hover:bg-accent dark:bg-transparent dark:hover:bg-accent/50'
@@ -276,16 +277,7 @@ export function TeammatePicker({
   )
 }
 
-const LAST_TEAMMATE = 'brigade.home.teammate'
-
-/** The teammate `useLastTeammate` remembers, read at once. */
-export function lastTeammate() {
-  try {
-    return localStorage.getItem(LAST_TEAMMATE) ?? undefined
-  } catch {
-    return undefined
-  }
-}
+export { lastTeammate }
 
 /**
  * The teammate new messages go to, remembered per browser. Read as it mounts: what asks is in
@@ -298,9 +290,7 @@ export function useLastTeammate() {
     id,
     (next: string) => {
       setId(next)
-      try {
-        localStorage.setItem(LAST_TEAMMATE, next)
-      } catch {}
+      rememberTeammate(next)
     },
   ] as const
 }
@@ -397,6 +387,7 @@ export function NewThread({
   layout = 'card',
   fill,
   sendRef,
+  compose,
 }: {
   /** The project the thread starts in unless changed, e.g. on a project page. */
   projectId?: string
@@ -443,6 +434,8 @@ export function NewThread({
    * the box left as it is. It says why when the thread cannot start (no computer online…).
    */
   sendRef?: MutableRefObject<((text: string) => string | undefined) | undefined>
+  /** What a message becomes as it is sent, from the box or `sendRef` (Chief's first meeting). */
+  compose?: (text: string) => string
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -514,14 +507,12 @@ export function NewThread({
   // The login the teammate runs on: its harness's own, or for Pi its model's vendor's (loginOf).
   const login = loginOf(teammate.harness, teammate.model)
   const online = usableComputers(computers.data)
-  const computer = online.find((c) => c.id === computerId) ?? online[0]
-  const usable = (accounts.data ?? []).filter(
-    (a) =>
-      a.computer.id === computer?.id &&
-      a.provider === login &&
-      (a.status === 'ready' || a.status === 'unverified') &&
-      !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date()),
-  )
+  const runs = (a: Account) =>
+    a.provider === login &&
+    (a.status === 'ready' || a.status === 'unverified') &&
+    !(a.exhaustedUntil && new Date(a.exhaustedUntil) > new Date())
+  const computer = pickComputer(online, accounts.data ?? [], runs, computerId)
+  const usable = (accounts.data ?? []).filter((a) => a.computer.id === computer?.id && runs(a))
   const account = pickAccount(usable, accountId)
   // No account for its login, and one of the other's ready there: an admin is shown where to run
   // it on that one, its profile, which changes it for the whole workspace (a Chief that was never
@@ -588,7 +579,7 @@ export function NewThread({
   async function start(e?: FormEvent, only?: string) {
     e?.preventDefault()
     if (busy || !(only === undefined ? ready : computer && account)) return
-    const text = only ?? box
+    const text = compose ? compose(only ?? box) : (only ?? box)
     if (onSending || openAtOnce) {
       // In the sidebar at once, under an id chosen here; opened at once too with `openAtOnce`,
       // showing this message until it has started, then its conversation (lib/pending-threads.ts).

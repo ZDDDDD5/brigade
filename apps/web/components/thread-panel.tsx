@@ -10,6 +10,7 @@
 // open it there; docking it again goes back to the page you were on.
 // ⌘J (Ctrl+J) shows it, brings it in front of a preview or a file, or hides it;
 // ⌘⇧K starts a thread without it (components/quick-thread.tsx).
+import { chiefFirstMessage } from '@brigade/contracts'
 import { ArrowLeft, ChevronRight, Laptop, LoaderCircle, Maximize2, X } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import {
@@ -24,7 +25,7 @@ import {
   type ReactNode,
 } from 'react'
 import { TeammatePanel } from '@/components/computer-panel'
-import { FirstMeeting } from '@/components/first-meeting'
+import { FirstMeeting, settingUp } from '@/components/first-meeting'
 import { SidebarToggle, TeammateAvatar, useDashboard } from '@/components/dashboard'
 import { ProjectIcon } from '@/components/projects'
 import { StatusDot } from '@/components/status-badge'
@@ -991,6 +992,9 @@ function TeammateStart({ teammate, top }: { teammate: Teammate; top?: ReactNode 
   )
   // Before its first thread, the teammate speaks first (FirstMeeting); after, the box alone.
   const firstMeeting = own?.length === 0
+  const { me, teammates } = useDashboard()
+  // Chief setting up the team: what is sent goes with what onboarding's questions kept.
+  const setup = firstMeeting && settingUp(teammate, teammates)
   const send = useRef<(text: string) => string | undefined>(undefined)
   const box = (
     <NewThread
@@ -1006,6 +1010,9 @@ function TeammateStart({ teammate, top }: { teammate: Teammate; top?: ReactNode 
       onStarted={(thread) => openThread(thread.id)}
       openAtOnce
       sendRef={send}
+      {...(setup && {
+        compose: (text: string) => chiefFirstMessage(text, me.onboardingAnswers),
+      })}
     />
   )
   return (
