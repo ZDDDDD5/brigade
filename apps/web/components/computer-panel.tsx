@@ -4,6 +4,7 @@
 // project and task), then the computer it runs on (its screen, taking control,
 // Preview, a shell, the run log) and what it made. Beside the list, what the teammate is
 // on now. Both end with the teammate: routines, settings.
+import type { BillingResponse } from '@brigade/contracts'
 import { AlarmClock, ArrowRight, Globe, Hand, Settings, SquareTerminal, X } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -11,7 +12,8 @@ import { createPortal } from 'react-dom'
 import { CloseButton } from '@/components/close-button'
 import { StatusBadge, TeammateAvatar } from '@/components/dashboard'
 import { TeammateTitle } from '@/components/teammate-title'
-import { DesktopScreen } from '@/components/desktop-preview'
+import { CloudOffer, DesktopScreen } from '@/components/desktop-preview'
+import { TeammateModelLine } from '@/components/model-select'
 import type { OpenFile } from '@/components/file-links'
 import { describeCron } from '@/components/schedules'
 import { Terminal } from '@/components/terminal'
@@ -25,7 +27,6 @@ import { Button } from '@/components/ui/button'
 import { Hint } from '@/components/ui/tooltip'
 import {
   api,
-  teammateModelLabel,
   useApi,
   type Schedule,
   type Teammate,
@@ -69,7 +70,7 @@ function Frame({
   children,
 }: {
   teammate: Pick<Teammate, 'id' | 'name' | 'title' | 'harness'>
-  subtitle: string
+  subtitle: ReactNode
   onClose: () => void
   /** What Escape does: closes it, as it does the other panels beside a page, unless told else. */
   onEscape?: () => void
@@ -95,12 +96,37 @@ function Frame({
             <strong className="truncate text-sm font-semibold">{teammate.name}</strong>
             <TeammateTitle title={teammate.title} className="px-1.5 py-0 text-[11px]" />
           </span>
-          <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
+          {typeof subtitle === 'string' ? (
+            <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
+          ) : (
+            subtitle
+          )}
         </div>
         <CloseButton label={`Close ${teammate.name}'s panel`} title="Close" onClick={onClose} />
       </div>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 py-4">{children}</div>
     </aside>
+  )
+}
+
+/**
+ * A thread on a member's machine has no screen here. Without Brigade Cloud, the offer of a
+ * computer that stays awake takes its place; with it (or billing off), only where it runs.
+ */
+function MemberMachine({ name, teammateName }: { name: string; teammateName: string }) {
+  const billing = useApi<BillingResponse>('/billing')
+  // Nothing until it is known which to show, rather than one replacing the other.
+  if (!billing.data && !billing.error) return null
+  if (billing.data?.enabled && !billing.data.plan?.active)
+    return (
+      <div className="flex aspect-video w-full items-center justify-center overflow-hidden rounded-lg border bg-black">
+        <CloudOffer teammateName={teammateName} size="small" />
+      </div>
+    )
+  return (
+    <p className="text-sm text-muted-foreground">
+      Runs on {name}, a member&apos;s machine: its screen is not shared here.
+    </p>
   )
 }
 
@@ -185,7 +211,11 @@ export function TeammatePanel({
   const waiting = (threads ?? []).filter((t) => t.status === 'waiting')
   const on = waiting[0] ?? working[0]
   return (
-    <Frame teammate={teammate} subtitle={teammateModelLabel(teammate)} onClose={onClose}>
+    <Frame
+      teammate={teammate}
+      subtitle={<TeammateModelLine teammate={teammate} />}
+      onClose={onClose}
+    >
       <Section title="Computer">
         <DesktopScreen
           source={{ teammate: teammate.id }}
@@ -538,7 +568,13 @@ export function ComputerPanel({
   return (
     <Frame
       teammate={{ ...teammate, harness: teammate.harness as Teammate['harness'] }}
-      subtitle={`${teammateModelLabel(teammate)} on ${cloud ? 'the cloud computer' : thread.computer.name}`}
+      subtitle={
+        <TeammateModelLine
+          teammate={teammate}
+          suffix={` on ${cloud ? 'the cloud computer' : thread.computer.name}`}
+          onSaved={onChange}
+        />
+      }
       onClose={onClose}
     >
       <Section title="Computer">
@@ -560,9 +596,7 @@ export function ComputerPanel({
             )}
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            Runs on {thread.computer.name}, a member&apos;s machine: its screen is not shared here.
-          </p>
+          <MemberMachine name={thread.computer.name} teammateName={teammate.name} />
         )}
       </Section>
 

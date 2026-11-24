@@ -27,7 +27,7 @@ export function InboxPaywall({ plan }: { plan: InboxPlan }) {
     setBusy(true)
     setError(undefined)
     try {
-      await subscribeToCloud()
+      await subscribeToCloud('billing', 'starter')
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -106,7 +106,7 @@ export function InboxPaywall({ plan }: { plan: InboxPlan }) {
           </ul>
           {admin ? (
             <Button className="self-start" disabled={busy} onClick={() => void subscribe()}>
-              Get Brigade Cloud · $99/mo
+              Get Brigade Cloud · $15/mo
             </Button>
           ) : (
             <p className="text-sm text-muted-foreground">

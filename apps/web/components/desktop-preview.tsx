@@ -315,7 +315,13 @@ export function DesktopScreen({
  * a member's machine is awake, and Cloud's Starter plan to keep it working. Members who may not
  * subscribe are told who can.
  */
-function CloudOffer({ teammateName, size }: { teammateName: string; size: 'small' | 'large' }) {
+export function CloudOffer({
+  teammateName,
+  size,
+}: {
+  teammateName: string
+  size: 'small' | 'large'
+}) {
   const dashboard = useMaybeDashboard()
   const admin = !dashboard || isAdmin(dashboard.me)
   const mac = useIsMac()
