@@ -15,3 +15,21 @@ export function defaultAccount<T extends Pickable>(usable: T[]): T | undefined {
 /** The one picked if it is still usable, else the default. */
 export const pickAccount = <T extends Pickable>(usable: T[], pickedId?: string) =>
   usable.find((a) => a.id === pickedId) ?? defaultAccount(usable)
+
+/**
+ * The computer a new thread runs on: the one picked, else the first with an account the teammate
+ * can run on there (`runs`), else the first. A cloud computer listed first may have none while
+ * the member's own machine, signed in during onboarding, does.
+ */
+export function pickComputer<C extends { id: string }, A extends { computer: { id: string } }>(
+  online: C[],
+  accounts: A[],
+  runs: (account: A) => boolean,
+  pickedId?: string,
+): C | undefined {
+  return (
+    online.find((c) => c.id === pickedId) ??
+    online.find((c) => accounts.some((a) => a.computer.id === c.id && runs(a))) ??
+    online[0]
+  )
+}

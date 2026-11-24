@@ -6,7 +6,6 @@
 // Chief in a workspace with no team yet asks for one thing instead, the person's website or
 // repository (or a line on what they build), which its first reply turns into a first job done
 // and a proposed team: where onboarding ends (app/onboarding/page.tsx).
-import { chiefFirstMessage } from '@brigade/contracts'
 import { ArrowUp, Plug, SlidersHorizontal } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
@@ -63,6 +62,14 @@ const GENERIC = [
 
 const CHIEF = ['Set up my team', 'Look at my website and suggest what to hand off', 'Plan my week']
 
+/**
+ * Chief before there is a team: its first meeting asks for the person's website, and what they
+ * send there or in the box goes with what onboarding's questions kept (chiefFirstMessage, which
+ * the thread's box adds: TeammateStart in components/thread-panel.tsx).
+ */
+export const settingUp = (teammate: Pick<Teammate, 'kind'>, teammates: Pick<Teammate, 'kind'>[]) =>
+  teammate.kind === 'chief' && !teammates.some((t) => t.kind !== 'chief')
+
 /** What Chief says first in a workspace with no team yet: one thing to send, no questions. */
 const SETUP_GREETING = (name: string) =>
   `Hi! I’m ${name}. I run your team. Send me your website or repo: I’ll read it, do a first small job for you, and suggest who should be on your team.`
@@ -110,12 +117,10 @@ export function FirstMeeting({
   onSend: (text: string) => string | undefined
 }) {
   const { me, teammates } = useDashboard()
-  // Chief before there is a team: the setup thread starts from the person's website.
-  const setup = teammate.kind === 'chief' && !teammates.some((t) => t.kind !== 'chief')
+  const setup = settingUp(teammate, teammates)
   const { greeting, jobs } = firstWords(teammate)
   const [problem, setProblem] = useState<string>()
-  const send = (text: string) =>
-    setProblem(onSend(setup ? chiefFirstMessage(text, me.onboardingAnswers) : text))
+  const send = (text: string) => setProblem(onSend(text))
 
   return (
     // Two bubbles in a row from the teammate read as one group, as Midnight draws them: round
