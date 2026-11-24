@@ -67,6 +67,9 @@ const CHIEF = ['Set up my team', 'Look at my website and suggest what to hand of
 const SETUP_GREETING = (name: string) =>
   `Hi! I’m ${name}. I run your team. Send me your website or repo: I’ll read it, do a first small job for you, and suggest who should be on your team.`
 
+/** Chief's third choice before there is a team: one click, nothing to write. */
+const STARTER_TEAM = 'Just suggest a starter team'
+
 /** What the teammate says first, and the jobs it offers. */
 export function firstWords(teammate: Pick<Teammate, 'name' | 'title' | 'kind' | 'instructions'>) {
   if (teammate.kind === 'chief')
@@ -145,6 +148,15 @@ export function FirstMeeting({
               label="What you are building"
               onSend={send}
             />
+            {/* Nothing to write: a starter team from what onboarding's questions kept. */}
+            <button
+              type="button"
+              onClick={() => send(STARTER_TEAM)}
+              className={cn(ROW, 'hover:bg-background/50')}
+            >
+              <Letter>C</Letter>
+              {STARTER_TEAM}
+            </button>
           </>
         ) : (
           <>
