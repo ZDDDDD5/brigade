@@ -8,6 +8,7 @@ import { HTTPException } from 'hono/http-exception'
 import { audit } from './audit.js'
 import { billingEnabled, entitles, workspacePlan } from './billing.js'
 import { prisma } from './db.js'
+import { removeAvatar } from './profile.js'
 import { checkMemberIdle, removeMember, type Membership } from './member-remove.js'
 import { checkWorkspaceIdle, deleteWorkspace } from './workspace-delete.js'
 
@@ -92,6 +93,9 @@ export async function deleteAccount(userId: string) {
       actor: { type: 'member', id: membership.id },
       reason: 'account deleted',
     })
+  // The picture they chose, kept in a workspace that may stay (src/profile.ts).
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { avatar: true } })
+  if (user?.avatar) await removeAvatar(userId, user.avatar)
   // Their sign-ins, sessions, devices and the invitations they sent go with them.
   await prisma.user.deleteMany({ where: { id: userId } })
 }

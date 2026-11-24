@@ -75,7 +75,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -127,6 +126,7 @@ import { markSignedIn, clearBrowserData, markSignedOut } from '@/lib/signed-in'
 import { isMac, useIsMac } from '@/lib/platform'
 import { openSettings, SETTINGS_SECTIONS, settingsHref } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
+import { userImageSrc } from '@/lib/user-image'
 import { NEW_TEAMMATE, openTeammate } from '@/lib/teammate-dialog'
 import { takeOffTheme, ThemeRuntime, useWornTheme } from '@/components/theme-runtime'
 
@@ -386,7 +386,6 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     return <AppLoader note={unreachable ? 'Cannot reach Brigade. Trying again…' : undefined} />
   const data = me.data
   const workspace = data.workspaces.find((w) => w.id === data.activeWorkspaceId)
-  const organization = data.organizations.find((o) => o.id === data.activeOrganizationId)
   // What Home's Needs you holds, counted beside Home in the sidebar: the one count of
   // what waits on this member (folded sections show none). A playbook's approvals are one.
   const waitingTickets = (tickets.data ?? []).filter((t) => waitsOn(t, data))
@@ -702,7 +701,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         <Avatar className="size-9 group-data-[collapsible=icon]:size-8">
                           {data.user.image && (
                             <AvatarImage
-                              src={data.user.image}
+                              src={userImageSrc(data.user.image) ?? undefined}
                               alt=""
                               referrerPolicy="no-referrer"
                             />
@@ -733,12 +732,16 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                           </DropdownMenuItem>
                         </>
                       ) : (
-                        <DropdownMenuLabel className="grid leading-tight">
-                          <span className="truncate">{data.user.name}</span>
-                          <span className="text-muted-foreground truncate text-xs font-normal">
-                            {organization?.name}
+                        // Who they are, and their profile a click away (Settings › Profile).
+                        <DropdownMenuItem onSelect={() => openSettings('/app/profile')}>
+                          <span className="grid min-w-0 flex-1 leading-tight">
+                            <span className="truncate font-semibold">{data.user.name}</span>
+                            <span className="text-muted-foreground truncate text-xs">
+                              {data.user.email}
+                            </span>
                           </span>
-                        </DropdownMenuLabel>
+                          <ChevronRight className="text-muted-foreground" />
+                        </DropdownMenuItem>
                       )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={() => openSettings()}>

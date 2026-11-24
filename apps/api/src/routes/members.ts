@@ -13,6 +13,7 @@ import { auth } from '../auth.js'
 import { prisma, type Prisma } from '../db.js'
 import { requireSavedAccount } from '../guests.js'
 import { spendInvitation } from '../invitation-budget.js'
+import { shownImage } from '../profile.js'
 import {
   beingRemoved,
   dropMemberSockets,
@@ -96,7 +97,9 @@ export const members = new Hono<AppEnv>()
     const [rows, invitations] = await Promise.all([
       prisma.member.findMany({
         where: { organizationId: scope.organizationId },
-        include: { user: { select: { name: true, email: true, image: true } } },
+        include: {
+          user: { select: { id: true, name: true, email: true, image: true, avatar: true } },
+        },
         orderBy: { createdAt: 'asc' },
       }),
       scope.role !== 'owner' && scope.role !== 'admin'
@@ -112,7 +115,7 @@ export const members = new Hono<AppEnv>()
         id: m.id,
         name: m.user.name,
         email: m.user.email,
-        image: m.user.image,
+        image: shownImage(m.user),
         role: m.role,
         joinedAt: m.createdAt,
       })),

@@ -19,6 +19,7 @@ import { desktopSignIn } from './desktop-sign-in.js'
 import { guestSignIn } from './guests.js'
 import { INVITATION_DAYS, sendInvitation } from './invitation-mail.js'
 import { passwordSignIn } from './password-sign-in.js'
+import { keepChosenName } from './profile.js'
 import { CODE_MINUTES, sendSignInCode } from './sign-in-code.js'
 
 /** Audit actors are members. Fall back to the user when no membership exists yet. */
@@ -130,6 +131,8 @@ export const auth = betterAuth({
   // (src/analytics.ts). After the user's row is written; never fails the sign-up.
   databaseHooks: {
     user: {
+      // A name the person chose in Settings › Profile outlives Google's on each sign-in.
+      update: { before: async (user) => keepChosenName(user) },
       create: {
         after: async (user, context) => {
           await recordSignup(user, context).catch((error: unknown) =>

@@ -21,7 +21,7 @@ test("each section's address opens it", () => {
 })
 
 test('/app/settings opens the first section', () => {
-  assert.equal(settingsAddress('/app/settings')?.section, 'preferences')
+  assert.equal(settingsAddress('/app/settings')?.section, 'profile')
 })
 
 test("what follows `?` goes to the section, as a provider's or Stripe's redirect brings it", () => {
@@ -122,7 +122,7 @@ test('the search finds settings inside a section, behind the features the member
   assert.deepEqual(inside('billing'), [['billing', []]])
   assert.deepEqual(
     inside('danger').map(([section]) => section),
-    ['preferences', 'workspace'],
+    ['profile', 'workspace'],
   )
   // An empty search lists the sections alone.
   assert.ok(searchSettings('', ['themes']).every((s) => s.settings.length === 0))

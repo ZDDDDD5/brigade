@@ -28,6 +28,13 @@ model User {
   email             String           @unique
   emailVerified     Boolean          @default(false)
   image             String?
+  /// The picture they chose in Settings › Profile (src/profile.ts), shown instead of `image`:
+  /// "<workspaceId>/<version>", its bytes in the bucket folder of the workspace they chose it in.
+  /// null: their sign-in's picture (`image`), else their initial.
+  avatar            String?
+  /// They chose their name in Settings › Profile: a sign-in with Google keeps it, rather than
+  /// putting Google's name back (src/auth.ts).
+  nameChosen        Boolean          @default(false)
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
   authSessions      AuthSession[]

@@ -242,6 +242,11 @@ async function deleteFenced(
         // Rows of its own with no link to it (their files are in its folder).
         await tx.documentAsset.deleteMany({ where: { workspaceId } })
         await tx.upload.deleteMany({ where: { workspaceId } })
+        // Pictures people chose here (src/profile.ts): their sign-in's shows again.
+        await tx.user.updateMany({
+          where: { avatar: { startsWith: `${workspaceId}/` } },
+          data: { avatar: null },
+        })
         await tx.workspace.deleteMany({ where: { id: workspaceId } })
         const next = await tx.workspace.findFirst({
           where: { organizationId },

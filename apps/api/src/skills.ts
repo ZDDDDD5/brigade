@@ -28,6 +28,7 @@ import { audit, type Actor } from './audit.js'
 import { getObject, objectSize, putObject, skillFileKey } from './bucket.js'
 import type { Scope, ScopedDb } from './db.js'
 import { actorNames } from './library-history.js'
+import { shownImage } from './profile.js'
 import type { FoundSkill } from './skill-import.js'
 
 type Row = Awaited<ReturnType<ScopedDb['skill']['findFirstOrThrow']>>
@@ -90,7 +91,7 @@ export async function toSkills(db: ScopedDb, rows: Row[]): Promise<Skill[]> {
     where: {
       id: { in: rows.flatMap((r) => (r.updatedByType === 'member' && r.updatedById) || []) },
     },
-    select: { id: true, user: { select: { image: true } } },
+    select: { id: true, user: { select: { id: true, image: true, avatar: true } } },
   })
   return rows.map((row) => {
     const by = name(row.updatedByType, row.updatedById)
@@ -113,7 +114,7 @@ export async function toSkills(db: ScopedDb, rows: Row[]): Promise<Skill[]> {
               type: by.type,
               id: by.id,
               name: by.name,
-              image: photos.find((m) => m.id === by.id)?.user.image ?? null,
+              image: shownImage(photos.find((m) => m.id === by.id)?.user ?? null),
             }
           : null,
       createdAt: row.createdAt.toISOString(),
