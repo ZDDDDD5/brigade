@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import type { ApiToRunner } from '@brigade/contracts'
+import type { AgentEvent, ApiToRunner } from '@brigade/contracts'
 import { WebSocketServer } from 'ws'
 
 // The runner reaches its workspace's hub (docs/workspace-hubs-plan.md): the API's welcome names
@@ -80,6 +80,68 @@ test('the workspace the welcome names is kept, and named on the next connection'
     sockets[0]!.terminate()
     await until(() => urls.length === 2, 'a new connection')
     assert.equal(urls[1], '/runner/ws?workspace=ws-1')
+  } finally {
+    connection.close()
+    for (const ws of sockets) ws.terminate()
+    server.close()
+  }
+})
+
+test('events the API had not acknowledged when its hub object reset are sent again, once', async () => {
+  // As on 2026-11-24, when Cloudflare reset a workspace's hub object (an internal error of its
+  // storage): every socket it held dropped at once. What the runner sent that the hub never
+  // acknowledged is sent again on the next connection, and what it acknowledged is not.
+  const server = new WebSocketServer({ port: 0 })
+  await new Promise((resolve) => server.once('listening', resolve))
+  const sockets: import('ws').WebSocket[] = []
+  const received: number[][] = []
+  server.on('connection', (ws) => {
+    const index = sockets.push(ws) - 1
+    received[index] = []
+    ws.on('message', (raw) => {
+      const message = JSON.parse(String(raw)) as {
+        type: string
+        events?: { sessionId: string; seq: number }[]
+      }
+      if (message.type === 'hello')
+        ws.send(
+          JSON.stringify({ type: 'welcome', runnerId: 'r', computerId: 'c', workspaceId: 'ws-1' }),
+        )
+      if (message.type === 'events') received[index]!.push(...message.events!.map((e) => e.seq))
+    })
+  })
+  const port = (server.address() as { port: number }).port
+  const outbox = new Outbox(join(home, 'outbox-reset'))
+  const connection = new Connection(
+    { apiUrl: `http://127.0.0.1:${port}`, token: 'test', computerId: 'c', workspaceName: 'Test' },
+    outbox,
+    () => undefined,
+    async () => ({}),
+    () => false,
+  )
+  connection.reconnectSpreadMs = 0
+  const event = (value: string): AgentEvent => ({
+    at: new Date().toISOString(),
+    type: 'raw',
+    source: 'runner',
+    value,
+  })
+  connection.start()
+  try {
+    await until(() => sockets.length === 1 && received[0] !== undefined, 'a connection')
+    await new Promise((r) => setTimeout(r, 50))
+    for (const value of ['one', 'two', 'three'])
+      connection.sendEvent(outbox.push('t', event(value)))
+    await until(() => received[0]!.length === 3, 'the events')
+    // The hub stores and acknowledges the first; the object resets before the others' ack.
+    sockets[0]!.send(JSON.stringify({ type: 'ack', sessionId: 't', seq: 1 }))
+    await until(() => outbox.unacknowledged().length === 2, 'the ack taken')
+    sockets[0]!.terminate()
+
+    await until(() => (received[1]?.length ?? 0) === 2, 'the events sent again')
+    assert.deepEqual(received[1], [2, 3])
+    sockets[1]!.send(JSON.stringify({ type: 'ack', sessionId: 't', seq: 3 }))
+    await until(() => outbox.unacknowledged().length === 0, 'all acknowledged')
   } finally {
     connection.close()
     for (const ws of sockets) ws.terminate()
