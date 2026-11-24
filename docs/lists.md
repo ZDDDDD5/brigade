@@ -135,10 +135,10 @@ mission; threads stay where the work happens.
 - **A new workspace starts with a list**, `getting-started.md` at the library's root
   (`GETTING_STARTED` in `@brigade/contracts`), saved by Brigade when the workspace is created
   (`seedGettingStarted`): first steps a teammate can take on, so Lists shows from day one how
-  lines are handed over and ticked, rather than an empty page. Its first line, "Set up your team
-  with Chief", is the one the onboarding's setup thread with the chief starts on (StartThread's
-  `listLines`), so the list shows it in progress at once. It is an ordinary list: people edit it,
-  hand its lines over or delete it, and nothing brings it back.
+  lines are handed over and ticked, rather than an empty page. Setting up the team is not one of
+  its lines: the person's first thread with Chief starts from Chief's first meeting, on its own
+  and in no list, so a new workspace never opens on a list's "stopped" line. It is an ordinary
+  list: people edit it, hand its lines over or delete it, and nothing brings it back.
 - **Lists are the backlog.** A line nobody has started is the backlog, planned in its file, where
   the order of the lines and their sections matter; the Board has no "To do" column. Lists replaced
   the Tasks board, gone since (docs/hand-offs.md). A teammate hands lines to a teammate in a thread

@@ -73,6 +73,7 @@ import { preloadThreadEvents } from '@/lib/use-thread-events'
 import { cn } from '@/lib/utils'
 import { captures, desktopPlatform } from '@/lib/brigade-app'
 import { clickSettings } from '@/lib/settings-dialog'
+import { lastTeammate, rememberTeammate } from '@/lib/last-teammate'
 
 const quietSelect =
   'h-8 border-transparent bg-transparent shadow-none hover:bg-accent dark:bg-transparent dark:hover:bg-accent/50'
@@ -276,16 +277,7 @@ export function TeammatePicker({
   )
 }
 
-const LAST_TEAMMATE = 'brigade.home.teammate'
-
-/** The teammate `useLastTeammate` remembers, read at once. */
-export function lastTeammate() {
-  try {
-    return localStorage.getItem(LAST_TEAMMATE) ?? undefined
-  } catch {
-    return undefined
-  }
-}
+export { lastTeammate }
 
 /**
  * The teammate new messages go to, remembered per browser. Read as it mounts: what asks is in
@@ -298,9 +290,7 @@ export function useLastTeammate() {
     id,
     (next: string) => {
       setId(next)
-      try {
-        localStorage.setItem(LAST_TEAMMATE, next)
-      } catch {}
+      rememberTeammate(next)
     },
   ] as const
 }

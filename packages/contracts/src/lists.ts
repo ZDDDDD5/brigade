@@ -650,18 +650,16 @@ export const LIST_OPERATIONS = ['list_items', 'link_items', 'complete_item', 'ad
 
 /**
  * The list every new workspace starts with, at the library's root: first steps a teammate can
- * take on, so Lists shows how lines are handed over and ticked from day one. Its first line is
- * the one the setup thread with the chief starts on (`setupLine`).
+ * take on, so Lists shows how lines are handed over and ticked from day one. Setting up the team
+ * is not one: Chief's first meeting starts it, in a thread of its own (docs/lists.md).
  */
 export const GETTING_STARTED = {
   path: 'getting-started.md',
-  setupLine: 'Set up your team with Chief',
   text: [
     '# Getting started',
     '',
     'Hand any line to a teammate: the list shows who is on it, and the line is ticked once it is done.',
     '',
-    '- [ ] Set up your team with Chief',
     '- [ ] Connect the Apps your work lives in, such as GitHub or Gmail',
     '- [ ] Create a project for what you are building',
     '- [ ] Hand this line to a teammate and watch it get ticked',

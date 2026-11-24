@@ -1,11 +1,12 @@
 // The questions a new project's creator answers during onboarding (User.onboardingAnswers):
-// who they are, which feeds the chief's first message, and where they heard of Brigade.
+// who they are, which goes with the first message they send the chief, and where they heard of
+// Brigade.
 import { z } from 'zod'
 
 type Option = {
   id: string
   label: string
-  /** How the chief's first message says it, when it says it. */
+  /** How the first message to the chief says it, when it says it. */
   phrase?: string
 }
 
@@ -113,20 +114,21 @@ const phraseOf = (key: OnboardingKey, id: string | undefined) =>
     : undefined
 
 /**
- * The first message of a new workspace's setup thread with the chief, with what the person
- * said of themselves. Nothing answered (or only `other`): the plain one.
+ * What the person said of themselves, as a line under the first message they send the chief
+ * from its first meeting (their website, or a line on what they build): "I'm a founder,
+ * working solo. I'd like my team to start with code." Empty when nothing was answered (or
+ * only `other`), as from Brigade.app, which skips the questions.
  */
-export function setupMessage(answers: OnboardingAnswers | null | undefined) {
+export function aboutMe(answers: OnboardingAnswers | null | undefined) {
   const role = phraseOf('role', answers?.role?.id)
   const size = phraseOf('teamSize', answers?.teamSize?.id)
   const work = phraseOf('firstWork', answers?.firstWork?.id)
   const who = [role ?? (size ? "I'm" : undefined), size].filter(Boolean).join(role ? ', ' : ' ')
-  return [
-    'Hi Chief, I just started on Brigade.',
-    who && `${who}.`,
-    work && `I'd like my team to start with ${work}.`,
-    'Help me set up my team.',
-  ]
+  return [who && `${who}.`, work && `I'd like my team to start with ${work}.`]
     .filter(Boolean)
     .join(' ')
 }
+
+/** The first message to the chief: what the person wrote, then `aboutMe` when there is any. */
+export const chiefFirstMessage = (text: string, answers: OnboardingAnswers | null | undefined) =>
+  [text.trim(), aboutMe(answers)].filter(Boolean).join('\n\n')

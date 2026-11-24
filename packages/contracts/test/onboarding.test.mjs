@@ -1,44 +1,46 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ONBOARDING_QUESTIONS, OnboardingAnswers, setupMessage } from '../dist/index.js'
+import {
+  aboutMe,
+  chiefFirstMessage,
+  ONBOARDING_QUESTIONS,
+  OnboardingAnswers,
+} from '../dist/index.js'
 
-// Onboarding's questions (src/onboarding.ts): the chief's first message says what was
-// answered, and only answers of the closed lists are kept.
+// Onboarding's questions (src/onboarding.ts): the first message to the chief says what was
+// answered under what the person wrote, and only answers of the closed lists are kept.
 
-const PLAIN = 'Hi Chief, I just started on Brigade. Help me set up my team.'
-
-test('nothing answered, all skipped or only Other: the plain first message', () => {
-  assert.equal(setupMessage(null), PLAIN)
-  assert.equal(setupMessage({}), PLAIN)
+test('nothing answered, all skipped or only Other: nothing to say', () => {
+  assert.equal(aboutMe(null), '')
+  assert.equal(aboutMe({}), '')
   assert.equal(
-    setupMessage({ role: { id: 'other', position: 9 }, firstWork: { id: 'other', position: 6 } }),
-    PLAIN,
+    aboutMe({ role: { id: 'other', position: 9 }, firstWork: { id: 'other', position: 6 } }),
+    '',
   )
   // Where they heard of Brigade is for us, never in the message.
-  assert.equal(setupMessage({ heardFrom: { id: 'twitter', position: 1 } }), PLAIN)
+  assert.equal(aboutMe({ heardFrom: { id: 'twitter', position: 1 } }), '')
+  assert.equal(chiefFirstMessage('  northwind.app \n', {}), 'northwind.app')
 })
 
-test('the first message says who they are and what to start with', () => {
+test('the first message says who they are and what to start with, under what they wrote', () => {
   assert.equal(
-    setupMessage({
+    aboutMe({
       role: { id: 'founder', position: 3 },
       teamSize: { id: '2-10', position: 2 },
       firstWork: { id: 'support', position: 1 },
       heardFrom: { id: 'friend', position: 4 },
     }),
-    "Hi Chief, I just started on Brigade. I'm a founder, on a team of 2–10. I'd like my team to start with customer support. Help me set up my team.",
+    "I'm a founder, on a team of 2–10. I'd like my team to start with customer support.",
+  )
+  assert.equal(aboutMe({ teamSize: { id: 'solo', position: 1 } }), "I'm working solo.")
+  assert.equal(aboutMe({ role: { id: 'marketing', position: 1 } }), 'I work in marketing.')
+  assert.equal(
+    aboutMe({ firstWork: { id: 'code', position: 2 } }),
+    "I'd like my team to start with code.",
   )
   assert.equal(
-    setupMessage({ teamSize: { id: 'solo', position: 1 } }),
-    "Hi Chief, I just started on Brigade. I'm working solo. Help me set up my team.",
-  )
-  assert.equal(
-    setupMessage({ role: { id: 'marketing', position: 1 } }),
-    'Hi Chief, I just started on Brigade. I work in marketing. Help me set up my team.',
-  )
-  assert.equal(
-    setupMessage({ firstWork: { id: 'code', position: 2 } }),
-    "Hi Chief, I just started on Brigade. I'd like my team to start with code. Help me set up my team.",
+    chiefFirstMessage('northwind.app', { teamSize: { id: 'solo', position: 1 } }),
+    "northwind.app\n\nI'm working solo.",
   )
 })
 

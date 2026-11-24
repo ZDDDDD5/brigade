@@ -486,10 +486,11 @@ test('a new list is a file named after it, at the root or in a project folder', 
   assert.equal(list.title, 'Launch plan')
 })
 
-test('the Getting started list has its setup line and five lines in all', () => {
+test('the Getting started list has four lines, none for setting up the team', () => {
   const list = parseList(GETTING_STARTED.text)
   assert.equal(list.title, 'Getting started')
-  assert.equal(list.lines.length, 5)
-  assert.equal(list.lines[0].text, GETTING_STARTED.setupLine)
+  assert.equal(list.lines.length, 4)
+  // Chief's first meeting starts the setup thread, in no list.
+  assert.ok(list.lines.every((l) => !/Chief/.test(l.text)))
   assert.ok(list.lines.every((l) => !l.done && !l.marker))
 })

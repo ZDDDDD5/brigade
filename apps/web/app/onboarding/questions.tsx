@@ -27,8 +27,8 @@ const ADVANCE_MS = 250
 
 /**
  * Onboarding's questions, one at a time, for someone who just made their project: a pick
- * moves on, Skip leaves a question out. What they say about themselves goes into the chief's
- * first message (setupMessage); all of it is kept once (POST /me/onboarding).
+ * moves on, Skip leaves a question out. What they say about themselves goes with the first
+ * message they send the chief (chiefFirstMessage); all of it is kept once (POST /me/onboarding).
  */
 export function Questions({ onDone }: { onDone: () => void }) {
   // Drawn once: Back shows the same order.

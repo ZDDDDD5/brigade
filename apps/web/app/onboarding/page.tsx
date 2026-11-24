@@ -1,5 +1,4 @@
 'use client'
-import { GETTING_STARTED, newListItemId, setupMessage, type ListSummary } from '@brigade/contracts'
 import {
   Check,
   ChevronDown,
@@ -43,6 +42,7 @@ import {
   type Teammate,
 } from '@/lib/api'
 import { inDesktopApp } from '@/lib/brigade-app'
+import { rememberTeammate } from '@/lib/last-teammate'
 import { computerTaken } from '@/lib/guest'
 import { detectDevice, type Device } from '@/lib/device'
 import { LINUX_APPIMAGE_URL, LINUX_DEB_URL } from '@/lib/linux-app'
@@ -53,22 +53,6 @@ import { useLive } from '@/lib/use-live'
 import { cn } from '@/lib/utils'
 import { Questions } from './questions'
 import { Shell } from './shell'
-
-/**
- * The line of the workspace's Getting started list the setup thread works on, so the list shows
- * it in progress with the chief. None without the list: the thread starts alone (and so it does
- * when the line is gone from it, which the API leaves out).
- */
-async function setupLine() {
-  const lists = await api<ListSummary[]>('/lists').catch(() => [])
-  const list = lists.find((l) => l.path === GETTING_STARTED.path)
-  return list
-    ? {
-        documentId: list.documentId,
-        items: [{ id: newListItemId(), text: GETTING_STARTED.setupLine }],
-      }
-    : undefined
-}
 
 /**
  * First run: the project (its organization and first workspace) is made at once, named after
@@ -500,8 +484,10 @@ function ConnectAI({
   const started = useRef(false)
 
   /**
-   * Meet the chief: a new workspace starts by setting up its team with it, its owner or admin.
-   * Anyone else (a member who joined, a workspace with a team already) goes to the dashboard.
+   * Meet the chief: a new workspace's owner or admin lands on Chief's first meeting
+   * (components/first-meeting.tsx), which asks for their website and starts the setup thread
+   * once they send it: nothing is sent in their name. Anyone else (a member who joined, a
+   * workspace with a team already) goes to the dashboard.
    */
   const finish = useCallback(
     async (me: Me) => {
@@ -516,37 +502,20 @@ function ConnectAI({
         const chief = teammates.find((t) => t.kind === 'chief')
         const others = teammates.filter((t) => t.kind !== 'chief')
         // Changing the chief is an owner's or admin's: a member's account would be refused.
-        if (others.length > 0 || (me.role !== 'owner' && me.role !== 'admin'))
+        if (!chief || others.length > 0 || (me.role !== 'owner' && me.role !== 'admin'))
           return router.replace('/app')
         const works = (a: Account) => ['ready', 'unverified', 'exhausted'].includes(a.status)
         // Only a Codex account: the chief runs on Codex.
         if (
-          chief &&
           !ready.some((a) => works(a) && a.provider === chief.harness) &&
           ready.some((a) => works(a))
         ) {
           const harness = ready.find(works)!.provider
           await api(`/teammates/${chief.id}`, { method: 'PATCH', body: { harness, model: null } })
-          chief.harness = harness
         }
-        const account = ready.find((a) => works(a) && a.provider === chief?.harness)
-        if (chief && account) {
-          // The API decides whether the team is set up already, and makes its setup thread once
-          // however many windows finish at once: that thread, or none (to the dashboard).
-          const listLines = await setupLine()
-          const thread = await api<{ id: string | null }>('/threads', {
-            body: {
-              teammateId: chief.id,
-              computerId: account.computer.id,
-              accountId: account.id,
-              text: setupMessage(me.onboardingAnswers),
-              ...(listLines ? { listLines } : {}),
-              setup: true,
-            },
-          })
-          if (thread.id) return router.replace(`/app/threads/${thread.id}`)
-        }
-        router.replace('/app')
+        // The threads page on Chief: before its first thread, its first meeting.
+        rememberTeammate(chief.id)
+        router.replace('/app/threads')
       } catch (e) {
         setError((e as Error).message)
         started.current = false

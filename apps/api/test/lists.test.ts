@@ -477,12 +477,13 @@ describe('lists', { skip: !database && 'no database answers' }, () => {
 
   test('a new thread starts on lines of a list: linked and told before its first turn', async () => {
     const { GETTING_STARTED } = await import('@brigade/contracts')
+    const APPS_LINE = 'Connect the Apps your work lives in, such as GitHub or Gmail'
     await lists.seedGettingStarted(scope)
     const file = await db.document.findFirstOrThrow({ where: { path: GETTING_STARTED.path } })
     assert.equal(file.createdByType, 'system', 'saved by Brigade')
     const summary = (await lists.listSummaries(db, scope)).find((l) => l.documentId === file.id)
     assert.equal(summary?.title, 'Getting started')
-    assert.equal(summary?.total, 5)
+    assert.equal(summary?.total, 4)
     // Seeding again keeps the file a person may have changed.
     await library.saveLibraryFile(
       db,
@@ -497,15 +498,15 @@ describe('lists', { skip: !database && 'no database answers' }, () => {
     const { startThread } = await import('../src/work.js')
     const itemIds = await lists.linesToStartOn(db, scope, ids.member, {
       documentId: file.id,
-      items: [{ id: 'setupline123456a', text: GETTING_STARTED.setupLine }],
+      items: [{ id: 'appsline1234567a', text: APPS_LINE }],
     })
-    assert.deepEqual(itemIds, ['setupline123456a'])
+    assert.deepEqual(itemIds, ['appsline1234567a'])
     const { thread } = await startThread(db, scope, {
       teammate: riley,
       computer: { id: ids.computer },
       memberId: ids.member,
-      title: 'Setup',
-      text: 'Help me set up my team.',
+      title: 'Apps',
+      text: 'Connect our Apps.',
       listItemIds: itemIds,
     })
     const lines = (
@@ -514,8 +515,8 @@ describe('lists', { skip: !database && 'no database answers' }, () => {
         await db.document.findFirstOrThrow({ where: { id: file.id } }),
       )
     ).split('\n')
-    assert.equal(lines[4], `- [ ] ${GETTING_STARTED.setupLine} <!-- item:setupline123456a -->`)
-    assert.equal(lines[5], `- [ ] Connect the Apps your work lives in, such as GitHub or Gmail`)
+    assert.equal(lines[4], `- [ ] ${APPS_LINE} <!-- item:appsline1234567a -->`)
+    assert.equal(lines[5], `- [ ] Create a project for what you are building`)
     await until(
       () =>
         sent.some(
@@ -531,7 +532,7 @@ describe('lists', { skip: !database && 'no database answers' }, () => {
     )!
     assert.deepEqual(
       (prompt.thread as { items?: { id: string; text: string }[] }).items?.map((i) => i.id),
-      ['setupline123456a'],
+      ['appsline1234567a'],
     )
     const after = (await lists.listSummaries(db, scope)).find((l) => l.documentId === file.id)
     assert.equal(after?.inProgress, 1, 'the list shows its line in progress')
