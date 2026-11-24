@@ -157,7 +157,6 @@ export const workspaces = new Hono<AppEnv>()
           avatar: true,
           onboardingAnswers: true,
           guest: true,
-          authAccounts: { where: { providerId: 'google' }, select: { id: true }, take: 1 },
         },
       }),
       prisma.member.findMany({ where: { userId: c.var.userId }, include: { organization: true } }),
@@ -209,12 +208,10 @@ export const workspaces = new Hono<AppEnv>()
             ],
           },
         })) > 0
-    const { onboardingAnswers, guest, avatar, authAccounts, ...person } = user
+    const { onboardingAnswers, guest, avatar, ...person } = user
     return c.json({
       // `image`: the picture they chose (a path under /api), else their sign-in's (src/profile.ts).
       user: { ...person, image: shownImage({ ...person, avatar }) },
-      // They sign in with Google (Settings › Profile says so by their email).
-      googleSignIn: authAccounts.length > 0,
       // A guest (src/guests.ts): made by Brigade.app without a sign-in, until saved with an email.
       guest,
       // What they answered to onboarding's questions; null: never asked.

@@ -10,6 +10,7 @@ import { DeleteAccount } from '@/components/danger-zone'
 import { shrinkLogo, uploadLogo } from '@/components/projects'
 import { SettingRow, SettingsGroup } from '@/components/settings-group'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
   DropdownMenu,
@@ -72,11 +73,13 @@ export default function ProfilePage() {
     queue.current = run
   }
 
+  const nextName = name.trim()
+  /** The name typed differs from the saved one: Save saves it. */
+  const nameChanged = !!nextName && nextName !== me.user.name
+
   function saveName() {
     editing.current = false
-    const next = name.trim()
-    if (!next) return setName(me.user.name)
-    if (next !== me.user.name) save({ name: next })
+    if (nameChanged) save({ name: nextName })
   }
 
   function pickPicture(picked: File | undefined) {
@@ -159,22 +162,34 @@ export default function ProfilePage() {
           />
           <div data-setting={settingAnchor('Name')} className="flex min-w-0 flex-1 flex-col gap-2">
             <Label htmlFor="profile-name">Name</Label>
-            <Input
-              id="profile-name"
-              value={name}
-              maxLength={80}
-              onFocus={() => (editing.current = true)}
-              onChange={(e) => setName(e.target.value)}
-              onBlur={saveName}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') e.currentTarget.blur()
-                if (e.key === 'Escape') {
-                  setName(me.user.name)
-                  editing.current = false
-                  requestAnimationFrame(() => (e.target as HTMLInputElement).blur())
-                }
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault()
+                saveName()
               }}
-            />
+            >
+              <Input
+                id="profile-name"
+                value={name}
+                maxLength={80}
+                onFocus={() => (editing.current = true)}
+                onChange={(e) => {
+                  editing.current = true
+                  setName(e.target.value)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    setName(me.user.name)
+                    editing.current = false
+                    requestAnimationFrame(() => (e.target as HTMLInputElement).blur())
+                  }
+                }}
+              />
+              <Button type="submit" disabled={!nameChanged}>
+                Save
+              </Button>
+            </form>
           </div>
         </Card>
         {status && (
@@ -193,15 +208,7 @@ export default function ProfilePage() {
         <SettingsGroup title="Account">
           <SettingRow
             title="Email"
-            detail={
-              <>
-                <span className="text-foreground font-medium">{me.user.email}</span>
-                <br />
-                {me.googleSignIn
-                  ? 'You sign in with it, by a code mailed to it or with Google. It cannot be changed here yet.'
-                  : 'You sign in with it, by a code mailed to it. It cannot be changed here yet.'}
-              </>
-            }
+            detail={<span className="text-foreground font-medium">{me.user.email}</span>}
           />
         </SettingsGroup>
       )}
