@@ -704,17 +704,8 @@ export function workerProblems(rows: Outcome[]): Alert[] {
   return alerts
 }
 
-/** Resets of Durable Objects in the window: this many is critical. */
+/** Resets of Durable Objects in the window: this many is critical; one is a warning. */
 export const RESETS_CRITICAL = 5
-/**
- * Resets by an internal error alone warn from this many in the window; one past its memory or
- * its CPU warns at once. An internal error is the runtime's own (on 2026-11-24, `Internal error
- * in Durable Object storage caused object to be reset`, twice in two hours): the object starts
- * again at once and its sockets connect again on their own, with nothing lost (the runner sends
- * again what the API had not acknowledged, the dashboard asks for what followed its last event),
- * so one or two are nothing to act on; more at once are Cloudflare in trouble.
- */
-export const RESETS_INTERNAL_WARNING = 3
 
 type Named = { dimensions: { scriptName: string; namespaceId: string } }
 type Resets = {
@@ -756,7 +747,7 @@ export function objectResetProblems(
   const alerts: Alert[] = []
   for (const [script, { memory, cpu, internal, objects }] of byScript) {
     const total = memory + cpu + internal
-    if (!memory && !cpu && internal < RESETS_INTERNAL_WARNING) continue
+    if (!total) continue
     const where = objects.size
       ? ` Which: ${[...objects].map(([name, n]) => `${name} (${n})`).join(', ')}.`
       : ''

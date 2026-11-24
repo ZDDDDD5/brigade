@@ -270,9 +270,8 @@ test('Durable Objects reset past their memory alert, by Worker; others are not o
   assert.equal(objectResetProblems(names, [reset('ns-hubs', 1)])[0]!.severity, 'warning')
 })
 
-test("resets by the runtime's internal error warn only from a few at once, and name the objects", () => {
-  // As on 2026-11-24: two hubs reset by `Internal error in Durable Object storage` 46 s apart,
-  // and the Api object twice two hours before. Their sockets connected again on their own.
+test('a reset alert names the objects that reset, by name or by id', () => {
+  // As on 2026-11-24: the Api object reset twice at 01:56 UTC, with no cause in its logs.
   const names = [
     { dimensions: { scriptName: 'brigade-api', namespaceId: 'ns-api' } },
     { dimensions: { scriptName: 'brigade-api', namespaceId: 'ns-hubs' } },
@@ -285,21 +284,15 @@ test("resets by the runtime's internal error warn only from a few at once, and n
     ['id-api', 'the Api object'],
     ['id-hub-a', 'the hub of workspace a'],
   ])
-  assert.deepEqual(objectResetProblems(names, [reset('ns-api', 'id-api', 2)], which), [])
-  assert.deepEqual(
-    objectResetProblems(
-      names,
-      [reset('ns-hubs', 'id-hub-a', 1), reset('ns-hubs', 'id-hub-b', 1), reset('ns-hubs', 'x', 0)],
-      which,
-    ),
-    [],
-  )
+  // Every reset by an internal error is still told: one with no known cause may be ours.
+  const [api] = objectResetProblems(names, [reset('ns-api', 'id-api', 2)], which)
+  assert.equal(api!.severity, 'warning')
+  assert.match(api!.detail!, /2 by an internal error\. Which: the Api object \(2\)\./)
 
-  // A third at once is Cloudflare in trouble: a warning, naming each object, by name or id.
   const [alert, ...rest] = objectResetProblems(
     names,
     [
-      reset('ns-hubs', 'id-hub-a', 1),
+      reset('ns-hubs', 'id-hub-a', 1, 1),
       reset('ns-hubs', 'f9fbb01929e7f67de6c0a51f', 1),
       reset('ns-api', 'id-api', 1),
       reset('ns-hubs', 'id-quiet', 0),
@@ -307,18 +300,12 @@ test("resets by the runtime's internal error warn only from a few at once, and n
     which,
   )
   assert.equal(rest.length, 0)
-  assert.equal(alert!.severity, 'warning')
-  assert.match(alert!.detail!, /3 reset\(s\).*3 by an internal error\./)
+  assert.match(alert!.detail!, /4 reset\(s\).*: 1 past their memory, 0 past their CPU, 3 by/)
   assert.match(
     alert!.detail!,
-    /Which: the hub of workspace a \(1\), object f9fbb01929e7 \(1\), the Api object \(1\)\./,
+    /Which: the hub of workspace a \(2\), object f9fbb01929e7 \(1\), the Api object \(1\)\./,
   )
   assert.doesNotMatch(alert!.detail!, /id-quiet/)
-
-  // One past its memory is still ours at once, whatever the internal errors.
-  const memory = objectResetProblems(names, [reset('ns-hubs', 'id-hub-a', 1, 1)], which)
-  assert.equal(memory.length, 1)
-  assert.match(memory[0]!.detail!, /Which: the hub of workspace a \(2\)\./)
 })
 
 describe('sending', () => {
