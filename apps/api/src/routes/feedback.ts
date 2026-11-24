@@ -23,10 +23,11 @@ const ATTACH_SECONDS = 24 * 3600
 const LINK_DAYS = 7
 
 /**
- * What one member may send, so a loop or a stuck key cannot flood the team or Resend's quota.
- * Every feedback within them is mailed: there is no global cap that would drop a real one.
+ * What one member may send, and all of Brigade in an hour, so a loop, a stuck key or many
+ * accounts cannot flood the team or Resend's shared quota. Past either, a 429 before anything
+ * is stored: every feedback accepted is mailed.
  */
-export const FEEDBACK_LIMITS = { burst: 5, burstMs: 10 * 60_000, day: 30 } as const
+export const FEEDBACK_LIMITS = { burst: 5, burstMs: 10 * 60_000, day: 30, allPerHour: 100 } as const
 
 export const feedback = new Hono<AppEnv>()
   .use(requireUser, requireWorkspace)
@@ -66,8 +67,8 @@ export const feedback = new Hono<AppEnv>()
 
 /**
  * Count the member's recent feedback and store this one, or refuse with a 429 once a limit is
- * spent. One member's sends at a time (an advisory lock, as src/invitation-budget.ts does), so
- * two at once can't both take the last place.
+ * spent. One send at a time (an advisory lock, as src/invitation-budget.ts does), so two at
+ * once can't both take the last place.
  */
 export async function reserveFeedback(
   scope: { organizationId: string; workspaceId: string; memberId: string; userId: string },
@@ -75,7 +76,14 @@ export async function reserveFeedback(
   data: { text: string; page: string; userAgent: string },
 ) {
   return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`feedback:${scope.memberId}`}, 0))`
+    // One lock for all: the budget across Brigade is counted too (many accounts, guests among
+    // them, share Resend's quota). Feedback is rare enough for sends to wait on each other.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('feedback', 0))`
+    const all = await tx.feedback.count({ where: { createdAt: { gt: new Date(now - 3600_000) } } })
+    if (all >= FEEDBACK_LIMITS.allPerHour)
+      throw new HTTPException(429, {
+        message: 'Feedback is busy right now: try again in a while',
+      })
     const mine = { organizationId: scope.organizationId, memberId: scope.memberId }
     const [recent, today] = await Promise.all([
       tx.feedback.count({

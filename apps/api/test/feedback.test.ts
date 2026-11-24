@@ -267,3 +267,25 @@ test('a message and feedback racing for a file: never both', { skip }, async () 
     await prisma.feedback.deleteMany({ where: { organizationId: ids.organization } })
   }
 })
+
+test(
+  'all of Brigade has an hourly budget, refused before anything is stored',
+  { skip },
+  async () => {
+    // Others' feedback this hour, up to the budget: stored straight, as other members' would be.
+    const others = FEEDBACK_LIMITS.allPerHour
+    await prisma.feedback.createMany({
+      data: Array.from({ length: others }, (_, i) => ({
+        organizationId: ids.organization,
+        workspaceId,
+        memberId: `someone-${i}`,
+        userId: `someone-${i}`,
+        text: `Other ${i}`,
+      })),
+    })
+    const before = await prisma.feedback.count()
+    const over = await send({ text: 'Mine' })
+    assert.equal(over.status, 429)
+    assert.equal(await prisma.feedback.count(), before)
+  },
+)
