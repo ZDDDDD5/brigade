@@ -44,6 +44,8 @@ export function FeedbackDialog() {
   }, [])
 
   function close(next: boolean) {
+    // Not while sending: its files are being given to the feedback.
+    if (!next && sending) return
     setOpen(next)
     if (next) return
     // Closed without sending: the uploads go; sent, they stay with the feedback.
@@ -150,7 +152,12 @@ export function FeedbackDialog() {
             <DialogFooter className="items-center sm:justify-between">
               <span className="text-muted-foreground text-xs">Goes to the Brigade team</span>
               <div className="flex gap-2">
-                <Button type="button" variant="ghost" onClick={() => close(false)}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={sending}
+                  onClick={() => close(false)}
+                >
                   Cancel
                 </Button>
                 <Button

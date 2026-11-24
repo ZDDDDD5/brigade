@@ -263,7 +263,7 @@ function blockedAttachment(
 /** A pending upload untouched this long was abandoned (its URL works 10 minutes). */
 const PENDING_MS = 60 * 60_000
 /** An upload never sent with a message is removed after this long. */
-const UNSENT_MS = 24 * 3600_000
+export const UNSENT_MS = 24 * 3600_000
 /** A file taken from a connection that no thread has: kept as long as its mail stays in its box. */
 const CONNECTOR_UNUSED_MS = 30 * 24 * 3600_000
 

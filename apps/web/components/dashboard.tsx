@@ -795,9 +795,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                           {mac ? '⇧?' : 'Shift+?'}
                         </span>
                       </DropdownMenuItem>
-                      <DropdownMenuItem onSelect={openFeedback}>
-                        <MessageCircle /> Give feedback
-                      </DropdownMenuItem>
+                      {/* A viewer can't upload or send (requireWorkspace answers 403). */}
+                      {!isViewer(data) && (
+                        <DropdownMenuItem onSelect={openFeedback}>
+                          <MessageCircle /> Give feedback
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem onSelect={() => void signOut()}>
                         {/* A guest has nothing to sign out of: what they want is another account. */}
                         <LogOut /> {data.guest ? 'Sign in to another account' : 'Sign out'}

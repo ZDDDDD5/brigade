@@ -8,7 +8,8 @@ import { HTTPException } from 'hono/http-exception'
 import { audit } from '../audit.js'
 import { attachmentKey, directUploads, presignGet } from '../bucket.js'
 import { env } from '../config.js'
-import { prisma } from '../db.js'
+import { prisma, type ScopedDb } from '../db.js'
+import { UNSENT_MS } from '../attachments.js'
 import { addressOf } from '../mail/names.js'
 import { resendConfigured, sendEmail } from '../mail/resend.js'
 import { parseBody, requireUser, requireWorkspace, type AppEnv } from '../scope.js'
@@ -21,27 +22,34 @@ const ATTACH_SECONDS = 24 * 3600
 /** The files' links in the mail's text: as long as R2 signs one. */
 const LINK_DAYS = 7
 
+/** What one member may send, so a loop or a stuck key cannot flood the team or Resend. */
+export const FEEDBACK_LIMITS = { burst: 5, burstMs: 10 * 60_000, day: 30 } as const
+/** Feedback mailed per hour across Brigade; past it, feedback is stored but not mailed. */
+const MAILS_PER_HOUR = 100
+
 export const feedback = new Hono<AppEnv>()
   .use(requireUser, requireWorkspace)
   .post('/', async (c) => {
     const { scope, db } = c.var
     const input = await parseBody(c.req.raw, SendFeedback)
     const ids = [...new Set(input.attachmentIds)]
-    const files = ids.length
-      ? await db.attachment.findMany({
-          where: {
-            id: { in: ids },
-            source: 'upload',
-            status: 'ready',
-            uploadedByMemberId: scope.memberId,
-            feedbackId: null,
-            threads: { none: {} },
-          },
-        })
-      : []
-    if (files.length !== ids.length)
-      throw new HTTPException(400, {
-        message: 'An attached file was not found or was already sent',
+
+    // Bounded before anything is written or mailed.
+    const now = Date.now()
+    const [recent, today] = await Promise.all([
+      db.feedback.count({
+        where: {
+          memberId: scope.memberId,
+          createdAt: { gt: new Date(now - FEEDBACK_LIMITS.burstMs) },
+        },
+      }),
+      db.feedback.count({
+        where: { memberId: scope.memberId, createdAt: { gt: new Date(now - 24 * 3600_000) } },
+      }),
+    ])
+    if (recent >= FEEDBACK_LIMITS.burst || today >= FEEDBACK_LIMITS.day)
+      throw new HTTPException(429, {
+        message: 'You sent a lot of feedback just now: try again a little later',
       })
 
     const row = await db.feedback.create({
@@ -53,8 +61,15 @@ export const feedback = new Hono<AppEnv>()
         userAgent: (c.req.header('user-agent') ?? '').slice(0, 500),
       } as never,
     })
-    if (ids.length)
-      await db.attachment.updateMany({ where: { id: { in: ids } }, data: { feedbackId: row.id } })
+    let files: { id: string; name: string; size: number; contentType: string }[] = []
+    if (ids.length) {
+      try {
+        files = await claimUploads(db, scope.memberId, row.id, ids, now)
+      } catch (error) {
+        await db.feedback.deleteMany({ where: { id: row.id } })
+        throw error
+      }
+    }
     await audit({
       ...scope,
       actor: { type: 'member', id: scope.memberId },
@@ -63,12 +78,55 @@ export const feedback = new Hono<AppEnv>()
       data: { files: ids.length },
     })
 
+    const mailed = await prisma.feedback.count({
+      where: { createdAt: { gt: new Date(now - 3600_000) } },
+    })
+    if (mailed > MAILS_PER_HOUR) {
+      console.warn(`feedback ${row.id}: stored, not mailed (over ${MAILS_PER_HOUR} an hour)`)
+      return c.json({ id: row.id }, 201)
+    }
     // The mail is a copy: the feedback is stored either way, so a failure here is only logged.
     await mailTeam(scope, row, files).catch((error) =>
       console.warn(`feedback ${row.id}: not mailed: ${String(error)}`),
     )
     return c.json({ id: row.id }, 201)
   })
+
+/**
+ * Give the member's own unsent uploads to a feedback, all or none. Each file is taken by one
+ * conditional write, so of two sends racing for a file only one gets it, and a Cancel (DELETE
+ * /attachments/:id, which deletes only a file nothing took) either wins before or finds it
+ * taken. Only uploads well inside UNSENT_MS are taken: older ones may be under sweepUploads.
+ * When any is missing, those taken are given back and it throws.
+ */
+export async function claimUploads(
+  db: ScopedDb,
+  memberId: string,
+  feedbackId: string,
+  ids: string[],
+  now = Date.now(),
+) {
+  const where = {
+    id: { in: ids },
+    source: 'upload' as const,
+    status: 'ready' as const,
+    uploadedByMemberId: memberId,
+    threads: { none: {} },
+    createdAt: { gt: new Date(now - UNSENT_MS + 3600_000) },
+  }
+  const taken = await db.attachment.updateMany({
+    where: { ...where, feedbackId: null },
+    data: { feedbackId },
+  })
+  if (taken.count !== ids.length) {
+    await db.attachment.updateMany({ where: { feedbackId }, data: { feedbackId: null } })
+    throw new HTTPException(400, { message: 'An attached file was not found or was already sent' })
+  }
+  return db.attachment.findMany({
+    where: { id: { in: ids }, feedbackId },
+    select: { id: true, name: true, size: true, contentType: true },
+  })
+}
 
 async function mailTeam(
   scope: { organizationId: string; workspaceId: string; userId: string },
