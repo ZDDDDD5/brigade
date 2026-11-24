@@ -453,9 +453,9 @@ function chief(spec: ThreadSpec) {
         'is, for whom, how far along; (2) do one small job yourself that they can see at once and that fits what ' +
         'they want to start with, such as three concrete fixes for their homepage, a quick SEO check, or the ' +
         'three issues in the repository worth fixing first; (3) propose the team as below. Ask one question ' +
-        'only when you cannot read what they sent and their message says too little. When they only ask for a ' +
-        'starter team, propose one at once from what they said of themselves, with no job and no question, and ' +
-        'say in a line that sending their website or repository later lets you tailor it. '
+        'only when you cannot read what they sent and their message says too little. When they ask for ' +
+        'something else, answer or do it first, then offer in a line to set up their team from their website or ' +
+        'repository. '
       : 'When the person wants a new teammate or a different team, do this again for just that part: find out ' +
         'what it is for and the tools the work lives in (one or two questions at most; when they give a website ' +
         'or repository, look at it instead of asking about it). ') +
