@@ -35,6 +35,7 @@ import { isMarkdownName } from '@/lib/file-view'
 import { HOVER_MS, prepareDocument } from '@/lib/prepare-document'
 import { libraryFile } from '@/lib/search-open'
 import { openSettings } from '@/lib/settings-dialog'
+import { openTeammate, teammateAddress } from '@/lib/teammate-dialog'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { api, pullHref } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -75,6 +76,12 @@ const ICON = Object.fromEntries(GROUPS.map((g) => [g.kind, g.icon])) as Record<
   Item['kind'],
   LucideIcon
 >
+
+/** A teammate's address opens its settings in place; false for any other address. */
+function openTeammateAt(href: string) {
+  const at = teammateAddress(href)
+  return !!at && openTeammate(at.id, at.tab)
+}
 
 /** Where a result opens. */
 function hrefOf(r: SearchResult) {
@@ -307,7 +314,7 @@ export function SearchDialog({
       onOpenChange(false)
       const file = libraryFile(item)
       if (file) documents.open(libraryDocument(file))
-      else if (!openSettings(item.href)) router.push(item.href)
+      else if (!openSettings(item.href) && !openTeammateAt(item.href)) router.push(item.href)
     },
     [onOpenChange, router, workspaceId, documents],
   )

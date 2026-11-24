@@ -49,6 +49,7 @@ import { useAppNotifications } from '@/components/notifications'
 import { NewProjectDialog, ProjectIcon } from '@/components/projects'
 import { SearchDialog } from '@/components/search'
 import { SettingsDialog } from '@/components/settings-dialog'
+import { TeammateDialog } from '@/components/teammate-dialog'
 import { SidebarResizer, useSidebarWidth } from '@/components/sidebar-resizer'
 import { RailMenu } from '@/components/rail-menu'
 import { SidebarWork, useSidebarOrder } from '@/components/sidebar-threads'
@@ -809,6 +810,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <ShortcutsDialog />
           <ConnectAppsDialog />
           <SettingsDialog />
+          <TeammateDialog />
           <AppNotifications needsYou={badge.size} />
           <NewProjectDialog open={creatingProject} onOpenChange={setCreatingProject} />
         </ThreadPanelProvider>
