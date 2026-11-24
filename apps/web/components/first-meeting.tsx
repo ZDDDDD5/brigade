@@ -111,12 +111,16 @@ export function FirstMeeting({
   }
 
   return (
-    <div className="flex w-full flex-col gap-2">
+    // Two bubbles in a row from the teammate read as one group, as Midnight draws them: round
+    // corners outside, small ones where they meet, a hairline apart.
+    <div className="flex w-full flex-col gap-0.5">
       <div className="flex items-end gap-2">
         <TeammateAvatar teammate={teammate} className="size-7 shrink-0" />
-        <p className="rounded-2xl rounded-bl-md bg-muted px-3.5 py-2 text-sm">{greeting}</p>
+        <p className="rounded-[1.3rem] rounded-bl-[0.45rem] bg-muted px-4 py-2.5 text-sm">
+          {greeting}
+        </p>
       </div>
-      <div className="ml-9 flex flex-col gap-0.5 rounded-2xl bg-muted p-2">
+      <div className="ml-9 flex flex-col gap-0.5 rounded-[1.3rem] rounded-tl-[0.45rem] bg-muted p-2">
         <p className="px-2 pt-1.5 pb-2 text-sm font-semibold">What should we start with?</p>
         {jobs.map((job, i) => (
           <button
@@ -156,8 +160,8 @@ export function FirstMeeting({
           )}
         </form>
       </div>
-      {problem && <p className="ml-9 px-1 text-sm text-destructive-text">{problem}</p>}
-      <div className="ml-9 flex flex-wrap gap-2">
+      {problem && <p className="mt-1.5 ml-9 px-1 text-sm text-destructive-text">{problem}</p>}
+      <div className="mt-2 ml-9 flex flex-wrap gap-2">
         <Chip onClick={openConnectApps}>
           <Plug aria-hidden />
           Connect apps
