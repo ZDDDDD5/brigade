@@ -1,6 +1,7 @@
 'use client'
 import {
   BookOpenCheck,
+  Bug,
   CalendarClock,
   ChevronDown,
   ChevronRight,
@@ -12,7 +13,6 @@ import {
   ListChecks,
   LogOut,
   Mail,
-  Megaphone,
   Moon,
   Monitor,
   Plug,
@@ -689,7 +689,6 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                   leaving={saving === 'leave'}
                   onLeave={() => void signOut(true)}
                 />
-                <GiveFeedbackItem />
                 {/* The member and their menu, and the way to connect apps; folded, a column. */}
                 <div className="flex items-center gap-2 px-2 pb-2 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:p-0">
                   <DropdownMenu onOpenChange={(open) => open && void reloadAccounts()}>
@@ -796,6 +795,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                           {mac ? '⇧?' : 'Shift+?'}
                         </span>
                       </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={openFeedback}>
+                        <Bug /> Give feedback
+                      </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => void signOut()}>
                         {/* A guest has nothing to sign out of: what they want is another account. */}
                         <LogOut /> {data.guest ? 'Sign in to another account' : 'Sign out'}
@@ -837,29 +839,6 @@ const TICKET_ASKS: Partial<Record<Ticket['type'], string>> = {
   sign_in: 'sign in',
   cap: 'raise cap',
   usage_limit: 'usage limit',
-}
-
-/** The sidebar footer's Give feedback: a quiet line above the member, opening components/feedback.tsx. */
-function GiveFeedbackItem() {
-  const { isMobile, setOpenMobile } = useSidebar()
-  return (
-    <SidebarMenu>
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          tooltip="Give feedback"
-          data-look="give-feedback"
-          className="text-muted-foreground"
-          onClick={() => {
-            if (isMobile) setOpenMobile(false)
-            openFeedback()
-          }}
-        >
-          <Megaphone />
-          <span>Give feedback</span>
-        </SidebarMenuButton>
-      </SidebarMenuItem>
-    </SidebarMenu>
-  )
 }
 
 /** The sidebar footer's Connect apps: opens the popup, over the sidebar on a phone. */
