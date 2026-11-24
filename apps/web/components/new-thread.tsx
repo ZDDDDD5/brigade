@@ -2,7 +2,7 @@
 import { ArrowUp, Check, ChevronDown, CircleUser, FolderKanban, List, Plus, X } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from 'react'
 import { defaultEffort, harnessName, loginName, loginOf, type Effort } from '@brigade/contracts'
 import {
   ComposerMenu,
@@ -396,6 +396,7 @@ export function NewThread({
   projectId: initialProject,
   layout = 'card',
   fill,
+  sendRef,
 }: {
   /** The project the thread starts in unless changed, e.g. on a project page. */
   projectId?: string
@@ -434,6 +435,8 @@ export function NewThread({
    * to fill it, and its first row makes room for the window buttons and drags the window.
    */
   fill?: boolean
+  /** Set here to send a message from outside the box, as typed and sent (a suggestion picked). */
+  sendRef?: MutableRefObject<((text: string) => void) | undefined>
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -547,6 +550,15 @@ export function NewThread({
     void start()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- starts once, as the words land
   }, [text])
+  // From outside: in the box, then sent as dictated words sent at once are (kept in the box if
+  // it cannot start yet, for the person to send).
+  useEffect(() => {
+    if (!sendRef) return
+    sendRef.current = (message: string) => {
+      sendDictated.current = true
+      setText(message)
+    }
+  })
 
   const create = (message: string, attachmentIds: string[], id?: string) =>
     api<{ id: string }>('/threads', {
