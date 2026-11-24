@@ -36,6 +36,7 @@ import { MentionChip, MentionIcon } from '@/components/mention'
 import { Hint } from '@/components/ui/tooltip'
 import { documentFileUrl, uploadDocumentAsset } from '@/lib/api'
 import { openSettings } from '@/lib/settings-dialog'
+import { openTeammate } from '@/lib/teammate-dialog'
 import {
   foundFor,
   MENTION_GROUPS,
@@ -55,8 +56,9 @@ function DocumentMention({ mention }: { mention: Mention }) {
   const open = () => {
     if (mention.kind === 'document' && documents)
       documents.open(libraryDocument({ id: mention.id, path: mention.label }))
-    else if (mention.kind === 'teammate') router.push(`/app/teammates/${mention.id}`)
-    else if (mention.kind === 'thread') router.push(`/app/threads/${mention.id}`)
+    else if (mention.kind === 'teammate') {
+      if (!openTeammate(mention.id)) router.push(`/app/teammates/${mention.id}`)
+    } else if (mention.kind === 'thread') router.push(`/app/threads/${mention.id}`)
     else if (mention.kind === 'connection') {
       if (!openSettings('/app/connections')) router.push('/app/connections')
     } else if (mention.kind === 'project' && !isLegacyProjectMention(mention))
