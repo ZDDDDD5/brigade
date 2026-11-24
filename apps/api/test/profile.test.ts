@@ -47,7 +47,8 @@ const skip = (await reachable()) ? false : 'no database to reach (apps/api/.env 
 const { prisma } = await import('../src/db.js')
 const { listObjects, userAvatarKey } = await import('../src/bucket.js')
 const { readLogo } = await import('../src/logos.js')
-const { avatarParts, keepChosenName, readAvatar, updateProfile } = await import('../src/profile.js')
+const { avatarParts, readAvatar, updateProfile } = await import('../src/profile.js')
+const { keepChosenName } = await import('../src/chosen-name.js')
 
 const id = randomUUID().slice(0, 8)
 const ids = {

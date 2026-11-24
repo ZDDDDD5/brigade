@@ -96,20 +96,6 @@ export async function readAvatar(viewerId: string, userId: string) {
   return key && parts ? readLogo(key, parts.version) : null
 }
 
-/**
- * A sign-in with Google puts Google's name and picture back on each sign-in (src/auth.ts): a name
- * the person chose stays. Its picture goes to `image`, under the one they chose, so it needs
- * nothing. The update names the person by their email, the only one it carries.
- */
-export async function keepChosenName(data: { name?: unknown; email?: unknown }) {
-  if (typeof data.name !== 'string' || typeof data.email !== 'string') return
-  const user = await prisma.user.findUnique({
-    where: { email: data.email.toLowerCase() },
-    select: { name: true, nameChosen: true },
-  })
-  if (user?.nameChosen && user.name !== data.name) return { data: { name: user.name } }
-}
-
 /** Clear the chosen pictures kept in a workspace being deleted: its bucket folder goes with it. */
 export async function forgetAvatarsIn(workspaceId: string) {
   await prisma.user.updateMany({

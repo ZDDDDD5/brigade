@@ -19,7 +19,7 @@ import { desktopSignIn } from './desktop-sign-in.js'
 import { guestSignIn } from './guests.js'
 import { INVITATION_DAYS, sendInvitation } from './invitation-mail.js'
 import { passwordSignIn } from './password-sign-in.js'
-import { keepChosenName } from './profile.js'
+import { keepChosenName } from './chosen-name.js'
 import { CODE_MINUTES, sendSignInCode } from './sign-in-code.js'
 
 /** Audit actors are members. Fall back to the user when no membership exists yet. */
