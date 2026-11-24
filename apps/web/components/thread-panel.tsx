@@ -997,7 +997,8 @@ function TeammateStart({ teammate, top }: { teammate: Teammate; top?: ReactNode 
       // A new key each time it should take the cursor: it focuses as it mounts.
       key={focusKey}
       teammate={teammate}
-      rows={firstMeeting ? 2 : 3}
+      rows={firstMeeting ? 1 : 3}
+      layout={firstMeeting ? 'thread' : 'card'}
       draft={draft}
       autoFocus
       typeToFocus
@@ -1027,7 +1028,9 @@ function TeammateStart({ teammate, top }: { teammate: Teammate; top?: ReactNode 
               <FirstMeeting teammate={teammate} onSend={(text) => send.current?.(text)} />
             </div>
           </div>
-          <div className="mx-auto w-full max-w-3xl px-4 pb-4 md:px-0">{box}</div>
+          <div className="px-4 pb-4 md:px-10">
+            <div className="mx-auto w-full max-w-3xl">{box}</div>
+          </div>
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-4 pb-16 md:px-10">

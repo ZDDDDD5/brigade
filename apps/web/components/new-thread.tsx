@@ -428,8 +428,11 @@ export function NewThread({
   autoFocus?: boolean
   /** The page's main message box: typing with nothing focused lands in it (Composer). */
   typeToFocus?: boolean
-  /** In a card (a page, the threads panel), or the whole of a dialog. */
-  layout?: 'card' | 'dialog'
+  /**
+   * In a card (a page, the threads panel), the whole of a dialog, or one line as a thread's own
+   * box is (a teammate's first meeting, where the conversation is already on screen).
+   */
+  layout?: 'card' | 'dialog' | 'thread'
   /**
    * The dialog is a whole window with no title bar (Brigade.app's capture): the message grows
    * to fill it, and its first row makes room for the window buttons and drags the window.
@@ -966,6 +969,39 @@ export function NewThread({
           </div>
         </div>
       </form>
+    )
+
+  // One line, as a thread's box: attach, the message, then effort, the mic and send. Where it
+  // runs and its project are their defaults; the message and what is wrong say it below.
+  if (layout === 'thread')
+    return (
+      <>
+        <form ref={form} onSubmit={(e) => void start(e)} className="flex flex-col gap-2">
+          <Card
+            data-composer-frame
+            data-look="composer"
+            className={cn(
+              'relative gap-2 rounded-xl p-2 shadow-md',
+              drop.dragging && 'border-primary ring-[3px] ring-primary/30',
+            )}
+            {...drop.props}
+          >
+            {uploads}
+            {/* Dictating, its bar takes the line (it is in `composer`), its own controls in it. */}
+            <div className="flex items-end gap-1">
+              <div className={cn('mb-1', dictation.active && 'hidden')}>{add}</div>
+              <div className="min-w-0 flex-1">{composer}</div>
+              <div className={cn('mb-1 flex items-center gap-1', dictation.active && 'hidden')}>
+                <EffortButton effort={effort} />
+                {mic}
+                {send}
+              </div>
+            </div>
+          </Card>
+          {message}
+        </form>
+        {recorder}
+      </>
     )
 
   // The recording outside the form: its events would reach the form through the portal.
