@@ -10,7 +10,7 @@ import {
   revokePermission,
   stopGoal,
 } from '../goals.js'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   JudgeGoal,
   ASIDE_PROTOCOL,
@@ -313,6 +313,41 @@ async function archive(c: Context<AppEnv>, on: boolean) {
  */
 const unread = (lastTurnAt: Date | null | undefined, seenAt: Date | undefined) =>
   !!lastTurnAt && (!seenAt || lastTurnAt > seenAt)
+
+/**
+ * The id of a workspace's setup thread with its chief (StartThread.setup): the same for every
+ * start of it, so that two at once make one thread, the other finding it taken. A thread id's
+ * shape (NewThreadId), as it names the thread's folders in storage.
+ */
+export const setupThreadId = (workspaceId: string, chiefId: string) => {
+  const digest = createHash('sha256').update(`setup:${workspaceId}:${chiefId}`).digest()
+  return `c${Array.from(digest.subarray(0, 24), (b) => (b % 36).toString(36)).join('')}`
+}
+
+/**
+ * Whether the setup thread `id` was made and started: its first message kept for its computer
+ * (a RunnerCommand, swept days later), or in a cap's ticket, so it is no longer dropped as unstarted (startThread's
+ * dropUnstarted). One being made by another start at once is waited for, a few seconds: started,
+ * its id is the answer; gone (it did not start), none is, and this start may make it; still
+ * starting, the member is asked to try again, which onboarding does on its own.
+ */
+async function setupStarted(db: ScopedDb, id: string) {
+  for (let tries = 0; ; tries++) {
+    const made = await db.session.findFirst({ where: { id }, select: { createdAt: true } })
+    if (!made) return false
+    if (Date.now() - made.createdAt.getTime() > SETUP_SETTLED_MS) return true
+    if (await prisma.runnerCommand.count({ where: { sessionId: id } })) return true
+    // Paused at a cap: its message is kept in the cap's ticket, sent once an admin allows it.
+    if (await db.ticket.count({ where: { sessionId: id, type: 'cap' } })) return true
+    if (tries * SETUP_POLL_MS >= SETUP_WAIT_MS)
+      throw new HTTPException(409, { message: 'Chief is still starting your setup thread' })
+    await new Promise((resolve) => setTimeout(resolve, SETUP_POLL_MS))
+  }
+}
+const SETUP_POLL_MS = 250
+const SETUP_WAIT_MS = 15_000
+/** Made this long ago, a setup thread is past starting, whatever its commands. */
+const SETUP_SETTLED_MS = 5 * 60_000
 
 /** A thread with the id the browser chose (`id`) exists already, in this workspace or another. */
 const idTaken = (error: unknown, id: string | undefined): never => {
@@ -1285,6 +1320,31 @@ export const threads = new Hono<AppEnv>()
     if (!computer || (computer.kind === 'member_machine' && computer.memberId !== scope.memberId)) {
       throw new HTTPException(404, { message: 'Computer not found' })
     }
+    // The setup thread is made once: started again, the one made already is the answer.
+    const setupId = input.setup ? setupThreadId(scope.workspaceId, teammate.id) : undefined
+    if (input.setup && teammate.kind !== 'chief')
+      throw new HTTPException(400, { message: 'Only Chief sets up a team' })
+    // Setting up the team is its owner's or admin's, as onboarding only offers it to them.
+    if (input.setup && !isAdmin(scope))
+      throw new HTTPException(403, { message: 'Only an owner or admin sets up the team' })
+    if (setupId && (await setupStarted(db, setupId)))
+      return c.json({ id: setupId, paused: false }, 200)
+    // Chief has threads already, from before setup threads had their id: the team is set up,
+    // and nothing is made (onboarding goes to the dashboard). As Chief's threads are listed.
+    if (
+      setupId &&
+      (await db.session.findFirst({
+        where: {
+          id: { not: setupId },
+          teammates: { some: { teammateId: teammate.id } },
+          archivedAt: null,
+          parentId: null,
+          OR: [{ playbookRunId: null, quiet: false }, { surfacedAt: { not: null } }],
+        },
+        select: { id: true },
+      }))
+    )
+      return c.json({ id: null, paused: false }, 200)
     // A thread runs on the accounts its starter may use (src/account-sharing.ts).
     // The title is what the message is about, not the command it starts with.
     const skill = input.text.startsWith('/')
@@ -1305,7 +1365,7 @@ export const threads = new Hono<AppEnv>()
       : undefined
     const { thread, outcome } = await startThread(db, scope, {
       // Chosen by the browser, which opened the thread already: never one that exists.
-      ...(input.id ? { id: input.id, fresh: true } : {}),
+      ...((setupId ?? input.id) ? { id: setupId ?? input.id, fresh: true } : {}),
       teammate,
       computer,
       memberId: scope.memberId,
@@ -1323,7 +1383,17 @@ export const threads = new Hono<AppEnv>()
       ...(listItemIds ? { listItemIds } : {}),
       // The member's box gets the message back: no failed thread of it is left.
       dropUnstarted: true,
-    }).catch((error: unknown) => idTaken(error, input.id))
+    }).catch(async (error: unknown) => {
+      // Two starts at once: the other made it in between.
+      if (setupId && (error as { code?: string }).code === 'P2002') {
+        if (await setupStarted(db, setupId))
+          return { thread: { id: setupId }, outcome: 'existing' as const }
+        // Made by the other and gone since (it did not start): onboarding tries again.
+        throw new HTTPException(409, { message: 'Chief is still starting your setup thread' })
+      }
+      return idTaken(error, input.id)
+    })
+    if (outcome === 'existing') return c.json({ id: thread.id, paused: false }, 200)
     if (outcome === 'offline') {
       throw new HTTPException(409, {
         message: 'That computer is offline. Start its runner and try again.',

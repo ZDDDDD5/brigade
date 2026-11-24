@@ -30,9 +30,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
-  answerOf,
   api,
-  isList,
   ApiError,
   subscribeToCloud,
   useApi,
@@ -43,7 +41,6 @@ import {
   type Me,
   type OpenInvitation,
   type Teammate,
-  type ThreadSummary,
 } from '@/lib/api'
 import { inDesktopApp } from '@/lib/brigade-app'
 import { computerTaken } from '@/lib/guest'
@@ -534,22 +531,20 @@ function ConnectAI({
         }
         const account = ready.find((a) => works(a) && a.provider === chief?.harness)
         if (chief && account) {
-          const started = await answerOf<ThreadSummary[]>(`/threads?teammateId=${chief.id}`, {
-            accept: isList,
+          // The API decides whether the team is set up already, and makes its setup thread once
+          // however many windows finish at once: that thread, or none (to the dashboard).
+          const listLines = await setupLine()
+          const thread = await api<{ id: string | null }>('/threads', {
+            body: {
+              teammateId: chief.id,
+              computerId: account.computer.id,
+              accountId: account.id,
+              text: setupMessage(me.onboardingAnswers),
+              ...(listLines ? { listLines } : {}),
+              setup: true,
+            },
           })
-          if (started.length === 0) {
-            const listLines = await setupLine()
-            const thread = await api<{ id: string }>('/threads', {
-              body: {
-                teammateId: chief.id,
-                computerId: account.computer.id,
-                accountId: account.id,
-                text: setupMessage(me.onboardingAnswers),
-                ...(listLines ? { listLines } : {}),
-              },
-            })
-            return router.replace(`/app/threads/${thread.id}`)
-          }
+          if (thread.id) return router.replace(`/app/threads/${thread.id}`)
         }
         router.replace('/app')
       } catch (e) {
