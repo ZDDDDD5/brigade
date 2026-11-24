@@ -10,6 +10,7 @@ import { DeleteAccount } from '@/components/danger-zone'
 import { shrinkLogo, uploadLogo } from '@/components/projects'
 import { SettingRow, SettingsGroup } from '@/components/settings-group'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { ActivityIndicator } from '@/components/ui/activity-indicator'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
@@ -71,15 +72,21 @@ export default function ProfilePage() {
       }
     })
     queue.current = run
+    return run
   }
 
   const nextName = name.trim()
   /** The name typed differs from the saved one: Save saves it. */
   const nameChanged = !!nextName && nextName !== me.user.name
 
+  /** The name is saving: Save shows a spinner. */
+  const [savingName, setSavingName] = useState(false)
+
   function saveName() {
     editing.current = false
-    if (nameChanged) save({ name: nextName })
+    if (!nameChanged || savingName) return
+    setSavingName(true)
+    void save({ name: nextName }).finally(() => setSavingName(false))
   }
 
   function pickPicture(picked: File | undefined) {
@@ -186,20 +193,21 @@ export default function ProfilePage() {
                   }
                 }}
               />
-              <Button type="submit" disabled={!nameChanged}>
+              <Button type="submit" disabled={!nameChanged || savingName}>
+                {savingName && <ActivityIndicator label="Saving" />}
                 Save
               </Button>
             </form>
           </div>
         </Card>
-        {status && (
+        {status && !('saving' in status) && (
           <p
             role="status"
             className={
               'error' in status ? 'text-destructive-text text-sm' : 'text-muted-foreground text-sm'
             }
           >
-            {'error' in status ? status.error : 'saving' in status ? 'Saving…' : 'Saved'}
+            {'error' in status ? status.error : 'Saved'}
           </p>
         )}
       </div>
