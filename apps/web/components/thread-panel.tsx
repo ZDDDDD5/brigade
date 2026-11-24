@@ -24,6 +24,7 @@ import {
   type ReactNode,
 } from 'react'
 import { TeammatePanel } from '@/components/computer-panel'
+import { FirstMeeting } from '@/components/first-meeting'
 import { SidebarToggle, TeammateAvatar, useDashboard } from '@/components/dashboard'
 import { ProjectIcon } from '@/components/projects'
 import { StatusDot } from '@/components/status-badge'
@@ -985,44 +986,63 @@ function useThreadChannel(teammateId: string) {
 function TeammateStart({ teammate, top }: { teammate: Teammate; top?: ReactNode }) {
   const { openThread, draft, focusKey, details, setDetails, openComputer, threads } =
     useThreadPanel()
+  const own = threads?.filter(
+    (t) => t.teammate.id === teammate.id || t.teammates?.some((p) => p.teammate.id === teammate.id),
+  )
+  // Before its first thread, the teammate speaks first (FirstMeeting); after, the box alone.
+  const firstMeeting = own?.length === 0
+  const send = useRef<(text: string) => string | undefined>(undefined)
+  const box = (
+    <NewThread
+      // A new key each time it should take the cursor: it focuses as it mounts.
+      key={focusKey}
+      teammate={teammate}
+      rows={firstMeeting ? 1 : 3}
+      layout={firstMeeting ? 'thread' : 'card'}
+      draft={draft}
+      autoFocus
+      typeToFocus
+      placeholder={`Chat with ${teammate.name}`}
+      onStarted={(thread) => openThread(thread.id)}
+      openAtOnce
+      sendRef={send}
+    />
+  )
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       {top}
       {details && (
         <TeammatePanel
           teammate={teammate}
-          threads={threads?.filter(
-            (t) =>
-              t.teammate.id === teammate.id ||
-              t.teammates?.some((p) => p.teammate.id === teammate.id),
-          )}
+          threads={own}
           onOpenThread={openThread}
           onOpenComputer={() => openComputer(teammate.id)}
           onClose={() => setDetails(false)}
         />
       )}
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-4 pb-16 md:px-10">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <TeammateAvatar teammate={teammate} className="size-12" />
-          <h2 className="text-2xl font-extrabold tracking-tight">
-            What should {teammate.name} work on?
-          </h2>
+      {firstMeeting ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {/* Below the pill bar, as a thread's conversation is. */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-16 md:px-10">
+            <div className="mx-auto w-full max-w-3xl">
+              <FirstMeeting teammate={teammate} onSend={(text) => send.current?.(text)} />
+            </div>
+          </div>
+          <div className="px-4 pb-4 md:px-10">
+            <div className="mx-auto w-full max-w-3xl">{box}</div>
+          </div>
         </div>
-        <div className="w-full max-w-3xl">
-          {/* A new key each time it should take the cursor: it focuses as it mounts. */}
-          <NewThread
-            key={focusKey}
-            teammate={teammate}
-            rows={3}
-            draft={draft}
-            autoFocus
-            typeToFocus
-            placeholder={`Chat with ${teammate.name}`}
-            onStarted={(thread) => openThread(thread.id)}
-            openAtOnce
-          />
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 overflow-y-auto px-4 pb-16 md:px-10">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <TeammateAvatar teammate={teammate} className="size-12" />
+            <h2 className="text-2xl font-extrabold tracking-tight">
+              What should {teammate.name} work on?
+            </h2>
+          </div>
+          <div className="w-full max-w-3xl">{box}</div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

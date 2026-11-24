@@ -2,7 +2,7 @@
 import { ArrowUp, Check, ChevronDown, CircleUser, FolderKanban, List, Plus, X } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type MutableRefObject } from 'react'
 import { defaultEffort, harnessName, loginName, loginOf, type Effort } from '@brigade/contracts'
 import {
   ComposerMenu,
@@ -396,6 +396,7 @@ export function NewThread({
   projectId: initialProject,
   layout = 'card',
   fill,
+  sendRef,
 }: {
   /** The project the thread starts in unless changed, e.g. on a project page. */
   projectId?: string
@@ -427,13 +428,21 @@ export function NewThread({
   autoFocus?: boolean
   /** The page's main message box: typing with nothing focused lands in it (Composer). */
   typeToFocus?: boolean
-  /** In a card (a page, the threads panel), or the whole of a dialog. */
-  layout?: 'card' | 'dialog'
+  /**
+   * In a card (a page, the threads panel), the whole of a dialog, or one line as a thread's own
+   * box is (a teammate's first meeting, where the conversation is already on screen).
+   */
+  layout?: 'card' | 'dialog' | 'thread'
   /**
    * The dialog is a whole window with no title bar (Brigade.app's capture): the message grows
    * to fill it, and its first row makes room for the window buttons and drags the window.
    */
   fill?: boolean
+  /**
+   * Set here to start the thread with a message from outside the box (a job picked), what is in
+   * the box left as it is. It says why when the thread cannot start (no computer online…).
+   */
+  sendRef?: MutableRefObject<((text: string) => string | undefined) | undefined>
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -547,6 +556,17 @@ export function NewThread({
     void start()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- starts once, as the words land
   }, [text])
+  // From outside: started at once with that message, or why it cannot be.
+  useEffect(() => {
+    if (!sendRef) return
+    sendRef.current = (message: string) => {
+      if (!loaded) return 'Still loading your computers, try again in a moment.'
+      if (!computer) return 'No computer is online: link your machine to start.'
+      if (!account) return `No ${loginName(login)} account on ${computerName(computer)} yet.`
+      void start(undefined, message)
+      return undefined
+    }
+  })
 
   const create = (message: string, attachmentIds: string[], id?: string) =>
     api<{ id: string }>('/threads', {
@@ -562,15 +582,19 @@ export function NewThread({
       },
     })
 
-  async function start(e?: FormEvent) {
+  // What is in the box, for start, where `text` is what goes.
+  const box = text
+  /** `only`: this message alone, from outside the box (sendRef), the box left as it is. */
+  async function start(e?: FormEvent, only?: string) {
     e?.preventDefault()
-    if (busy || !ready) return
+    if (busy || !(only === undefined ? ready : computer && account)) return
+    const text = only ?? box
     if (onSending || openAtOnce) {
       // In the sidebar at once, under an id chosen here; opened at once too with `openAtOnce`,
       // showing this message until it has started, then its conversation (lib/pending-threads.ts).
       const id = newThreadId()
-      const sending = create(text, files.ids, id)
-      const taken = files.take()
+      const sending = create(text, only === undefined ? files.ids : [], id)
+      const taken = only === undefined ? files.take() : { uploads: [] }
       pendingThreads.add(
         id,
         {
@@ -599,7 +623,7 @@ export function NewThread({
           files: taken.uploads,
         }),
       )
-      setText('')
+      if (only === undefined) setText('')
       setEffortValue(null)
       const started = sending.then(
         async () => {
@@ -630,13 +654,13 @@ export function NewThread({
     setBusy(true)
     setError(undefined)
     try {
-      const thread = await create(text, files.ids)
-      files.clear()
+      const thread = await create(text, only === undefined ? files.ids : [])
+      if (only === undefined) files.clear()
       // The effort went with that thread; the next one starts on Default, even from a
       // draft that outlives the box (the threads panel).
       setEffortValue(null)
       if (onStarted) {
-        setText('')
+        if (only === undefined) setText('')
         setBusy(false)
         onStarted(thread)
       } else router.push(`/app/threads/${thread.id}`)
@@ -954,6 +978,39 @@ export function NewThread({
           </div>
         </div>
       </form>
+    )
+
+  // One line, as a thread's box: attach, the message, then effort, the mic and send. Where it
+  // runs and its project are their defaults; the message and what is wrong say it below.
+  if (layout === 'thread')
+    return (
+      <>
+        <form ref={form} onSubmit={(e) => void start(e)} className="flex flex-col gap-2">
+          <Card
+            data-composer-frame
+            data-look="composer"
+            className={cn(
+              'relative gap-2 rounded-xl p-2 shadow-md',
+              drop.dragging && 'border-primary ring-[3px] ring-primary/30',
+            )}
+            {...drop.props}
+          >
+            {uploads}
+            {/* Dictating, its bar takes the line (it is in `composer`), its own controls in it. */}
+            <div className="flex items-end gap-1">
+              <div className={cn('mb-1', dictation.active && 'hidden')}>{add}</div>
+              <div className="min-w-0 flex-1">{composer}</div>
+              <div className={cn('mb-1 flex items-center gap-1', dictation.active && 'hidden')}>
+                <EffortButton effort={effort} />
+                {mic}
+                {send}
+              </div>
+            </div>
+          </Card>
+          {message}
+        </form>
+        {recorder}
+      </>
     )
 
   // The recording outside the form: its events would reach the form through the portal.
