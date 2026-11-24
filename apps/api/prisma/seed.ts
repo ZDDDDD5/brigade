@@ -40,7 +40,14 @@ const sharing = [DEV_USERS.ada.email, DEV_USERS.bob.email, DEV_USERS.carol.email
 const [accounts, organized, erinOrganized] = await Promise.all([
   prisma.user.count({ where: { email: { in: emails } } }),
   prisma.member.count({ where: { user: { email: { in: sharing } } } }),
-  prisma.member.count({ where: { user: { email: DEV_USERS.erin.email } } }),
+  // Erin's workspace, with its plan (seed-new-workspace.ts).
+  prisma.billingSubscription.count({
+    where: {
+      workspace: {
+        organization: { members: { some: { user: { email: DEV_USERS.erin.email } } } },
+      },
+    },
+  }),
 ])
 if (accounts === emails.length && organized && erinOrganized) {
   console.log('exists: the dev accounts and their organization')
@@ -90,13 +97,9 @@ const onboarded = await prisma.member.count({
 if (sample) console.log('exists: sample organization Acme')
 else if (onboarded) console.log('skipped: sample organization (Ada, Bob or Carol already has one)')
 else await seedWorkspace(users)
-if (!(await prisma.member.count({ where: { userId: users.erin.id } })))
-  await (
-    await import('./seed-new-workspace.js')
-  ).seedNewWorkspace({
-    id: users.erin.id,
-    email: DEV_USERS.erin.email,
-  })
+// Erin's, made once; its plan added to one made before it had one.
+const { seedNewWorkspace } = await import('./seed-new-workspace.js')
+await seedNewWorkspace({ id: users.erin.id, email: DEV_USERS.erin.email })
 await (await import('./seed-inbox.js')).seedInbox()
 await (await import('./seed-missions.js')).seedMissions()
 

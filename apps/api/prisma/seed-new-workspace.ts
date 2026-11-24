@@ -2,13 +2,19 @@
 // on its cloud computer, its Getting started list and Chief alone, which has no thread yet. Its
 // threads page opens on Chief's first meeting (apps/web/components/first-meeting.tsx), as a new
 // workspace's owner sees it once onboarding ends; no runner answers what is sent there.
-// Called by seed.ts while Erin has no organization.
+// With a Cloud plan, so its cloud computer counts as one to start threads on when billing is on.
+// Called by seed.ts while Erin has no workspace, or one without its plan.
 import { randomUUID } from 'node:crypto'
 import { CHIEF_NAME } from '@brigade/contracts'
 import { prisma } from '../src/db.js'
 import { seedGettingStarted } from '../src/lists.js'
 
 export async function seedNewWorkspace(erin: { id: string; email: string }) {
+  const made = await prisma.workspace.findFirst({
+    where: { organization: { members: { some: { userId: erin.id } } } },
+    select: { id: true },
+  })
+  if (made) return await cloudPlan(made.id)
   const organization = await prisma.organization.create({
     data: { id: randomUUID(), name: 'Erin', slug: `erin-${randomUUID().slice(0, 4)}` },
   })
@@ -56,8 +62,24 @@ export async function seedNewWorkspace(erin: { id: string; email: string }) {
       },
     },
   })
+  await cloudPlan(workspace.id)
   await seedGettingStarted(inWorkspace).catch((error: unknown) =>
     console.warn(`seed: no getting-started list for Erin: ${String(error)}`),
   )
   console.log('created: Erin’s new workspace')
+}
+
+/** An active Cloud plan, without Stripe: a preview has billing on, with no webhook to make one. */
+async function cloudPlan(workspaceId: string) {
+  if (await prisma.billingSubscription.count({ where: { workspaceId } })) return
+  await prisma.billingSubscription.create({
+    data: {
+      workspaceId,
+      plan: 'cloud',
+      tier: 'cloud',
+      status: 'active',
+      periodStart: new Date(),
+      periodEnd: new Date(Date.now() + 30 * 24 * 60 * 60_000),
+    },
+  })
 }
