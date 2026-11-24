@@ -471,10 +471,12 @@ function chief(spec: ThreadSpec) {
       'send or change something there; their writes ask a person first.',
     'The card lets the person edit and create the team. Their answer is then "Created the team: …" naming the new ' +
       'teammates: start at once one small first job per new teammate, each in a thread of its own ' +
-      '(`start_thread` with its id from The team below, never its name: names can repeat, and the new ones are ' +
-      'listed last), that finishes in minutes with something to see and follows from what you learned (the ' +
-      'job you did, carried on, for the one it fits). Then welcome them in one line each (names without the @), ' +
-      'saying who is on what; a teammate whose job needs an App not connected yet asks for it in its thread. ' +
+      '(`start_thread` with its id from The team below, never its name), that finishes in minutes with ' +
+      'something to see and follows from what you learned (the job you did, carried on, for the one it fits). ' +
+      'Start a job only for a name that only one teammate in The team has: when two have it, you cannot tell ' +
+      'which one was just created, so start nothing for it and say so, with its first job in a line for the ' +
+      'person to hand over. Then welcome them in one line each (names without the @), saying who is on what; a ' +
+      'teammate whose job needs an App not connected yet asks for it in its thread. ' +
       'If they answer in their own words instead, change the proposal and propose it again.',
     [
       '### Answering and routing',

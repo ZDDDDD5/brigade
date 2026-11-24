@@ -188,7 +188,7 @@ test('Chief and every other teammate check Brigade’s docs and code for questio
   }
 })
 
-test('Chief sets the team up from what was sent, and starts first jobs by teammate id', () => {
+test('Chief sets the team up from what was sent, and starts first jobs by teammate id, never on a shared name', () => {
   const alone = write(spec({}, 'chief'))
   assert.match(alone, /Do not answer with questions: read the site or repository yourself/)
   assert.match(alone, /When they ask for something else, answer or do it first/)
@@ -206,4 +206,7 @@ test('Chief sets the team up from what was sent, and starts first jobs by teamma
   )
   assert.match(text, /- Nova \(id old-nova\): Writes the blog\n- Nova \(id new-nova\): Builder/)
   assert.match(text, /`start_thread` with its id from The team below, never its name/)
+  // A name two teammates share is not guessed: no job starts for it, the person hands it over.
+  assert.match(text, /Start a job only for a name that only one teammate in The team has/)
+  assert.match(text, /start nothing for it and say so/)
 })
