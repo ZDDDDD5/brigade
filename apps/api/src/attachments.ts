@@ -534,6 +534,19 @@ export async function attachToThread(
       }
     }
   }
+  // A member's upload Give feedback took meanwhile (its claimUploads checks the other way after
+  // its write): the links go, so no file is both sent with a message and kept with feedback.
+  if (check && created.length > 0) {
+    const taken = await db.attachment.count({
+      where: { id: { in: ids }, feedbackId: { not: null } },
+    })
+    if (taken > 0) {
+      await detach(db, created)
+      throw new HTTPException(400, {
+        message: 'An attached file was not found or was already sent',
+      })
+    }
+  }
   if (created.length > 0)
     await audit({
       ...scope,

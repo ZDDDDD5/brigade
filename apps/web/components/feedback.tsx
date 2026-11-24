@@ -34,7 +34,8 @@ export function FeedbackDialog() {
   const [sent, setSent] = useState(false)
   const [error, setError] = useState<string>()
   const files = useUploads()
-  const drop = useFileDrop(files.add, open && !sent)
+  // While sending, nothing changes: what was sent is what the dialog shows.
+  const drop = useFileDrop(files.add, open && !sent && !sending)
   const picker = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -103,51 +104,53 @@ export function FeedbackDialog() {
                 Tell the Brigade team about a bug or an idea, with screenshots or files.
               </DialogDescription>
             </DialogHeader>
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="feedback-text">What happened, or what would you change?</Label>
-              <Textarea
-                id="feedback-text"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey))
-                    e.currentTarget.form?.requestSubmit()
-                }}
-                placeholder="A bug, an idea, anything that felt off"
-                rows={5}
-                maxLength={FEEDBACK_MAX}
-                autoFocus
-                className="resize-none focus-visible:border-input focus-visible:ring-0"
-              />
-            </div>
-            <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => picker.current?.click()}
-                className={cn(
-                  'text-muted-foreground hover:text-foreground hover:bg-muted/40 flex w-full flex-col items-center gap-1 rounded-lg border border-dashed px-4 py-4 text-sm transition-colors',
-                  drop.dragging && 'border-primary bg-muted/60 text-foreground',
-                )}
-              >
-                <ImagePlus className="size-5" aria-hidden />
-                <span>
-                  {drop.dragging
-                    ? 'Drop to attach'
-                    : 'Add screenshots or files: drop, paste or browse'}
-                </span>
-              </button>
-              <input
-                ref={picker}
-                type="file"
-                multiple
-                hidden
-                onChange={(e) => {
-                  files.add([...(e.target.files ?? [])])
-                  e.target.value = ''
-                }}
-              />
-              <UploadList uploads={files.uploads} onRemove={files.remove} />
-            </div>
+            <fieldset disabled={sending} className="flex min-w-0 flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="feedback-text">What happened, or what would you change?</Label>
+                <Textarea
+                  id="feedback-text"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey))
+                      e.currentTarget.form?.requestSubmit()
+                  }}
+                  placeholder="A bug, an idea, anything that felt off"
+                  rows={5}
+                  maxLength={FEEDBACK_MAX}
+                  autoFocus
+                  className="resize-none focus-visible:border-input focus-visible:ring-0"
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => picker.current?.click()}
+                  className={cn(
+                    'text-muted-foreground hover:text-foreground hover:bg-muted/40 flex w-full flex-col items-center gap-1 rounded-lg border border-dashed px-4 py-4 text-sm transition-colors',
+                    drop.dragging && 'border-primary bg-muted/60 text-foreground',
+                  )}
+                >
+                  <ImagePlus className="size-5" aria-hidden />
+                  <span>
+                    {drop.dragging
+                      ? 'Drop to attach'
+                      : 'Add screenshots or files: drop, paste or browse'}
+                  </span>
+                </button>
+                <input
+                  ref={picker}
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    files.add([...(e.target.files ?? [])])
+                    e.target.value = ''
+                  }}
+                />
+                <UploadList uploads={files.uploads} onRemove={files.remove} />
+              </div>
+            </fieldset>
             {error && <p className="text-destructive-text text-sm">{error}</p>}
             <DialogFooter className="items-center sm:justify-between">
               <span className="text-muted-foreground text-xs">Goes to the Brigade team</span>

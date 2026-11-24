@@ -22,10 +22,11 @@ const ATTACH_SECONDS = 24 * 3600
 /** The files' links in the mail's text: as long as R2 signs one. */
 const LINK_DAYS = 7
 
-/** What one member may send, so a loop or a stuck key cannot flood the team or Resend. */
+/**
+ * What one member may send, so a loop or a stuck key cannot flood the team or Resend's quota.
+ * Every feedback within them is mailed: there is no global cap that would drop a real one.
+ */
 export const FEEDBACK_LIMITS = { burst: 5, burstMs: 10 * 60_000, day: 30 } as const
-/** Feedback mailed per hour across Brigade; past it, feedback is stored but not mailed. */
-const MAILS_PER_HOUR = 100
 
 export const feedback = new Hono<AppEnv>()
   .use(requireUser, requireWorkspace)
@@ -33,33 +34,11 @@ export const feedback = new Hono<AppEnv>()
     const { scope, db } = c.var
     const input = await parseBody(c.req.raw, SendFeedback)
     const ids = [...new Set(input.attachmentIds)]
-
-    // Bounded before anything is written or mailed.
     const now = Date.now()
-    const [recent, today] = await Promise.all([
-      db.feedback.count({
-        where: {
-          memberId: scope.memberId,
-          createdAt: { gt: new Date(now - FEEDBACK_LIMITS.burstMs) },
-        },
-      }),
-      db.feedback.count({
-        where: { memberId: scope.memberId, createdAt: { gt: new Date(now - 24 * 3600_000) } },
-      }),
-    ])
-    if (recent >= FEEDBACK_LIMITS.burst || today >= FEEDBACK_LIMITS.day)
-      throw new HTTPException(429, {
-        message: 'You sent a lot of feedback just now: try again a little later',
-      })
-
-    const row = await db.feedback.create({
-      data: {
-        memberId: scope.memberId,
-        userId: scope.userId,
-        text: input.text,
-        page: input.page.slice(0, 2000),
-        userAgent: (c.req.header('user-agent') ?? '').slice(0, 500),
-      } as never,
+    const row = await reserveFeedback(scope, now, {
+      text: input.text,
+      page: input.page.slice(0, 2000),
+      userAgent: (c.req.header('user-agent') ?? '').slice(0, 500),
     })
     let files: { id: string; name: string; size: number; contentType: string }[] = []
     if (ids.length) {
@@ -78,13 +57,6 @@ export const feedback = new Hono<AppEnv>()
       data: { files: ids.length },
     })
 
-    const mailed = await prisma.feedback.count({
-      where: { createdAt: { gt: new Date(now - 3600_000) } },
-    })
-    if (mailed > MAILS_PER_HOUR) {
-      console.warn(`feedback ${row.id}: stored, not mailed (over ${MAILS_PER_HOUR} an hour)`)
-      return c.json({ id: row.id }, 201)
-    }
     // The mail is a copy: the feedback is stored either way, so a failure here is only logged.
     await mailTeam(scope, row, files).catch((error) =>
       console.warn(`feedback ${row.id}: not mailed: ${String(error)}`),
@@ -93,10 +65,46 @@ export const feedback = new Hono<AppEnv>()
   })
 
 /**
+ * Count the member's recent feedback and store this one, or refuse with a 429 once a limit is
+ * spent. One member's sends at a time (an advisory lock, as src/invitation-budget.ts does), so
+ * two at once can't both take the last place.
+ */
+export async function reserveFeedback(
+  scope: { organizationId: string; workspaceId: string; memberId: string; userId: string },
+  now: number,
+  data: { text: string; page: string; userAgent: string },
+) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`feedback:${scope.memberId}`}, 0))`
+    const mine = { organizationId: scope.organizationId, memberId: scope.memberId }
+    const [recent, today] = await Promise.all([
+      tx.feedback.count({
+        where: { ...mine, createdAt: { gt: new Date(now - FEEDBACK_LIMITS.burstMs) } },
+      }),
+      tx.feedback.count({ where: { ...mine, createdAt: { gt: new Date(now - 24 * 3600_000) } } }),
+    ])
+    if (recent >= FEEDBACK_LIMITS.burst || today >= FEEDBACK_LIMITS.day)
+      throw new HTTPException(429, {
+        message: 'You sent a lot of feedback just now: try again a little later',
+      })
+    return tx.feedback.create({
+      data: {
+        organizationId: scope.organizationId,
+        workspaceId: scope.workspaceId,
+        memberId: scope.memberId,
+        userId: scope.userId,
+        ...data,
+      },
+    })
+  })
+}
+
+/**
  * Give the member's own unsent uploads to a feedback, all or none. Each file is taken by one
  * conditional write, so of two sends racing for a file only one gets it, and a Cancel (DELETE
  * /attachments/:id, which deletes only a file nothing took) either wins before or finds it
  * taken. Only uploads well inside UNSENT_MS are taken: older ones may be under sweepUploads.
+ * Against a message sending the same file, each side checks the other after its own write.
  * When any is missing, those taken are given back and it throws.
  */
 export async function claimUploads(
@@ -118,7 +126,13 @@ export async function claimUploads(
     where: { ...where, feedbackId: null },
     data: { feedbackId },
   })
-  if (taken.count !== ids.length) {
+  // A message may have linked one to its thread meanwhile (attachToThread checks the other way
+  // after its links): then neither keeps it twice.
+  const linked =
+    taken.count === ids.length
+      ? await db.threadAttachment.count({ where: { attachmentId: { in: ids } } })
+      : 0
+  if (taken.count !== ids.length || linked > 0) {
     await db.attachment.updateMany({ where: { feedbackId }, data: { feedbackId: null } })
     throw new HTTPException(400, { message: 'An attached file was not found or was already sent' })
   }

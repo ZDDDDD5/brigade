@@ -47,11 +47,13 @@ const { prisma } = await import('../src/db.js')
 const { auth } = await import('../src/auth.js')
 const { feedback, FEEDBACK_LIMITS } = await import('../src/routes/feedback.js')
 const { attachments } = await import('../src/routes/attachments.js')
-const { sweepUploads, UNSENT_MS } = await import('../src/attachments.js')
+const { attachToThread, sweepUploads, UNSENT_MS } = await import('../src/attachments.js')
+const { scoped } = await import('../src/db.js')
 
 const id = randomUUID().slice(0, 8)
 const ids = { organization: `org-fb-${id}`, user: `user-fb-${id}`, member: `mem-fb-${id}` }
 let workspaceId = ''
+let sessionId = ''
 
 const realGetSession = auth.api.getSession
 const app = new Hono().route('/api/feedback', feedback).route('/api/attachments', attachments)
@@ -97,6 +99,22 @@ before(async () => {
     data: { organizationId: ids.organization, name: 'Feedback test' },
   })
   workspaceId = workspace.id
+  const where = { organizationId: ids.organization, workspaceId }
+  const teammate = await prisma.teammate.create({ data: { ...where, name: 'Riley' } })
+  const computer = await prisma.computer.create({
+    data: { ...where, kind: 'member_machine', memberId: ids.member, name: 'Laptop' },
+  })
+  sessionId = (
+    await prisma.session.create({
+      data: {
+        ...where,
+        teammateId: teammate.id,
+        startedByMemberId: ids.member,
+        computerId: computer.id,
+        title: 'A thread',
+      },
+    })
+  ).id
   ;(auth.api as { getSession: unknown }).getSession = sessionStub(() => ({
     user: { id: ids.user },
     session: {
@@ -213,4 +231,39 @@ test('one member cannot flood the team', { skip }, async () => {
     await prisma.feedback.count({ where: { organizationId: ids.organization } }),
     FEEDBACK_LIMITS.burst,
   )
+})
+
+test('parallel sends cannot pass the last place', { skip }, async () => {
+  const results = await Promise.all(
+    Array.from({ length: FEEDBACK_LIMITS.burst + 3 }, (_, i) => send({ text: `At once ${i}` })),
+  )
+  const statuses = results.map((r) => r.status)
+  assert.equal(statuses.filter((s) => s === 201).length, FEEDBACK_LIMITS.burst)
+  assert.equal(statuses.filter((s) => s === 429).length, 3)
+  assert.equal(
+    await prisma.feedback.count({ where: { organizationId: ids.organization } }),
+    FEEDBACK_LIMITS.burst,
+  )
+})
+
+test('a message and feedback racing for a file: never both', { skip }, async () => {
+  const db = scoped({ organizationId: ids.organization, workspaceId })
+  const scope = { organizationId: ids.organization, workspaceId }
+  for (let i = 0; i < 8; i++) {
+    const file = await upload(`both-${i}.png`)
+    const [sent, linked] = await Promise.allSettled([
+      send({ text: `Both ${i}`, attachmentIds: [file] }).then((r) => r.status),
+      attachToThread(db, scope, sessionId, [file], { memberId: ids.member }),
+    ])
+    const row = await prisma.attachment.findUnique({
+      where: { id: file },
+      include: { threads: true },
+    })
+    const inFeedback = Boolean(row?.feedbackId)
+    const inThread = (row?.threads.length ?? 0) > 0
+    assert.ok(!(inFeedback && inThread), `round ${i}: kept by both`)
+    assert.equal(sent.status === 'fulfilled' && sent.value === 201, inFeedback)
+    assert.equal(linked.status === 'fulfilled', inThread)
+    await prisma.feedback.deleteMany({ where: { organizationId: ids.organization } })
+  }
 })
