@@ -10,7 +10,7 @@ import {
   revokePermission,
   stopGoal,
 } from '../goals.js'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import {
   JudgeGoal,
   ASIDE_PROTOCOL,
@@ -313,6 +313,16 @@ async function archive(c: Context<AppEnv>, on: boolean) {
  */
 const unread = (lastTurnAt: Date | null | undefined, seenAt: Date | undefined) =>
   !!lastTurnAt && (!seenAt || lastTurnAt > seenAt)
+
+/**
+ * The id of a workspace's setup thread with its chief (StartThread.setup): the same for every
+ * start of it, so that two at once make one thread, the other finding it taken. A thread id's
+ * shape (NewThreadId), as it names the thread's folders in storage.
+ */
+export const setupThreadId = (workspaceId: string, chiefId: string) => {
+  const digest = createHash('sha256').update(`setup:${workspaceId}:${chiefId}`).digest()
+  return `c${Array.from(digest.subarray(0, 24), (b) => (b % 36).toString(36)).join('')}`
+}
 
 /** A thread with the id the browser chose (`id`) exists already, in this workspace or another. */
 const idTaken = (error: unknown, id: string | undefined): never => {
@@ -1285,6 +1295,13 @@ export const threads = new Hono<AppEnv>()
     if (!computer || (computer.kind === 'member_machine' && computer.memberId !== scope.memberId)) {
       throw new HTTPException(404, { message: 'Computer not found' })
     }
+    // The setup thread is made once: started again, the one made already is the answer.
+    const setupId = input.setup ? setupThreadId(scope.workspaceId, teammate.id) : undefined
+    if (input.setup && teammate.kind !== 'chief')
+      throw new HTTPException(400, { message: 'Only Chief sets up a team' })
+    const setupMade = async () =>
+      setupId && (await db.session.findFirst({ where: { id: setupId }, select: { id: true } }))
+    if (await setupMade()) return c.json({ id: setupId!, paused: false }, 200)
     // A thread runs on the accounts its starter may use (src/account-sharing.ts).
     // The title is what the message is about, not the command it starts with.
     const skill = input.text.startsWith('/')
@@ -1305,7 +1322,7 @@ export const threads = new Hono<AppEnv>()
       : undefined
     const { thread, outcome } = await startThread(db, scope, {
       // Chosen by the browser, which opened the thread already: never one that exists.
-      ...(input.id ? { id: input.id, fresh: true } : {}),
+      ...(setupId ?? input.id ? { id: setupId ?? input.id, fresh: true } : {}),
       teammate,
       computer,
       memberId: scope.memberId,
@@ -1323,7 +1340,13 @@ export const threads = new Hono<AppEnv>()
       ...(listItemIds ? { listItemIds } : {}),
       // The member's box gets the message back: no failed thread of it is left.
       dropUnstarted: true,
-    }).catch((error: unknown) => idTaken(error, input.id))
+    }).catch(async (error: unknown) => {
+      // Two starts at once: the other made it in between.
+      if (setupId && (error as { code?: string }).code === 'P2002' && (await setupMade()))
+        return { thread: { id: setupId }, outcome: 'existing' as const }
+      return idTaken(error, input.id)
+    })
+    if (outcome === 'existing') return c.json({ id: thread.id, paused: false }, 200)
     if (outcome === 'offline') {
       throw new HTTPException(409, {
         message: 'That computer is offline. Start its runner and try again.',

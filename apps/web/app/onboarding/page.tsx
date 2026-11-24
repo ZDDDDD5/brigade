@@ -546,6 +546,8 @@ function ConnectAI({
                 accountId: account.id,
                 text: setupMessage(me.onboardingAnswers),
                 ...(listLines ? { listLines } : {}),
+                // Onboarding open in a browser and in Brigade.app finishes in both: one thread.
+                setup: true,
               },
             })
             return router.replace(`/app/threads/${thread.id}`)

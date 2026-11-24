@@ -357,6 +357,12 @@ export const StartThread = z
     effort: Effort.nullish(),
     /** Lines of a list it works on, attached before its first turn so its teammate knows. */
     listLines: StartOnLines.optional(),
+    /**
+     * Onboarding's thread setting up a new workspace's team with its chief: one per workspace.
+     * Started again (onboarding open in a browser and in Brigade.app at once), it is the same
+     * thread, whose id comes back, rather than a second one.
+     */
+    setup: z.literal(true).optional(),
   })
   .refine(hasContent, { path: ['text'], message: 'Write a message or attach a file' })
 
