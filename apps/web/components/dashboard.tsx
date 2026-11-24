@@ -12,7 +12,7 @@ import {
   ListChecks,
   LogOut,
   Mail,
-  MessageSquare,
+  MessageCircle,
   Moon,
   Monitor,
   Plug,
@@ -796,7 +796,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         </span>
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={openFeedback}>
-                        <MessageSquare /> Give feedback
+                        <MessageCircle /> Give feedback
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => void signOut()}>
                         {/* A guest has nothing to sign out of: what they want is another account. */}
