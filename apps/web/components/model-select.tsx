@@ -172,11 +172,21 @@ function ModelOption({
 
 /**
  * Under a teammate's name: its model, changed in place by owners and admins, saved at once (its
- * next turns use it). Others see the model as text, as they can't change a teammate.
+ * next turns use it, in every thread). Others see the model as text, as they can't change a
+ * teammate. `suffix` follows it on the line (" on the cloud computer").
  */
-export function TeammateModelLine({ teammate }: { teammate: Teammate }) {
+export function TeammateModelLine({
+  teammate,
+  suffix,
+  onSaved,
+}: {
+  teammate: Pick<Teammate, 'id' | 'model'> & { harness: string }
+  suffix?: string
+  /** Saved: what shows the teammate fetches it again (the teammates are, always). */
+  onSaved?: () => void
+}) {
   const { me, reloadTeammates } = useDashboard()
-  const saved = { harness: teammate.harness, model: teammate.model }
+  const saved = { harness: teammate.harness as Harness, model: teammate.model }
   // What was just picked, shown while it saves; dropped once the saved teammate says so.
   const [picked, setPicked] = useState<ModelChoice>()
   const [error, setError] = useState<string>()
@@ -186,6 +196,7 @@ export function TeammateModelLine({ teammate }: { teammate: Teammate }) {
     return (
       <span className="block truncate text-xs text-muted-foreground">
         {teammateModelLabel(teammate)}
+        {suffix}
       </span>
     )
 
@@ -196,6 +207,7 @@ export function TeammateModelLine({ teammate }: { teammate: Teammate }) {
     try {
       await api(`/teammates/${teammate.id}`, { method: 'PATCH', body: next })
       await reloadTeammates()
+      onSaved?.()
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -205,13 +217,16 @@ export function TeammateModelLine({ teammate }: { teammate: Teammate }) {
 
   return (
     <span className="flex min-w-0 flex-col items-start">
-      <ModelSelect
-        variant="inline"
-        value={shown}
-        saved={saved}
-        disabled={!!picked}
-        onChange={(next) => void change(next)}
-      />
+      <span className="flex max-w-full min-w-0 items-center">
+        <ModelSelect
+          variant="inline"
+          value={shown}
+          saved={saved}
+          disabled={!!picked}
+          onChange={(next) => void change(next)}
+        />
+        {suffix && <span className="truncate text-xs text-muted-foreground">{suffix}</span>}
+      </span>
       {error && <span className="text-xs text-destructive-text">{error}</span>}
     </span>
   )
