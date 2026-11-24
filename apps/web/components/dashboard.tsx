@@ -127,6 +127,7 @@ import { markSignedIn, clearBrowserData, markSignedOut } from '@/lib/signed-in'
 import { isMac, useIsMac } from '@/lib/platform'
 import { openSettings, SETTINGS_SECTIONS, settingsHref } from '@/lib/settings-dialog'
 import { cn } from '@/lib/utils'
+import { NEW_TEAMMATE, openTeammate } from '@/lib/teammate-dialog'
 import { takeOffTheme, ThemeRuntime, useWornTheme } from '@/components/theme-runtime'
 
 export { StatusBadge } from '@/components/status-badge'
@@ -1019,7 +1020,10 @@ function TeammatesRailMenu({ teammates, admin }: { teammates: Teammate[]; admin:
       }))}
       action={
         admin
-          ? { label: 'New teammate', onSelect: () => router.push('/app/teammates/new') }
+          ? {
+              label: 'New teammate',
+              onSelect: () => openTeammate(NEW_TEAMMATE) || router.push('/app/teammates/new'),
+            }
           : undefined
       }
     />

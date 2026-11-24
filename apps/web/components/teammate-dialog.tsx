@@ -1,7 +1,7 @@
 'use client'
 // A teammate's settings in a dialog over the page the member is on (lib/teammate-dialog.ts): its
 // profile, what it may reach, what it is up to and its limits. Its threads are where the sidebar
-// takes you (components/thread-panel.tsx).
+// takes you (components/thread-panel.tsx). The form for a new teammate opens in it too.
 import { modelLabel } from '@brigade/contracts'
 import { Archive } from 'lucide-react'
 import { useRouter } from 'next/navigation'
@@ -11,14 +11,17 @@ import { TeammateAccess } from '@/components/teammate-access'
 import { TeammateForm } from '@/components/teammate-form'
 import { TeammateTitle } from '@/components/teammate-title'
 import { TeammateCaps, TeammateStatus, useTeammateTimeline } from '@/components/teammate-oversight'
+import { useThreadPanel } from '@/components/thread-panel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { api, harnessLabel } from '@/lib/api'
+import { api, harnessLabel, type Teammate } from '@/lib/api'
 import {
   closeTeammate,
   hostTeammate,
+  NEW_TEAMMATE,
+  TEAMMATE_CREATED,
   openTeammate,
   setTeammateTab,
   showTeammate,
@@ -34,7 +37,8 @@ import {
 export function TeammateDialog() {
   const shown = useTeammateDialog()
   const { teammates } = useDashboard()
-  const teammate = shown && teammates.find((t) => t.id === shown.id)
+  const creating = shown?.id === NEW_TEAMMATE
+  const teammate = shown && !creating && teammates.find((t) => t.id === shown.id)
   useEffect(() => hostTeammate(), [])
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -56,21 +60,54 @@ export function TeammateDialog() {
     <Dialog open={!!shown} onOpenChange={(open) => !open && closeTeammate()}>
       <DialogContent className="flex max-h-[min(52rem,calc(100svh-2rem))] flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl">
         <DialogTitle className="sr-only">
-          {teammate ? `${teammate.name}’s settings` : 'Teammate settings'}
+          {creating
+            ? 'New AI teammate'
+            : teammate
+              ? `${teammate.name}’s settings`
+              : 'Teammate settings'}
         </DialogTitle>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-6 pb-8 md:px-8">
-          {shown && (
-            <TeammateSettings
-              key={shown.id}
-              id={shown.id}
-              tab={shown.tab}
-              onTab={setTeammateTab}
-              onArchived={closeTeammate}
-            />
+          {creating ? (
+            <NewTeammate />
+          ) : (
+            shown && (
+              <TeammateSettings
+                key={shown.id}
+                id={shown.id}
+                tab={shown.tab}
+                onTab={setTeammateTab}
+                onArchived={closeTeammate}
+              />
+            )
           )}
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * The form for a new teammate. Once made, the dialog closes on a new thread with it, where it
+ * speaks first (components/first-meeting.tsx), and the sidebar narrows its threads to it.
+ */
+function NewTeammate() {
+  const { reloadTeammates } = useDashboard()
+  const { openTeammate } = useThreadPanel()
+  return (
+    <div className="flex flex-col gap-7">
+      <h1 className="text-3xl font-extrabold tracking-tight">New AI teammate</h1>
+      <TeammateForm
+        submitLabel="Create teammate"
+        onSubmit={async (input) => {
+          const teammate = await api<Teammate>('/teammates', { body: input })
+          // In the list first: the thread panel picks it from there.
+          await reloadTeammates()
+          closeTeammate()
+          openTeammate(teammate.id)
+          window.dispatchEvent(new CustomEvent(TEAMMATE_CREATED, { detail: teammate.id }))
+        }}
+      />
+    </div>
   )
 }
 

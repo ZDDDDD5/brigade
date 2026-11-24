@@ -106,6 +106,7 @@ import {
 import { useFlip } from '@/lib/use-flip'
 import { clickInPlace } from '@/lib/thread-address'
 import { cn } from '@/lib/utils'
+import { TEAMMATE_CREATED } from '@/lib/teammate-dialog'
 
 /** How many threads show before the "+N" row. */
 const CAP = 5
@@ -1446,15 +1447,28 @@ export function SidebarWork({
   function clickTeammate(id: string) {
     if (filter.teammateId === id)
       return setFilter((f) => ({ ...f, teammateId: undefined, byRow: undefined }))
+    narrowToTeammate(id)
+    // A new thread with it: its threads are in the list, narrowed to them.
+    openTeammate(id)
+  }
+  function narrowToTeammate(id: string) {
     setFilter((f) => ({
       ...f,
       teammateId: id,
       byRow: 'teammate',
       ...(f.byRow === 'project' ? { projectId: undefined } : {}),
     }))
-    // A new thread with it: its threads are in the list, narrowed to them.
-    openTeammate(id)
   }
+  // A teammate just made opens on a new thread with it (components/teammate-dialog.tsx): its
+  // threads only, as a click on its row shows them.
+  useEffect(() => {
+    const onCreated = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail
+      if (id) narrowToTeammate(id)
+    }
+    window.addEventListener(TEAMMATE_CREATED, onCreated)
+    return () => window.removeEventListener(TEAMMATE_CREATED, onCreated)
+  }, [])
   function clickProject(id: string) {
     setFilter((f) => ({
       ...f,
