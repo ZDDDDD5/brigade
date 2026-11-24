@@ -1,7 +1,6 @@
 'use client'
 import {
   BookOpenCheck,
-  Bug,
   CalendarClock,
   ChevronDown,
   ChevronRight,
@@ -13,6 +12,7 @@ import {
   ListChecks,
   LogOut,
   Mail,
+  MessageSquare,
   Moon,
   Monitor,
   Plug,
@@ -796,7 +796,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                         </span>
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={openFeedback}>
-                        <Bug /> Give feedback
+                        <MessageSquare /> Give feedback
                       </DropdownMenuItem>
                       <DropdownMenuItem onSelect={() => void signOut()}>
                         {/* A guest has nothing to sign out of: what they want is another account. */}
