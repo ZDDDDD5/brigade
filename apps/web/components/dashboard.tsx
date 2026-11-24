@@ -12,6 +12,7 @@ import {
   ListChecks,
   LogOut,
   Mail,
+  MessageCircle,
   Moon,
   Monitor,
   Plug,
@@ -39,6 +40,7 @@ import {
 } from 'react'
 import { AppLoader } from '@/components/app-loader'
 import { ConnectAppsDialog, openConnectApps } from '@/components/connect-apps'
+import { FeedbackDialog, openFeedback } from '@/components/feedback'
 import { DocumentPanel, DocumentPanelProvider, DocumentsCorner } from '@/components/document-panel'
 import { KeptPreviews } from '@/components/kept-previews'
 import { openShortcuts, ShortcutsDialog } from '@/components/help-menu'
@@ -793,6 +795,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                           {mac ? '⇧?' : 'Shift+?'}
                         </span>
                       </DropdownMenuItem>
+                      {/* A viewer can't upload or send (requireWorkspace answers 403). */}
+                      {!isViewer(data) && (
+                        <DropdownMenuItem onSelect={openFeedback}>
+                          <MessageCircle /> Give feedback
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem onSelect={() => void signOut()}>
                         {/* A guest has nothing to sign out of: what they want is another account. */}
                         <LogOut /> {data.guest ? 'Sign in to another account' : 'Sign out'}
@@ -809,6 +817,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <SearchDialog open={searching} onOpenChange={setSearching} />
           <ShortcutsDialog />
           <ConnectAppsDialog />
+          <FeedbackDialog />
           <SettingsDialog />
           <TeammateDialog />
           <AppNotifications needsYou={badge.size} />

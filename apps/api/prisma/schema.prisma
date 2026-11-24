@@ -368,6 +368,7 @@ model Workspace {
   libraryFolderGrants   LibraryFolderGrant[]
   attachments           Attachment[]
   threadAttachments     ThreadAttachment[]
+  feedback              Feedback[]
   pullRequests          PullRequest[]
   pullRequestReviews    PullRequestReview[]
   tasks                 Task[]
@@ -2685,11 +2686,15 @@ model Attachment {
   session            Session?           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   /// Extracted for search, like a library file's.
   text               String             @default("")
+  /// Set for a file sent with Give feedback: kept with it, never swept as an unsent upload.
+  feedbackId         String?
+  feedback           Feedback?          @relation(fields: [feedbackId], references: [id], onDelete: SetNull)
   createdAt          DateTime           @default(now())
   threads            ThreadAttachment[]
 
   @@unique([connectionId, externalRef])
   @@index([workspaceId, createdAt])
+  @@index([feedbackId])
 }
 
 /// A file in a thread: copied into each teammate's working folder at `path` before its turn.
@@ -2709,6 +2714,28 @@ model ThreadAttachment {
   @@unique([sessionId, path])
   @@unique([sessionId, attachmentId])
   @@index([attachmentId])
+}
+
+/// What a member sent with Give feedback (the sidebar's line): their words, the page they were
+/// on and their files (Attachment.feedbackId). Mailed to Brigade's team (FEEDBACK_EMAILS).
+model Feedback {
+  id             String       @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberId       String
+  userId         String
+  text           String
+  /// The dashboard's address when it was sent, e.g. /app/threads/abc.
+  page           String       @default("")
+  userAgent      String       @default("")
+  /// new: not looked at yet. Changed by Brigade's team.
+  status         String       @default("new")
+  createdAt      DateTime     @default(now())
+  attachments    Attachment[]
+
+  @@index([createdAt])
+  @@index([workspaceId, createdAt])
 }
 
 /// A design system: rules, tokens and assets in a library folder, and where it applies.

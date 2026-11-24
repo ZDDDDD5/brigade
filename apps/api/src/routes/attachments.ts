@@ -8,14 +8,13 @@ import { Hono } from 'hono'
 import { HTTPException } from 'hono/http-exception'
 import { audit } from '../audit.js'
 import {
-  deleteAttachment,
   finishUpload,
   servedFromBucket,
   startUpload,
   storeAttachment,
   toInfo,
 } from '../attachments.js'
-import { attachmentKey, directUploads, presignGet } from '../bucket.js'
+import { attachmentKey, deleteObject, directUploads, presignGet } from '../bucket.js'
 import { parseBody, requireUser, requireWorkspace, type AppEnv } from '../scope.js'
 import { serveObject } from '../serve-object.js'
 
@@ -124,18 +123,39 @@ export const attachments = new Hono<AppEnv>()
     })
   })
 
-  /** Remove an upload that was not sent: the chip's ✕ in the composer. */
+  /**
+   * Remove an upload that was not sent: the chip's ✕ in the composer, Cancel in Give feedback.
+   * One conditional delete, so a send taking the file at the same moment (Give feedback's
+   * claimUploads) either finds it gone or keeps it, never a file whose bytes went.
+   */
   .delete('/:id', async (c) => {
     const { scope, db } = c.var
+    const id = c.req.param('id')
     const row = await db.attachment.findFirst({
+      where: { id },
+      select: { name: true, status: true },
+    })
+    const gone = await db.attachment.deleteMany({
       where: {
-        id: c.req.param('id'),
+        id,
         source: 'upload',
         uploadedByMemberId: scope.memberId,
         threads: { none: {} },
+        feedbackId: null,
       },
     })
-    if (!row) throw new HTTPException(404, { message: 'File not found or already sent' })
-    await deleteAttachment(db, scope, { type: 'member', id: scope.memberId }, row.id)
+    if (!row || gone.count === 0)
+      throw new HTTPException(404, { message: 'File not found or already sent' })
+    if (row.status !== 'blocked')
+      await deleteObject(attachmentKey(scope, id)).catch((error) =>
+        console.warn(`attachment ${id}: bytes not deleted: ${String(error)}`),
+      )
+    await audit({
+      ...scope,
+      actor: { type: 'member', id: scope.memberId },
+      action: 'attachment.deleted',
+      target: { type: 'attachment', id },
+      data: { name: row.name },
+    })
     return c.body(null, 204)
   })

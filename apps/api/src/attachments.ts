@@ -263,7 +263,7 @@ function blockedAttachment(
 /** A pending upload untouched this long was abandoned (its URL works 10 minutes). */
 const PENDING_MS = 60 * 60_000
 /** An upload never sent with a message is removed after this long. */
-const UNSENT_MS = 24 * 3600_000
+export const UNSENT_MS = 24 * 3600_000
 /** A file taken from a connection that no thread has: kept as long as its mail stays in its box. */
 const CONNECTOR_UNUSED_MS = 30 * 24 * 3600_000
 
@@ -402,6 +402,8 @@ export async function sweepUploads() {
   const rows = await prisma.attachment.findMany({
     where: {
       threads: { none: {} },
+      // Sent with Give feedback: kept with it.
+      feedbackId: null,
       OR: [
         {
           source: { in: ['upload', 'connector', 'teammate'] },
@@ -493,6 +495,7 @@ export async function attachToThread(
             status: 'ready',
             uploadedByMemberId: check.memberId,
             threads: { none: {} },
+            feedbackId: null,
           }
         : { status: { not: 'pending' } }),
     },
@@ -529,6 +532,19 @@ export async function attachToThread(
           error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002'
         if (!clash || attempt >= 5) throw error
       }
+    }
+  }
+  // A member's upload Give feedback took meanwhile (its claimUploads checks the other way after
+  // its write): the links go, so no file is both sent with a message and kept with feedback.
+  if (check && created.length > 0) {
+    const taken = await db.attachment.count({
+      where: { id: { in: ids }, feedbackId: { not: null } },
+    })
+    if (taken > 0) {
+      await detach(db, created)
+      throw new HTTPException(400, {
+        message: 'An attached file was not found or was already sent',
+      })
     }
   }
   if (created.length > 0)
