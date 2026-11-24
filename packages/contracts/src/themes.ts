@@ -488,6 +488,10 @@ export const THEME_HOOKS = [
     what: 'the Connect apps button, bottom of the sidebar',
     always: true,
   },
+  {
+    selector: '[data-look="give-feedback"]',
+    what: "Give feedback, the line above the member at the sidebar's bottom (a sidebar menu button)",
+  },
   { selector: '[data-slot="sidebar-trigger"]', what: 'the button that folds the sidebar' },
   { selector: '[data-slot="sidebar-inset"]', what: 'the page beside the sidebar', always: true },
   { selector: '[data-look="thread"]', what: "a thread's page, behind its messages" },

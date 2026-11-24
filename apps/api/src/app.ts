@@ -16,6 +16,7 @@ import { authenticateRunner, browserSocket, HubOpError, runnerSocket } from './h
 import { accounts } from './routes/accounts.js'
 import { documentAssets } from './routes/assets.js'
 import { attachments } from './routes/attachments.js'
+import { feedback } from './routes/feedback.js'
 import { localBucket } from './routes/bucket.js'
 import { billing } from './routes/billing.js'
 import { usage } from './routes/usage.js'
@@ -267,6 +268,7 @@ app.route('/api/skills', skills)
 app.route('/api/designs', designs)
 app.route('/api/tools', tools)
 app.route('/api/attachments', attachments)
+app.route('/api/feedback', feedback)
 app.route('/api/uploads', uploads)
 app.route('/api/repositories', repositories)
 app.route('/api/home', home)

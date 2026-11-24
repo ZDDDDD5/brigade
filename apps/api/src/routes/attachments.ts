@@ -133,6 +133,7 @@ export const attachments = new Hono<AppEnv>()
         source: 'upload',
         uploadedByMemberId: scope.memberId,
         threads: { none: {} },
+        feedbackId: null,
       },
     })
     if (!row) throw new HTTPException(404, { message: 'File not found or already sent' })

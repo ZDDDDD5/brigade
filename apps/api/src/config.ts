@@ -204,6 +204,19 @@ const Env = z.object({
         .map((a) => a.trim())
         .filter(Boolean),
     ),
+  /**
+   * Where Give feedback goes (src/routes/feedback.ts): addresses, comma-separated, mailed through
+   * Resend from feedback@MAIL_DOMAIN. Unset: the operators' alert addresses (OPS_ALERT_EMAILS).
+   */
+  FEEDBACK_EMAILS: z
+    .string()
+    .optional()
+    .transform((v) =>
+      (v ?? '')
+        .split(',')
+        .map((a) => a.trim())
+        .filter(Boolean),
+    ),
   /** A URL alerts are posted to as JSON: Slack's or Discord's incoming webhook, a Brigade custom app's. */
   OPS_ALERT_WEBHOOK_URL: z.url().optional(),
   /** Signs those posts (x-brigade-signature), for a receiver that checks them. */

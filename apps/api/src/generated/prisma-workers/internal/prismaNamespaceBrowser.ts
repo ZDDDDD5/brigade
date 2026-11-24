@@ -130,6 +130,7 @@ export const ModelName = {
   Upload: 'Upload',
   Attachment: 'Attachment',
   ThreadAttachment: 'ThreadAttachment',
+  Feedback: 'Feedback',
   DesignSystem: 'DesignSystem',
   Skill: 'Skill',
   SkillPack: 'SkillPack',
@@ -1536,6 +1537,7 @@ export const AttachmentScalarFieldEnum = {
   externalRef: 'externalRef',
   sessionId: 'sessionId',
   text: 'text',
+  feedbackId: 'feedbackId',
   createdAt: 'createdAt'
 } as const
 
@@ -1553,6 +1555,22 @@ export const ThreadAttachmentScalarFieldEnum = {
 } as const
 
 export type ThreadAttachmentScalarFieldEnum = (typeof ThreadAttachmentScalarFieldEnum)[keyof typeof ThreadAttachmentScalarFieldEnum]
+
+
+export const FeedbackScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  userId: 'userId',
+  text: 'text',
+  page: 'page',
+  userAgent: 'userAgent',
+  status: 'status',
+  createdAt: 'createdAt'
+} as const
+
+export type FeedbackScalarFieldEnum = (typeof FeedbackScalarFieldEnum)[keyof typeof FeedbackScalarFieldEnum]
 
 
 export const DesignSystemScalarFieldEnum = {

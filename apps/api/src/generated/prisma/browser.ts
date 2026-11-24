@@ -507,6 +507,12 @@ export type Attachment = Prisma.AttachmentModel
  */
 export type ThreadAttachment = Prisma.ThreadAttachmentModel
 /**
+ * Model Feedback
+ * What a member sent with Give feedback (the sidebar's line): their words, the page they were
+ * on and their files (Attachment.feedbackId). Mailed to Brigade's team (FEEDBACK_EMAILS).
+ */
+export type Feedback = Prisma.FeedbackModel
+/**
  * Model DesignSystem
  * A design system: rules, tokens and assets in a library folder, and where it applies.
  * Teammates making a design pick one: named in the message, then by the library folder

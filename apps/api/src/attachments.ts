@@ -402,6 +402,8 @@ export async function sweepUploads() {
   const rows = await prisma.attachment.findMany({
     where: {
       threads: { none: {} },
+      // Sent with Give feedback: kept with it.
+      feedbackId: null,
       OR: [
         {
           source: { in: ['upload', 'connector', 'teammate'] },
@@ -493,6 +495,7 @@ export async function attachToThread(
             status: 'ready',
             uploadedByMemberId: check.memberId,
             threads: { none: {} },
+            feedbackId: null,
           }
         : { status: { not: 'pending' } }),
     },

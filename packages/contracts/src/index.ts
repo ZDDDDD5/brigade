@@ -2,6 +2,7 @@
 export * from './api.js'
 export * from './apps.js'
 export * from './attachments.js'
+export * from './feedback.js'
 export * from './board.js'
 export * from './builtin-skills.js'
 export * from './cards.js'

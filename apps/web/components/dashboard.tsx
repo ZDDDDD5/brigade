@@ -12,6 +12,7 @@ import {
   ListChecks,
   LogOut,
   Mail,
+  MessageSquare,
   Moon,
   Monitor,
   Plug,
@@ -39,6 +40,7 @@ import {
 } from 'react'
 import { AppLoader } from '@/components/app-loader'
 import { ConnectAppsDialog, openConnectApps } from '@/components/connect-apps'
+import { FeedbackDialog, openFeedback } from '@/components/feedback'
 import { DocumentPanel, DocumentPanelProvider, DocumentsCorner } from '@/components/document-panel'
 import { KeptPreviews } from '@/components/kept-previews'
 import { openShortcuts, ShortcutsDialog } from '@/components/help-menu'
@@ -687,6 +689,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                   leaving={saving === 'leave'}
                   onLeave={() => void signOut(true)}
                 />
+                <GiveFeedbackItem />
                 {/* The member and their menu, and the way to connect apps; folded, a column. */}
                 <div className="flex items-center gap-2 px-2 pb-2 group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:p-0">
                   <DropdownMenu onOpenChange={(open) => open && void reloadAccounts()}>
@@ -809,6 +812,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <SearchDialog open={searching} onOpenChange={setSearching} />
           <ShortcutsDialog />
           <ConnectAppsDialog />
+          <FeedbackDialog />
           <SettingsDialog />
           <TeammateDialog />
           <AppNotifications needsYou={badge.size} />
@@ -833,6 +837,29 @@ const TICKET_ASKS: Partial<Record<Ticket['type'], string>> = {
   sign_in: 'sign in',
   cap: 'raise cap',
   usage_limit: 'usage limit',
+}
+
+/** The sidebar footer's Give feedback: a quiet line above the member, opening components/feedback.tsx. */
+function GiveFeedbackItem() {
+  const { isMobile, setOpenMobile } = useSidebar()
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          tooltip="Give feedback"
+          data-look="give-feedback"
+          className="text-muted-foreground"
+          onClick={() => {
+            if (isMobile) setOpenMobile(false)
+            openFeedback()
+          }}
+        >
+          <MessageSquare />
+          <span>Give feedback</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  )
 }
 
 /** The sidebar footer's Connect apps: opens the popup, over the sidebar on a phone. */
