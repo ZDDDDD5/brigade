@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api, useApi, type MembersResponse } from '@/lib/api'
+import { userImageSrc } from '@/lib/user-image'
 
 type Member = MembersResponse['members'][number]
 type Role = Member['role']
@@ -240,7 +241,13 @@ export default function MembersPage() {
               className={`flex items-center gap-3 py-2.5 pl-4 ${admin ? 'pr-3' : 'pr-4'}`}
             >
               <Avatar className="size-8">
-                {m.image && <AvatarImage src={m.image} alt="" referrerPolicy="no-referrer" />}
+                {m.image && (
+                  <AvatarImage
+                    src={userImageSrc(m.image) ?? undefined}
+                    alt=""
+                    referrerPolicy="no-referrer"
+                  />
+                )}
                 <AvatarFallback className="bg-secondary text-sm font-bold">
                   {initial(m.name || m.email)}
                 </AvatarFallback>

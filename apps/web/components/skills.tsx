@@ -55,6 +55,7 @@ import { Hint } from '@/components/ui/tooltip'
 import { api, uploadFile, useApi } from '@/lib/api'
 import { ProjectIcon } from '@/components/projects'
 import { clickSettings } from '@/lib/settings-dialog'
+import { userImageSrc } from '@/lib/user-image'
 
 type Scope = { everywhere: boolean; teammateIds: string[]; projectIds: string[] }
 
@@ -144,7 +145,13 @@ function AuthorImage({ skill }: { skill: Skill }) {
   if (by?.type === 'teammate') return <TeammateAvatar teammate={by} className="size-8 shrink-0" />
   return (
     <Avatar className="size-8" aria-hidden>
-      {by?.image && <AvatarImage src={by.image} alt="" referrerPolicy="no-referrer" />}
+      {by?.image && (
+        <AvatarImage
+          src={userImageSrc(by.image) ?? undefined}
+          alt=""
+          referrerPolicy="no-referrer"
+        />
+      )}
       <AvatarFallback className="bg-accent text-xs font-semibold text-accent-foreground">
         {by ? by.name.trim().charAt(0).toUpperCase() : <BookOpenText className="size-4" />}
       </AvatarFallback>

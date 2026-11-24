@@ -12,6 +12,19 @@ import { useSyncExternalStore, type MouseEvent } from 'react'
  */
 export const SETTINGS_SECTIONS = [
   {
+    section: 'profile',
+    label: 'Profile',
+    group: 'You',
+    keywords: 'account me name photo picture avatar email',
+    settings: [
+      { label: 'Name', keywords: 'display rename' },
+      { label: 'Picture', keywords: 'photo avatar image' },
+      { label: 'Email', keywords: 'address sign in google' },
+      { label: 'Danger zone', keywords: '' },
+      { label: 'Delete my account', keywords: 'remove' },
+    ],
+  },
+  {
     section: 'preferences',
     label: 'Preferences',
     group: 'You',
@@ -38,8 +51,6 @@ export const SETTINGS_SECTIONS = [
         feature: 'themes',
       },
       { label: 'Import a theme', keywords: 'appearance', feature: 'themes' },
-      { label: 'Danger zone', keywords: '' },
-      { label: 'Delete my account', keywords: 'remove' },
     ],
   },
   {

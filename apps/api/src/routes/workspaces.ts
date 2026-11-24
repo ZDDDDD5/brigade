@@ -13,6 +13,7 @@ import {
   SetSuggestions,
   SwitchOrganization,
   SwitchWorkspace,
+  UpdateProfile,
   UpdateWorkspace,
   WorkspaceDeletionCode,
 } from '@brigade/contracts'
@@ -41,6 +42,7 @@ import {
   type AppEnv,
   type WorkspaceScope,
 } from '../scope.js'
+import { readAvatar, shownImage, updateProfile } from '../profile.js'
 import { deleteWorkspace } from '../workspace-delete.js'
 import { updateWorkspace } from '../workspace-settings.js'
 import { featuresOf, featuresOfMember, requireFeature } from '../features.js'
@@ -152,8 +154,10 @@ export const workspaces = new Hono<AppEnv>()
           name: true,
           email: true,
           image: true,
+          avatar: true,
           onboardingAnswers: true,
           guest: true,
+          authAccounts: { where: { providerId: 'google' }, select: { id: true }, take: 1 },
         },
       }),
       prisma.member.findMany({ where: { userId: c.var.userId }, include: { organization: true } }),
@@ -205,9 +209,12 @@ export const workspaces = new Hono<AppEnv>()
             ],
           },
         })) > 0
-    const { onboardingAnswers, guest, ...person } = user
+    const { onboardingAnswers, guest, avatar, authAccounts, ...person } = user
     return c.json({
-      user: person,
+      // `image`: the picture they chose (a path under /api), else their sign-in's (src/profile.ts).
+      user: { ...person, image: shownImage({ ...person, avatar }) },
+      // They sign in with Google (Settings › Profile says so by their email).
+      googleSignIn: authAccounts.length > 0,
       // A guest (src/guests.ts): made by Brigade.app without a sign-in, until saved with an email.
       guest,
       // What they answered to onboarding's questions; null: never asked.
@@ -252,6 +259,22 @@ export const workspaces = new Hono<AppEnv>()
     })
     if (count > 0) recordOnboardingAnswers(c.var.userId, answers)
     return c.body(null, 204)
+  })
+
+  /** The person changes their own name or picture (Settings › Profile, src/profile.ts). */
+  .patch('/me/profile', requireWorkspace, async (c) => {
+    const input = await parseBody(c.req.raw, UpdateProfile)
+    return c.json(await updateProfile(c.var.scope, input))
+  })
+
+  /** A person's chosen picture, for anyone who shares an organization with them. */
+  .get('/users/:id/avatar', async (c) => {
+    const avatar = await readAvatar(c.var.userId, c.req.param('id'))
+    if (!avatar) throw new HTTPException(404, { message: 'No picture' })
+    return c.body(avatar.bytes as Uint8Array<ArrayBuffer>, 200, {
+      'content-type': avatar.type,
+      ...LOGO_HEADERS,
+    })
   })
 
   /** The member's message box suggests their next message, or stops (Member.suggestions). */

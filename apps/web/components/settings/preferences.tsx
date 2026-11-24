@@ -11,7 +11,6 @@ import { CHIEF_RULES_MAX, type ChiefSettings, type SetChief } from '@brigade/con
 import { useEffect, useState } from 'react'
 import { AppearanceSection } from '@/components/appearance-settings'
 import { BuildInfo } from '@/components/build-info'
-import { DeleteAccount } from '@/components/danger-zone'
 import { useDashboard } from '@/components/dashboard'
 import { NewThread, useThreadDraft } from '@/components/new-thread'
 import { SettingRow, SettingsGroup } from '@/components/settings-group'
@@ -126,8 +125,6 @@ export default function PreferencesPage() {
       <ChiefSection />
 
       {me.features?.includes('themes') && <AppearanceSection />}
-
-      <DeleteAccount />
 
       <BuildInfo />
     </div>

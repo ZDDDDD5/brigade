@@ -450,6 +450,8 @@ export type Me = {
    * with an email. Absent from APIs before it.
    */
   guest?: boolean
+  /** They sign in with Google (Settings › Profile says so). Absent from APIs before it. */
+  googleSignIn?: boolean
   organizations: { id: string; name: string; slug: string; role: string }[]
   activeOrganizationId: string | null
   role: 'owner' | 'admin' | 'member' | 'viewer' | null

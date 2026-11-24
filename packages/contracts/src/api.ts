@@ -35,6 +35,19 @@ export const UpdateWorkspace = z.object({
 })
 
 /**
+ * The person changes their own name, or their picture (an upload, as a logo is; null: back to
+ * their sign-in's picture), in Settings › Profile.
+ */
+export const UpdateProfile = z.object({
+  name: z.string().trim().min(1).max(80).optional(),
+  avatar: Logo.nullable().optional(),
+})
+
+/** Where the dashboard reads a person's chosen picture, under /api. */
+export const userAvatarPath = (user: { id: string; avatar: string }) =>
+  `/users/${user.id}/avatar?v=${encodeURIComponent(user.avatar)}`
+
+/**
  * An owner deletes the active workspace for good, typing its name to confirm, then the code
  * mailed to them for it (WorkspaceDeletionCode).
  */

@@ -7,6 +7,7 @@ import {
   BookOpenText,
   Building2,
   ChartColumn,
+  CircleUserRound,
   CreditCard,
   KeyRound,
   Monitor,
@@ -44,6 +45,7 @@ import {
 import { cn } from '@/lib/utils'
 
 const ICONS: Record<SettingsSection, LucideIcon> = {
+  profile: CircleUserRound,
   preferences: SlidersHorizontal,
   notifications: Bell,
   accounts: UserRound,
@@ -60,6 +62,7 @@ const ICONS: Record<SettingsSection, LucideIcon> = {
 
 // Each section's code loads as it first opens, not with every page of the app.
 const SECTIONS: Record<SettingsSection, ComponentType> = {
+  profile: dynamic(() => import('@/components/settings/profile')),
   preferences: dynamic(() => import('@/components/settings/preferences')),
   notifications: dynamic(() => import('@/components/settings/notifications')),
   accounts: dynamic(() => import('@/components/settings/accounts')),

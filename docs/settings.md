@@ -17,3 +17,24 @@ was; on a phone it takes the whole screen, its sections in a row above.
 - The sections are in `apps/web/components/settings/`, the dialog in
   `apps/web/components/settings-dialog.tsx`; their list, labels and search words in
   `SETTINGS_SECTIONS`, which the app's search reads too.
+
+## Profile
+
+The first section of You (`components/settings/profile.tsx`, `apps/api/src/profile.ts`): the
+person's own name, picture and email, the same in every organization they are in. The member
+menu's top row (their name and email) opens it. Deleting the account is at its foot.
+
+- **Name and picture** save on their own as they change (`PATCH /api/me/profile`), as the
+  workspace's name and logo do. A picture is uploaded and kept as a logo is (`src/logos.ts`, 256
+  KB at most, shrunk to 256 px), in the bucket folder of the workspace it was chosen in:
+  `User.avatar` holds `<workspaceId>/<version>`, and the API gives `image` as
+  `/users/<id>/avatar?v=…` (`userImageSrc` in the dashboard puts `/api` before it). Only the person
+  and those who share an organization with them read it. Removing it shows their sign-in's picture
+  (`User.image`, Google's) again; deleting that workspace does too, and deleting the account deletes
+  the picture.
+- **A sign-in with Google** puts Google's name and picture back on each sign-in
+  (`overrideUserInfoOnSignIn`). A name the person chose (`User.nameChosen`) stays: a better-auth
+  hook (`keepChosenName`) keeps it. A chosen picture needs nothing, since Google's goes to `image`,
+  under it.
+- **Email** is read only: they sign in with it. Changing it needs the new address proven first
+  (better-auth's `changeEmail`), not set up yet.
