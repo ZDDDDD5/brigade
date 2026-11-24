@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
 import { settingAnchor } from '@/lib/settings-dialog'
+import { cn } from '@/lib/utils'
 import { chosenImage, userImageSrc } from '@/lib/user-image'
 
 type Status = { saving: true } | { saved: true } | { error: string } | null
@@ -169,8 +170,9 @@ export default function ProfilePage() {
           />
           <div data-setting={settingAnchor('Name')} className="flex min-w-0 flex-1 flex-col gap-2">
             <Label htmlFor="profile-name">Name</Label>
+            {/* Save sits inside the field, only while there is a new name to save. */}
             <form
-              className="flex gap-2"
+              className="relative"
               onSubmit={(e) => {
                 e.preventDefault()
                 saveName()
@@ -179,6 +181,7 @@ export default function ProfilePage() {
               <Input
                 id="profile-name"
                 value={name}
+                className={cn((nameChanged || savingName) && 'pr-20')}
                 maxLength={80}
                 onFocus={() => (editing.current = true)}
                 onChange={(e) => {
@@ -193,10 +196,17 @@ export default function ProfilePage() {
                   }
                 }}
               />
-              <Button type="submit" disabled={!nameChanged || savingName}>
-                {savingName && <ActivityIndicator label="Saving" />}
-                Save
-              </Button>
+              {(nameChanged || savingName) && (
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={savingName}
+                  className="absolute top-1/2 right-0.5 h-7 -translate-y-1/2 rounded-full"
+                >
+                  {savingName && <ActivityIndicator label="Saving" />}
+                  Save
+                </Button>
+              )}
             </form>
           </div>
         </Card>
