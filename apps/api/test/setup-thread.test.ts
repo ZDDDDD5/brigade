@@ -16,7 +16,10 @@ import { sessionStub } from './session-stub.js'
 // - only the chief sets up a team, and only an owner or admin starts it, as onboarding offers
 //   it only to them: a member's start would take the thread the owner's onboarding opens;
 // - another start waits for one being made to start: one that did not start (its computer
-//   offline) is gone, and this start makes it rather than send the member to it.
+//   offline) is gone, and this start makes it rather than send the member to it; one paused at a
+//   cap has its message kept in the cap's ticket, and is the answer at once;
+// - a workspace whose Chief has threads from before setup threads had their id is set up: no
+//   thread is made, and onboarding goes to the dashboard.
 const envFile = new URL('../.env', import.meta.url)
 if (!process.env.DATABASE_URL && existsSync(envFile))
   process.env.DATABASE_URL = parseEnv(readFileSync(envFile, 'utf8')).DATABASE_URL || undefined
@@ -238,5 +241,52 @@ describe("a workspace's setup thread", { skip: !database && 'no database answers
     assert.equal(res.status, 201, await res.clone().text())
     assert.equal(((await res.json()) as { id: string }).id, id)
     await until(() => prompts(sent, id).length > 0, 'the message on its runner')
+  })
+
+  test("one paused at a cap is the answer at once: its message is kept in the cap's ticket", async () => {
+    const { setupThreadId } = await import('../src/routes/threads.js')
+    const id = setupThreadId(ids.workspace, ids.chief)
+    await db.session.deleteMany({ where: { teammateId: ids.chief } })
+    await db.session.create({
+      data: {
+        id,
+        teammateId: ids.chief,
+        startedByMemberId: ids.member,
+        computerId: ids.computer,
+        title: 'Setup',
+        status: 'paused',
+      } as never,
+    })
+    await db.ticket.create({
+      data: { sessionId: id, type: 'cap', title: 'Chief reached its cap' },
+    } as never)
+    const began = Date.now()
+    const res = await start({ teammateId: ids.chief, text: 'Set up', setup: true })
+    assert.equal(res.status, 200, await res.clone().text())
+    assert.equal(((await res.json()) as { id: string }).id, id)
+    assert.ok(Date.now() - began < 2000, 'answered without waiting')
+  })
+
+  test('with Chief threads from before, the team is set up: nothing is made', async () => {
+    await db.session.deleteMany({ where: { teammateId: ids.chief } })
+    const old = await db.session.create({
+      data: {
+        teammateId: ids.chief,
+        startedByMemberId: ids.member,
+        computerId: ids.computer,
+        title: 'Earlier',
+        status: 'idle',
+      } as never,
+    })
+    await db.threadTeammate.create({
+      data: { sessionId: old.id, teammateId: ids.chief },
+    } as never)
+    const before = sent.length
+    const res = await start({ teammateId: ids.chief, text: 'Set up', setup: true })
+    assert.equal(res.status, 200, await res.clone().text())
+    assert.equal(((await res.json()) as { id: string | null }).id, null)
+    assert.equal((await chiefThreads()).length, 1)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    assert.equal(sent.slice(before).filter((m) => m.type === 'thread.prompt').length, 0)
   })
 })

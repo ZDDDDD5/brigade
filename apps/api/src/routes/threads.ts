@@ -326,7 +326,7 @@ export const setupThreadId = (workspaceId: string, chiefId: string) => {
 
 /**
  * Whether the setup thread `id` was made and started: its first message kept for its computer
- * (a RunnerCommand, swept days later), so it is no longer dropped as unstarted (startThread's
+ * (a RunnerCommand, swept days later), or in a cap's ticket, so it is no longer dropped as unstarted (startThread's
  * dropUnstarted). One being made by another start at once is waited for, a few seconds: started,
  * its id is the answer; gone (it did not start), none is, and this start may make it; still
  * starting, the member is asked to try again, which onboarding does on its own.
@@ -337,6 +337,8 @@ async function setupStarted(db: ScopedDb, id: string) {
     if (!made) return false
     if (Date.now() - made.createdAt.getTime() > SETUP_SETTLED_MS) return true
     if (await prisma.runnerCommand.count({ where: { sessionId: id } })) return true
+    // Paused at a cap: its message is kept in the cap's ticket, sent once an admin allows it.
+    if (await db.ticket.count({ where: { sessionId: id, type: 'cap' } })) return true
     if (tries * SETUP_POLL_MS >= SETUP_WAIT_MS)
       throw new HTTPException(409, { message: 'Chief is still starting your setup thread' })
     await new Promise((resolve) => setTimeout(resolve, SETUP_POLL_MS))
@@ -1327,6 +1329,22 @@ export const threads = new Hono<AppEnv>()
       throw new HTTPException(403, { message: 'Only an owner or admin sets up the team' })
     if (setupId && (await setupStarted(db, setupId)))
       return c.json({ id: setupId, paused: false }, 200)
+    // Chief has threads already, from before setup threads had their id: the team is set up,
+    // and nothing is made (onboarding goes to the dashboard). As Chief's threads are listed.
+    if (
+      setupId &&
+      (await db.session.findFirst({
+        where: {
+          id: { not: setupId },
+          teammates: { some: { teammateId: teammate.id } },
+          archivedAt: null,
+          parentId: null,
+          OR: [{ playbookRunId: null, quiet: false }, { surfacedAt: { not: null } }],
+        },
+        select: { id: true },
+      }))
+    )
+      return c.json({ id: null, paused: false }, 200)
     // A thread runs on the accounts its starter may use (src/account-sharing.ts).
     // The title is what the message is about, not the command it starts with.
     const skill = input.text.startsWith('/')
