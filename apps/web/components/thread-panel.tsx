@@ -991,7 +991,7 @@ function TeammateStart({ teammate, top }: { teammate: Teammate; top?: ReactNode 
   )
   // Before its first thread, the teammate speaks first (FirstMeeting); after, the box alone.
   const firstMeeting = own?.length === 0
-  const send = useRef<(text: string) => void>(undefined)
+  const send = useRef<(text: string) => string | undefined>(undefined)
   const box = (
     <NewThread
       // A new key each time it should take the cursor: it focuses as it mounts.

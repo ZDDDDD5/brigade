@@ -95,14 +95,19 @@ export function FirstMeeting({
   onSend,
 }: {
   teammate: Teammate
-  /** A job picked, or one written in Something else: sent at once as the thread's first message. */
-  onSend: (text: string) => void
+  /**
+   * A job picked, or one written in Something else: sent at once as the thread's first message.
+   * Why it could not be, when it could not.
+   */
+  onSend: (text: string) => string | undefined
 }) {
   const { me } = useDashboard()
   const { greeting, jobs } = firstWords(teammate)
   const [other, setOther] = useState('')
+  const [problem, setProblem] = useState<string>()
+  const send = (text: string) => setProblem(onSend(text))
   const sendOther = () => {
-    if (other.trim()) onSend(other.trim())
+    if (other.trim()) send(other.trim())
   }
 
   return (
@@ -117,7 +122,7 @@ export function FirstMeeting({
           <button
             key={job}
             type="button"
-            onClick={() => onSend(job)}
+            onClick={() => send(job)}
             className={cn(ROW, 'hover:bg-background/50')}
           >
             <Letter>{LETTERS[i]!}</Letter>
@@ -151,6 +156,7 @@ export function FirstMeeting({
           )}
         </form>
       </div>
+      {problem && <p className="ml-9 px-1 text-sm text-destructive-text">{problem}</p>}
       <div className="ml-9 flex flex-wrap gap-2">
         <Chip onClick={openConnectApps}>
           <Plug aria-hidden />

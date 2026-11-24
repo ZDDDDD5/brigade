@@ -438,8 +438,11 @@ export function NewThread({
    * to fill it, and its first row makes room for the window buttons and drags the window.
    */
   fill?: boolean
-  /** Set here to send a message from outside the box, as typed and sent (a suggestion picked). */
-  sendRef?: MutableRefObject<((text: string) => void) | undefined>
+  /**
+   * Set here to start the thread with a message from outside the box (a job picked), what is in
+   * the box left as it is. It says why when the thread cannot start (no computer online…).
+   */
+  sendRef?: MutableRefObject<((text: string) => string | undefined) | undefined>
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -553,13 +556,15 @@ export function NewThread({
     void start()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- starts once, as the words land
   }, [text])
-  // From outside: in the box, then sent as dictated words sent at once are (kept in the box if
-  // it cannot start yet, for the person to send).
+  // From outside: started at once with that message, or why it cannot be.
   useEffect(() => {
     if (!sendRef) return
     sendRef.current = (message: string) => {
-      sendDictated.current = true
-      setText(message)
+      if (!loaded) return 'Still loading your computers, try again in a moment.'
+      if (!computer) return 'No computer is online: link your machine to start.'
+      if (!account) return `No ${loginName(login)} account on ${computerName(computer)} yet.`
+      void start(undefined, message)
+      return undefined
     }
   })
 
@@ -577,15 +582,19 @@ export function NewThread({
       },
     })
 
-  async function start(e?: FormEvent) {
+  // What is in the box, for start, where `text` is what goes.
+  const box = text
+  /** `only`: this message alone, from outside the box (sendRef), the box left as it is. */
+  async function start(e?: FormEvent, only?: string) {
     e?.preventDefault()
-    if (busy || !ready) return
+    if (busy || !(only === undefined ? ready : computer && account)) return
+    const text = only ?? box
     if (onSending || openAtOnce) {
       // In the sidebar at once, under an id chosen here; opened at once too with `openAtOnce`,
       // showing this message until it has started, then its conversation (lib/pending-threads.ts).
       const id = newThreadId()
-      const sending = create(text, files.ids, id)
-      const taken = files.take()
+      const sending = create(text, only === undefined ? files.ids : [], id)
+      const taken = only === undefined ? files.take() : { uploads: [] }
       pendingThreads.add(
         id,
         {
@@ -614,7 +623,7 @@ export function NewThread({
           files: taken.uploads,
         }),
       )
-      setText('')
+      if (only === undefined) setText('')
       setEffortValue(null)
       const started = sending.then(
         async () => {
@@ -645,13 +654,13 @@ export function NewThread({
     setBusy(true)
     setError(undefined)
     try {
-      const thread = await create(text, files.ids)
-      files.clear()
+      const thread = await create(text, only === undefined ? files.ids : [])
+      if (only === undefined) files.clear()
       // The effort went with that thread; the next one starts on Default, even from a
       // draft that outlives the box (the threads panel).
       setEffortValue(null)
       if (onStarted) {
-        setText('')
+        if (only === undefined) setText('')
         setBusy(false)
         onStarted(thread)
       } else router.push(`/app/threads/${thread.id}`)
