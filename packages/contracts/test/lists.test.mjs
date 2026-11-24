@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import {
-  GETTING_STARTED,
   documentFileId,
   documentFilePath,
   findLine,
@@ -484,13 +483,4 @@ test('a new list is a file named after it, at the root or in a project folder', 
   assert.equal(newListPath('!!!'), 'list.md')
   const list = parseList(newListText('Launch plan'))
   assert.equal(list.title, 'Launch plan')
-})
-
-test('the Getting started list has four lines, none for setting up the team', () => {
-  const list = parseList(GETTING_STARTED.text)
-  assert.equal(list.title, 'Getting started')
-  assert.equal(list.lines.length, 4)
-  // Chief's first meeting starts the setup thread, in no list.
-  assert.ok(list.lines.every((l) => !/Chief/.test(l.text)))
-  assert.ok(list.lines.every((l) => !l.done && !l.marker))
 })

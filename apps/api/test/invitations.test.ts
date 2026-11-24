@@ -196,17 +196,6 @@ test('the mail says who invites, to what, and links to the invitation', () => {
   assert.ok(mail.text.includes(`${env.WEB_URL[0]}/invite/inv-1`))
 })
 
-test('a new workspace starts with its Getting started list', { skip }, async () => {
-  const { GETTING_STARTED } = await import('@brigade/contracts')
-  const org = await founder('starter')
-  const file = await scoped(org).document.findFirst({
-    where: { kind: 'library', path: GETTING_STARTED.path, deletedAt: null },
-  })
-  assert.ok(file, 'the list is in its library')
-  assert.equal(file.createdByType, 'system')
-  assert.match(file.text, /- \[ \] Set up your team with Chief/)
-})
-
 test('an invited address joins the organization in its first workspace', { skip }, async () => {
   const bob = address('bob')
   const id = await invite(ada.cookie, bob.toUpperCase())

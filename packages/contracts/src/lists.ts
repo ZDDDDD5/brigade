@@ -649,26 +649,6 @@ export const ListOperations = [
 export const LIST_OPERATIONS = ['list_items', 'link_items', 'complete_item', 'add_item'] as const
 
 /**
- * The list every new workspace starts with, at the library's root: first steps a teammate can
- * take on, so Lists shows how lines are handed over and ticked from day one. Setting up the team
- * is not one: Chief's first meeting starts it, in a thread of its own (docs/lists.md).
- */
-export const GETTING_STARTED = {
-  path: 'getting-started.md',
-  text: [
-    '# Getting started',
-    '',
-    'Hand any line to a teammate: the list shows who is on it, and the line is ticked once it is done.',
-    '',
-    '- [ ] Connect the Apps your work lives in, such as GitHub or Gmail',
-    '- [ ] Create a project for what you are building',
-    '- [ ] Hand this line to a teammate and watch it get ticked',
-    '- [ ] Invite a colleague from Members',
-    '',
-  ].join('\n'),
-} as const
-
-/**
  * Where a new list named `name` goes: a Markdown file named after it, in `folder` (a project's)
  * or at the library's root. "Launch plan!" -> `launch-plan.md`.
  */

@@ -50,7 +50,6 @@ const { prisma } = await import('../src/db.js')
 const { env } = await import('../src/config.js')
 const { workspaces, firstWorkspaceName, firstWorkspaceFaults } =
   await import('../src/routes/workspaces.js')
-const { GETTING_STARTED } = await import('@brigade/contracts')
 
 const app = new Hono()
 app.on(['GET', 'POST'], '/api/auth/*', (c) => auth.handler(c.req.raw))
@@ -193,17 +192,19 @@ test(
     const chiefs = () =>
       prisma.teammate.count({ where: { workspaceId: workspace.id, kind: 'chief' } })
     assert.equal(await chiefs(), 1)
-    const list = () =>
-      prisma.document.count({
-        where: { workspaceId: workspace.id, kind: 'library', path: GETTING_STARTED.path },
-      })
-    assert.equal(await list(), 0, 'the setup after the commit did not run')
-
-    // Onboarding, on setupPending, calls again.
-    const again = await call('/api/me/first-workspace', { body: {}, cookie })
-    assert.equal(again.status, 200, await again.clone().text())
-    assert.equal(((await again.json()) as { created: boolean }).created, false)
-    assert.equal(await list(), 1, 'the next call finished it')
+    // Onboarding, on setupPending, calls again: the setup after the commit runs this time.
+    let resumed = 0
+    firstWorkspaceFaults.afterCommit = () => {
+      resumed++
+    }
+    try {
+      const again = await call('/api/me/first-workspace', { body: {}, cookie })
+      assert.equal(again.status, 200, await again.clone().text())
+      assert.equal(((await again.json()) as { created: boolean }).created, false)
+    } finally {
+      firstWorkspaceFaults.afterCommit = undefined
+    }
+    assert.equal(resumed, 1, 'the next call finished it')
     assert.equal(await chiefs(), 1)
     assert.equal(
       await prisma.workspace.count({ where: { organizationId: member.organizationId } }),
@@ -228,21 +229,19 @@ test(
     assert.equal((await call('/api/me', { cookie })).status, 200)
     const made = await call('/api/workspaces', { body: { name: 'Cleo HQ' }, cookie })
     assert.equal(made.status, 201, await made.clone().text())
-    const { id: workspaceId } = (await made.json()) as { id: string }
-    await prisma.document.deleteMany({
-      where: { workspaceId, kind: 'library', path: GETTING_STARTED.path },
-    })
     assert.equal((await meOf(cookie)).setupPending, false)
 
-    const answer = await call('/api/me/first-workspace', { body: {}, cookie })
-    assert.equal(((await answer.json()) as { created: boolean }).created, false)
-    assert.equal(
-      await prisma.document.count({
-        where: { workspaceId, kind: 'library', path: GETTING_STARTED.path },
-      }),
-      0,
-      'the removed list stays removed',
-    )
+    let resumed = 0
+    firstWorkspaceFaults.afterCommit = () => {
+      resumed++
+    }
+    try {
+      const answer = await call('/api/me/first-workspace', { body: {}, cookie })
+      assert.equal(((await answer.json()) as { created: boolean }).created, false)
+    } finally {
+      firstWorkspaceFaults.afterCommit = undefined
+    }
+    assert.equal(resumed, 0, 'its setup is not run again')
   },
 )
 
@@ -267,21 +266,24 @@ test('the pending organization is finished, not the oldest one they are in', { s
     where: { id: own.id },
     data: { metadata: JSON.stringify({ firstWorkspaceSetup: 'pending' }) },
   })
-  const lists = (workspaceId: string) =>
-    prisma.document.count({ where: { workspaceId, kind: 'library', path: GETTING_STARTED.path } })
-  await prisma.document.deleteMany({
-    where: {
-      workspaceId: { in: [team.workspaceId, own.workspaceId] },
-      kind: 'library',
-      path: GETTING_STARTED.path,
-    },
-  })
+  const pending = async (id: string) =>
+    (await prisma.organization.findUniqueOrThrow({ where: { id } })).metadata
+  const teamBefore = await pending(team.id)
   assert.equal((await meOf(cookie)).setupPending, true)
 
-  const answer = await call('/api/me/first-workspace', { body: {}, cookie })
-  assert.equal(answer.status, 200, await answer.clone().text())
-  assert.equal(await lists(own.workspaceId), 1, 'their own is finished')
-  assert.equal(await lists(team.workspaceId), 0, 'the team is left as it is')
+  let resumed = 0
+  firstWorkspaceFaults.afterCommit = () => {
+    resumed++
+  }
+  try {
+    const answer = await call('/api/me/first-workspace', { body: {}, cookie })
+    assert.equal(answer.status, 200, await answer.clone().text())
+  } finally {
+    firstWorkspaceFaults.afterCommit = undefined
+  }
+  assert.equal(resumed, 1, 'one setup finished')
+  assert.equal(await pending(own.id), null, 'their own is finished')
+  assert.equal(await pending(team.id), teamBefore, 'the team is left as it is')
   const me = await meOf(cookie)
   assert.equal(me.activeOrganizationId, own.id)
   assert.equal(me.activeWorkspaceId, own.workspaceId)

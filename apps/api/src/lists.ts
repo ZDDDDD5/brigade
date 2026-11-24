@@ -7,7 +7,6 @@ import { memberMayWrite } from './account-sharing.js'
 import { createHash } from 'node:crypto'
 import {
   findLine,
-  GETTING_STARTED,
   hasHeading,
   insertLine,
   ListItemId,
@@ -826,22 +825,6 @@ export async function linesToStartOn(
   )
   if (there.length === 0) return []
   return [...new Set(await itemsFor(db, scope, { type: 'member', id: memberId }, file, there))]
-}
-
-/**
- * Give a new workspace its first list (GETTING_STARTED), at the library's root, saved by
- * Brigade. A workspace whose library has that file already keeps its own.
- */
-export async function seedGettingStarted(scope: Scope) {
-  const db = scoped(scope)
-  if (await db.document.findFirst({ where: { kind: 'library', path: GETTING_STARTED.path } }))
-    return
-  await saveLibraryFile(
-    db,
-    scope,
-    { type: 'system', id: 'brigade' },
-    { path: GETTING_STARTED.path, bytes: new TextEncoder().encode(GETTING_STARTED.text) },
-  )
 }
 
 /**

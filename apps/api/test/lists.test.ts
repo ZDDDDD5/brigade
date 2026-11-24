@@ -476,24 +476,30 @@ describe('lists', { skip: !database && 'no database answers' }, () => {
   })
 
   test('a new thread starts on lines of a list: linked and told before its first turn', async () => {
-    const { GETTING_STARTED } = await import('@brigade/contracts')
     const APPS_LINE = 'Connect the Apps your work lives in, such as GitHub or Gmail'
-    await lists.seedGettingStarted(scope)
-    const file = await db.document.findFirstOrThrow({ where: { path: GETTING_STARTED.path } })
-    assert.equal(file.createdByType, 'system', 'saved by Brigade')
-    const summary = (await lists.listSummaries(db, scope)).find((l) => l.documentId === file.id)
-    assert.equal(summary?.title, 'Getting started')
-    assert.equal(summary?.total, 4)
-    // Seeding again keeps the file a person may have changed.
     await library.saveLibraryFile(
       db,
       scope,
       { type: 'member', id: ids.member },
-      { path: file.path, bytes: new TextEncoder().encode(`${GETTING_STARTED.text}- [ ] Mine\n`) },
+      {
+        path: 'first-steps.md',
+        bytes: new TextEncoder().encode(
+          [
+            '# First steps',
+            '',
+            'Hand any line to a teammate.',
+            '',
+            `- [ ] ${APPS_LINE}`,
+            '- [ ] Create a project for what you are building',
+            '',
+          ].join('\n'),
+        ),
+      },
     )
-    await lists.seedGettingStarted(scope)
-    const kept = await db.document.findFirstOrThrow({ where: { id: file.id } })
-    assert.match(await library.documentText(scope, kept), /- \[ \] Mine/)
+    const file = await db.document.findFirstOrThrow({ where: { path: 'first-steps.md' } })
+    const summary = (await lists.listSummaries(db, scope)).find((l) => l.documentId === file.id)
+    assert.equal(summary?.title, 'First steps')
+    assert.equal(summary?.total, 2)
 
     const { startThread } = await import('../src/work.js')
     const itemIds = await lists.linesToStartOn(db, scope, ids.member, {

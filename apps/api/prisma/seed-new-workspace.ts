@@ -1,5 +1,5 @@
 // A workspace just past onboarding, for a local Brigade or a preview: Erin's, with an AI account
-// on its cloud computer, its Getting started list and Chief alone, which has no thread yet. Its
+// on its cloud computer and Chief alone, which has no thread yet. Its
 // threads page opens on Chief's first meeting (apps/web/components/first-meeting.tsx), as a new
 // workspace's owner sees it once onboarding ends; no runner answers what is sent there.
 // With a Cloud plan, so its cloud computer counts as one to start threads on when billing is on.
@@ -7,7 +7,6 @@
 import { randomUUID } from 'node:crypto'
 import { CHIEF_NAME } from '@brigade/contracts'
 import { prisma } from '../src/db.js'
-import { seedGettingStarted } from '../src/lists.js'
 
 export async function seedNewWorkspace(erin: { id: string; email: string }) {
   const made = await prisma.workspace.findFirst({
@@ -63,9 +62,6 @@ export async function seedNewWorkspace(erin: { id: string; email: string }) {
     },
   })
   await cloudPlan(workspace.id)
-  await seedGettingStarted(inWorkspace).catch((error: unknown) =>
-    console.warn(`seed: no getting-started list for Erin: ${String(error)}`),
-  )
   console.log('created: Erin’s new workspace')
 }
 
