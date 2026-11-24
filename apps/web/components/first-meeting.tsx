@@ -112,8 +112,8 @@ export function FirstMeeting({
 
   return (
     // Two bubbles in a row from the teammate read as one group, as Midnight draws them: round
-    // corners outside, small ones where they meet, a hairline apart.
-    <div className="flex w-full flex-col gap-0.5">
+    // corners outside, small ones where they meet, a few pixels apart.
+    <div className="flex w-full flex-col gap-1.5">
       <div className="flex items-end gap-2">
         <TeammateAvatar teammate={teammate} className="size-7 shrink-0" />
         <p className="rounded-[1.3rem] rounded-bl-[0.45rem] bg-muted px-4 py-2.5 text-sm">
