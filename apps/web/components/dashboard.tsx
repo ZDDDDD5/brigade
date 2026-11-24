@@ -12,7 +12,7 @@ import {
   ListChecks,
   LogOut,
   Mail,
-  MessageSquare,
+  Megaphone,
   Moon,
   Monitor,
   Plug,
@@ -854,7 +854,7 @@ function GiveFeedbackItem() {
             openFeedback()
           }}
         >
-          <MessageSquare />
+          <Megaphone />
           <span>Give feedback</span>
         </SidebarMenuButton>
       </SidebarMenuItem>

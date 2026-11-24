@@ -115,7 +115,7 @@ export function FeedbackDialog() {
                 rows={5}
                 maxLength={FEEDBACK_MAX}
                 autoFocus
-                className="resize-none"
+                className="resize-none focus-visible:border-input focus-visible:ring-0"
               />
             </div>
             <div className="flex flex-col gap-2">

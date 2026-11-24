@@ -13,11 +13,13 @@ import { addressOf } from '../mail/names.js'
 import { resendConfigured, sendEmail } from '../mail/resend.js'
 import { parseBody, requireUser, requireWorkspace, type AppEnv } from '../scope.js'
 
-/** Files larger than this are named in the mail, not attached; Resend takes 40 MB in all. */
+/** Files larger than this are only linked in the mail, not attached; Resend takes 40 MB in all. */
 const ATTACH_EACH = 10 * 1024 * 1024
 const ATTACH_TOTAL = 30 * 1024 * 1024
 /** Long enough for Resend to fetch them, however long its queue. */
-const LINK_SECONDS = 24 * 3600
+const ATTACH_SECONDS = 24 * 3600
+/** The files' links in the mail's text: as long as R2 signs one. */
+const LINK_DAYS = 7
 
 export const feedback = new Hono<AppEnv>()
   .use(requireUser, requireWorkspace)
@@ -85,23 +87,35 @@ async function mailTeam(
   const who = user ? `${user.name || user.email} <${user.email}>` : scope.userId
   const page = row.page ? `${env.WEB_URL[0]}${row.page.startsWith('/') ? '' : '/'}${row.page}` : ''
 
+  // Each file by a signed link of the bucket (the longest R2 signs: 7 days), and attached when
+  // small enough, Resend fetching it by a signed link too. Without R2 (locally): names only.
   const attachments: { filename: string; path: string; content_type?: string }[] = []
-  const named: string[] = []
+  const lines: string[] = []
   let total = 0
   for (const file of files) {
-    const size = `${file.name} (${Math.max(1, Math.round(file.size / 1024))} KB)`
-    if (directUploads && file.size <= ATTACH_EACH && total + file.size <= ATTACH_TOTAL) {
-      total += file.size
-      const signed = await presignGet(
+    const label = `${file.name} (${Math.max(1, Math.round(file.size / 1024))} KB)`
+    if (!directUploads) {
+      lines.push(`- ${label}`)
+      continue
+    }
+    const link = (seconds: number) =>
+      presignGet(
         attachmentKey(scope, file.id),
         {
           contentType: file.contentType,
           disposition: `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,
         },
-        LINK_SECONDS,
-      )
-      attachments.push({ filename: file.name, path: signed.url, content_type: file.contentType })
-    } else named.push(size)
+        seconds,
+      ).then((signed) => signed.url)
+    lines.push(`- ${label}: ${await link(LINK_DAYS * 24 * 3600)}`)
+    if (file.size <= ATTACH_EACH && total + file.size <= ATTACH_TOTAL) {
+      total += file.size
+      attachments.push({
+        filename: file.name,
+        path: await link(ATTACH_SECONDS),
+        content_type: file.contentType,
+      })
+    }
   }
 
   const text = [
@@ -113,7 +127,7 @@ async function mailTeam(
     page && `Page: ${page}`,
     row.userAgent && `Browser: ${row.userAgent}`,
     files.length
-      ? `Files: ${files.length}${named.length ? ` (not attached: ${named.join(', ')})` : ''}`
+      ? `Files (links work ${LINK_DAYS} days; the files stay in Brigade):\n${lines.join('\n')}`
       : '',
     `Feedback: ${row.id}`,
   ]
