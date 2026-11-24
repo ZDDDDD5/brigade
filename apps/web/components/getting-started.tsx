@@ -3,6 +3,7 @@ import { Check, X } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { useDashboard } from '@/components/dashboard'
+import { useThreadPanel } from '@/components/thread-panel'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
@@ -19,6 +20,7 @@ const dismissedKey = (workspaceId: string) => `brigade.checklist.dismissed.${wor
  */
 export function GettingStarted({ threads }: { threads: ThreadSummary[] | undefined }) {
   const { me, teammates } = useDashboard()
+  const panel = useThreadPanel()
   const workspaceId = me.activeWorkspaceId!
   const connections = useApi<ConnectionsResponse>('/connections', ['connections.updated'])
   const [dismissed, setDismissed] = useState(true)
@@ -42,9 +44,14 @@ export function GettingStarted({ threads }: { threads: ThreadSummary[] | undefin
     {
       label: 'Set up your team with Chief',
       done: team.length > 0,
+      // Not started: Chief's first meeting (components/first-meeting.tsx), which asks for the
+      // website the team is set up from.
       href: chiefThread ? `/app/threads/${chiefThread.id}` : undefined,
-      action: chiefThread ? 'Continue' : undefined,
-      hint: chiefThread ? undefined : 'Ask Chief below to help you set up your team.',
+      open: !chiefThread && chief ? () => panel.openTeammate(chief.id) : undefined,
+      action: chiefThread ? 'Continue' : 'Start',
+      hint: chiefThread
+        ? undefined
+        : 'Send Chief your website: it does a first job for you and suggests your team.',
     },
     {
       label: 'Connect a tool your team works in',
@@ -123,6 +130,11 @@ export function GettingStarted({ threads }: { threads: ThreadSummary[] | undefin
                   <Link href={s.href} onClick={(e) => clickSettings(e, s.href!)}>
                     {s.action}
                   </Link>
+                </Button>
+              )}
+              {!s.done && !s.href && s.open && s.action && (
+                <Button size="sm" variant={next ? 'default' : 'outline'} onClick={s.open}>
+                  {s.action}
                 </Button>
               )}
             </li>
