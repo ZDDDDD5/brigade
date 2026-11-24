@@ -270,6 +270,44 @@ test('Durable Objects reset past their memory alert, by Worker; others are not o
   assert.equal(objectResetProblems(names, [reset('ns-hubs', 1)])[0]!.severity, 'warning')
 })
 
+test('a reset alert names the objects that reset, by name or by id', () => {
+  // As on 2026-11-24: the Api object reset twice at 01:56 UTC, with no cause in its logs.
+  const names = [
+    { dimensions: { scriptName: 'brigade-api', namespaceId: 'ns-api' } },
+    { dimensions: { scriptName: 'brigade-api', namespaceId: 'ns-hubs' } },
+  ]
+  const reset = (namespaceId: string, objectId: string, internal: number, memory = 0) => ({
+    sum: { exceededMemoryErrors: memory, exceededCpuErrors: 0, fatalInternalErrors: internal },
+    dimensions: { namespaceId, objectId },
+  })
+  const which = new Map([
+    ['id-api', 'the Api object'],
+    ['id-hub-a', 'the hub of workspace a'],
+  ])
+  // Every reset by an internal error is still told: one with no known cause may be ours.
+  const [api] = objectResetProblems(names, [reset('ns-api', 'id-api', 2)], which)
+  assert.equal(api!.severity, 'warning')
+  assert.match(api!.detail!, /2 by an internal error\. Which: the Api object \(2\)\./)
+
+  const [alert, ...rest] = objectResetProblems(
+    names,
+    [
+      reset('ns-hubs', 'id-hub-a', 1, 1),
+      reset('ns-hubs', 'f9fbb01929e7f67de6c0a51f', 1),
+      reset('ns-api', 'id-api', 1),
+      reset('ns-hubs', 'id-quiet', 0),
+    ],
+    which,
+  )
+  assert.equal(rest.length, 0)
+  assert.match(alert!.detail!, /4 reset\(s\).*: 1 past their memory, 0 past their CPU, 3 by/)
+  assert.match(
+    alert!.detail!,
+    /Which: the hub of workspace a \(2\), object f9fbb01929e7 \(1\), the Api object \(1\)\./,
+  )
+  assert.doesNotMatch(alert!.detail!, /id-quiet/)
+})
+
 describe('sending', () => {
   const notice = {
     kind: 'firing' as const,

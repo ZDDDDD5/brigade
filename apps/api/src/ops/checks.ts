@@ -710,50 +710,79 @@ export const RESETS_CRITICAL = 5
 type Named = { dimensions: { scriptName: string; namespaceId: string } }
 type Resets = {
   sum: { exceededMemoryErrors: number; exceededCpuErrors: number; fatalInternalErrors: number }
-  dimensions: { namespaceId: string }
+  dimensions: { namespaceId: string; objectId?: string }
 }
 
 /**
  * Durable Objects reset by the runtime (past their memory, their CPU, or an internal error), by
  * Worker. Cloudflare counts these apart from invocations: an object past its memory is reset with
  * every socket it held, which the failed invocations alone may not show (the 2026-10-27 incident).
- * Only the namespaces of `names`: Brigade's, as its invocations name them.
+ * Only the namespaces of `names`: Brigade's, as its invocations name them. `which` names the
+ * objects that reset (the Api object, a workspace's hub), by their id.
  */
-export function objectResetProblems(names: Named[], resets: Resets[]): Alert[] {
+export function objectResetProblems(
+  names: Named[],
+  resets: Resets[],
+  which: Map<string, string> = new Map(),
+): Alert[] {
   const scriptOf = new Map(names.map((n) => [n.dimensions.namespaceId, n.dimensions.scriptName]))
-  const byScript = new Map<string, { memory: number; cpu: number; internal: number }>()
+  const byScript = new Map<
+    string,
+    { memory: number; cpu: number; internal: number; objects: Map<string, number> }
+  >()
   for (const { sum, dimensions } of resets) {
     const script = scriptOf.get(dimensions.namespaceId)
     if (!script) continue
-    const total = byScript.get(script) ?? { memory: 0, cpu: 0, internal: 0 }
+    const total = byScript.get(script) ?? { memory: 0, cpu: 0, internal: 0, objects: new Map() }
     total.memory += sum.exceededMemoryErrors
     total.cpu += sum.exceededCpuErrors
     total.internal += sum.fatalInternalErrors
+    const count = sum.exceededMemoryErrors + sum.exceededCpuErrors + sum.fatalInternalErrors
+    if (count && dimensions.objectId) {
+      const name = which.get(dimensions.objectId) ?? `object ${dimensions.objectId.slice(0, 12)}`
+      total.objects.set(name, (total.objects.get(name) ?? 0) + count)
+    }
     byScript.set(script, total)
   }
   const alerts: Alert[] = []
-  for (const [script, { memory, cpu, internal }] of byScript) {
+  for (const [script, { memory, cpu, internal, objects }] of byScript) {
     const total = memory + cpu + internal
     if (!total) continue
+    const where = objects.size
+      ? ` Which: ${[...objects].map(([name, n]) => `${name} (${n})`).join(', ')}.`
+      : ''
     alerts.push({
       key: `worker:${script}:resets`,
       severity: total >= RESETS_CRITICAL ? 'critical' : 'warning',
       title: `Durable Objects of ${script} reset`,
-      detail: `${total} reset(s) in the last ${CF_WINDOW_MS / MINUTE} min: ${memory} past their memory, ${cpu} past their CPU, ${internal} by an internal error. Each drops every socket the object held. Workers & Pages › ${script} › Logs in Cloudflare says which object.`,
+      detail: `${total} reset(s) in the last ${CF_WINDOW_MS / MINUTE} min: ${memory} past their memory, ${cpu} past their CPU, ${internal} by an internal error.${where} Each drops every socket the object held. Workers & Pages › ${script} › Logs in Cloudflare says why.`,
     })
   }
   return alerts
 }
 
+/** The objects of `resets` that reset, by id. */
+const resetObjects = (resets: Resets[]) => [
+  ...new Set(
+    resets
+      .filter(
+        ({ sum }) => sum.exceededMemoryErrors + sum.exceededCpuErrors + sum.fatalInternalErrors,
+      )
+      .flatMap(({ dimensions }) => (dimensions.objectId ? [dimensions.objectId] : [])),
+  ),
+]
+
 async function checkWorkers(now: number) {
   if (!env.CLOUDFLARE_API_TOKEN || !env.CLOUDFLARE_ACCOUNT_ID) return
   const filter = `{datetime_geq: $since, datetime_leq: $until, scriptName_like: "brigade%", status_notin: ${JSON.stringify(FINE)}}`
+  // The resets: one row per object over the window (the account's every object, other Workers'
+  // too: 28 on a night of November 2026), so that the alert names which one reset.
   const query = `query ($account: String!, $since: Time!, $until: Time!) {
     viewer { accounts(filter: {accountTag: $account}) {
       workers: workersInvocationsAdaptive(limit: 200, filter: ${filter}) { sum { requests } dimensions { scriptName status } }
       objects: durableObjectsInvocationsAdaptiveGroups(limit: 200, filter: ${filter}) { sum { requests } dimensions { scriptName status } }
       names: durableObjectsInvocationsAdaptiveGroups(limit: 200, filter: {datetime_geq: $since, datetime_leq: $until, scriptName_like: "brigade%"}) { dimensions { scriptName namespaceId } }
-      resets: durableObjectsPeriodicGroups(limit: 1000, filter: {datetimeMinute_geq: $since, datetimeMinute_leq: $until}) { sum { exceededMemoryErrors exceededCpuErrors fatalInternalErrors } dimensions { namespaceId } }
+      resets: durableObjectsPeriodicGroups(limit: 10000, filter: {datetimeMinute_geq: $since, datetimeMinute_leq: $until}) { sum { exceededMemoryErrors exceededCpuErrors fatalInternalErrors } dimensions { namespaceId objectId } }
     } }
   }`
   const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
@@ -785,11 +814,19 @@ async function checkWorkers(now: number) {
       `Cloudflare analytics ${response.status}: ${body.errors?.map((e) => e.message).join('; ') ?? ''}`,
     )
   const account = body.data.viewer.accounts[0]
+  const resets = account?.resets ?? []
+  // Named only when one reset; a name not found leaves the object's id in the alert.
+  const objects = resetObjects(resets)
+  const which = objects.length
+    ? await import('../platform/node.js')
+        .then(({ objectNames }) => objectNames(objects))
+        .catch(() => new Map<string, string>())
+    : new Map<string, string>()
   await settle(
     'worker:',
     [
       ...workerProblems([...(account?.workers ?? []), ...(account?.objects ?? [])]),
-      ...objectResetProblems(account?.names ?? [], account?.resets ?? []),
+      ...objectResetProblems(account?.names ?? [], resets, which),
     ],
     new Date(now),
   )

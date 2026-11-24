@@ -86,7 +86,7 @@ told stays open until it is, and a turn for the worse that was not sent is tried
 | `disk:<computerId>`           | A cloud computer's disk still full once its runner freed what it could (`Computer.disk`, below), with the largest entries of teammates' homes                                                                                                                                                                                                                                                                          | warning                                |
 | `abuse:<computerId>`          | Teammates' processes on a cloud computer sending mail to port 25, reaching the cloud's metadata, scanning, mining (each stopped, docs/abuse.md), or keeping 80% of the CPU for 30 min; over an hour after the last report                                                                                                                                                                                              | critical; warning for CPU alone        |
 | `worker:<script>`             | A `brigade-*` Worker's or Durable Object's failed invocations (exceptions, exceeded limits), as Cloudflare counts them                                                                                                                                                                                                                                                                                                 | 5 / 50 in 10 min (checked every 5 min) |
-| `worker:<script>:resets`      | A `brigade-*` Worker's Durable Objects reset by the runtime: past their memory or CPU, or an internal error (each drops the object's sockets)                                                                                                                                                                                                                                                                          | 1 / 5 in 10 min (checked every 5 min)  |
+| `worker:<script>:resets`      | A `brigade-*` Worker's Durable Objects reset by the runtime: past their memory or CPU, or an internal error (each drops the object's sockets); names which (the Api object, a workspace's hub)                                                                                                                                                                                                                         | 1 / 5 in 10 min (checked every 5 min)  |
 | `api-down`                    | The watchdog: the Api object does not answer, or its checks fail                                                                                                                                                                                                                                                                                                                                                       | critical                               |
 
 A failure-count problem ends once none came for a while (15 minutes to 3 hours, by kind).
@@ -213,6 +213,17 @@ Its resets (past its memory, as on 2026-10-27, or an internal error) are Cloudfl
 `worker:brigade-api:resets`. It no longer counts its own starts: with the jobs on their queue
 and the sockets in the hub objects, the runtime lets it go between requests, and each start
 looked like a restart no deploy explains.
+
+The alert names the objects that reset: Cloudflare counts resets by object id, an id is its
+name hashed, so the Api object's and the hubs' ids are made again from their names (the
+workspaces whose hub has an object of its own); one not found is named by its id. Every reset
+warns, an internal error's too: Cloudflare's count says nothing of its cause. On 2026-11-24
+two hubs reset at 04:08 and 04:09 UTC with `Internal error in Durable Object storage caused
+object to be reset` in their logs (as one hub on 2026-11-18): Cloudflare's storage. The Api
+object reset twice at 01:56 UTC with no line in its logs: its cause is unknown. After the
+04:09 reset the hub's three sockets were back within 30 seconds. On a reconnect a runner sends
+again every event the API had not acknowledged (its outbox), a thread's page asks for what
+followed its last event (`subscribe` with `afterSeq`), and the dashboard's lists fetch again.
 
 A whole Worker that does not deploy or load (its cron with it) is not seen from inside
 Cloudflare: for that, an uptime monitor outside (Better Stack, UptimeRobot…) on

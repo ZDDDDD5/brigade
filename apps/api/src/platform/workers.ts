@@ -196,6 +196,35 @@ export function hubElsewhere(workspaceId: string): HubCall | null | Promise<HubC
   return hubModeOf(workspaceId).then(decide)
 }
 
+/**
+ * Which of this Worker's Durable Objects each of `objectIds` is, for the alert of their resets
+ * (src/ops/checks.ts): the Api object, or the hub of a workspace whose hub has an object of its
+ * own. An id is its name hashed, so the hubs' ids are made again from the workspaces' ids; one
+ * that is neither is left out.
+ */
+export async function objectNames(objectIds: string[]): Promise<Map<string, string>> {
+  const names = new Map<string, string>()
+  const wanted = new Set(objectIds)
+  if (!wanted.size) return names
+  if (hubBindings.API) {
+    const { NAME } = await import('../api-object.js')
+    const id = hubBindings.API.idFromName(NAME).toString()
+    if (wanted.has(id)) names.set(id, 'the Api object')
+  }
+  const hubs = hubBindings.HUBS
+  if (!hubs || names.size === wanted.size) return names
+  const { prisma } = await import('../db.js')
+  const workspaces = await prisma.workspace.findMany({
+    where: { hubMode: 'object' },
+    select: { id: true },
+  })
+  for (const { id: workspaceId } of workspaces) {
+    const id = hubs.idFromName(workspaceId).toString()
+    if (wanted.has(id)) names.set(id, `the hub of workspace ${workspaceId}`)
+  }
+  return names
+}
+
 /** Whether the workspace's hub, and its sockets, are not this process's (an Api object's) to hold. */
 export async function hubIsElsewhere(workspaceId: string) {
   return Boolean(hubBindings.HUBS) && (await hubModeOf(workspaceId)) === 'object'

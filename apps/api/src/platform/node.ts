@@ -69,6 +69,11 @@ export function hubElsewhere(_workspaceId: string): HubCall | null | Promise<Hub
   return null
 }
 
+/** Which Durable Object each id is (src/ops/checks.ts): there are none on Node. */
+export async function objectNames(_objectIds: string[]): Promise<Map<string, string>> {
+  return new Map()
+}
+
 /** Whether the workspace's hub is not this process's: never on Node. */
 export async function hubIsElsewhere(_workspaceId: string) {
   return false
