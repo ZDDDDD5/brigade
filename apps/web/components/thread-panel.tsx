@@ -992,11 +992,10 @@ function TeammateStart({ teammate, top }: { teammate: Teammate; top?: ReactNode 
   // Before its first thread, the teammate speaks first (FirstMeeting); after, the box alone.
   const firstMeeting = own?.length === 0
   const send = useRef<(text: string) => void>(undefined)
-  const [refocus, setRefocus] = useState(0)
   const box = (
     <NewThread
       // A new key each time it should take the cursor: it focuses as it mounts.
-      key={`${focusKey}:${refocus}`}
+      key={focusKey}
       teammate={teammate}
       rows={firstMeeting ? 2 : 3}
       draft={draft}
@@ -1022,13 +1021,10 @@ function TeammateStart({ teammate, top }: { teammate: Teammate; top?: ReactNode 
       )}
       {firstMeeting ? (
         <div className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-6 md:px-10">
+          {/* Below the pill bar, as a thread's conversation is. */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-16 md:px-10">
             <div className="mx-auto w-full max-w-3xl">
-              <FirstMeeting
-                teammate={teammate}
-                onPick={(text) => send.current?.(text)}
-                onSomethingElse={() => setRefocus((n) => n + 1)}
-              />
+              <FirstMeeting teammate={teammate} onSend={(text) => send.current?.(text)} />
             </div>
           </div>
           <div className="mx-auto w-full max-w-3xl px-4 pb-4 md:px-0">{box}</div>

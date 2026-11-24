@@ -1,14 +1,15 @@
 'use client'
 // A teammate's first meeting with the member: before its first thread, it speaks first. A
-// greeting, a few jobs to start with (a pick sends it as the thread's first message), and what
-// helps it work (Apps, and Brigade Cloud for a workspace without it). Written here, from its
+// greeting, a few jobs to start with or one written in Something else (sent at once as the
+// thread's first message), and what helps it work (Apps, its role). Written here, from its
 // name and role: no model runs for it, and no thread exists until the member sends something.
-import type { BillingResponse } from '@brigade/contracts'
-import { Cloud, Plug } from 'lucide-react'
+import { ArrowUp, Plug, SlidersHorizontal } from 'lucide-react'
+import Link from 'next/link'
 import { useState } from 'react'
 import { openConnectApps } from '@/components/connect-apps'
 import { isAdmin, TeammateAvatar, useDashboard } from '@/components/dashboard'
-import { subscribeToCloud, useApi, type Teammate } from '@/lib/api'
+import type { Teammate } from '@/lib/api'
+import { cn } from '@/lib/utils'
 
 /** Jobs to start with, by what the teammate's role says it does; the first match wins. */
 const BY_ROLE: { match: RegExp; jobs: string[] }[] = [
@@ -74,23 +75,35 @@ export function firstWords(teammate: Pick<Teammate, 'name' | 'title' | 'kind' | 
 
 const LETTERS = 'ABCD'
 
+/** A row of the card: its letter, then what it holds. Rounded like the card, not a pill. */
+const ROW =
+  'flex w-full items-center gap-3 rounded-[12px] px-2 py-2 text-left text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50'
+
+function Letter({ children }: { children: string }) {
+  return (
+    <span
+      aria-hidden
+      className="flex size-6 shrink-0 items-center justify-center rounded-[6px] bg-background/70 text-xs font-medium text-muted-foreground"
+    >
+      {children}
+    </span>
+  )
+}
+
 export function FirstMeeting({
   teammate,
-  onPick,
-  onSomethingElse,
+  onSend,
 }: {
   teammate: Teammate
-  /** A job picked: sent as the thread's first message. */
-  onPick: (text: string) => void
-  /** Something else: the member writes their own. */
-  onSomethingElse: () => void
+  /** A job picked, or one written in Something else: sent at once as the thread's first message. */
+  onSend: (text: string) => void
 }) {
   const { me } = useDashboard()
-  const billing = useApi<BillingResponse>('/billing')
-  const [busy, setBusy] = useState(false)
   const { greeting, jobs } = firstWords(teammate)
-  // Cloud only where it is offered and not had, to whoever may subscribe.
-  const offerCloud = isAdmin(me) && billing.data?.enabled && !billing.data.plan?.active
+  const [other, setOther] = useState('')
+  const sendOther = () => {
+    if (other.trim()) onSend(other.trim())
+  }
 
   return (
     <div className="flex w-full flex-col gap-2">
@@ -98,45 +111,56 @@ export function FirstMeeting({
         <TeammateAvatar teammate={teammate} className="size-7 shrink-0" />
         <p className="rounded-2xl rounded-bl-md bg-muted px-3.5 py-2 text-sm">{greeting}</p>
       </div>
-      <div className="ml-9 flex flex-col gap-1 rounded-2xl bg-muted p-3">
-        <p className="px-1 pb-1 text-sm font-semibold">What should we start with?</p>
-        {[...jobs, 'Something else'].map((job, i) => {
-          const other = i === jobs.length
-          return (
+      <div className="ml-9 flex flex-col gap-0.5 rounded-2xl bg-muted p-2">
+        <p className="px-2 pt-1.5 pb-2 text-sm font-semibold">What should we start with?</p>
+        {jobs.map((job, i) => (
+          <button
+            key={job}
+            type="button"
+            onClick={() => onSend(job)}
+            className={cn(ROW, 'hover:bg-background/50')}
+          >
+            <Letter>{LETTERS[i]!}</Letter>
+            {job}
+          </button>
+        ))}
+        {/* Something else: written right here, and sent as the jobs are. */}
+        <form
+          className={cn(ROW, 'py-1.5 focus-within:bg-background/50 hover:bg-background/50')}
+          onSubmit={(e) => {
+            e.preventDefault()
+            sendOther()
+          }}
+        >
+          <Letter>{LETTERS[jobs.length]!}</Letter>
+          <input
+            value={other}
+            onChange={(e) => setOther(e.target.value)}
+            placeholder="Something else"
+            aria-label="Something else"
+            className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+          />
+          {other.trim() && (
             <button
-              key={job}
-              type="button"
-              onClick={() => (other ? onSomethingElse() : onPick(job))}
-              className="flex items-center gap-2.5 rounded-lg px-1 py-1.5 text-left text-sm outline-none hover:bg-background/60 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              type="submit"
+              aria-label="Send"
+              className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground text-background"
             >
-              <span
-                aria-hidden
-                className="flex size-5 shrink-0 items-center justify-center rounded-md bg-background text-[11px] text-muted-foreground"
-              >
-                {LETTERS[i]}
-              </span>
-              <span className={other ? 'text-muted-foreground' : undefined}>{job}</span>
+              <ArrowUp aria-hidden className="size-4" />
             </button>
-          )
-        })}
+          )}
+        </form>
       </div>
       <div className="ml-9 flex flex-wrap gap-2">
         <Chip onClick={openConnectApps}>
           <Plug aria-hidden />
           Connect apps
         </Chip>
-        {offerCloud && (
-          <Chip
-            disabled={busy}
-            onClick={() => {
-              setBusy(true)
-              subscribeToCloud('billing', 'starter')
-                .catch(() => undefined)
-                .finally(() => setBusy(false))
-            }}
-          >
-            <Cloud aria-hidden />
-            Keep {teammate.name} working · Cloud
+        {/* Its role and instructions, where an owner or admin shapes what it does. */}
+        {isAdmin(me) && (
+          <Chip href={`/app/teammates/${teammate.id}`}>
+            <SlidersHorizontal aria-hidden />
+            Shape {teammate.name}’s role
           </Chip>
         )}
       </div>
@@ -144,22 +168,26 @@ export function FirstMeeting({
   )
 }
 
+const CHIP =
+  'inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5 text-xs font-medium outline-none hover:bg-muted/70 focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg]:size-3.5 [&_svg]:text-muted-foreground'
+
 function Chip({
   onClick,
-  disabled,
+  href,
   children,
 }: {
-  onClick: () => void
-  disabled?: boolean
+  onClick?: () => void
+  href?: string
   children: React.ReactNode
 }) {
+  if (href)
+    return (
+      <Link href={href} className={CHIP}>
+        {children}
+      </Link>
+    )
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5 text-xs font-medium outline-none hover:bg-muted/70 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50 [&_svg]:size-3.5 [&_svg]:text-muted-foreground"
-    >
+    <button type="button" onClick={onClick} className={CHIP}>
       {children}
     </button>
   )
