@@ -27,7 +27,6 @@ import { Button } from '@/components/ui/button'
 import { Hint } from '@/components/ui/tooltip'
 import {
   api,
-  teammateModelLabel,
   useApi,
   type Schedule,
   type Teammate,
