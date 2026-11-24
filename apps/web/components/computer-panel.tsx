@@ -12,6 +12,7 @@ import { CloseButton } from '@/components/close-button'
 import { StatusBadge, TeammateAvatar } from '@/components/dashboard'
 import { TeammateTitle } from '@/components/teammate-title'
 import { DesktopScreen } from '@/components/desktop-preview'
+import { TeammateModelLine } from '@/components/model-select'
 import type { OpenFile } from '@/components/file-links'
 import { describeCron } from '@/components/schedules'
 import { Terminal } from '@/components/terminal'
@@ -69,7 +70,7 @@ function Frame({
   children,
 }: {
   teammate: Pick<Teammate, 'id' | 'name' | 'title' | 'harness'>
-  subtitle: string
+  subtitle: ReactNode
   onClose: () => void
   /** What Escape does: closes it, as it does the other panels beside a page, unless told else. */
   onEscape?: () => void
@@ -95,7 +96,11 @@ function Frame({
             <strong className="truncate text-sm font-semibold">{teammate.name}</strong>
             <TeammateTitle title={teammate.title} className="px-1.5 py-0 text-[11px]" />
           </span>
-          <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
+          {typeof subtitle === 'string' ? (
+            <span className="block truncate text-xs text-muted-foreground">{subtitle}</span>
+          ) : (
+            subtitle
+          )}
         </div>
         <CloseButton label={`Close ${teammate.name}'s panel`} title="Close" onClick={onClose} />
       </div>
@@ -185,7 +190,11 @@ export function TeammatePanel({
   const waiting = (threads ?? []).filter((t) => t.status === 'waiting')
   const on = waiting[0] ?? working[0]
   return (
-    <Frame teammate={teammate} subtitle={teammateModelLabel(teammate)} onClose={onClose}>
+    <Frame
+      teammate={teammate}
+      subtitle={<TeammateModelLine teammate={teammate} />}
+      onClose={onClose}
+    >
       <Section title="Computer">
         <DesktopScreen
           source={{ teammate: teammate.id }}
