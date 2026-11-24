@@ -1,5 +1,7 @@
 'use client'
 import {
+  ArrowUpRight,
+  BookOpen,
   BookOpenCheck,
   CalendarClock,
   ChevronDown,
@@ -793,11 +795,18 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                           <Palette /> Take off {wornTheme.theme.name}
                         </DropdownMenuItem>
                       )}
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={openShortcuts}>
                         <Keyboard /> Keyboard shortcuts
                         <span className="text-muted-foreground ml-auto text-xs">
                           {mac ? '⇧?' : 'Shift+?'}
                         </span>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem asChild>
+                        <a href="https://www.brigade.lol/docs" target="_blank" rel="noreferrer">
+                          <BookOpen /> Documentation
+                          <ArrowUpRight className="text-muted-foreground ml-auto" />
+                        </a>
                       </DropdownMenuItem>
                       {/* A viewer can't upload or send (requireWorkspace answers 403). */}
                       {!isViewer(data) && (
@@ -805,6 +814,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                           <MessageCircle /> Give feedback
                         </DropdownMenuItem>
                       )}
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem onSelect={() => void signOut()}>
                         {/* A guest has nothing to sign out of: what they want is another account. */}
                         <LogOut /> {data.guest ? 'Sign in to another account' : 'Sign out'}
