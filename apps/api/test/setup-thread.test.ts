@@ -13,7 +13,10 @@ import { sessionStub } from './session-stub.js'
 //   account ready on the same tick), it is one thread, whose id both get back, and its first
 //   message reaches the runner once;
 // - started again later, it is the same thread: nothing new is made or sent;
-// - only the chief sets up a team.
+// - only the chief sets up a team, and only an owner or admin starts it, as onboarding offers
+//   it only to them: a member's start would take the thread the owner's onboarding opens;
+// - another start waits for one being made to start: one that did not start (its computer
+//   offline) is gone, and this start makes it rather than send the member to it.
 const envFile = new URL('../.env', import.meta.url)
 if (!process.env.DATABASE_URL && existsSync(envFile))
   process.env.DATABASE_URL = parseEnv(readFileSync(envFile, 'utf8')).DATABASE_URL || undefined
@@ -47,7 +50,7 @@ const until = async (check: () => boolean, what: string) => {
 describe("a workspace's setup thread", { skip: !database && 'no database answers' }, () => {
   const suffix = randomUUID().slice(0, 8)
   const ids = {} as Record<
-    'org' | 'user' | 'member' | 'workspace' | 'computer' | 'runner' | 'chief' | 'riley',
+    'org' | 'user' | 'member' | 'carol' | 'workspace' | 'computer' | 'runner' | 'chief' | 'riley',
     string
   >
   let db: ReturnType<typeof scoped>
@@ -56,6 +59,7 @@ describe("a workspace's setup thread", { skip: !database && 'no database answers
   let restore: () => void
   let sent: Sent[]
   let close: () => void
+  let signedIn: string
 
   before(async () => {
     const { auth } = await import('../src/auth.js')
@@ -69,9 +73,17 @@ describe("a workspace's setup thread", { skip: !database && 'no database answers
     await prisma.user.create({
       data: { id: ids.user, name: 'Ada', email: `${ids.user}@test.local` },
     })
-    await prisma.member.create({
-      data: { id: ids.member, organizationId: ids.org, userId: ids.user, role: 'owner' },
+    await prisma.user.create({
+      data: { id: `${ids.user}-carol`, name: 'Carol', email: `${ids.user}-carol@test.local` },
     })
+    ids.carol = `m-setup-carol-${suffix}`
+    await prisma.member.createMany({
+      data: [
+        { id: ids.member, organizationId: ids.org, userId: ids.user, role: 'owner' },
+        { id: ids.carol, organizationId: ids.org, userId: `${ids.user}-carol`, role: 'member' },
+      ],
+    })
+    signedIn = ids.user
     ids.workspace = (
       await prisma.workspace.create({ data: { organizationId: ids.org, name: 'Setup' } })
     ).id
@@ -102,7 +114,7 @@ describe("a workspace's setup thread", { skip: !database && 'no database answers
     ids.riley = (await db.teammate.create({ data: { name: `Riley ${suffix}` } } as never)).id
     const getSession = auth.api.getSession
     ;(auth.api as { getSession: unknown }).getSession = sessionStub(() => ({
-      user: { id: ids.user },
+      user: { id: signedIn },
       session: {
         id: `session-${suffix}`,
         activeOrganizationId: ids.org,
@@ -135,7 +147,7 @@ describe("a workspace's setup thread", { skip: !database && 'no database answers
     if (ids.workspace) await prisma.workspace.deleteMany({ where: { id: ids.workspace } })
     await prisma.member.deleteMany({ where: { organizationId: ids.org } })
     await prisma.organization.deleteMany({ where: { id: ids.org } })
-    await prisma.user.deleteMany({ where: { id: ids.user } })
+    await prisma.user.deleteMany({ where: { id: { in: [ids.user, `${ids.user}-carol`] } } })
   })
 
   const start = (body: Record<string, unknown>) =>
@@ -182,5 +194,49 @@ describe("a workspace's setup thread", { skip: !database && 'no database answers
     const res = await start({ teammateId: ids.riley, text: 'Set up', setup: true })
     assert.equal(res.status, 400, await res.clone().text())
     assert.equal(await db.session.count({ where: { teammateId: ids.riley } }), 0)
+  })
+
+  test('a member who is not an owner or admin does not start it', async () => {
+    await db.session.deleteMany({ where: { teammateId: ids.chief } })
+    signedIn = `${ids.user}-carol`
+    try {
+      // On a computer of her own, which she may start threads on.
+      const laptop = await db.computer.create({
+        data: { kind: 'member_machine', memberId: ids.carol, name: 'Hers', status: 'running' },
+      } as never)
+      const res = await start({
+        teammateId: ids.chief,
+        computerId: laptop.id,
+        text: 'Set up',
+        setup: true,
+      })
+      assert.equal(res.status, 403, await res.clone().text())
+      assert.equal((await chiefThreads()).length, 0)
+    } finally {
+      signedIn = ids.user
+    }
+  })
+
+  test('one being made is waited for: gone, this start makes it', async () => {
+    const { setupThreadId } = await import('../src/routes/threads.js')
+    const id = setupThreadId(ids.workspace, ids.chief)
+    // Another start's thread, made and not started yet: nothing kept for its computer.
+    await db.session.create({
+      data: {
+        id,
+        teammateId: ids.chief,
+        startedByMemberId: ids.member,
+        computerId: ids.computer,
+        title: 'Setup',
+      } as never,
+    })
+    const answer = start({ teammateId: ids.chief, text: 'Set up', setup: true })
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    // It did not start, and goes (dropUnstarted).
+    await db.session.deleteMany({ where: { id } })
+    const res = await answer
+    assert.equal(res.status, 201, await res.clone().text())
+    assert.equal(((await res.json()) as { id: string }).id, id)
+    await until(() => prompts(sent, id).length > 0, 'the message on its runner')
   })
 })
