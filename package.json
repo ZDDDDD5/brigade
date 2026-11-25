@@ -9,6 +9,7 @@
   "scripts": {
     "build": "turbo run build",
     "build:zh": "node scripts/zh-cn/build.mjs",
+    "start:zh": "node scripts/zh-cn/start.mjs",
     "dev": "turbo run dev --filter=!@brigade/docs",
     "docs": "pnpm --filter @brigade/docs dev",
     "typecheck": "turbo run typecheck",

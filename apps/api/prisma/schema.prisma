@@ -249,6 +249,7 @@ model Member {
   threadPins            ThreadPin[]
   documentPins          DocumentPin[]
   listPins              ListPin[]
+  teamRooms             TeamRoom[]
   sidebarOrders         SidebarOrder[]
   threadLaters          ThreadLater[]
   homeDismissals        HomeDismissal[]
@@ -407,6 +408,7 @@ model Workspace {
   themeChanges          ThemeChange[]
   toolAccounts          ToolAccount[]
   listPins              ListPin[]
+  teamRooms             TeamRoom[]
   sidebarOrders         SidebarOrder[]
   threadLaters          ThreadLater[]
   homeDismissals        HomeDismissal[]
@@ -639,6 +641,8 @@ model SidebarOrder {
   /// "teammates" or "projects".
   list           String
   ids            String[]
+  layout         Json?
+  revision       Int       @default(0)
   updatedAt      DateTime  @updatedAt
 
   @@id([memberId, workspaceId, list])
@@ -693,7 +697,29 @@ enum SessionOrigin {
   child
 }
 
+/// A member's fixed group of bots. Each assignment has its own native task thread.
+model TeamRoom {
+  id             String    @id @default(cuid())
+  organizationId String
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  memberId       String
+  member         Member    @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  name           String
+  managerId      String
+  memberIds      String[]
+  revision       Int       @default(0)
+  tasks          Session[]
+
+  @@index([workspaceId, memberId])
+}
+
 model Session {
+  roomId               String?
+  room                 TeamRoom?          @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  roomRequestHash      String?
+  roomStopped          Boolean            @default(false)
+  roomReady            Boolean            @default(false)
   id                   String             @id @default(cuid())
   organizationId       String
   workspaceId          String
@@ -871,6 +897,7 @@ model Session {
   initiative        Initiative?        @relation(fields: [initiativeId], references: [id], onDelete: SetNull)
   initiativeActions InitiativeAction[]
   initiativeOutputs InitiativeOutput[]
+  @@index([roomId, createdAt])
   @@index([workspaceId, createdAt])
   @@index([title(ops: raw("gin_trgm_ops"))], type: Gin)
   @@index([projectId, createdAt])

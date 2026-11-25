@@ -73,6 +73,7 @@ export async function loadThread(db: ScopedDb, id: string) {
     where: { id },
     include: {
       teammate: true,
+      room: true,
       computer: true,
       teammates: { include: { teammate: true }, orderBy: { joinedAt: 'asc' } },
       parent: { select: { id: true, title: true } },
@@ -404,7 +405,14 @@ export async function specFor(
     teammate: {
       id: teammate.id,
       name: teammate.name,
-      instructions: teammate.instructions,
+      instructions: thread.room
+        ? [
+            teammate.instructions,
+            teammate.id === thread.room.managerId
+              ? 'You manage this group. Answer general requests, delegate work to the named teammates when appropriate, and ask them to report in this thread.'
+              : 'You are a specialist in this group. Report your result in this thread.',
+          ].join('\n\n')
+        : teammate.instructions,
       harness: teammate.harness,
       model: teammate.model,
       kind: teammate.kind,
@@ -419,9 +427,16 @@ export async function specFor(
       !playbook &&
       thread.startedBy.suggestions,
     starter: teammate.id === thread.teammateId,
-    teammates: thread.teammates.map((t) => ({ id: t.teammate.id, name: t.teammate.name })),
+    teammates: thread.teammates
+      .filter(
+        (t) =>
+          !thread.room || (!t.teammate.archivedAt && thread.room.memberIds.includes(t.teammateId)),
+      )
+      .map((t) => ({ id: t.teammate.id, name: t.teammate.name })),
     // In its pass, Chief brings nobody in.
-    roster: passing ? [] : roster,
+    roster: passing
+      ? []
+      : roster.filter((t) => !thread.room || thread.room.memberIds.includes(t.id)),
     library: teammate.libraryAccess,
     libraryFolders: folderExceptions({ id: teammate.id, library: teammate.libraryAccess }, rules),
     private: thread.private,

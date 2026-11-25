@@ -420,6 +420,7 @@ export const ModelName = {
   SidebarOrder: 'SidebarOrder',
   ThreadLater: 'ThreadLater',
   HomeDismissal: 'HomeDismissal',
+  TeamRoom: 'TeamRoom',
   Session: 'Session',
   Task: 'Task',
   Schedule: 'Schedule',
@@ -535,7 +536,7 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
     omit: GlobalOmitOptions
   }
   meta: {
-    modelProps: "user" | "analyticsFirst" | "downloadSource" | "adConversion" | "billingSubscription" | "authSession" | "authAccount" | "verification" | "rateLimit" | "organization" | "billingClosing" | "member" | "invitation" | "invitationSend" | "workspace" | "computer" | "runner" | "teammate" | "threadRead" | "threadPin" | "sidebarOrder" | "threadLater" | "homeDismissal" | "session" | "task" | "schedule" | "chiefDecision" | "chiefPass" | "goal" | "goalMeasurement" | "wakeup" | "replyWatch" | "threadTeammate" | "sessionEvent" | "coldEventChunk" | "threadEventVolume" | "workspaceEventDay" | "tokenUsage" | "account" | "pullRequest" | "pullRequestReview" | "comment" | "mcpClient" | "app" | "connection" | "vaultSecret" | "credential" | "credentialGrant" | "grant" | "connectionCall" | "trigger" | "subscription" | "ticket" | "document" | "listItem" | "listItemThread" | "listItemPull" | "libraryLock" | "listPin" | "documentPin" | "memoryLine" | "documentVersion" | "libraryObjectFolder" | "libraryObject" | "libraryFolder" | "libraryFolderGrant" | "libraryShare" | "toolState" | "theme" | "themeAsset" | "themeChange" | "toolAccount" | "documentAsset" | "bucketCleanup" | "workspaceCleanup" | "auditEntry" | "upload" | "attachment" | "threadAttachment" | "feedback" | "designSystem" | "skill" | "skillPack" | "previewRecipe" | "previewMachine" | "vmRun" | "previewVariable" | "project" | "projectRepository" | "pushDevice" | "desktopDevice" | "desktopMessage" | "pushNotice" | "playbookInstallation" | "playbookAction" | "playbookRun" | "playbookDryRun" | "threadFollow" | "mailAddress" | "mailProject" | "mailAlias" | "mailMessage" | "mailHtml" | "mailDomain" | "contact" | "mailMute" | "contactHandle" | "opsAlert" | "heldCall" | "runnerCommand" | "specPart" | "triggerDelivery" | "inboundEvent" | "folderBackup" | "teammateBackup" | "accountLoginBackup" | "computerReplacement" | "featureFlag" | "specPull" | "initiative" | "initiativeAction" | "initiativeOutput" | "initiativeValue"
+    modelProps: "user" | "analyticsFirst" | "downloadSource" | "adConversion" | "billingSubscription" | "authSession" | "authAccount" | "verification" | "rateLimit" | "organization" | "billingClosing" | "member" | "invitation" | "invitationSend" | "workspace" | "computer" | "runner" | "teammate" | "threadRead" | "threadPin" | "sidebarOrder" | "threadLater" | "homeDismissal" | "teamRoom" | "session" | "task" | "schedule" | "chiefDecision" | "chiefPass" | "goal" | "goalMeasurement" | "wakeup" | "replyWatch" | "threadTeammate" | "sessionEvent" | "coldEventChunk" | "threadEventVolume" | "workspaceEventDay" | "tokenUsage" | "account" | "pullRequest" | "pullRequestReview" | "comment" | "mcpClient" | "app" | "connection" | "vaultSecret" | "credential" | "credentialGrant" | "grant" | "connectionCall" | "trigger" | "subscription" | "ticket" | "document" | "listItem" | "listItemThread" | "listItemPull" | "libraryLock" | "listPin" | "documentPin" | "memoryLine" | "documentVersion" | "libraryObjectFolder" | "libraryObject" | "libraryFolder" | "libraryFolderGrant" | "libraryShare" | "toolState" | "theme" | "themeAsset" | "themeChange" | "toolAccount" | "documentAsset" | "bucketCleanup" | "workspaceCleanup" | "auditEntry" | "upload" | "attachment" | "threadAttachment" | "feedback" | "designSystem" | "skill" | "skillPack" | "previewRecipe" | "previewMachine" | "vmRun" | "previewVariable" | "project" | "projectRepository" | "pushDevice" | "desktopDevice" | "desktopMessage" | "pushNotice" | "playbookInstallation" | "playbookAction" | "playbookRun" | "playbookDryRun" | "threadFollow" | "mailAddress" | "mailProject" | "mailAlias" | "mailMessage" | "mailHtml" | "mailDomain" | "contact" | "mailMute" | "contactHandle" | "opsAlert" | "heldCall" | "runnerCommand" | "specPart" | "triggerDelivery" | "inboundEvent" | "folderBackup" | "teammateBackup" | "accountLoginBackup" | "computerReplacement" | "featureFlag" | "specPull" | "initiative" | "initiativeAction" | "initiativeOutput" | "initiativeValue"
     txIsolationLevel: TransactionIsolationLevel
   }
   model: {
@@ -2238,6 +2239,80 @@ export type TypeMap<ExtArgs extends runtime.Types.Extensions.InternalArgs = runt
         count: {
           args: Prisma.HomeDismissalCountArgs<ExtArgs>
           result: runtime.Types.Utils.Optional<Prisma.HomeDismissalCountAggregateOutputType> | number
+        }
+      }
+    }
+    TeamRoom: {
+      payload: Prisma.$TeamRoomPayload<ExtArgs>
+      fields: Prisma.TeamRoomFieldRefs
+      operations: {
+        findUnique: {
+          args: Prisma.TeamRoomFindUniqueArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload> | null
+        }
+        findUniqueOrThrow: {
+          args: Prisma.TeamRoomFindUniqueOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload>
+        }
+        findFirst: {
+          args: Prisma.TeamRoomFindFirstArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload> | null
+        }
+        findFirstOrThrow: {
+          args: Prisma.TeamRoomFindFirstOrThrowArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload>
+        }
+        findMany: {
+          args: Prisma.TeamRoomFindManyArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload>[]
+        }
+        create: {
+          args: Prisma.TeamRoomCreateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload>
+        }
+        createMany: {
+          args: Prisma.TeamRoomCreateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        createManyAndReturn: {
+          args: Prisma.TeamRoomCreateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload>[]
+        }
+        delete: {
+          args: Prisma.TeamRoomDeleteArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload>
+        }
+        update: {
+          args: Prisma.TeamRoomUpdateArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload>
+        }
+        deleteMany: {
+          args: Prisma.TeamRoomDeleteManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateMany: {
+          args: Prisma.TeamRoomUpdateManyArgs<ExtArgs>
+          result: BatchPayload
+        }
+        updateManyAndReturn: {
+          args: Prisma.TeamRoomUpdateManyAndReturnArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload>[]
+        }
+        upsert: {
+          args: Prisma.TeamRoomUpsertArgs<ExtArgs>
+          result: runtime.Types.Utils.PayloadToResult<Prisma.$TeamRoomPayload>
+        }
+        aggregate: {
+          args: Prisma.TeamRoomAggregateArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.AggregateTeamRoom>
+        }
+        groupBy: {
+          args: Prisma.TeamRoomGroupByArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.TeamRoomGroupByOutputType>[]
+        }
+        count: {
+          args: Prisma.TeamRoomCountArgs<ExtArgs>
+          result: runtime.Types.Utils.Optional<Prisma.TeamRoomCountAggregateOutputType> | number
         }
       }
     }
@@ -9985,6 +10060,8 @@ export const SidebarOrderScalarFieldEnum = {
   memberId: 'memberId',
   list: 'list',
   ids: 'ids',
+  layout: 'layout',
+  revision: 'revision',
   updatedAt: 'updatedAt'
 } as const
 
@@ -10015,7 +10092,25 @@ export const HomeDismissalScalarFieldEnum = {
 export type HomeDismissalScalarFieldEnum = (typeof HomeDismissalScalarFieldEnum)[keyof typeof HomeDismissalScalarFieldEnum]
 
 
+export const TeamRoomScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  name: 'name',
+  managerId: 'managerId',
+  memberIds: 'memberIds',
+  revision: 'revision'
+} as const
+
+export type TeamRoomScalarFieldEnum = (typeof TeamRoomScalarFieldEnum)[keyof typeof TeamRoomScalarFieldEnum]
+
+
 export const SessionScalarFieldEnum = {
+  roomId: 'roomId',
+  roomRequestHash: 'roomRequestHash',
+  roomStopped: 'roomStopped',
+  roomReady: 'roomReady',
   id: 'id',
   organizationId: 'organizationId',
   workspaceId: 'workspaceId',
@@ -12867,6 +12962,7 @@ export type GlobalOmitConfig = {
   sidebarOrder?: Prisma.SidebarOrderOmit
   threadLater?: Prisma.ThreadLaterOmit
   homeDismissal?: Prisma.HomeDismissalOmit
+  teamRoom?: Prisma.TeamRoomOmit
   session?: Prisma.SessionOmit
   task?: Prisma.TaskOmit
   schedule?: Prisma.ScheduleOmit

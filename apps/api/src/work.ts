@@ -355,21 +355,29 @@ export async function handoffThread(
   })
   if (!session || session.status === 'paused' || session.status === 'failed') return
   let thread = await loadThread(db, session.id)
-  const inThread = new Set(thread.teammates.map((t) => t.teammateId))
+  const inThread = new Set(
+    thread.teammates.filter((t) => !thread.room || !t.teammate.archivedAt).map((t) => t.teammateId),
+  )
   const from = thread.teammates.find((t) => t.teammateId === message.fromTeammateId)
-  if (!from) return
+  if (!from || thread.roomStopped || (thread.room && from.teammate.archivedAt)) return
+  const room = thread.room
+  if (room && !room.memberIds.includes(from.teammateId)) return
   // The chief routes work: a teammate it mentions joins the thread to answer. Not in a playbook's
   // run: what started it is untrusted, and only a person brings another teammate in. Nor in its
   // daily pass for a person (src/chief-pass.ts), nor a decision thread of #724's: it only reads there.
   if (
-    from.teammate.kind === 'chief' &&
+    (room || from.teammate.kind === 'chief') &&
     !session.playbookRunId &&
     !session.chiefDecisionId &&
     !session.chiefPassId
   ) {
     const joining = await db.teammate.findMany({
       where: {
-        id: { in: message.teammateIds.filter((id) => !inThread.has(id)) },
+        id: {
+          in: message.teammateIds.filter(
+            (id) => !inThread.has(id) && (!room || room.memberIds.includes(id)),
+          ),
+        },
         archivedAt: null,
       },
       select: { id: true },
@@ -385,7 +393,8 @@ export async function handoffThread(
     }
   }
   const ids = [...new Set(message.teammateIds)].filter(
-    (id) => id !== message.fromTeammateId && inThread.has(id),
+    (id) =>
+      id !== message.fromTeammateId && inThread.has(id) && (!room || room.memberIds.includes(id)),
   )
   if (ids.length === 0) return
   const lastMember = await db.sessionEvent.findFirst({
@@ -405,12 +414,18 @@ export async function handoffThread(
     target: { type: 'thread', id: session.id },
     data: { to: ids },
   })
-  await promptThread(db, scope, thread, {
-    text: '',
-    memberId: null,
-    teammateIds: ids,
-    handoff: true,
-  })
+  await promptThread(
+    db,
+    scope,
+    thread,
+    {
+      text: '',
+      memberId: null,
+      teammateIds: ids,
+      handoff: true,
+    },
+    room && message.turnId ? { commandId: `room-handoff:${session.id}:${message.turnId}` } : {},
+  )
 }
 
 /** The thread a child is started from: it takes who may see and write in it from there. */
@@ -487,6 +502,7 @@ export async function startThread(
   scope: Scope,
   input: {
     teammate: { id: string; name: string; harness: TeammateHarness; model: string | null }
+    room?: { id: string; memberIds: string[]; requestHash: string }
     computer: { id: string }
     memberId: string
     accountId?: string | null
@@ -596,6 +612,7 @@ export async function startThread(
     (await db.session.create({
       data: {
         ...(input.id ? { id: input.id } : {}),
+        ...(input.room ? { roomId: input.room.id, roomRequestHash: input.room.requestHash } : {}),
         teammateId: input.teammate.id,
         startedByMemberId: input.memberId,
         askedByMemberId:
@@ -675,7 +692,7 @@ export async function startThread(
     // Each step below is a trip to the database: what does not wait on another goes with it,
     // and each has settled before a failure is acted on (the thread may go: dropUnstarted).
     const [joined, linked, attached] = await Promise.allSettled([
-      joinThread(db, created.id, teammateIds),
+      joinThread(db, created.id, input.room?.memberIds ?? teammateIds),
       input.listItemIds?.length
         ? db.listItemThread.createMany({
             data: input.listItemIds.map((itemId) => ({ itemId, sessionId: created.id })) as never,

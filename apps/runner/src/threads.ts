@@ -378,6 +378,8 @@ function push(log: Log, entry: LogEntry) {
 type Thread = {
   /** One harness session per teammate, by teammate id, and where it works. */
   harnesses: Map<string, Seat>
+  roomStopped?: boolean
+  queueGeneration: number
   queue: Promise<void>
   controller: AbortController | undefined
   /** The turn running now, and whose. */
@@ -492,7 +494,12 @@ export class Threads {
         request: Parameters<CredentialRequester>[0],
       ) => Promise<unknown>
       /** A teammate's reply mentioned others in the thread: ask the API to have them answer next. */
-      handoff: (sessionId: string, fromTeammateId: string, teammateIds: string[]) => void
+      handoff: (
+        sessionId: string,
+        fromTeammateId: string,
+        teammateIds: string[],
+        turnId?: string,
+      ) => void
       /** The library and memory threads reach. */
       context: Omit<ThreadContext, 'callLibrary' | 'callSchedule' | 'preview' | 'machine'>
       /** Apps teammates run for people to try, one per thread. */
@@ -539,6 +546,13 @@ export class Threads {
   handle(command: Command) {
     if (command.type === 'thread.interrupt') {
       const thread = this.threads.get(command.sessionId)
+      if (thread && command.cancelQueue) {
+        thread.roomStopped = true
+        thread.queueGeneration++
+        for (const message of thread.messages.values())
+          if (message.state === 'queued' || message.state === 'held')
+            this.cancel(command.sessionId, thread, message, null, 'Group task stopped')
+      }
       // An interrupt meant for a turn that already ended does not stop the next one.
       if (thread && (!command.turnId || thread.running?.turnId === command.turnId))
         thread.controller?.abort()
@@ -569,6 +583,7 @@ export class Threads {
     if (command.type === 'thread.prompt') this.settleFailure(this.thread(spec.sessionId))
     if (command.type === 'thread.retry') return this.retry(spec, command.error)
     if (command.type === 'thread.prompt' && command.handoff) {
+      if (this.threads.get(spec.sessionId)?.roomStopped) return
       // Nobody wrote anything: each is told what was said since its last turn.
       for (const next of specs) this.enqueue(next, 'prompt', undefined, undefined, true)
       // A turn answered already only waits on Claude Code's guess: the next ones need not.
@@ -578,6 +593,7 @@ export class Threads {
     }
     if (command.type === 'thread.prompt') {
       const thread = this.thread(spec.sessionId)
+      if (command.memberId) thread.roomStopped = false
       // Sent twice (a person's second click to run a settled message): it waits here already.
       if (command.messageId && thread.messages.has(command.messageId)) return
       thread.handoffs = 0
@@ -1091,6 +1107,7 @@ export class Threads {
     seat.parkTimer = undefined
     seat.idleSince = undefined
     clearTimeout(thread.quietTimer)
+    const generation = thread.queueGeneration
     this.pending++
     const me = spec.teammate.id
     thread.waiting.set(me, (thread.waiting.get(me) ?? 0) + 1)
@@ -1117,7 +1134,7 @@ export class Threads {
       let turnStarted = false
       try {
         // Taken over while waiting in the queue: the turn does not happen.
-        if (thread.takeover) return
+        if (thread.takeover || generation !== thread.queueGeneration) return
         // Its message was read in an earlier turn: nothing to wait for.
         if (moot?.()) return
         // Every slot taken: the thread shows its teammate waiting, with how many turns run.
@@ -1134,12 +1151,12 @@ export class Threads {
         acquired = true
         // Stopped, or taken over, while it waited for memory: the turn does not happen.
         counted = await this.waitForMemory(thread, spec)
-        if (!counted || thread.takeover) return
+        if (!counted || thread.takeover || generation !== thread.queueGeneration) return
         // The runner is stopping: the API still has the turn, and gives it to the next runner.
         if (this.stopping) return
         const prepared = prepare ? await prepare() : undefined
         started()
-        if (prepared === null) return
+        if (prepared === null || generation !== thread.queueGeneration) return
         // Messages queued after its own go in too: it runs on the spec of the last of them,
         // which has the thread as it is now, every file sent with them included.
         const upTo = typeof prepared === 'object' ? prepared.upTo : prepared
@@ -2087,7 +2104,7 @@ export class Threads {
       return
     }
     thread.handoffs++
-    this.options.handoff(spec.sessionId, me, next.slice(0, 5))
+    this.options.handoff(spec.sessionId, me, next.slice(0, 5), thread.running?.turnId)
   }
 
   /**
@@ -2380,6 +2397,7 @@ export class Threads {
       const empty: Log = { start: 0, entries: [], seen: {} }
       thread = {
         harnesses: new Map(),
+        queueGeneration: 0,
         queue: Promise.resolve(),
         controller: undefined,
         messages: new Map(),

@@ -1,3 +1,4 @@
+import { ownRoom } from './rooms.js'
 import { addressOf } from '../mail/names.js'
 import { mayWrite, openToOthers } from '../account-sharing.js'
 import {
@@ -1307,9 +1308,47 @@ export const threads = new Hono<AppEnv>()
     const { scope, db } = c.var
     await requireGuestRoom(c.var.userId, scope.workspaceId)
     const input = await parseBody(c.req.raw, StartThread)
+    const room = input.roomId ? await ownRoom(db, scope.memberId, input.roomId) : null
+    let responder = input.teammateId
+    const requestHash = room ? createHash('sha256').update(JSON.stringify(input)).digest('hex') : ''
+    async function existingTask() {
+      if (!room || !input.id) return null
+      const task = await db.session.findFirst({
+        where: {
+          id: input.id,
+          roomId: room.id,
+          startedByMemberId: scope.memberId,
+          roomRequestHash: requestHash,
+        },
+        select: { id: true, roomReady: true, status: true },
+      })
+      if (task && !task.roomReady) {
+        // The API may have restarted between durable delivery and acknowledging the request.
+        const kept =
+          (await isKept(`room-start:${task.id}`)) ||
+          (await db.ticket.count({ where: { sessionId: task.id, type: 'cap' } })) ||
+          (await db.sessionEvent.count({ where: { sessionId: task.id, type: 'message.user' } }))
+        if (!kept)
+          throw new HTTPException(409, {
+            message: '群任务尚未确认投递，请稍后重试或在群任务内继续。',
+          })
+        await db.session.updateMany({ where: { id: task.id }, data: { roomReady: true } })
+      }
+      return task
+    }
+    if (room) {
+      if (!input.id || input.setup)
+        throw new HTTPException(400, { message: '群任务需要独立的请求编号。' })
+      const previous = await existingTask()
+      if (previous) return c.json({ id: previous.id, paused: previous.status === 'paused' })
+      const mentions = await mentionedTeammates(db, input.text)
+      if (mentions.some((id) => !room.memberIds.includes(id)))
+        throw new HTTPException(400, { message: '只能点名本群成员。' })
+      responder = mentions[0] ?? room.managerId
+    }
     // Looked up together, each a trip to the database; their errors still in this order.
     const [teammate, computer, project] = await Promise.all([
-      db.teammate.findFirst({ where: { id: input.teammateId, archivedAt: null } }),
+      db.teammate.findFirst({ where: { id: responder, archivedAt: null } }),
       db.computer.findFirst({ where: { id: input.computerId } }),
       usableProject(db, input.projectId).then(
         (id) => ({ id }),
@@ -1366,6 +1405,7 @@ export const threads = new Hono<AppEnv>()
     const { thread, outcome } = await startThread(db, scope, {
       // Chosen by the browser, which opened the thread already: never one that exists.
       ...((setupId ?? input.id) ? { id: setupId ?? input.id, fresh: true } : {}),
+      ...(room ? { room: { ...room, requestHash }, commandId: `room-start:${input.id}` } : {}),
       teammate,
       computer,
       memberId: scope.memberId,
@@ -1391,6 +1431,10 @@ export const threads = new Hono<AppEnv>()
         // Made by the other and gone since (it did not start): onboarding tries again.
         throw new HTTPException(409, { message: 'Chief is still starting your setup thread' })
       }
+      if (room && (error as { code?: string }).code === 'P2002') {
+        const previous = await existingTask()
+        if (previous) return { thread: previous, outcome: 'existing' as const }
+      }
       return idTaken(error, input.id)
     })
     if (outcome === 'existing') return c.json({ id: thread.id, paused: false }, 200)
@@ -1399,6 +1443,7 @@ export const threads = new Hono<AppEnv>()
         message: 'That computer is offline. Start its runner and try again.',
       })
     }
+    if (room) await db.session.updateMany({ where: { id: thread.id }, data: { roomReady: true } })
     return c.json({ id: thread.id, paused: outcome === 'paused' }, 201)
   })
 
@@ -1452,7 +1497,27 @@ export const threads = new Hono<AppEnv>()
     const picking = pick ? await checkPick(db, thread.id, pick) : undefined
     // Teammates the message mentions answer it, joining the thread if new; otherwise whoever answered last.
     const mentioned = await mentionedTeammates(db, text)
-    const joined = mentioned.filter((id) => !thread.teammates.some((t) => t.teammateId === id))
+    if (thread.room) {
+      if (mentioned.some((id) => !thread.room!.memberIds.includes(id)))
+        throw new HTTPException(400, { message: '只能点名本群成员。' })
+      if (!mentioned.length) {
+        const manager = await db.teammate.findFirst({
+          where: { id: thread.room.managerId, archivedAt: null },
+        })
+        if (!manager)
+          throw new HTTPException(409, { message: '请先在群设置中更换已归档的管理员。' })
+        mentioned.push(manager.id)
+      }
+    }
+    const participating = thread.room
+      ? (
+          await db.teammate.findMany({
+            where: { id: { in: thread.room.memberIds }, archivedAt: null },
+            select: { id: true },
+          })
+        ).map((t) => t.id)
+      : mentioned
+    const joined = participating.filter((id) => !thread.teammates.some((t) => t.teammateId === id))
     if (joined.length > 0) await joinThread(db, thread.id, joined)
     // Continue on another computer: the message goes with the thread once it is there.
     if (moveTo) {
@@ -1496,6 +1561,8 @@ export const threads = new Hono<AppEnv>()
       throw new HTTPException(409, {
         message: 'That computer is offline. Start its runner and try again.',
       })
+    if (thread.roomStopped)
+      await db.session.updateMany({ where: { id: thread.id }, data: { roomStopped: false } })
     if (picking) await applyPick(db, scope, { type: 'member', id: scope.memberId }, picking)
     // Written in again, an archived thread is back in the sidebar.
     if (thread.archivedAt) await setThreadArchived(scope, thread.id, false)
@@ -1785,8 +1852,11 @@ export const threads = new Hono<AppEnv>()
     requireMayPrompt(scope, thread)
     // The body is optional: without a turn, whichever runs stops.
     const turnId = InterruptThread.safeParse(await c.req.json().catch(() => ({}))).data?.turnId
+    if (thread.room && !turnId)
+      await db.session.updateMany({ where: { id: thread.id }, data: { roomStopped: true } })
     await deliver(thread.computer, {
       type: 'thread.interrupt',
+      ...(thread.room && !turnId ? { cancelQueue: true as const } : {}),
       commandId: randomUUID(),
       sessionId: thread.id,
       ...(turnId ? { turnId } : {}),

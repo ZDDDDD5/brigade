@@ -454,8 +454,8 @@ async function start() {
         approvalHooks(sessionId, teammateId, { toolCallId, toolName, input }),
       ),
     attachments,
-    handoff: (sessionId, fromTeammateId, teammateIds) =>
-      connection.send({ type: 'thread.handoff', sessionId, fromTeammateId, teammateIds }),
+    handoff: (sessionId, fromTeammateId, teammateIds, turnId) =>
+      connection.send({ type: 'thread.handoff', sessionId, fromTeammateId, teammateIds, turnId }),
     context: {
       libraryDir: (teammateId) => library.view(teammateId),
       memoryFor: (teammateId) => library.memoryFor(teammateId),

@@ -20764,7 +20764,7 @@
            </Hint>
 @@ -1833,7 +1818,7 @@
                    key={t.id}
-                   drag={dragRow('teammates', t.id)}
+                   drag={drag}
                    active={filter.teammateId === t.id}
 -                  title={`${t.name}: its latest thread, and only its threads above`}
 +                  title={`${t.name}: 其最新对话,只有上面的对话`}

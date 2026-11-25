@@ -176,6 +176,11 @@ export type ThreadLater = Prisma.ThreadLaterModel
  */
 export type HomeDismissal = Prisma.HomeDismissalModel
 /**
+ * Model TeamRoom
+ * A member's fixed group of bots. Each assignment has its own native task thread.
+ */
+export type TeamRoom = Prisma.TeamRoomModel
+/**
  * Model Session
  * 
  */

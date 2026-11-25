@@ -281,6 +281,7 @@ export type MemberWhereInput = {
   threadPins?: Prisma.ThreadPinListRelationFilter
   documentPins?: Prisma.DocumentPinListRelationFilter
   listPins?: Prisma.ListPinListRelationFilter
+  teamRooms?: Prisma.TeamRoomListRelationFilter
   sidebarOrders?: Prisma.SidebarOrderListRelationFilter
   threadLaters?: Prisma.ThreadLaterListRelationFilter
   homeDismissals?: Prisma.HomeDismissalListRelationFilter
@@ -321,6 +322,7 @@ export type MemberOrderByWithRelationInput = {
   threadPins?: Prisma.ThreadPinOrderByRelationAggregateInput
   documentPins?: Prisma.DocumentPinOrderByRelationAggregateInput
   listPins?: Prisma.ListPinOrderByRelationAggregateInput
+  teamRooms?: Prisma.TeamRoomOrderByRelationAggregateInput
   sidebarOrders?: Prisma.SidebarOrderOrderByRelationAggregateInput
   threadLaters?: Prisma.ThreadLaterOrderByRelationAggregateInput
   homeDismissals?: Prisma.HomeDismissalOrderByRelationAggregateInput
@@ -365,6 +367,7 @@ export type MemberWhereUniqueInput = Prisma.AtLeast<{
   threadPins?: Prisma.ThreadPinListRelationFilter
   documentPins?: Prisma.DocumentPinListRelationFilter
   listPins?: Prisma.ListPinListRelationFilter
+  teamRooms?: Prisma.TeamRoomListRelationFilter
   sidebarOrders?: Prisma.SidebarOrderListRelationFilter
   threadLaters?: Prisma.ThreadLaterListRelationFilter
   homeDismissals?: Prisma.HomeDismissalListRelationFilter
@@ -449,6 +452,7 @@ export type MemberCreateInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -487,6 +491,7 @@ export type MemberUncheckedCreateInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -525,6 +530,7 @@ export type MemberUpdateInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -563,6 +569,7 @@ export type MemberUncheckedUpdateInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -913,6 +920,20 @@ export type MemberUpdateOneRequiredWithoutHomeDismissalsNestedInput = {
   update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutHomeDismissalsInput, Prisma.MemberUpdateWithoutHomeDismissalsInput>, Prisma.MemberUncheckedUpdateWithoutHomeDismissalsInput>
 }
 
+export type MemberCreateNestedOneWithoutTeamRoomsInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutTeamRoomsInput, Prisma.MemberUncheckedCreateWithoutTeamRoomsInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutTeamRoomsInput
+  connect?: Prisma.MemberWhereUniqueInput
+}
+
+export type MemberUpdateOneRequiredWithoutTeamRoomsNestedInput = {
+  create?: Prisma.XOR<Prisma.MemberCreateWithoutTeamRoomsInput, Prisma.MemberUncheckedCreateWithoutTeamRoomsInput>
+  connectOrCreate?: Prisma.MemberCreateOrConnectWithoutTeamRoomsInput
+  upsert?: Prisma.MemberUpsertWithoutTeamRoomsInput
+  connect?: Prisma.MemberWhereUniqueInput
+  update?: Prisma.XOR<Prisma.XOR<Prisma.MemberUpdateToOneWithWhereWithoutTeamRoomsInput, Prisma.MemberUpdateWithoutTeamRoomsInput>, Prisma.MemberUncheckedUpdateWithoutTeamRoomsInput>
+}
+
 export type MemberCreateNestedOneWithoutSessionsInput = {
   create?: Prisma.XOR<Prisma.MemberCreateWithoutSessionsInput, Prisma.MemberUncheckedCreateWithoutSessionsInput>
   connectOrCreate?: Prisma.MemberCreateOrConnectWithoutSessionsInput
@@ -1107,6 +1128,7 @@ export type MemberCreateWithoutUserInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -1144,6 +1166,7 @@ export type MemberUncheckedCreateWithoutUserInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -1230,6 +1253,7 @@ export type MemberCreateWithoutOrganizationInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -1267,6 +1291,7 @@ export type MemberUncheckedCreateWithoutOrganizationInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -1330,6 +1355,7 @@ export type MemberCreateWithoutComputersInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -1367,6 +1393,7 @@ export type MemberUncheckedCreateWithoutComputersInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -1420,6 +1447,7 @@ export type MemberUpdateWithoutComputersInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -1457,6 +1485,7 @@ export type MemberUncheckedUpdateWithoutComputersInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -1494,6 +1523,7 @@ export type MemberCreateWithoutThreadReadsInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -1531,6 +1561,7 @@ export type MemberUncheckedCreateWithoutThreadReadsInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -1584,6 +1615,7 @@ export type MemberUpdateWithoutThreadReadsInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -1621,6 +1653,7 @@ export type MemberUncheckedUpdateWithoutThreadReadsInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -1658,6 +1691,7 @@ export type MemberCreateWithoutThreadPinsInput = {
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -1695,6 +1729,7 @@ export type MemberUncheckedCreateWithoutThreadPinsInput = {
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -1748,6 +1783,7 @@ export type MemberUpdateWithoutThreadPinsInput = {
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -1785,6 +1821,7 @@ export type MemberUncheckedUpdateWithoutThreadPinsInput = {
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -1823,6 +1860,7 @@ export type MemberCreateWithoutSidebarOrdersInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
   chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
@@ -1860,6 +1898,7 @@ export type MemberUncheckedCreateWithoutSidebarOrdersInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
   chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
@@ -1913,6 +1952,7 @@ export type MemberUpdateWithoutSidebarOrdersInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
   chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
@@ -1950,6 +1990,7 @@ export type MemberUncheckedUpdateWithoutSidebarOrdersInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
   chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
@@ -1987,6 +2028,7 @@ export type MemberCreateWithoutThreadLatersInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
   chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
@@ -2024,6 +2066,7 @@ export type MemberUncheckedCreateWithoutThreadLatersInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
   chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
@@ -2077,6 +2120,7 @@ export type MemberUpdateWithoutThreadLatersInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
   chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
@@ -2114,6 +2158,7 @@ export type MemberUncheckedUpdateWithoutThreadLatersInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
   chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
@@ -2151,6 +2196,7 @@ export type MemberCreateWithoutHomeDismissalsInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
@@ -2188,6 +2234,7 @@ export type MemberUncheckedCreateWithoutHomeDismissalsInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
@@ -2241,6 +2288,7 @@ export type MemberUpdateWithoutHomeDismissalsInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
@@ -2278,8 +2326,177 @@ export type MemberUncheckedUpdateWithoutHomeDismissalsInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUncheckedUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUncheckedUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberCreateWithoutTeamRoomsInput = {
+  id: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  organization: Prisma.OrganizationCreateNestedOneWithoutMembersInput
+  user: Prisma.UserCreateNestedOneWithoutMembersInput
+  computers?: Prisma.ComputerCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeCreateNestedManyWithoutMemberInput
+}
+
+export type MemberUncheckedCreateWithoutTeamRoomsInput = {
+  id: string
+  organizationId: string
+  userId: string
+  role?: string
+  createdAt?: Date | string
+  removingAt?: Date | string | null
+  notify?: $Enums.NotifyPreset
+  suggestions?: boolean
+  autoMerge?: boolean
+  previewMachines?: boolean
+  chiefAnswers?: boolean
+  chiefAuto?: Prisma.MemberCreatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Date | string | null
+  chiefPass?: boolean
+  chiefRules?: string | null
+  chiefRulesRefused?: Prisma.MemberCreatechiefRulesRefusedInput | string[]
+  timezone?: string | null
+  computers?: Prisma.ComputerUncheckedCreateNestedManyWithoutMemberInput
+  accounts?: Prisma.AccountUncheckedCreateNestedManyWithoutMemberInput
+  sessions?: Prisma.SessionUncheckedCreateNestedManyWithoutStartedByInput
+  tasks?: Prisma.TaskUncheckedCreateNestedManyWithoutCreatedByInput
+  schedules?: Prisma.ScheduleUncheckedCreateNestedManyWithoutOwnerInput
+  threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
+  threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
+  documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
+  threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
+  chiefDecisions?: Prisma.ChiefDecisionUncheckedCreateNestedManyWithoutMemberInput
+  chiefPasses?: Prisma.ChiefPassUncheckedCreateNestedManyWithoutMemberInput
+  pushNotices?: Prisma.PushNoticeUncheckedCreateNestedManyWithoutMemberInput
+  playbookInstallations?: Prisma.PlaybookInstallationUncheckedCreateNestedManyWithoutOwnerInput
+  themes?: Prisma.ThemeUncheckedCreateNestedManyWithoutMemberInput
+  themeChanges?: Prisma.ThemeChangeUncheckedCreateNestedManyWithoutMemberInput
+}
+
+export type MemberCreateOrConnectWithoutTeamRoomsInput = {
+  where: Prisma.MemberWhereUniqueInput
+  create: Prisma.XOR<Prisma.MemberCreateWithoutTeamRoomsInput, Prisma.MemberUncheckedCreateWithoutTeamRoomsInput>
+}
+
+export type MemberUpsertWithoutTeamRoomsInput = {
+  update: Prisma.XOR<Prisma.MemberUpdateWithoutTeamRoomsInput, Prisma.MemberUncheckedUpdateWithoutTeamRoomsInput>
+  create: Prisma.XOR<Prisma.MemberCreateWithoutTeamRoomsInput, Prisma.MemberUncheckedCreateWithoutTeamRoomsInput>
+  where?: Prisma.MemberWhereInput
+}
+
+export type MemberUpdateToOneWithWhereWithoutTeamRoomsInput = {
+  where?: Prisma.MemberWhereInput
+  data: Prisma.XOR<Prisma.MemberUpdateWithoutTeamRoomsInput, Prisma.MemberUncheckedUpdateWithoutTeamRoomsInput>
+}
+
+export type MemberUpdateWithoutTeamRoomsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  organization?: Prisma.OrganizationUpdateOneRequiredWithoutMembersNestedInput
+  user?: Prisma.UserUpdateOneRequiredWithoutMembersNestedInput
+  computers?: Prisma.ComputerUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
+  chiefDecisions?: Prisma.ChiefDecisionUpdateManyWithoutMemberNestedInput
+  chiefPasses?: Prisma.ChiefPassUpdateManyWithoutMemberNestedInput
+  pushNotices?: Prisma.PushNoticeUpdateManyWithoutMemberNestedInput
+  playbookInstallations?: Prisma.PlaybookInstallationUpdateManyWithoutOwnerNestedInput
+  themes?: Prisma.ThemeUpdateManyWithoutMemberNestedInput
+  themeChanges?: Prisma.ThemeChangeUpdateManyWithoutMemberNestedInput
+}
+
+export type MemberUncheckedUpdateWithoutTeamRoomsInput = {
+  id?: Prisma.StringFieldUpdateOperationsInput | string
+  organizationId?: Prisma.StringFieldUpdateOperationsInput | string
+  userId?: Prisma.StringFieldUpdateOperationsInput | string
+  role?: Prisma.StringFieldUpdateOperationsInput | string
+  createdAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  removingAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  notify?: Prisma.EnumNotifyPresetFieldUpdateOperationsInput | $Enums.NotifyPreset
+  suggestions?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  autoMerge?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  previewMachines?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAnswers?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefAuto?: Prisma.MemberUpdatechiefAutoInput | string[]
+  chiefAutoChangedAt?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
+  chiefPass?: Prisma.BoolFieldUpdateOperationsInput | boolean
+  chiefRules?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  chiefRulesRefused?: Prisma.MemberUpdatechiefRulesRefusedInput | string[]
+  timezone?: Prisma.NullableStringFieldUpdateOperationsInput | string | null
+  computers?: Prisma.ComputerUncheckedUpdateManyWithoutMemberNestedInput
+  accounts?: Prisma.AccountUncheckedUpdateManyWithoutMemberNestedInput
+  sessions?: Prisma.SessionUncheckedUpdateManyWithoutStartedByNestedInput
+  tasks?: Prisma.TaskUncheckedUpdateManyWithoutCreatedByNestedInput
+  schedules?: Prisma.ScheduleUncheckedUpdateManyWithoutOwnerNestedInput
+  threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
+  threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
+  documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
+  threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
+  homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
   chiefDecisions?: Prisma.ChiefDecisionUncheckedUpdateManyWithoutMemberNestedInput
   chiefPasses?: Prisma.ChiefPassUncheckedUpdateManyWithoutMemberNestedInput
   pushNotices?: Prisma.PushNoticeUncheckedUpdateManyWithoutMemberNestedInput
@@ -2314,6 +2531,7 @@ export type MemberCreateWithoutSessionsInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -2351,6 +2569,7 @@ export type MemberUncheckedCreateWithoutSessionsInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -2404,6 +2623,7 @@ export type MemberUpdateWithoutSessionsInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -2441,6 +2661,7 @@ export type MemberUncheckedUpdateWithoutSessionsInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -2478,6 +2699,7 @@ export type MemberCreateWithoutTasksInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -2515,6 +2737,7 @@ export type MemberUncheckedCreateWithoutTasksInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -2568,6 +2791,7 @@ export type MemberUpdateWithoutTasksInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -2605,6 +2829,7 @@ export type MemberUncheckedUpdateWithoutTasksInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -2642,6 +2867,7 @@ export type MemberCreateWithoutSchedulesInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -2679,6 +2905,7 @@ export type MemberUncheckedCreateWithoutSchedulesInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -2732,6 +2959,7 @@ export type MemberUpdateWithoutSchedulesInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -2769,6 +2997,7 @@ export type MemberUncheckedUpdateWithoutSchedulesInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -2807,6 +3036,7 @@ export type MemberCreateWithoutChiefDecisionsInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -2844,6 +3074,7 @@ export type MemberUncheckedCreateWithoutChiefDecisionsInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -2897,6 +3128,7 @@ export type MemberUpdateWithoutChiefDecisionsInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -2934,6 +3166,7 @@ export type MemberUncheckedUpdateWithoutChiefDecisionsInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -2971,6 +3204,7 @@ export type MemberCreateWithoutChiefPassesInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -3008,6 +3242,7 @@ export type MemberUncheckedCreateWithoutChiefPassesInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -3061,6 +3296,7 @@ export type MemberUpdateWithoutChiefPassesInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -3098,6 +3334,7 @@ export type MemberUncheckedUpdateWithoutChiefPassesInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -3134,6 +3371,7 @@ export type MemberCreateWithoutAccountsInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -3171,6 +3409,7 @@ export type MemberUncheckedCreateWithoutAccountsInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -3224,6 +3463,7 @@ export type MemberUpdateWithoutAccountsInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -3261,6 +3501,7 @@ export type MemberUncheckedUpdateWithoutAccountsInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -3298,6 +3539,7 @@ export type MemberCreateWithoutListPinsInput = {
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -3335,6 +3577,7 @@ export type MemberUncheckedCreateWithoutListPinsInput = {
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -3388,6 +3631,7 @@ export type MemberUpdateWithoutListPinsInput = {
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -3425,6 +3669,7 @@ export type MemberUncheckedUpdateWithoutListPinsInput = {
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -3462,6 +3707,7 @@ export type MemberCreateWithoutDocumentPinsInput = {
   threadReads?: Prisma.ThreadReadCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -3499,6 +3745,7 @@ export type MemberUncheckedCreateWithoutDocumentPinsInput = {
   threadReads?: Prisma.ThreadReadUncheckedCreateNestedManyWithoutMemberInput
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -3552,6 +3799,7 @@ export type MemberUpdateWithoutDocumentPinsInput = {
   threadReads?: Prisma.ThreadReadUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -3589,6 +3837,7 @@ export type MemberUncheckedUpdateWithoutDocumentPinsInput = {
   threadReads?: Prisma.ThreadReadUncheckedUpdateManyWithoutMemberNestedInput
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -3627,6 +3876,7 @@ export type MemberCreateWithoutThemesInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -3664,6 +3914,7 @@ export type MemberUncheckedCreateWithoutThemesInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -3717,6 +3968,7 @@ export type MemberUpdateWithoutThemesInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -3754,6 +4006,7 @@ export type MemberUncheckedUpdateWithoutThemesInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -3791,6 +4044,7 @@ export type MemberCreateWithoutThemeChangesInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -3828,6 +4082,7 @@ export type MemberUncheckedCreateWithoutThemeChangesInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -3881,6 +4136,7 @@ export type MemberUpdateWithoutThemeChangesInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -3918,6 +4174,7 @@ export type MemberUncheckedUpdateWithoutThemeChangesInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -3955,6 +4212,7 @@ export type MemberCreateWithoutPushNoticesInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -3992,6 +4250,7 @@ export type MemberUncheckedCreateWithoutPushNoticesInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -4045,6 +4304,7 @@ export type MemberUpdateWithoutPushNoticesInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -4082,6 +4342,7 @@ export type MemberUncheckedUpdateWithoutPushNoticesInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -4119,6 +4380,7 @@ export type MemberCreateWithoutPlaybookInstallationsInput = {
   threadPins?: Prisma.ThreadPinCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalCreateNestedManyWithoutMemberInput
@@ -4156,6 +4418,7 @@ export type MemberUncheckedCreateWithoutPlaybookInstallationsInput = {
   threadPins?: Prisma.ThreadPinUncheckedCreateNestedManyWithoutMemberInput
   documentPins?: Prisma.DocumentPinUncheckedCreateNestedManyWithoutMemberInput
   listPins?: Prisma.ListPinUncheckedCreateNestedManyWithoutMemberInput
+  teamRooms?: Prisma.TeamRoomUncheckedCreateNestedManyWithoutMemberInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedCreateNestedManyWithoutMemberInput
   threadLaters?: Prisma.ThreadLaterUncheckedCreateNestedManyWithoutMemberInput
   homeDismissals?: Prisma.HomeDismissalUncheckedCreateNestedManyWithoutMemberInput
@@ -4209,6 +4472,7 @@ export type MemberUpdateWithoutPlaybookInstallationsInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -4246,6 +4510,7 @@ export type MemberUncheckedUpdateWithoutPlaybookInstallationsInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -4301,6 +4566,7 @@ export type MemberUpdateWithoutUserInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -4338,6 +4604,7 @@ export type MemberUncheckedUpdateWithoutUserInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -4413,6 +4680,7 @@ export type MemberUpdateWithoutOrganizationInput = {
   threadPins?: Prisma.ThreadPinUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUpdateManyWithoutMemberNestedInput
@@ -4450,6 +4718,7 @@ export type MemberUncheckedUpdateWithoutOrganizationInput = {
   threadPins?: Prisma.ThreadPinUncheckedUpdateManyWithoutMemberNestedInput
   documentPins?: Prisma.DocumentPinUncheckedUpdateManyWithoutMemberNestedInput
   listPins?: Prisma.ListPinUncheckedUpdateManyWithoutMemberNestedInput
+  teamRooms?: Prisma.TeamRoomUncheckedUpdateManyWithoutMemberNestedInput
   sidebarOrders?: Prisma.SidebarOrderUncheckedUpdateManyWithoutMemberNestedInput
   threadLaters?: Prisma.ThreadLaterUncheckedUpdateManyWithoutMemberNestedInput
   homeDismissals?: Prisma.HomeDismissalUncheckedUpdateManyWithoutMemberNestedInput
@@ -4495,6 +4764,7 @@ export type MemberCountOutputType = {
   threadPins: number
   documentPins: number
   listPins: number
+  teamRooms: number
   sidebarOrders: number
   threadLaters: number
   homeDismissals: number
@@ -4516,6 +4786,7 @@ export type MemberCountOutputTypeSelect<ExtArgs extends runtime.Types.Extensions
   threadPins?: boolean | MemberCountOutputTypeCountThreadPinsArgs
   documentPins?: boolean | MemberCountOutputTypeCountDocumentPinsArgs
   listPins?: boolean | MemberCountOutputTypeCountListPinsArgs
+  teamRooms?: boolean | MemberCountOutputTypeCountTeamRoomsArgs
   sidebarOrders?: boolean | MemberCountOutputTypeCountSidebarOrdersArgs
   threadLaters?: boolean | MemberCountOutputTypeCountThreadLatersArgs
   homeDismissals?: boolean | MemberCountOutputTypeCountHomeDismissalsArgs
@@ -4598,6 +4869,13 @@ export type MemberCountOutputTypeCountDocumentPinsArgs<ExtArgs extends runtime.T
  */
 export type MemberCountOutputTypeCountListPinsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   where?: Prisma.ListPinWhereInput
+}
+
+/**
+ * MemberCountOutputType without action
+ */
+export type MemberCountOutputTypeCountTeamRoomsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  where?: Prisma.TeamRoomWhereInput
 }
 
 /**
@@ -4693,6 +4971,7 @@ export type MemberSelect<ExtArgs extends runtime.Types.Extensions.InternalArgs =
   threadPins?: boolean | Prisma.Member$threadPinsArgs<ExtArgs>
   documentPins?: boolean | Prisma.Member$documentPinsArgs<ExtArgs>
   listPins?: boolean | Prisma.Member$listPinsArgs<ExtArgs>
+  teamRooms?: boolean | Prisma.Member$teamRoomsArgs<ExtArgs>
   sidebarOrders?: boolean | Prisma.Member$sidebarOrdersArgs<ExtArgs>
   threadLaters?: boolean | Prisma.Member$threadLatersArgs<ExtArgs>
   homeDismissals?: boolean | Prisma.Member$homeDismissalsArgs<ExtArgs>
@@ -4782,6 +5061,7 @@ export type MemberInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs 
   threadPins?: boolean | Prisma.Member$threadPinsArgs<ExtArgs>
   documentPins?: boolean | Prisma.Member$documentPinsArgs<ExtArgs>
   listPins?: boolean | Prisma.Member$listPinsArgs<ExtArgs>
+  teamRooms?: boolean | Prisma.Member$teamRoomsArgs<ExtArgs>
   sidebarOrders?: boolean | Prisma.Member$sidebarOrdersArgs<ExtArgs>
   threadLaters?: boolean | Prisma.Member$threadLatersArgs<ExtArgs>
   homeDismissals?: boolean | Prisma.Member$homeDismissalsArgs<ExtArgs>
@@ -4816,6 +5096,7 @@ export type $MemberPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs
     threadPins: Prisma.$ThreadPinPayload<ExtArgs>[]
     documentPins: Prisma.$DocumentPinPayload<ExtArgs>[]
     listPins: Prisma.$ListPinPayload<ExtArgs>[]
+    teamRooms: Prisma.$TeamRoomPayload<ExtArgs>[]
     sidebarOrders: Prisma.$SidebarOrderPayload<ExtArgs>[]
     threadLaters: Prisma.$ThreadLaterPayload<ExtArgs>[]
     homeDismissals: Prisma.$HomeDismissalPayload<ExtArgs>[]
@@ -5298,6 +5579,7 @@ export interface Prisma__MemberClient<T, Null = never, ExtArgs extends runtime.T
   threadPins<T extends Prisma.Member$threadPinsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$threadPinsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ThreadPinPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   documentPins<T extends Prisma.Member$documentPinsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$documentPinsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$DocumentPinPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   listPins<T extends Prisma.Member$listPinsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$listPinsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ListPinPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+  teamRooms<T extends Prisma.Member$teamRoomsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$teamRoomsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$TeamRoomPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   sidebarOrders<T extends Prisma.Member$sidebarOrdersArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$sidebarOrdersArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$SidebarOrderPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   threadLaters<T extends Prisma.Member$threadLatersArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$threadLatersArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$ThreadLaterPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
   homeDismissals<T extends Prisma.Member$homeDismissalsArgs<ExtArgs> = {}>(args?: Prisma.Subset<T, Prisma.Member$homeDismissalsArgs<ExtArgs>>): Prisma.PrismaPromise<runtime.Types.Result.GetResult<Prisma.$HomeDismissalPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
@@ -5967,6 +6249,30 @@ export type Member$listPinsArgs<ExtArgs extends runtime.Types.Extensions.Interna
   take?: number
   skip?: number
   distinct?: Prisma.ListPinScalarFieldEnum | Prisma.ListPinScalarFieldEnum[]
+}
+
+/**
+ * Member.teamRooms
+ */
+export type Member$teamRoomsArgs<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
+  /**
+   * Select specific fields to fetch from the TeamRoom
+   */
+  select?: Prisma.TeamRoomSelect<ExtArgs> | null
+  /**
+   * Omit specific fields from the TeamRoom
+   */
+  omit?: Prisma.TeamRoomOmit<ExtArgs> | null
+  /**
+   * Choose, which related nodes to fetch as well
+   */
+  include?: Prisma.TeamRoomInclude<ExtArgs> | null
+  where?: Prisma.TeamRoomWhereInput
+  orderBy?: Prisma.TeamRoomOrderByWithRelationInput | Prisma.TeamRoomOrderByWithRelationInput[]
+  cursor?: Prisma.TeamRoomWhereUniqueInput
+  take?: number
+  skip?: number
+  distinct?: Prisma.TeamRoomScalarFieldEnum | Prisma.TeamRoomScalarFieldEnum[]
 }
 
 /**

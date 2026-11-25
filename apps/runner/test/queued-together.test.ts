@@ -265,3 +265,25 @@ test('at most twenty queued messages go into one turn, the rest into the next', 
   await sleep(100)
   assert.equal(turns('t6'), 3, 'no turn of their own after them')
 })
+
+test('stopping a room task cancels queued specialist turns; an explicit new request can run', async () => {
+  const id = 'stop-room'
+  message(id, 'Plan and check', 'mark', ['nina'])
+  await until(() => turns(id) === 1, 'manager started')
+  threads.handle({
+    type: 'thread.interrupt',
+    commandId: 'stop-it',
+    sessionId: id,
+    cancelQueue: true,
+  })
+  end()
+  message(id, 'Resume explicitly')
+  await until(() => turns(id) === 2, 'new user request started')
+  assert.equal(told.at(-1)!.teammate, 'mark')
+  assert.match(told.at(-1)!.text, /Resume explicitly/)
+  end()
+  await until(
+    () => of(id).filter((e) => e.type === 'turn.completed').length === 2,
+    'both turns settled',
+  )
+})

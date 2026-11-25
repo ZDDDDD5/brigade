@@ -96,6 +96,7 @@ async function openTerminal(
     include: {
       teammate: true,
       computer: true,
+      room: true,
       teammates: { include: { teammate: true }, orderBy: { joinedAt: 'asc' } },
       parent: { select: { id: true, title: true } },
       startedBy: { select: { suggestions: true } },

@@ -891,6 +891,7 @@ export const RunnerToApi = z.discriminatedUnion('type', [
    */
   z.object({
     type: z.literal('thread.handoff'),
+    turnId: z.string().optional(),
     sessionId: z.string(),
     fromTeammateId: z.string(),
     teammateIds: z.array(z.string()).min(1).max(5),
@@ -1271,6 +1272,7 @@ export const ApiToRunner = z.discriminatedUnion('type', [
   }),
   z.object({
     type: z.literal('thread.interrupt'),
+    cancelQueue: z.literal(true).optional(),
     commandId: z.string(),
     sessionId: z.string(),
     /** Stop only this turn (turn.started's turnId). Unset: whichever runs. */

@@ -357,6 +357,7 @@ export const StartThread = z
   .object({
     /** Its id, chosen beforehand (NewThreadId): refused when a thread has it already. */
     id: NewThreadId.optional(),
+    roomId: z.string().min(1).max(100).optional(),
     teammateId: z.string(),
     computerId: z.string(),
     /** Omit to use the member's default account for the teammate's harness. */

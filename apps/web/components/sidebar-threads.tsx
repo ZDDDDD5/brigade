@@ -45,6 +45,7 @@ import {
   type ComponentProps,
   type ReactNode,
 } from 'react'
+import { TeamDirectory } from '@/components/team-directory'
 import { TeammateAvatar } from '@/components/dashboard'
 import { TeammateTitle } from '@/components/teammate-title'
 import { ProjectIcon } from '@/components/projects'
@@ -1546,6 +1547,11 @@ export function SidebarWork({
             <SidebarMenu>{list}</SidebarMenu>
           </RailPanel>
           {rail}
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild tooltip="固定群聊" isActive={pathname.startsWith('/app/rooms')}>
+              <Link href="/app/rooms" aria-label="固定群聊"><MessagesSquare /></Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           {/* The pinned threads in the rail itself: the teammate, and a dot when it has news. */}
           {pinned.length > 0 && (
             <li aria-hidden className="bg-sidebar-border mx-auto my-1 h-px w-4" />
@@ -1828,10 +1834,10 @@ export function SidebarWork({
         {!folded.teammates && (
           <SidebarGroupContent>
             <SidebarMenu>
-              {teammates.map((t) => (
+              <TeamDirectory teammates={teammates} renderBot={(t, drag) => (
                 <SidebarRow
                   key={t.id}
-                  drag={dragRow('teammates', t.id)}
+                  drag={drag}
                   active={filter.teammateId === t.id}
                   title={`${t.name}: its latest thread, and only its threads above`}
                   onClick={() => clickTeammate(t.id)}
@@ -1846,7 +1852,7 @@ export function SidebarWork({
                     icon: <Settings />,
                   }}
                 />
-              ))}
+              )} />
             </SidebarMenu>
           </SidebarGroupContent>
         )}

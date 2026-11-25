@@ -170,7 +170,11 @@ describe('threads others write in', { skip: !database && 'no database answers' }
       ws as never,
     )
     await until(() => sent.some((m) => m.type === 'welcome'), 'the welcome')
-    return { sent, close: () => handle.onClose() }
+    return {
+      sent,
+      say: (m: unknown) => handle.onMessage(JSON.stringify(m), ws as never),
+      close: () => handle.onClose(),
+    }
   }
 
   const call = (p: Person, path: string, init: { method?: string; body?: unknown } = {}) => {
@@ -660,6 +664,209 @@ describe('threads others write in', { skip: !database && 'no database answers' }
     } finally {
       await results?.catch(() => {})
       await limited.$disconnect()
+    }
+  })
+
+  test('directory preferences survive refresh, reject stale edits and stay per member/workspace', async () => {
+    const { directory } = await import('../src/routes/rooms.js')
+    const prefs = new Hono().route('/me/directory', directory)
+    const request = (body?: unknown) =>
+      prefs.request('/me/directory', {
+        method: body ? 'PUT' : 'GET',
+        headers: { 'content-type': 'application/json' },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+    as = 'ada'
+    const empty = await (await request()).json()
+    assert.deepEqual(empty, { revision: 0, layout: { pins: [], groups: [], order: [] } })
+    const bot = 'bot:' + riley
+    const layout = {
+      pins: [bot],
+      order: [bot],
+      groups: [{ id: 'work', name: '工作', items: [bot], collapsed: true }],
+    }
+    assert.equal((await request({ revision: 0, layout })).status, 200)
+    assert.equal((await request({ revision: 0, layout })).status, 409)
+    assert.deepEqual(await (await request()).json(), { revision: 1, layout })
+    as = 'bob'
+    assert.deepEqual(await (await request()).json(), empty)
+    const other = await prisma.workspace.create({ data: { organizationId: org, name: 'Second' } })
+    const previous = workspaceId
+    try {
+      workspaceId = other.id
+      as = 'ada'
+      assert.deepEqual(await (await request()).json(), empty)
+    } finally {
+      workspaceId = previous
+      await prisma.workspace.delete({ where: { id: other.id } })
+    }
+  })
+
+  test('three bots share a fixed room, route mentions, return receipts and stop handing on', async () => {
+    const { rooms } = await import('../src/routes/rooms.js')
+    const { handoffThread } = await import('../src/work.js')
+    const roomApp = new Hono().route('/rooms', rooms)
+    const roomReq = (path: string, body?: unknown, method = body ? 'POST' : 'GET') =>
+      roomApp.request('/rooms' + path, {
+        method,
+        headers: { 'content-type': 'application/json' },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      })
+    const [writer, reviewer, outsider] = await Promise.all(
+      ['Writer', 'Reviewer', 'Outside'].map((name) =>
+        db.teammate.create({ data: { name } } as never),
+      ),
+    )
+    as = 'ada'
+    const setup = {
+      name: 'Design review',
+      managerId: riley,
+      memberIds: [riley, writer.id, reviewer.id],
+    }
+    const created = await roomReq('', setup)
+    assert.equal(created.status, 201, await created.clone().text())
+    const room = await created.json()
+    as = 'bob'
+    assert.deepEqual(await (await roomReq('')).json(), [])
+    assert.equal((await roomReq('/' + room.id)).status, 404)
+    as = 'ada'
+    const changed = await roomReq(
+      '/' + room.id,
+      { revision: 0, settings: { ...setup, name: 'Launch team' } },
+      'PUT',
+    )
+    assert.equal(changed.status, 200)
+    assert.equal(
+      (await roomReq('/' + room.id, { revision: 0, settings: setup }, 'PUT')).status,
+      409,
+    )
+    const conn = await runner()
+    const taskId = () => 'c' + randomUUID().replaceAll('-', '').slice(0, 24)
+    const send = (body: unknown) => call('ada', '', { body })
+    const body = {
+      id: taskId(),
+      roomId: room.id,
+      computerId: cloud,
+      teammateId: writer.id,
+      text: 'Plan the launch',
+    }
+    const commands = (id: string) =>
+      conn.sent.filter(
+        (m) => m.type === 'thread.prompt' && (m.thread as { sessionId: string }).sessionId === id,
+      )
+    const firstId = (cmd: Sent) => (cmd.thread as { teammate: { id: string } }).teammate.id
+    try {
+      const first = await send(body)
+      assert.equal(first.status, 201, await first.clone().text())
+      await until(() => commands(body.id).length === 1, 'one delivery')
+      assert.equal(firstId(commands(body.id)[0]!), riley)
+      assert.deepEqual(commands(body.id)[0]!.then, [])
+      assert.equal((await send(body)).status, 200)
+      assert.equal((await send({ ...body, text: 'Different request' })).status, 409)
+      const runnerScope = { computerId: cloud, workspaceId, organizationId: org }
+      const handoff = {
+        type: 'thread.handoff' as const,
+        turnId: randomUUID(),
+        sessionId: body.id,
+        fromTeammateId: riley,
+        teammateIds: [writer.id, reviewer.id, outsider.id],
+      }
+      await handoffThread(runnerScope, handoff)
+      await handoffThread(runnerScope, handoff)
+      await until(() => commands(body.id).length === 2, 'one handoff')
+      const delegated = commands(body.id)[1]!
+      assert.equal(firstId(delegated), writer.id)
+      assert.deepEqual(
+        (delegated.then as { teammate: { id: string } }[]).map((s) => s.teammate.id),
+        [reviewer.id],
+      )
+      const at = new Date().toISOString()
+      conn.say({
+        type: 'events',
+        events: [riley, writer.id, reviewer.id].map((teammateId, i) => ({
+          sessionId: body.id,
+          seq: i + 1,
+          event: { type: 'message.done', id: 'report-' + i, at, teammateId, text: 'Receipt ' + i },
+        })),
+      })
+      await until(
+        () => conn.sent.some((m) => m.type === 'ack' && m.seq === 3),
+        'three receipts stored',
+      )
+      const view = await (await roomReq('/' + room.id)).json()
+      assert.deepEqual(
+        view.tasks[0].replies.map((r: { teammateId: string }) => r.teammateId),
+        [riley, writer.id, reviewer.id],
+      )
+      const named = {
+        ...body,
+        id: taskId(),
+        text: `@[Reviewer](teammate:${reviewer.id}) Check this`,
+      }
+      assert.equal((await send(named)).status, 201)
+      await until(() => commands(named.id).length === 1, 'one named specialist')
+      assert.equal(firstId(commands(named.id)[0]!), reviewer.id)
+      assert.equal(
+        (await send({ ...body, id: taskId(), text: `@[Out](teammate:${outsider.id})` })).status,
+        400,
+      )
+      assert.equal(
+        (await call('ada', '/' + named.id + '/messages', { body: { text: 'Summarize' } })).status,
+        200,
+      )
+      await until(() => commands(named.id).length === 2, 'manager takes a plain follow-up')
+      assert.equal(firstId(commands(named.id)[1]!), riley)
+      assert.equal((await call('ada', '/' + body.id + '/interrupt', { body: {} })).status, 200)
+      await until(
+        () => conn.sent.some((m) => m.type === 'thread.interrupt' && m.cancelQueue === true),
+        'whole queue stopped',
+      )
+      await handoffThread(runnerScope, { ...handoff, turnId: randomUUID() })
+      assert.equal(commands(body.id).length, 2)
+      assert.equal(
+        (await (await roomReq('/' + room.id)).json()).tasks.find(
+          (t: { id: string }) => t.id === body.id,
+        ).roomStopped,
+        true,
+      )
+      assert.equal(
+        (await call('ada', '/' + body.id + '/messages', { body: { text: 'Continue' } })).status,
+        200,
+      )
+      conn.say({
+        type: 'events',
+        events: [
+          {
+            sessionId: named.id,
+            seq: 1,
+            event: { at, type: 'turn.started', teammateId: reviewer.id, accountId: account },
+          },
+          {
+            sessionId: named.id,
+            seq: 2,
+            event: { at, type: 'error', teammateId: reviewer.id, message: 'Simulated failure' },
+          },
+        ],
+      })
+      await until(
+        () => conn.sent.some((m) => m.type === 'ack' && m.sessionId === named.id && m.seq === 2),
+        'failed turn stored',
+      )
+      assert.equal((await call('ada', '/' + named.id + '/retry', { body: {} })).status, 200)
+      await until(
+        () => conn.sent.some((m) => m.type === 'thread.retry' && firstId(m) === reviewer.id),
+        'retry went back to the failed specialist',
+      )
+      const direct = await send({
+        id: taskId(),
+        computerId: cloud,
+        teammateId: writer.id,
+        text: 'Private assignment',
+      })
+      assert.equal(direct.status, 201, await direct.clone().text())
+      assert.equal((await (await roomReq('/' + room.id)).json()).tasks.length, 2)
+    } finally {
+      conn.close()
     }
   })
 

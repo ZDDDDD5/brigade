@@ -74,6 +74,7 @@ export const ModelName = {
   SidebarOrder: 'SidebarOrder',
   ThreadLater: 'ThreadLater',
   HomeDismissal: 'HomeDismissal',
+  TeamRoom: 'TeamRoom',
   Session: 'Session',
   Task: 'Task',
   Schedule: 'Schedule',
@@ -497,6 +498,8 @@ export const SidebarOrderScalarFieldEnum = {
   memberId: 'memberId',
   list: 'list',
   ids: 'ids',
+  layout: 'layout',
+  revision: 'revision',
   updatedAt: 'updatedAt'
 } as const
 
@@ -527,7 +530,25 @@ export const HomeDismissalScalarFieldEnum = {
 export type HomeDismissalScalarFieldEnum = (typeof HomeDismissalScalarFieldEnum)[keyof typeof HomeDismissalScalarFieldEnum]
 
 
+export const TeamRoomScalarFieldEnum = {
+  id: 'id',
+  organizationId: 'organizationId',
+  workspaceId: 'workspaceId',
+  memberId: 'memberId',
+  name: 'name',
+  managerId: 'managerId',
+  memberIds: 'memberIds',
+  revision: 'revision'
+} as const
+
+export type TeamRoomScalarFieldEnum = (typeof TeamRoomScalarFieldEnum)[keyof typeof TeamRoomScalarFieldEnum]
+
+
 export const SessionScalarFieldEnum = {
+  roomId: 'roomId',
+  roomRequestHash: 'roomRequestHash',
+  roomStopped: 'roomStopped',
+  roomReady: 'roomReady',
   id: 'id',
   organizationId: 'organizationId',
   workspaceId: 'workspaceId',

@@ -21,8 +21,18 @@ export type SidebarOrderModel = runtime.Types.Result.DefaultSelection<Prisma.$Si
 
 export type AggregateSidebarOrder = {
   _count: SidebarOrderCountAggregateOutputType | null
+  _avg: SidebarOrderAvgAggregateOutputType | null
+  _sum: SidebarOrderSumAggregateOutputType | null
   _min: SidebarOrderMinAggregateOutputType | null
   _max: SidebarOrderMaxAggregateOutputType | null
+}
+
+export type SidebarOrderAvgAggregateOutputType = {
+  revision: number | null
+}
+
+export type SidebarOrderSumAggregateOutputType = {
+  revision: number | null
 }
 
 export type SidebarOrderMinAggregateOutputType = {
@@ -30,6 +40,7 @@ export type SidebarOrderMinAggregateOutputType = {
   workspaceId: string | null
   memberId: string | null
   list: string | null
+  revision: number | null
   updatedAt: Date | null
 }
 
@@ -38,6 +49,7 @@ export type SidebarOrderMaxAggregateOutputType = {
   workspaceId: string | null
   memberId: string | null
   list: string | null
+  revision: number | null
   updatedAt: Date | null
 }
 
@@ -47,16 +59,27 @@ export type SidebarOrderCountAggregateOutputType = {
   memberId: number
   list: number
   ids: number
+  layout: number
+  revision: number
   updatedAt: number
   _all: number
 }
 
+
+export type SidebarOrderAvgAggregateInputType = {
+  revision?: true
+}
+
+export type SidebarOrderSumAggregateInputType = {
+  revision?: true
+}
 
 export type SidebarOrderMinAggregateInputType = {
   organizationId?: true
   workspaceId?: true
   memberId?: true
   list?: true
+  revision?: true
   updatedAt?: true
 }
 
@@ -65,6 +88,7 @@ export type SidebarOrderMaxAggregateInputType = {
   workspaceId?: true
   memberId?: true
   list?: true
+  revision?: true
   updatedAt?: true
 }
 
@@ -74,6 +98,8 @@ export type SidebarOrderCountAggregateInputType = {
   memberId?: true
   list?: true
   ids?: true
+  layout?: true
+  revision?: true
   updatedAt?: true
   _all?: true
 }
@@ -116,6 +142,18 @@ export type SidebarOrderAggregateArgs<ExtArgs extends runtime.Types.Extensions.I
   /**
    * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
    * 
+   * Select which fields to average
+  **/
+  _avg?: SidebarOrderAvgAggregateInputType
+  /**
+   * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+   * 
+   * Select which fields to sum
+  **/
+  _sum?: SidebarOrderSumAggregateInputType
+  /**
+   * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+   * 
    * Select which fields to find the minimum value
   **/
   _min?: SidebarOrderMinAggregateInputType
@@ -146,6 +184,8 @@ export type SidebarOrderGroupByArgs<ExtArgs extends runtime.Types.Extensions.Int
   take?: number
   skip?: number
   _count?: SidebarOrderCountAggregateInputType | true
+  _avg?: SidebarOrderAvgAggregateInputType
+  _sum?: SidebarOrderSumAggregateInputType
   _min?: SidebarOrderMinAggregateInputType
   _max?: SidebarOrderMaxAggregateInputType
 }
@@ -156,8 +196,12 @@ export type SidebarOrderGroupByOutputType = {
   memberId: string
   list: string
   ids: string[]
+  layout: runtime.JsonValue | null
+  revision: number
   updatedAt: Date
   _count: SidebarOrderCountAggregateOutputType | null
+  _avg: SidebarOrderAvgAggregateOutputType | null
+  _sum: SidebarOrderSumAggregateOutputType | null
   _min: SidebarOrderMinAggregateOutputType | null
   _max: SidebarOrderMaxAggregateOutputType | null
 }
@@ -186,6 +230,8 @@ export type SidebarOrderWhereInput = {
   memberId?: Prisma.StringFilter<"SidebarOrder"> | string
   list?: Prisma.StringFilter<"SidebarOrder"> | string
   ids?: Prisma.StringNullableListFilter<"SidebarOrder">
+  layout?: Prisma.JsonNullableFilter<"SidebarOrder">
+  revision?: Prisma.IntFilter<"SidebarOrder"> | number
   updatedAt?: Prisma.DateTimeFilter<"SidebarOrder"> | Date | string
   workspace?: Prisma.XOR<Prisma.WorkspaceScalarRelationFilter, Prisma.WorkspaceWhereInput>
   member?: Prisma.XOR<Prisma.MemberScalarRelationFilter, Prisma.MemberWhereInput>
@@ -197,6 +243,8 @@ export type SidebarOrderOrderByWithRelationInput = {
   memberId?: Prisma.SortOrder
   list?: Prisma.SortOrder
   ids?: Prisma.SortOrder
+  layout?: Prisma.SortOrderInput | Prisma.SortOrder
+  revision?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   workspace?: Prisma.WorkspaceOrderByWithRelationInput
   member?: Prisma.MemberOrderByWithRelationInput
@@ -212,6 +260,8 @@ export type SidebarOrderWhereUniqueInput = Prisma.AtLeast<{
   memberId?: Prisma.StringFilter<"SidebarOrder"> | string
   list?: Prisma.StringFilter<"SidebarOrder"> | string
   ids?: Prisma.StringNullableListFilter<"SidebarOrder">
+  layout?: Prisma.JsonNullableFilter<"SidebarOrder">
+  revision?: Prisma.IntFilter<"SidebarOrder"> | number
   updatedAt?: Prisma.DateTimeFilter<"SidebarOrder"> | Date | string
   workspace?: Prisma.XOR<Prisma.WorkspaceScalarRelationFilter, Prisma.WorkspaceWhereInput>
   member?: Prisma.XOR<Prisma.MemberScalarRelationFilter, Prisma.MemberWhereInput>
@@ -223,10 +273,14 @@ export type SidebarOrderOrderByWithAggregationInput = {
   memberId?: Prisma.SortOrder
   list?: Prisma.SortOrder
   ids?: Prisma.SortOrder
+  layout?: Prisma.SortOrderInput | Prisma.SortOrder
+  revision?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
   _count?: Prisma.SidebarOrderCountOrderByAggregateInput
+  _avg?: Prisma.SidebarOrderAvgOrderByAggregateInput
   _max?: Prisma.SidebarOrderMaxOrderByAggregateInput
   _min?: Prisma.SidebarOrderMinOrderByAggregateInput
+  _sum?: Prisma.SidebarOrderSumOrderByAggregateInput
 }
 
 export type SidebarOrderScalarWhereWithAggregatesInput = {
@@ -238,6 +292,8 @@ export type SidebarOrderScalarWhereWithAggregatesInput = {
   memberId?: Prisma.StringWithAggregatesFilter<"SidebarOrder"> | string
   list?: Prisma.StringWithAggregatesFilter<"SidebarOrder"> | string
   ids?: Prisma.StringNullableListFilter<"SidebarOrder">
+  layout?: Prisma.JsonNullableWithAggregatesFilter<"SidebarOrder">
+  revision?: Prisma.IntWithAggregatesFilter<"SidebarOrder"> | number
   updatedAt?: Prisma.DateTimeWithAggregatesFilter<"SidebarOrder"> | Date | string
 }
 
@@ -245,6 +301,8 @@ export type SidebarOrderCreateInput = {
   organizationId: string
   list: string
   ids?: Prisma.SidebarOrderCreateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: number
   updatedAt?: Date | string
   workspace: Prisma.WorkspaceCreateNestedOneWithoutSidebarOrdersInput
   member: Prisma.MemberCreateNestedOneWithoutSidebarOrdersInput
@@ -256,6 +314,8 @@ export type SidebarOrderUncheckedCreateInput = {
   memberId: string
   list: string
   ids?: Prisma.SidebarOrderCreateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: number
   updatedAt?: Date | string
 }
 
@@ -263,6 +323,8 @@ export type SidebarOrderUpdateInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   workspace?: Prisma.WorkspaceUpdateOneRequiredWithoutSidebarOrdersNestedInput
   member?: Prisma.MemberUpdateOneRequiredWithoutSidebarOrdersNestedInput
@@ -274,6 +336,8 @@ export type SidebarOrderUncheckedUpdateInput = {
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -283,6 +347,8 @@ export type SidebarOrderCreateManyInput = {
   memberId: string
   list: string
   ids?: Prisma.SidebarOrderCreateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: number
   updatedAt?: Date | string
 }
 
@@ -290,6 +356,8 @@ export type SidebarOrderUpdateManyMutationInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -299,6 +367,8 @@ export type SidebarOrderUncheckedUpdateManyInput = {
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -324,7 +394,13 @@ export type SidebarOrderCountOrderByAggregateInput = {
   memberId?: Prisma.SortOrder
   list?: Prisma.SortOrder
   ids?: Prisma.SortOrder
+  layout?: Prisma.SortOrder
+  revision?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+}
+
+export type SidebarOrderAvgOrderByAggregateInput = {
+  revision?: Prisma.SortOrder
 }
 
 export type SidebarOrderMaxOrderByAggregateInput = {
@@ -332,6 +408,7 @@ export type SidebarOrderMaxOrderByAggregateInput = {
   workspaceId?: Prisma.SortOrder
   memberId?: Prisma.SortOrder
   list?: Prisma.SortOrder
+  revision?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
 }
 
@@ -340,7 +417,12 @@ export type SidebarOrderMinOrderByAggregateInput = {
   workspaceId?: Prisma.SortOrder
   memberId?: Prisma.SortOrder
   list?: Prisma.SortOrder
+  revision?: Prisma.SortOrder
   updatedAt?: Prisma.SortOrder
+}
+
+export type SidebarOrderSumOrderByAggregateInput = {
+  revision?: Prisma.SortOrder
 }
 
 export type SidebarOrderCreateNestedManyWithoutMemberInput = {
@@ -440,6 +522,8 @@ export type SidebarOrderCreateWithoutMemberInput = {
   organizationId: string
   list: string
   ids?: Prisma.SidebarOrderCreateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: number
   updatedAt?: Date | string
   workspace: Prisma.WorkspaceCreateNestedOneWithoutSidebarOrdersInput
 }
@@ -449,6 +533,8 @@ export type SidebarOrderUncheckedCreateWithoutMemberInput = {
   workspaceId: string
   list: string
   ids?: Prisma.SidebarOrderCreateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: number
   updatedAt?: Date | string
 }
 
@@ -487,6 +573,8 @@ export type SidebarOrderScalarWhereInput = {
   memberId?: Prisma.StringFilter<"SidebarOrder"> | string
   list?: Prisma.StringFilter<"SidebarOrder"> | string
   ids?: Prisma.StringNullableListFilter<"SidebarOrder">
+  layout?: Prisma.JsonNullableFilter<"SidebarOrder">
+  revision?: Prisma.IntFilter<"SidebarOrder"> | number
   updatedAt?: Prisma.DateTimeFilter<"SidebarOrder"> | Date | string
 }
 
@@ -494,6 +582,8 @@ export type SidebarOrderCreateWithoutWorkspaceInput = {
   organizationId: string
   list: string
   ids?: Prisma.SidebarOrderCreateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: number
   updatedAt?: Date | string
   member: Prisma.MemberCreateNestedOneWithoutSidebarOrdersInput
 }
@@ -503,6 +593,8 @@ export type SidebarOrderUncheckedCreateWithoutWorkspaceInput = {
   memberId: string
   list: string
   ids?: Prisma.SidebarOrderCreateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: number
   updatedAt?: Date | string
 }
 
@@ -537,6 +629,8 @@ export type SidebarOrderCreateManyMemberInput = {
   workspaceId: string
   list: string
   ids?: Prisma.SidebarOrderCreateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: number
   updatedAt?: Date | string
 }
 
@@ -544,6 +638,8 @@ export type SidebarOrderUpdateWithoutMemberInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   workspace?: Prisma.WorkspaceUpdateOneRequiredWithoutSidebarOrdersNestedInput
 }
@@ -553,6 +649,8 @@ export type SidebarOrderUncheckedUpdateWithoutMemberInput = {
   workspaceId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -561,6 +659,8 @@ export type SidebarOrderUncheckedUpdateManyWithoutMemberInput = {
   workspaceId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -569,6 +669,8 @@ export type SidebarOrderCreateManyWorkspaceInput = {
   memberId: string
   list: string
   ids?: Prisma.SidebarOrderCreateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: number
   updatedAt?: Date | string
 }
 
@@ -576,6 +678,8 @@ export type SidebarOrderUpdateWithoutWorkspaceInput = {
   organizationId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
   member?: Prisma.MemberUpdateOneRequiredWithoutSidebarOrdersNestedInput
 }
@@ -585,6 +689,8 @@ export type SidebarOrderUncheckedUpdateWithoutWorkspaceInput = {
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -593,6 +699,8 @@ export type SidebarOrderUncheckedUpdateManyWithoutWorkspaceInput = {
   memberId?: Prisma.StringFieldUpdateOperationsInput | string
   list?: Prisma.StringFieldUpdateOperationsInput | string
   ids?: Prisma.SidebarOrderUpdateidsInput | string[]
+  layout?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
+  revision?: Prisma.IntFieldUpdateOperationsInput | number
   updatedAt?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
 }
 
@@ -604,6 +712,8 @@ export type SidebarOrderSelect<ExtArgs extends runtime.Types.Extensions.Internal
   memberId?: boolean
   list?: boolean
   ids?: boolean
+  layout?: boolean
+  revision?: boolean
   updatedAt?: boolean
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   member?: boolean | Prisma.MemberDefaultArgs<ExtArgs>
@@ -615,6 +725,8 @@ export type SidebarOrderSelectCreateManyAndReturn<ExtArgs extends runtime.Types.
   memberId?: boolean
   list?: boolean
   ids?: boolean
+  layout?: boolean
+  revision?: boolean
   updatedAt?: boolean
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   member?: boolean | Prisma.MemberDefaultArgs<ExtArgs>
@@ -626,6 +738,8 @@ export type SidebarOrderSelectUpdateManyAndReturn<ExtArgs extends runtime.Types.
   memberId?: boolean
   list?: boolean
   ids?: boolean
+  layout?: boolean
+  revision?: boolean
   updatedAt?: boolean
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   member?: boolean | Prisma.MemberDefaultArgs<ExtArgs>
@@ -637,10 +751,12 @@ export type SidebarOrderSelectScalar = {
   memberId?: boolean
   list?: boolean
   ids?: boolean
+  layout?: boolean
+  revision?: boolean
   updatedAt?: boolean
 }
 
-export type SidebarOrderOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"organizationId" | "workspaceId" | "memberId" | "list" | "ids" | "updatedAt", ExtArgs["result"]["sidebarOrder"]>
+export type SidebarOrderOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"organizationId" | "workspaceId" | "memberId" | "list" | "ids" | "layout" | "revision" | "updatedAt", ExtArgs["result"]["sidebarOrder"]>
 export type SidebarOrderInclude<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   workspace?: boolean | Prisma.WorkspaceDefaultArgs<ExtArgs>
   member?: boolean | Prisma.MemberDefaultArgs<ExtArgs>
@@ -669,6 +785,8 @@ export type $SidebarOrderPayload<ExtArgs extends runtime.Types.Extensions.Intern
      */
     list: string
     ids: string[]
+    layout: runtime.JsonValue | null
+    revision: number
     updatedAt: Date
   }, ExtArgs["result"]["sidebarOrder"]>
   composites: {}
@@ -1100,6 +1218,8 @@ export interface SidebarOrderFieldRefs {
   readonly memberId: Prisma.FieldRef<"SidebarOrder", 'String'>
   readonly list: Prisma.FieldRef<"SidebarOrder", 'String'>
   readonly ids: Prisma.FieldRef<"SidebarOrder", 'String[]'>
+  readonly layout: Prisma.FieldRef<"SidebarOrder", 'Json'>
+  readonly revision: Prisma.FieldRef<"SidebarOrder", 'Int'>
   readonly updatedAt: Prisma.FieldRef<"SidebarOrder", 'DateTime'>
 }
     

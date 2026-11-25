@@ -43,6 +43,7 @@ import { missionRoutes } from './routes/missions.js'
 import { themeRoutes } from './routes/themes.js'
 import { notifications } from './routes/notifications.js'
 import { desktopNotifications } from './routes/desktop-notifications.js'
+import { directory, rooms } from './routes/rooms.js'
 import { projects } from './routes/projects.js'
 import { home } from './routes/home.js'
 import { pulls } from './routes/pulls.js'
@@ -255,6 +256,8 @@ app.route('/api/security', security)
 app.route('/api/tickets', tickets)
 app.route('/api/schedules', schedules)
 app.route('/api/playbooks', playbooks)
+app.route('/api/me/directory', directory)
+app.route('/api/rooms', rooms)
 app.route('/api/projects', projects)
 // Before the library: its own routes would read /assets/<id> as a file id.
 app.route('/api/library/assets', documentAssets)

@@ -257,3 +257,4 @@ export function nodeAtLeast(version: string, min = NODE_VERSION) {
   for (let i = 0; i < 3; i++) if (a![i] !== b![i]) return (a![i] ?? 0) > (b![i] ?? 0)
   return true
 }
+export * from './team-rooms.js'
