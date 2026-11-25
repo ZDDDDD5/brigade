@@ -5,7 +5,7 @@
  import type { ReactNode } from 'react'
  
 -export const metadata: Metadata = { title: 'Sign in · Brigade' }
-+export const metadata: Metadata = { title: "签名于 。Brigade" }
++export const metadata: Metadata = { title: "登录 · Brigade" }
  
  export default function Layout({ children }: { children: ReactNode }) {
    return children
@@ -20767,7 +20767,7 @@
                    drag={drag}
                    active={filter.teammateId === t.id}
 -                  title={`${t.name}: its latest thread, and only its threads above`}
-+                  title={`${t.name}: 其最新对话,只有上面的对话`}
++                  title={`查看 ${t.name} 的最近对话，并按此队友筛选`}
                    onClick={() => clickTeammate(t.id)}
                    icon={<TeammateAvatar teammate={t} className="size-5" />}
                    label={t.name}

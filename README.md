@@ -283,6 +283,10 @@ and your teammates keep working for free on your own computer.
 
 <br/>
 
+## 中文工作台
+
+本 fork 支持队友与群聊的个人置顶、分组和排序，以及群管理员接单、点名分工和群任务回执。使用方法、升级步骤和验证记录见[中文更新说明](docs/zh-cn-workbench.md)。
+
 ## Quickstart
 
 ### Use it

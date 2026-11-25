@@ -193,13 +193,14 @@ export function RoomWorkspace({ id }: { id: string }) {
   const lock = useRef(false)
   const draft = useRef<{ body: string; id: string } | null>(null)
   const resume = useRef(new Map<string, string>())
+  const reloadTasks = details.reload
   // A task can finish on a different tab or runner while this page stays open.
   useEffect(() => {
     const poll = setInterval(() => {
-      if (document.visibilityState === 'visible') void details.reload()
+      if (document.visibilityState === 'visible') void reloadTasks()
     }, 5000)
     return () => clearInterval(poll)
-  }, [details.reload])
+  }, [reloadTasks])
   const data = details.data
   if (!data || data.room.id !== id)
     return <p className="p-6">{details.error?.message ?? '正在打开群聊…'}</p>

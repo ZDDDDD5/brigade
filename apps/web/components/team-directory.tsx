@@ -38,11 +38,12 @@ export function TeamDirectory({
   const [busy, setBusy] = useState(false)
   const lock = useRef(false)
   const dragId = useRef('')
+  const reloadRooms = rooms.reload
   useEffect(() => {
-    const changed = () => void rooms.reload()
+    const changed = () => void reloadRooms()
     window.addEventListener(ROOMS_CHANGED, changed)
     return () => window.removeEventListener(ROOMS_CHANGED, changed)
-  }, [rooms.reload])
+  }, [reloadRooms])
   const saved = prefs.data?.layout ?? emptyDirectory
   const bots = new Map(teammates.map((t) => ['bot:' + t.id, t]))
   const chats = new Map(rooms.data?.map((r) => ['room:' + r.id, r]))
