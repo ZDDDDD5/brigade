@@ -29,3 +29,7 @@ apps/api/.bucket
 # Cloudflare Workers builds: the API's assets (apps/api/scripts/prepare-worker.mjs) and OpenNext's output
 dist-worker
 .open-next
+
+# Local self-hosted credentials, data and generated workbench releases
+.local-run/
+.brigade-build/
